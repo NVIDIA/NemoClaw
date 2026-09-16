@@ -19,7 +19,7 @@ The design separates three values:
 |---|---|---|
 | Connection endpoint | How does the client contact the engine? | An SSH URL resolved through OpenSSH configuration. |
 | Durable target identity | Is this the daemon and resource namespace recorded in state? | A verified Docker daemon ID combined with bound resource identities. |
-| Inference publication | How does the sandbox's OpenShell router reach the model API? | A private host address and declared `/v1` URL. |
+| Inference publication | How does the sandbox's OpenShell proxy reach the model API? | A private host address and declared `/v1` URL. |
 
 This separation permits an external OpenShell gateway to own Podman sandboxes while a selected Docker daemon owns inference.
 It does not require the inference engine to own the gateway or sandbox.
@@ -31,21 +31,21 @@ flowchart TD
     Client[SDK and provider] -->|SSH Docker API| Engine[Selected Docker daemon]
     Client -->|OpenShell API| Gateway[External OpenShell gateway]
     subgraph Sandbox[Rootless Podman sandbox]
-        Agent[Fabric agent] -->|inference.local| Router[Sandbox-local OpenShell router]
+        Agent[Fabric agent] -->|native endpoint| Router[Sandbox-local OpenShell proxy]
     end
     Gateway -->|native driver manages| Sandbox
-    Gateway -. supplies route configuration .-> Router
+    Gateway -. provider attachments and policy .-> Router
     Engine -->|owns| Model[Inference container and retained volume]
     Router -->|private publication URL| Model
 ```
 
 The SSH connection carries engine operations; it does not tunnel inference traffic.
-The sandbox-local OpenShell router must reach the publication URL.
-The gateway supplies route configuration; inference requests do not pass through the gateway API server.
+The sandbox-local OpenShell proxy must reach the publication URL.
+The gateway supplies provider attachments and policy; inference requests do not pass through the gateway API server.
 A successful model request from the CLI host cannot establish that reachability.
 The [connection-resolution change](https://github.com/NVIDIA/NemoClaw/commit/80deefbd97) and [independent placement change](https://github.com/NVIDIA/NemoClaw/commit/8bdf4960c0) established these separate paths.
 
-The pinned OpenShell implementation [loads route bundles](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/inference_routes.rs) and [handles inference in the sandbox proxy](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/l7/inference.rs).
+The pinned OpenShell implementation uses [provider-backed native inference](https://github.com/NVIDIA/OpenShell/blob/b3e4ad4579e24dacfb285924876473b50a04b988/docs/sandboxes/inference-routing.mdx).
 
 For example, suppose the alias used by an established deployment is redirected to a second daemon containing identically named containers.
 The observed daemon identity no longer matches the binding, so planning stops before mutation.

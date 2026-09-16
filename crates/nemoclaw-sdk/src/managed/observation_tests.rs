@@ -250,6 +250,7 @@ async fn capacity_requires_measurements_from_the_selected_execution_target() {
                         architecture: "arm64".into(),
                         gpu: "NVIDIA GB10".into(),
                         driver_major: 580,
+                        gpu_memory: None,
                         total: 128 * GIB,
                         available: 120 * GIB,
                         free: 110 * GIB,

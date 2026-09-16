@@ -2,30 +2,35 @@
 # SPDX-License-Identifier: Apache-2.0
 """Add explicit API mode forwarding to the pinned Fabric Hermes adapter.
 
-Upstream: NVIDIA/NeMo-Fabric 51a28c1aefec56abd877070b6973d0a32a1e3003,
+Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c,
 Apache-2.0. 2026-09-15: extend settings schema and forward api_mode to AIAgent
 from NousResearch/hermes-agent 29112bef099274229cadff79cdff7bf7b99c4b77.
 Upstream notices remain in the patched source and built wheel.
 """
+
 import json
 
 
 def patch_hermes(source):
-    root = source / 'adapters/python/hermes'
-    adapter = root / 'src/nemo_fabric_adapters/hermes/adapter.py'
+    root = source / "adapters/python/hermes"
+    adapter = root / "src/nemo_fabric_adapters/hermes/adapter.py"
     original = adapter.read_text()
-    anchor = '                        provider=model_config.provider,\n'
+    anchor = "                        provider=model_config.provider,\n"
     if original.count(anchor) != 1 or 'api_mode=self._settings.get("api_mode")' in original:
-        raise ValueError('pinned Hermes adapter API forwarding anchor changed')
-    adapter.write_text("# NemoClaw modification, 2026-09-15: forward explicit api_mode.\n"
-        "# Upstream: NVIDIA/NeMo-Fabric 51a28c1aefec56abd877070b6973d0a32a1e3003 (Apache-2.0).\n"
-        + original.replace(anchor, anchor +
-        '                        api_mode=self._settings.get("api_mode"),\n'))
-    manifest = root / 'hermes.fabric-adapter.json'
+        raise ValueError("pinned Hermes adapter API forwarding anchor changed")
+    adapter.write_text(
+        "# NemoClaw modification, 2026-09-15: forward explicit api_mode.\n"
+        "# Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c (Apache-2.0).\n"
+        + original.replace(
+            anchor, anchor + '                        api_mode=self._settings.get("api_mode"),\n'
+        )
+    )
+    manifest = root / "hermes.fabric-adapter.json"
     value = json.loads(manifest.read_text())
-    value['settings_schema']['properties']['api_mode'] = {
-        'type': 'string', 'enum': ['chat_completions', 'codex_responses', 'anthropic_messages'],
-        'description': 'Explicit Hermes wire API through the OpenShell primary route.',
+    value["settings_schema"]["properties"]["api_mode"] = {
+        "type": "string",
+        "enum": ["chat_completions", "codex_responses", "anthropic_messages"],
+        "description": "Explicit Hermes wire API through the OpenShell primary route.",
     }
-    manifest.write_text(json.dumps(value, indent=2) + '\n')
-    (root / 'NEMOCLAW-MODIFICATIONS.md').write_text(__doc__ + '\n')
+    manifest.write_text(json.dumps(value, indent=2) + "\n")
+    (root / "NEMOCLAW-MODIFICATIONS.md").write_text(__doc__ + "\n")

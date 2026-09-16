@@ -20,6 +20,7 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
         driver_major: 580,
+        gpu_memory: None,
         total: 121 * GIB,
         available: 116 * GIB,
         free: 110 * GIB,

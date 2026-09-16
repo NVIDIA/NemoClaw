@@ -11,9 +11,11 @@ No engine registry or per-sandbox placement override is required.
 
 Replace the example SSH alias, gateway endpoint, and private publication address with your hosts.
 Publication currently requires a private IPv4 address, the service's port and `/v1` path.
-It uses HTTP without model credentials.
+It uses private HTTP; enable [managed bearer authentication](inference.md#authenticate-a-managed-vllm-service) with `service.authentication: bearer`.
+Omission preserves unauthenticated serving.
 
-The remote host must meet the existing Linux ARM64 DGX Spark hardware profile and have Docker, Python 3 and `nvidia-smi`.
+The remote host must satisfy its service's hardware contract and have Docker, Python 3 and `nvidia-smi`.
+The existing example uses Linux ARM64 DGX Spark; [the Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
 Managed volume observation uses that daemon's reported data root, including a non-default root; it never substitutes the client host's storage path.
 

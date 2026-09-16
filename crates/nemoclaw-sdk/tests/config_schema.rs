@@ -156,7 +156,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "/spec/sandboxes/0/agents/0/harness/kind",
             json!("claude"),
             false,
         ),
@@ -168,7 +168,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "fabric-pi.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
+            "/spec/sandboxes/0/agents/0/harness/kind",
             json!("codex"),
             false,
         ),
@@ -252,8 +252,8 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "vllm.yaml",
-            "/spec/sandboxes/0/agents/0/harness",
-            json!("hermes"),
+            "/spec/sandboxes/0/agents/0/harness/kind",
+            json!("deepagents"),
             false,
         ),
         (
@@ -303,7 +303,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
         ("serving", "port", 1024, 65535),
         ("serving", "contextTokens", 8192, 65536),
         ("serving", "maxSequences", 1, 2),
-        ("serving", "batchTokens", 512, 2048),
+        ("serving", "batchTokens", 512, 4096),
         ("serving", "startupTimeoutSeconds", 60, 3600),
         ("memory", "hostReserveGiB", 28, 64),
         ("memory", "kvCacheGiB", 4, 12),

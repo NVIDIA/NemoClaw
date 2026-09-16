@@ -34,6 +34,19 @@ fn maintained_examples_parse_without_connecting_to_services() {
 }
 
 #[test]
+fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
+    let original = include_str!("../../../examples/fabric-openclaw.yaml");
+    for replacement in [
+        "metadata: &metadata",
+        "metadata: *metadata",
+        "metadata:\n  <<: {name: merged}",
+    ] {
+        let yaml = original.replacen("metadata:", replacement, 1);
+        assert!(Document::parse(yaml.as_bytes()).is_err());
+    }
+}
+
+#[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     let mut omitted = input("spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {

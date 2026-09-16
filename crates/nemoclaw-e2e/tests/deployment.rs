@@ -27,7 +27,148 @@ async fn inference_settings_sdk_apply_export_reapply_and_drift() {
     lifecycle(include_str!("../../../examples/hermes-auth.yaml")).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn multiple_agents_cli_export_reapply_and_policy_drift() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    let primary = document.spec.sandboxes[0].agents[0].clone();
+    for name in ["reader", "reviewer", "auditor"] {
+        let mut agent = primary.clone();
+        agent.name = name.into();
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
+            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        });
+        document.spec.sandboxes[0].agents.push(agent);
+    }
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn tool_disclosure_cli_export_reapply_and_drift() {
+    for mode in [
+        nemoclaw_sdk::config::ToolDisclosure::Direct,
+        nemoclaw_sdk::config::ToolDisclosure::Progressive,
+    ] {
+        let mut document =
+            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
+                .unwrap();
+        document.spec.sandboxes[0].agents[0].tools =
+            Some(nemoclaw_sdk::config::AgentTools::Disclosure { disclosure: mode });
+        // Exercise the existing launch-setting drift assertions as well as export/reapply.
+        document.spec.inference_providers[0].api =
+            Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
+        lifecycle(&document.yaml().unwrap()).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn execution_settings_cli_export_reapply_and_drift() {
+    for heartbeat in [None, Some("0m"), Some("30m")] {
+        let mut document =
+            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
+                .unwrap();
+        document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution = Some(nemoclaw_sdk::config::AgentExecution {
+            timeout_seconds: Some(900),
+            heartbeat_every: heartbeat.map(String::from),
+        });
+        lifecycle(&document.yaml().unwrap()).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn observability_cli_export_reapply_and_drift() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].agents[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .observability = Some(
+        serde_json::from_value(serde_json::json!({
+        "otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
+                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}))
+        .unwrap(),
+    );
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
+    lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn hermes_interfaces_sdk_export_reapply_and_drift() {
+    lifecycle(include_str!("../../../examples/hermes-interfaces.yaml")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn web_search_cli_export_reapply_and_destroy() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agents[0].integration_refs = vec!["search".into()];
+    lifecycle(&document.yaml().unwrap()).await;
+    document.spec.sandboxes[0].integrations = std::mem::take(&mut document.spec.integrations);
+    lifecycle(&document.yaml().unwrap()).await;
+    let sandbox = &mut document.spec.sandboxes[0];
+    sandbox.agents[0].integration_refs.clear();
+    sandbox.agents[0].integrations = std::mem::take(&mut sandbox.integrations);
+    lifecycle(&document.yaml().unwrap()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope() {
+    for input in [
+        include_str!("../../../examples/fabric-openclaw.yaml"),
+        include_str!("../../../examples/hermes-auth.yaml"),
+    ] {
+        let mut document = Document::parse(input.as_bytes()).unwrap();
+        document.spec.sandboxes[0].inference_providers =
+            std::mem::take(&mut document.spec.inference_providers);
+        document.spec.inference_providers.push(
+            serde_json::from_value(serde_json::json!({
+                "name":"unused", "provider":"openai", "endpoint":"https://unused.example.test/v1",
+                "credential":{"env":"UNUSED_KEY"}
+            }))
+            .unwrap(),
+        );
+        lifecycle(&document.yaml().unwrap()).await;
+        let sandbox = &mut document.spec.sandboxes[0];
+        let provider = sandbox.inference_providers.remove(0);
+        let route = &mut sandbox.agents[0].inference.as_mut().unwrap().routes[0];
+        route.provider_ref = None;
+        route.provider = Some(provider);
+        lifecycle(&document.yaml().unwrap()).await;
+    }
+}
+
 async fn lifecycle(input: &str) {
+    lifecycle_with_ownership(input, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn optional_management_plan_export_reapply_preserves_resources() {
+    lifecycle_with_ownership(include_str!("../../../examples/explicit-policy.yaml"), true).await;
+}
+
+async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
@@ -48,10 +189,14 @@ async fn lifecycle(input: &str) {
             .path = Some("/docs/${file}/%{literal}".into());
     }
     document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let has_search = !document.spec.sandboxes[0]
+        .integration_bindings(&document.spec.integrations)
+        .unwrap()
+        .is_empty();
     struct FixtureSecrets;
     impl nemoclaw_sdk::openshell::Secrets for FixtureSecrets {
         fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            assert_eq!(name, "NOUS_API_KEY");
+            assert!(["NOUS_API_KEY", "SEARCH_KEY"].contains(&name));
             Ok("fixture-only-inference-key".into())
         }
     }
@@ -67,14 +212,45 @@ async fn lifecycle(input: &str) {
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(record["pending"], true);
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].agents[0].inference.routes[0]
+    changed.spec.sandboxes[0].agents[0]
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
         .overrides
         .model = "changed".into();
     assert!(deployment.apply(&changed, &cancel).await.is_err());
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
+    assert_eq!(effects, if has_search { 6 } else { 4 });
+    if declare_ownership {
+        document.inference_provider_mut().unwrap().management =
+            Some(nemoclaw_sdk::config::Management::External);
+        document.spec.sandboxes[0]
+            .network
+            .proxy
+            .as_mut()
+            .unwrap()
+            .management = Some(nemoclaw_sdk::config::ExternalManagement::External);
+        assert!(
+            deployment
+                .plan(&document, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert!(
+            deployment
+                .apply(&document, &cancel)
+                .await
+                .unwrap()
+                .changes
+                .is_empty()
+        );
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    }
     let exported = Command::new(
         bundle
             .join("bin")
@@ -100,8 +276,91 @@ async fn lifecycle(input: &str) {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    if document.spec.inference_providers[0].api.is_some()
+    if has_search {
+        let state_bytes = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let key = format!("{}/nemoclaw-brave", document.workspace());
+        let profile = fixture.state.lock().unwrap().profiles[&key].clone();
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .profiles
+            .get_mut(&key)
+            .unwrap()
+            .endpoints
+            .clear();
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        assert_eq!(
+            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            state_bytes
+        );
+        fixture.state.lock().unwrap().profiles.insert(key, profile);
+        let sandbox_key = format!(
+            "{}/{}",
+            document.workspace(),
+            document.spec.sandboxes[0].name
+        );
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&sandbox_key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .providers
+            .clear();
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&sandbox_key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .providers = vec![
+            document.inference_provider().unwrap().name.clone(),
+            "brave-search".into(),
+        ];
+        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    }
+    if document.spec.sandboxes[0].agents.len() > 1 {
+        let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let mut broadened = document.clone();
+        broadened.spec.sandboxes[0].agents[1].tools = None;
+        assert!(deployment.plan(&broadened, &cancel).await.is_err());
+        fixture.state.lock().unwrap().exec_exit = 2;
+        assert!(deployment.plan(&document, &cancel).await.is_err());
+        assert!(deployment.export(&cancel).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        assert_eq!(
+            fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            state
+        );
+        fixture.state.lock().unwrap().exec_exit = 0;
+        assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    }
+    if document.inference_provider().unwrap().api.is_some()
         || document.spec.sandboxes[0].agents[0].auth.is_some()
+        || document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution
+            .is_some()
+        || document.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .observability
+            .is_some()
     {
         let key = format!(
             "{}/{}",
@@ -125,15 +384,31 @@ async fn lifecycle(input: &str) {
                 .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
         );
         let mut changed = document.clone();
-        changed.spec.inference_providers[0].api = Some(
-            if document.spec.inference_providers[0].api
-                == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
-            {
-                nemoclaw_sdk::config::InferenceApi::OpenaiResponses
-            } else {
-                nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
-            },
-        );
+        if let Some(execution) = &mut changed.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .execution
+        {
+            execution.timeout_seconds = Some(1200);
+        } else if let Some(observability) = &mut changed.spec.sandboxes[0].agents[0]
+            .harness
+            .as_mut()
+            .unwrap()
+            .observability
+        {
+            observability.otlp.as_mut().unwrap().sample_rate = 1.into();
+        } else {
+            changed.inference_provider_mut().unwrap().api = Some(
+                if document.inference_provider().unwrap().api
+                    == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
+                {
+                    nemoclaw_sdk::config::InferenceApi::OpenaiResponses
+                } else {
+                    nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
+                },
+            );
+        }
         assert!(deployment.plan(&changed, &cancel).await.is_err());
         fixture
             .state
@@ -215,7 +490,7 @@ async fn lifecycle(input: &str) {
             .policy = original;
     }
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(preview.changes.len(), if has_search { 5 } else { 3 });
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -247,7 +522,7 @@ async fn lifecycle(input: &str) {
             .unwrap()
             .changes
             .len(),
-        3
+        if has_search { 5 } else { 3 }
     );
 }
 

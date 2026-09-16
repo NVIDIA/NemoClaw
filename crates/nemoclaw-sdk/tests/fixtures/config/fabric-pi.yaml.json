@@ -1,5 +1,5 @@
 {
-  "digest": "66acaacccbe0e63979bc9d69a5d73948b731990a7be380a24ced0d27a2155f91",
+  "digest": "f5cc0092d2381cd01985a861a126caebe641800ca7a79f9f6a66208fe84a9d62",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -9,37 +9,27 @@
     },
     "spec": {
       "gateway": {
-        "management": "external",
-        "endpoint": "http://127.0.0.1:17681"
+        "endpoint": "http://127.0.0.1:17681",
+        "management": "external"
       },
       "inferenceProviders": [
         {
+          "endpoint": "http://172.20.0.1:11446/v1",
           "name": "local",
-          "provider": "openai",
-          "endpoint": "http://172.20.0.1:11446/v1"
+          "provider": "openai"
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-fabric-pi@sha256:fc53fc5a0c37bd487fc58e41886cd1afe8af387c6c8cf410e632c045a03a20dc"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "main",
-              "harness": "pi",
+              "harness": {
+                "kind": "pi"
+              },
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "local",
                     "overrides": {
                       "model": "qwen3:4b",
                       "piModel": {
@@ -51,12 +41,24 @@
                         "maxTokens": 2048,
                         "reasoning": false
                       }
-                    }
+                    },
+                    "providerRef": "local"
                   }
                 ]
-              }
+              },
+              "name": "main"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

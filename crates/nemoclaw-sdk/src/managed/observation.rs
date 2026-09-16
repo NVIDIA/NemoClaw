@@ -4,7 +4,7 @@
 #[path = "observation_tests.rs"]
 mod tests;
 
-use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, SERVICE_KIND, SUPERVISOR_SHA256, Spec};
+use super::{GATEWAY_KIND, GENERATION_LABEL, OWNER_LABEL, SERVICE_KIND, Spec};
 use crate::{Error, ObservationError, docker::Engine};
 use bollard::models::{ContainerInspectResponse, NetworkInspect, Volume};
 use serde_json::{Value, json};
@@ -201,7 +201,11 @@ pub(crate) fn verify_container(
         || !host.cap_add.as_ref().is_none_or(Vec::is_empty)
         || host.auto_remove.unwrap_or(false)
         || !host.pid_mode.as_deref().unwrap_or("").is_empty()
-        || !matches!(host.ipc_mode.as_deref().unwrap_or(""), "" | "private")
+        || (if host.ipc_mode.as_deref().is_none_or(|m| m.is_empty()) {
+            "private"
+        } else {
+            host.ipc_mode.as_deref().unwrap()
+        }) != expected_host.ipc_mode.as_deref().unwrap_or("private")
         || !host.devices.as_ref().is_none_or(Vec::is_empty)
         || host.memory.unwrap_or(0) != expected_host.memory.unwrap_or(0)
         || host.memory_swap.unwrap_or(0) != expected_host.memory_swap.unwrap_or(0)
@@ -339,6 +343,7 @@ impl Engine {
                 )
                 .await?
                 .ok_or(ObservationError::Incomplete)?;
+            spec.validate_image_authentication(&image)?;
             let image_config = image.config.as_ref().ok_or(ObservationError::Incomplete)?;
             let image_id = image
                 .id
@@ -398,21 +403,6 @@ impl Engine {
                     .await?
                     .ok_or(ObservationError::Incomplete)?;
                 actual = gateway_identity(&actual, &signing, &encryption)?;
-                let supervisor = self
-                    .read_file(
-                        &container_id,
-                        &format!("{}/openshell-sandbox", volume.mountpoint),
-                        128 << 20,
-                    )
-                    .await?
-                    .ok_or(ObservationError::Incomplete)?;
-                let digest: String = Sha256::digest(supervisor)
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect();
-                if digest != SUPERVISOR_SHA256 {
-                    return Err(Error::Conflict("gateway supervisor artifact changed"));
-                }
             }
             if !id.is_empty() && id != actual {
                 return Err(ObservationError::BindingMismatch.into());

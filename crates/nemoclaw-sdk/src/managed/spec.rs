@@ -19,9 +19,8 @@ pub const SERVICE_KIND: &str = "inference_service";
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION_LABEL: &str = "nemoclaw.nvidia.com/generation";
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
-pub const SUPERVISOR_IMAGE: &str = "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
-pub const SUPERVISOR_SHA256: &str =
-    "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d";
+pub const SUPERVISOR_IMAGE: &str = "ghcr.io/nvidia/openshell/supervisor@sha256:5787e5bad644cdaf064d6a40a1671942d72cec4b27e31422ec0e7466fc3c794d";
+pub const SANDBOX_RUNTIME_IMAGE: &str = "ghcr.io/nvidia/openshell/sandbox@sha256:854dcef3a4354780422dd4bc0e8b38bbd301974815c9b028ef1bb7c20ebc9868";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
@@ -84,6 +83,28 @@ impl Spec {
         if self.kind == GATEWAY_KIND && self.layout != 2 {
             return Err(Error::Conflict(
                 "unsupported managed gateway process layout; resources retained",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_image_authentication(
+        &self,
+        image: &bollard::models::ImageInspect,
+    ) -> Result<(), Error> {
+        if self
+            .service
+            .as_ref()
+            .is_some_and(|s| s.authentication.is_some())
+            && image
+                .config
+                .as_ref()
+                .and_then(|c| c.labels.as_ref())
+                .and_then(|l| l.get("org.nemoclaw.inference.authentication"))
+                .map(String::as_str)
+                != Some("bearer-v1")
+        {
+            return Err(Error::Conflict(
+                "runtime image lacks managed bearer authentication; rebuild the runtime image",
             ));
         }
         Ok(())
@@ -170,7 +191,10 @@ impl Spec {
             let url = url::Url::parse(&self.gateway.endpoint)
                 .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
             config["User"] = json!("0:0");
-            config["Env"] = json!([format!("XDG_STATE_HOME={data_path}/state")]);
+            config["Env"] = json!([
+                format!("XDG_STATE_HOME={data_path}/state"),
+                format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db")
+            ]);
             config["Entrypoint"] = json!(["/usr/local/bin/openshell-gateway"]);
             config["Cmd"] = json!([
                 "--config",
@@ -182,12 +206,7 @@ impl Spec {
                 "--port",
                 &url.port()
                     .ok_or(Error::Conflict("missing gateway port"))?
-                    .to_string(),
-                "--drivers",
-                "docker",
-                "--disable-tls",
-                "--db-url",
-                &format!("sqlite:{data_path}/gateway.db")
+                    .to_string()
             ]);
             host["NetworkMode"] = json!("host");
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":"/var/run/docker.sock","Target":"/var/run/docker.sock"}]);
@@ -204,7 +223,20 @@ impl Spec {
             )]);
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":"/data"}]);
-            host["ShmSize"] = json!(8 * GIB);
+            host["ShmSize"] = json!(
+                service
+                    .container
+                    .as_ref()
+                    .map_or(8, |c| c.shared_memory_gi_b)
+                    * GIB
+            );
+            if service
+                .container
+                .as_ref()
+                .is_some_and(|c| c.ipc == crate::config::ServiceIpc::Host)
+            {
+                host["IpcMode"] = json!("host");
+            }
             host["Memory"] = json!(104 * GIB);
             host["MemorySwap"] = json!(104 * GIB);
             host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
@@ -221,10 +253,10 @@ impl Spec {
     }
     pub fn gateway_config(&self, data_path: &str) -> String {
         format!(
-            "[openshell.drivers.docker]\nnetwork_name = {:?}\nssh_socket_path = {:?}\nsupervisor_bin = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.network(),
-            format!("{data_path}/ssh"),
-            format!("{data_path}/openshell-sandbox"),
+            SANDBOX_RUNTIME_IMAGE,
+            SUPERVISOR_IMAGE,
             format!("{data_path}/tls/jwt/signing.pem"),
             format!("{data_path}/tls/jwt/public.pem"),
             format!("{data_path}/tls/jwt/kid"),

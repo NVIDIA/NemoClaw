@@ -1,0 +1,62 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "sections": [
+    {
+      "title": "Get started",
+      "pages": [
+        {"title": "Understand NemoClaw", "source": "docs/overview.md", "slug": "overview"},
+        {"title": "Documentation index", "source": "docs/README.md", "slug": "index"},
+        {"title": "Check prerequisites", "source": "docs/prerequisites.md", "slug": "prerequisites"},
+        {"title": "Deploy OpenClaw with existing services", "source": "docs/get-started.md", "slug": "get-started"},
+        {"title": "Assess migration", "source": "docs/migration.md", "slug": "migration"},
+        {"title": "Release notes", "source": "docs/release-notes.md", "slug": "release-notes"}
+      ]
+    },
+    {
+      "title": "Build and deploy",
+      "pages": [
+        {"title": "Build local artifacts", "source": "docs/build.md", "slug": "build"},
+        {"title": "Use desired state", "source": "docs/usage.md", "slug": "usage"},
+        {"title": "Definitions and references", "source": "docs/configuration-references.md", "slug": "configuration-references"},
+        {"title": "Locate and preserve state", "source": "docs/state.md", "slug": "state"},
+        {"title": "Troubleshoot deployment operations", "source": "docs/troubleshooting.md", "slug": "troubleshooting"},
+        {"title": "Security and credential ownership", "source": "docs/security.md", "slug": "security"},
+        {"title": "Sandbox policy and proxy", "source": "docs/sandbox-network.md", "slug": "sandbox-network"}
+      ]
+    },
+    {
+      "title": "Agents and inference",
+      "pages": [
+        {"title": "Configure inference", "source": "docs/inference.md", "slug": "inference"},
+        {"title": "Access agent interfaces", "source": "docs/interfaces.md", "slug": "interfaces"},
+        {"title": "Agent runtimes", "source": "docs/agents.md", "slug": "agents"},
+        {"title": "Select a managed model", "source": "docs/models.md", "slug": "models"},
+        {"title": "Inline model recipes", "source": "docs/recipes.md", "slug": "recipes"},
+        {"title": "Configure an SSH model service", "source": "docs/remote-service.md", "slug": "remote-service"}
+      ]
+    },
+    {
+      "title": "Integrate and reference",
+      "pages": [
+        {"title": "Use the Rust SDK", "source": "docs/sdk.md", "slug": "sdk"},
+        {"title": "OpenTofu provider", "source": "docs/provider.md", "slug": "provider"},
+        {"title": "CLI reference", "source": "docs/reference/cli.md", "slug": "reference/cli"},
+        {"title": "YAML configuration reference", "source": "docs/reference/configuration.md", "slug": "reference/configuration"},
+        {"title": "Fabric harnesses", "source": "docs/reference/fabric-harnesses.md", "slug": "reference/fabric-harnesses"},
+        {"title": "Project resources", "source": "docs/resources.md", "slug": "resources"}
+      ]
+    },
+    {
+      "title": "Develop and validate",
+      "pages": [
+        {"title": "Tests", "source": "docs/testing.md", "slug": "testing"},
+        {"title": "Run fixture qualification", "source": "docs/testing/fixtures.md", "slug": "testing/fixtures"},
+        {"title": "Run live qualification", "source": "docs/testing/live.md", "slug": "testing/live"},
+        {"title": "Validation evidence", "source": "docs/validation/README.md", "slug": "validation"},
+        {"title": "Contribute documentation", "source": "docs/CONTRIBUTING.md", "slug": "contributing"},
+        {"title": "Maintain the configuration schema", "source": "docs/configuration-schema.md", "slug": "configuration-schema"},
+        {"title": "Build and publish documentation", "source": "docs/AUTOMATION.md", "slug": "documentation-build"}
+      ]
+    }
+  ]
+}

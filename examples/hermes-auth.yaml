@@ -29,10 +29,10 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: hermes
+          harness:
+            kind: hermes
           auth:
             method: api-key
-            providerRef: local
           inference:
             routes:
               - name: primary

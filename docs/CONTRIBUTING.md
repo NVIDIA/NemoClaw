@@ -5,6 +5,7 @@
 
 Follow [WRITING.md](../WRITING.md) for prose and [the design decision](design/scope.md) for accepted scope.
 Documentation lives in repository Markdown files.
+The [documentation build](AUTOMATION.md) renders selected pages for Fern; edit the Markdown sources and [page manifest](../fern/pages.json), not generated MDX.
 
 ## Choose the Page
 
@@ -20,6 +21,11 @@ Follow [schema maintenance](configuration-schema.md) to update its sources and r
 - Architecture rationale belongs in [design/](design/architecture.md).
 - Retained results and qualification limits belong in [validation/](validation/README.md).
 - Source notices and fixture provenance stay beside their artifacts.
+
+The user-guide structure is scaffolded in the [documentation index](README.md).
+Use **TBD** for a section without enough current implementation evidence or a verified procedure, and name the missing evidence briefly.
+Do not fill it from main's documentation alone or infer product support from parser acceptance.
+Replace a TBD only when the text can link to the implementation, tests, or scoped qualification that supports its claims.
 
 Label historical findings with their revision and scope; do not rewrite retained results to imply that later code was tested.
 
@@ -40,6 +46,7 @@ When moving content, update inbound links and the index; retain old paths or anc
 ## Validate and Review
 
 Verify changed commands against their parser, script, or executable help, and check local links and anchors.
+Run `python3 tools/docs/fern.py check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](AUTOMATION.md#validate-locally) apply.
 For structural changes, account for moved or removed content.
 Run the repository checks required by [AGENTS.md](../AGENTS.md) and `git diff --check`; report checks that could not run and why.
 Documentation-only changes need no new runtime tests or live resources.

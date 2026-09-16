@@ -33,8 +33,37 @@ pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> 
         runtime,
         row_proxy(row)?.as_ref(),
     );
-    if inference_settings(text, runtime)?.is_some() {
+    if let Some(settings) = inference_settings(text, runtime)? {
+        if settings
+            .agents
+            .first()
+            .is_some_and(|agent| Some(&agent.name) != row.get("agent_name"))
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
         env.insert(INFERENCE_ENV.into(), text.into());
     }
     Ok(env)
+}
+
+pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, ObservationError> {
+    let settings = inference_settings(text, runtime)?.ok_or(ObservationError::Incomplete)?;
+    let mut selected = std::collections::BTreeSet::new();
+    for agent in &settings.agents {
+        if let Some(inference) = &agent.inference {
+            selected.extend(
+                inference
+                    .models
+                    .values()
+                    .map(|model| model.provider.clone()),
+            );
+        }
+    }
+    selected.remove(&settings.provider);
+    let mut providers = vec![settings.provider];
+    providers.extend(selected);
+    if settings.web_search.is_some() {
+        providers.push("brave-search".into());
+    }
+    Ok(providers)
 }

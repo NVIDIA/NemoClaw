@@ -2,6 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
+fn gateway_launch_uses_version_two_configuration_and_supported_process_flags() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let launch = spec.container("/owned").unwrap();
+    let command = launch.cmd.unwrap();
+    for flag in command.iter().filter(|arg| arg.starts_with("--")) {
+        assert!(
+            ["--config", "--name", "--bind-address", "--port"].contains(&flag.as_str()),
+            "unsupported process flag: {flag}"
+        );
+    }
+    assert!(
+        launch
+            .env
+            .unwrap()
+            .contains(&"OPENSHELL_DB_URL=sqlite:/owned/gateway.db".into())
+    );
+    let config = spec.gateway_config("/owned");
+    assert!(config.starts_with("[openshell]\nversion = 2\n"));
+    assert!(config.contains("compute_driver = \"docker\""));
+    assert!(!config.contains("ttl_secs = 0"));
+    assert!(config.contains("sandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:"));
+    assert!(config.contains("supervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:"));
+    assert!(!config.contains("supervisor_bin"));
+    assert!(!config.contains("ssh_socket_path"));
+}
+#[test]
 fn invalid_placement_network_does_not_panic() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();

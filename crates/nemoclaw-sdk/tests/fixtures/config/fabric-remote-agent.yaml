@@ -26,7 +26,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: remote-agent
+          harness:
+            kind: remote-agent
           inference:
             routes:
               - name: primary

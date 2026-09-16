@@ -18,7 +18,7 @@ spec:
   sandboxes:
     - name: assistant
       image:
-        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+        ref: nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b
       runtime:
         provider: docker
       network:
@@ -54,7 +54,8 @@ spec:
                   - path: /usr/bin/curl
       agents:
         - name: main
-          harness: openclaw
+          harness:
+            kind: openclaw
           inference:
             routes:
               - name: primary

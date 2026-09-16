@@ -38,16 +38,33 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one inference provider and one sandbox.
+/// The configuration requires one sandbox and at least one selected inference provider. At most one selected provider may have managed inference dependencies.
 pub struct Spec {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.
+    pub harnesses: std::collections::BTreeMap<String, Harness>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
+    pub inferences: std::collections::BTreeMap<String, Inference>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
     pub gateway: Gateway,
-    #[serde(rename = "inferenceProviders")]
-    /// Exactly one external endpoint, managed Ollama server, or managed vLLM service.
+    #[serde(
+        rename = "inferenceProviders",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// Exactly one sandbox with one agent and one primary inference route.
+    /// Exactly one sandbox with one or more OpenClaw agents sharing one harness runtime, or one agent of another harness.
     pub sandboxes: Vec<Sandbox>,
 }
 
@@ -82,6 +99,14 @@ pub struct TLS {
 #[serde(default, deny_unknown_fields)]
 /// Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.
 pub struct Gateway {
+    /// Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub network: Option<super::ManagedResource>,
+    /// Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
     #[serde(rename = "management")]
     /// Whether the SDK manages the gateway or connects to an existing one.
     pub management: String,
@@ -117,8 +142,20 @@ pub struct Gateway {
 #[serde(default, deny_unknown_fields)]
 /// Choose endpoint for external inference, endpoint plus ollama for managed Ollama, or service for managed vLLM.
 pub struct InferenceProvider {
+    #[serde(
+        rename = "ollamaProxy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "super::OllamaProxy")]
+    /// Manage an authenticated proxy while leaving the endpoint's Ollama daemon and installed model external.
+    pub ollama_proxy: Option<super::OllamaProxy>,
+    /// Optional server ownership. Omission means managed with service or ollama, external with endpoint alone. The OpenShell provider registration remains deployment-owned in either mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::Management")]
+    pub management: Option<super::Management>,
     #[serde(rename = "name")]
-    /// Provider name referenced by the primary route.
+    /// Provider name referenced by model choices.
     pub name: String,
     #[serde(rename = "provider")]
     /// OpenShell provider implementation. Must match the selected API family.
@@ -151,6 +188,18 @@ pub struct InferenceProvider {
 #[serde(default, deny_unknown_fields)]
 /// Managed Ollama uses a pinned image, an existing Docker network, and an explicit model:tag on the route.
 pub struct ManagedOllama {
+    /// Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub model: Option<super::ManagedResource>,
+    /// Optional model-volume ownership declaration. Omission means managed; the volume survives destroy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
+    /// Optional ownership declaration for the Ollama daemon container. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(rename = "engine")]
     /// Local Unix Docker socket URL.
     pub engine: String,
@@ -159,14 +208,34 @@ pub struct ManagedOllama {
     pub image: String,
     #[serde(rename = "network")]
     /// Name of the existing Docker network.
-    pub network: String,
+    pub network: super::NetworkReference,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
+/// The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
 pub struct Sandbox {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.
+    pub harnesses: std::collections::BTreeMap<String, Harness>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.
+    pub inferences: std::collections::BTreeMap<String, Inference>,
+    #[serde(
+        rename = "inferenceProviders",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions.
+    pub inference_providers: Vec<InferenceProvider>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "name")]
     /// Lowercase sandbox name.
     pub name: String,
@@ -180,10 +249,10 @@ pub struct Sandbox {
     pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]
-    /// Sandbox network policy; omission selects isolated inference routing.
+    /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
     #[serde(rename = "agents")]
-    /// Exactly one agent.
+    /// One or more named OpenClaw agents sharing identical harness settings. Other harnesses require one agent.
     pub agents: Vec<Agent>,
 }
 
@@ -234,19 +303,53 @@ pub struct Network {
 #[serde(default, deny_unknown_fields)]
 /// One Fabric harness and its inference route.
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
+    #[serde(
+        default,
+        rename = "integrationRefs",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.
+    pub integration_refs: Vec<String>,
     #[serde(rename = "name")]
     /// Lowercase agent name.
     pub name: String,
-    #[serde(rename = "harness")]
-    /// Agent harness. Harnesses other than openclaw require external gateway and inference services.
-    pub harness: String,
-    #[serde(rename = "inference")]
-    /// Primary inference route for this agent.
-    pub inference: Inference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Harness")]
+    /// Inline harness configuration. Exactly one of harness or harnessRef is required. Agents in a sandbox must select identical harness settings.
+    pub harness: Option<Harness>,
+    #[serde(
+        rename = "harnessRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing harness configuration. Excludes inline harness.
+    pub harness_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Inference")]
+    /// Inline inference configuration. Exactly one of inference or inferenceRef is required.
+    pub inference: Option<Inference>,
+    #[serde(
+        rename = "inferenceRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing inference configuration. Excludes inline inference.
+    pub inference_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentAuth")]
     /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
     pub auth: Option<super::AgentAuth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentTools")]
+    /// OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access.
+    pub tools: Option<super::AgentTools>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -254,22 +357,35 @@ pub struct Agent {
 #[serde(default, deny_unknown_fields)]
 /// Agent inference routing.
 pub struct Inference {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// Initial model choice by route name. Required with multiple routes; omission selects the sole route.
+    pub default: Option<String>,
     #[serde(rename = "routes")]
-    /// Exactly one route named primary.
+    /// One or more uniquely named model choices. Multiple choices require OpenClaw.
     pub routes: Vec<Route>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Primary inference route supplied through OpenShell.
+/// Native model connection authorized through an attached OpenShell provider.
 pub struct Route {
     #[serde(rename = "name")]
-    /// The primary route name.
+    /// Unique lowercase name for this model choice.
     pub name: String,
-    #[serde(rename = "providerRef")]
-    /// Must equal the declared inference provider name.
-    pub provider_ref: String,
+    #[serde(
+        rename = "providerRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "String")]
+    /// Name of an enclosing inference provider. Exactly one of providerRef or provider is required.
+    pub provider_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "InferenceProvider")]
+    /// Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition.
+    pub provider: Option<InferenceProvider>,
     #[serde(rename = "overrides")]
     /// Model selection, optional OpenClaw tuning, and optional Pi model metadata.
     pub overrides: Overrides,
@@ -278,7 +394,7 @@ pub struct Route {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Model overrides on the primary route.
+/// Model settings for one named inference choice.
 pub struct Overrides {
     #[serde(rename = "model")]
     /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.
@@ -297,6 +413,26 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
+    /// Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ServiceHardware")]
+    pub hardware: Option<super::ServiceHardware>,
+    /// Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ServiceContainer")]
+    pub container: Option<super::ServiceContainer>,
+    /// Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ServiceAuthentication")]
+    pub authentication: Option<ServiceAuthentication>,
+    /// Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub storage: Option<super::ManagedResource>,
+    /// Optional managed ownership declaration. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Box<crate::recipes::inline::InlineRecipe>")]
     /// Optional inline preparation and serving contract supplied by the pinned runtime image.
@@ -330,11 +466,22 @@ pub struct Service {
     pub memory: Memory,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+/// Generated bearer authentication for a managed inference service.
+pub enum ServiceAuthentication {
+    Bearer,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
 /// Immutable model identity used for snapshot resolution and storage.
 pub struct Model {
+    /// Optional ownership declaration for downloading and preparing this model installation. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedManagement")]
+    pub management: Option<super::ManagedManagement>,
     #[serde(rename = "repository")]
     /// Public Hugging Face owner/repository name.
     pub repository: String,
@@ -348,6 +495,18 @@ pub struct Model {
 #[serde(default, deny_unknown_fields)]
 /// Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.
 pub struct Serving {
+    /// Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.
+    #[serde(rename = "modelName", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub model_name: String,
+    /// Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend.
+    #[serde(rename = "mambaBackend", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub mamba_backend: String,
+    /// Without a recipe, omission or true enables eager execution; false leaves compilation and CUDA graphs at vLLM's native defaults.
+    #[serde(rename = "enforceEager", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "bool")]
+    pub enforce_eager: Option<bool>,
     #[serde(rename = "toolParser", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag.
@@ -387,6 +546,13 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware and excludes a recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    #[serde(
+        rename = "gpuMemoryUtilization",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "f64")]
+    pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
     /// Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
@@ -397,7 +563,7 @@ pub struct Memory {
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]
-    /// KV cache allocation in GiB for ordinary vLLM. Recipe serving does not emit this explicit cache-allocation flag.
+    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
     pub kv_cache_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]
@@ -425,6 +591,10 @@ fn is_zero(value: &i64) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Execution host and Docker network for a remote model service.
 pub struct ServicePlacement {
+    /// Optional ownership declaration for the network configured by networkCIDR. Omission means managed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ManagedResource")]
+    pub network: Option<super::ManagedResource>,
     /// SSH Docker endpoint, for example ssh://gpu-box.
     pub engine: String,
     /// Canonical private IPv4 /24 on the selected Docker engine.
@@ -438,4 +608,25 @@ pub struct ServicePublication {
     pub endpoint: String,
     /// Private host IPv4 address outside the service Docker subnet. Loopback is rejected.
     pub bind_address: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.
+pub struct Harness {
+    /// Fabric harness implementation. Multiple agents require OpenClaw.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentObservability")]
+    /// Harness-native tracing shared by the sandbox.
+    pub observability: Option<super::AgentObservability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentExecution")]
+    /// OpenClaw timeout and heartbeat defaults shared by the sandbox.
+    pub execution: Option<super::AgentExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "super::AgentInterfaces")]
+    /// Native dashboard access for this sandbox runtime.
+    pub interfaces: Option<super::AgentInterfaces>,
 }

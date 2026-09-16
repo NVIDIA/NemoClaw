@@ -37,7 +37,7 @@ They use only the local gRPC fixture:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment -- --ignored
+  cargo test -p nemoclaw-e2e --test deployment --test fabric_deployment --test multiple_providers -- --ignored
 ```
 
 CI runs the fixture lifecycle tests with `--test-threads=2`.
@@ -45,6 +45,7 @@ Each Fabric harness is an independent ignored test with its own temporary state 
 To qualify one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
+The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
 The fixture returns protocol responses; it does not establish live agent inference.
 
 ## Ollama and Platform Fixtures
@@ -101,8 +102,8 @@ The fixture starts disposable containers with networking disabled and local TLS 
 OpenClaw's fixture adds an address to the container's loopback interface with `NET_ADMIN`, then runs the agent as UID 1000.
 
 ```sh
-python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-prototype-fabric:openclaw --inference-api openai-responses
-python3 tools/fabric-adapter-experiment.py --harness hermes --image nc-prototype-fabric:hermes --inference-api anthropic-messages
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-fabric:openclaw --inference-api openai-responses
+python3 tools/fabric-adapter-experiment.py --harness hermes --image nc-fabric:hermes --inference-api anthropic-messages
 ```
 
 Repeat with `openai-completions`, `openai-responses`, and `anthropic-messages` to exercise all three APIs for each harness.
@@ -114,3 +115,129 @@ The command prints an evidence directory under `.local/fabric-<harness>-<uuid>` 
 It retains logs, request bodies, and `proof.json`; it removes only its named container, including after failure.
 Inspect that directory on failure and rerun after correcting the fixture or image.
 These tests do not qualify model quality, live upstream authentication, or inference through a real OpenShell gateway.
+
+## OpenClaw Agent Tool Policies
+
+Build the updated OpenClaw image using the [agent runtime procedure](../agents.md#runtime-lifecycle).
+From the repository root, run the adapter tests and the pinned native tool factory in disposable containers:
+
+```sh
+docker run --rm --network none --pull=never \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
+  -m unittest test_openclaw_adapter test_inference
+
+docker run --rm --network none --pull=never -e PYTHONPATH=/work \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /usr/local/bin/node nc-fabric:openclaw \
+  /work/test_openclaw_tools.mts
+
+docker run --rm --network none --pull=never -e PYTHONPATH=/work \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /usr/local/bin/node nc-fabric:openclaw \
+  /work/test_openclaw_disclosure.mts
+
+docker run --rm --network none --pull=never \
+  -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e PYTHONPATH=/work \
+  -v "$PWD/image/fabric:/work:ro" -w /work \
+  --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
+  -m unittest test_openclaw_tools_gateway
+```
+
+The adapter tests cover named sessions and rejection of changed native permissions.
+The gateway test starts and restarts the pinned native gateway, then verifies that broadened permissions fail its configuration check.
+The native factory test executes a file read and checks that restricted agents receive no write, exec, or delegation tools, while the unrestricted agent retains coding tools.
+The disclosure test checks direct exposure and executes progressive search and read calls; attempts to dispatch exec, write, edit, or delegation through search are rejected.
+These tests do not invoke a model or establish filesystem isolation between agents.
+The read fixture exists only in the disposable container.
+
+With a freshly built native bundle, run the SDK/CLI lifecycle fixture:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test deployment multiple_agents_cli_export_reapply_and_policy_drift -- --ignored
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test deployment tool_disclosure_cli_export_reapply_and_drift -- --ignored
+```
+
+These fixtures check four-agent and disclosure-mode export/reapply and failed observation without mutation or lost state.
+The local OpenShell fixture simulates the runtime observation result; native enforcement is covered separately by the tool factory test.
+
+## OpenClaw Interface Lifecycle
+
+With a freshly built OpenClaw image and the prerequisites above, run:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-fabric:openclaw --interfaces
+```
+
+This offline test uses the nondefault port 18800, lists native pairing requests with the authenticated helper, rejects an incorrect token and weakened native device-auth settings, restores the original settings, and verifies that a runtime restart retains the token.
+Its evidence includes `authenticated_interfaces_verified` in `proof.json`.
+The bundle fixture is `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary.
+[Recorded Linux ARM64 results](../validation/rust-openclaw-interfaces-linux-arm64.json) distinguish native gateway checks from simulated OpenShell lifecycle behavior.
+
+## Hermes Native API Lifecycle
+
+This section tests the default local Hermes adapter, with Relay tracing omitted.
+
+Build a fresh Hermes image using the [runtime procedure](../agents.md#runtime-lifecycle).
+From the repository root, test native authentication and shutdown without networking:
+
+```sh
+docker run --rm --network none --pull=never \
+  -e HERMES_HOME=/tmp/hermes-contract \
+  -v "$PWD/test/hermes_native.py:/test.py:ro" \
+  --entrypoint /opt/fabric/bin/python nc-fabric:hermes /test.py
+```
+
+The contract rejects missing and incorrect API credentials, verifies authenticated model discovery, and checks that disconnect closes the listener.
+The inference API fixtures above exercise the Fabric-owned native server, two ordered turns, and a separate probe through the hosted runtime.
+They use local protocol responses, not a live model.
+
+With a freshly verified bundle, run the managed Hermes lifecycle fixture:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test remote_service managed_hermes -- --ignored
+```
+
+It simulates SSH/Docker, OpenShell, and the agent response while exercising apply, export/reapply, observation failures, and retained data through the bundled CLI/provider.
+
+### Hermes Interface Modes
+
+After rebuilding the Hermes image, exercise the three native interface modes:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --hermes-tui disabled --inference-api openai-responses
+python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --hermes-dashboard disabled --inference-api anthropic-messages
+```
+
+These offline containers check nondefault API/dashboard ports, authenticated native readiness, HTML delivery, browser WebSocket session creation or rejection, and the absence of a disabled dashboard listener.
+They also reject changed credentials and native route configuration without overwriting drift, then verify restored readiness and credential retention across restart.
+The fixture invokes the hosted probe and two Fabric turns against local model responses.
+It does not qualify browser rendering, interactive terminal behavior, or live OpenShell forwarding.
+
+Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with a verified bundle to check retained interface intent through SDK apply, CLI export, reapply, drift rejection, and destroy.
+
+[Recorded Hermes results](../validation/rust-hermes-native-interfaces-linux-arm64.json) identify the pinned sources, tested local image, and separate bundle-fixture limits.
+
+## Hermes Relay Tracing Fixture
+
+Use the [inference fixture prerequisites](#inference-api-fixtures) and a Hermes image built from the current recipe.
+From the repository root, replace the image placeholder with that local image:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api openai-completions --image YOUR_BUILT_IMAGE
+```
+
+The parser requires an explicit API with `--hermes-relay`; do not add `--interfaces`, which conflicts with this adapter mode.
+The test runs disposable containers with networking disabled and a local model-protocol fixture.
+It invokes the real adapter twice and checks nonempty ATOF events and ATIF trajectories plus absence of the fixture credential string.
+That narrow credential assertion does not establish general redaction or production privacy.
+
+Expect a successful exit and `relay` evidence in the printed directory's `proof.json`.
+The host retains logs, request records, proof, and a copy of `/sandbox/artifacts` under the evidence directory's `artifacts/` folder, including Relay traces and native runtime-home data.
+Inspect those retained files privately before sharing, and remove only your test's evidence directory when it is no longer needed.
+On failure, inspect the retained diagnostics, correct the fixture/image mismatch, and rerun with an owned test image.
+This is an offline tracing check, not live Hermes/Relay or OpenShell qualification.

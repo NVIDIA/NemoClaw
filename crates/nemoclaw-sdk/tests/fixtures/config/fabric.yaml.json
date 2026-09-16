@@ -1,5 +1,5 @@
 {
-  "digest": "52a05fa12970b60c791bafa8d450a3545dbe9f83d6efdfddd9678887e963b7b9",
+  "digest": "8408bccbf8817ab1e5dabc055a588d3b9a1497752e019734a6b715fa31902f42",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -9,45 +9,47 @@
     },
     "spec": {
       "gateway": {
-        "management": "external",
-        "endpoint": "http://127.0.0.1:17681"
+        "endpoint": "http://127.0.0.1:17681",
+        "management": "external"
       },
       "inferenceProviders": [
         {
+          "endpoint": "http://172.20.0.1:11446/v1",
           "name": "local",
-          "provider": "openai",
-          "endpoint": "http://172.20.0.1:11446/v1"
+          "provider": "openai"
         }
       ],
       "sandboxes": [
         {
-          "name": "assistant",
-          "image": {
-            "ref": "nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd"
-          },
-          "runtime": {
-            "provider": "docker"
-          },
-          "network": {
-            "tier": "isolated"
-          },
           "agents": [
             {
-              "name": "main",
-              "harness": "deepagents",
+              "harness": {
+                "kind": "deepagents"
+              },
               "inference": {
                 "routes": [
                   {
                     "name": "primary",
-                    "providerRef": "local",
                     "overrides": {
                       "model": "qwen3:1.7b"
-                    }
+                    },
+                    "providerRef": "local"
                   }
                 ]
-              }
+              },
+              "name": "main"
             }
-          ]
+          ],
+          "image": {
+            "ref": "nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd"
+          },
+          "name": "assistant",
+          "network": {
+            "tier": "isolated"
+          },
+          "runtime": {
+            "provider": "docker"
+          }
         }
       ]
     }

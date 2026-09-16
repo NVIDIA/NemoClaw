@@ -127,14 +127,20 @@ impl Engine {
             image = self.image(spec.image()).await?;
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
+        spec.validate_image_authentication(&image)?;
         if image.id.as_ref().is_none_or(String::is_empty)
             || image.architecture.as_deref()
-                != Some(
-                    spec.service
+                != Some(spec.service.as_ref().map_or("arm64", |s| {
+                    s.hardware
                         .as_ref()
-                        .and_then(|s| s.recipe.as_ref())
-                        .map_or("arm64", |r| r.compatibility.architecture.as_str()),
-                )
+                        .map(|h| h.architecture.as_str())
+                        .or_else(|| {
+                            s.recipe
+                                .as_ref()
+                                .map(|r| r.compatibility.architecture.as_str())
+                        })
+                        .unwrap_or("arm64")
+                }))
             || image.os.as_deref() != Some("linux")
         {
             return Err(Error::Conflict(

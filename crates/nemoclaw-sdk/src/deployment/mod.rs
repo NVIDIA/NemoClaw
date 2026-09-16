@@ -162,7 +162,8 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        if document.spec.inference_providers[0].ollama.is_some()
+        if (document.lifecycle_provider()?.ollama.is_some()
+            || document.lifecycle_provider()?.ollama_proxy.is_some())
             && record
                 .generations
                 .get("ollama")
@@ -230,9 +231,13 @@ impl Deployment {
         changes.extend(check_plan(&plan, &allowed, &bindings)?);
         let agent = &document.spec.sandboxes[0].agents[0];
         if !fresh
-            && agent.harness == "pi"
-            && agent.inference.routes[0].overrides
-                != record.document.spec.sandboxes[0].agents[0].inference.routes[0].overrides
+            && document.agent_harness(agent)?.kind == "pi"
+            && document.agent_inference(agent)?.default_route()?.overrides
+                != record
+                    .document
+                    .agent_inference(&record.document.spec.sandboxes[0].agents[0])?
+                    .default_route()?
+                    .overrides
         {
             changes.push(Change {
                 resource: format!("fabric_runtime.{}", agent.name),
@@ -255,14 +260,14 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
-        if agent.harness == "pi"
+        if document.agent_harness(agent)?.kind == "pi"
             && let Some(binding) = bindings.get(&targets[3].address)
         {
             let mut sandbox = targets[3].values.clone();
             sandbox.insert("id".into(), binding.id.clone());
             sandbox.insert(
                 "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
+                serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
                     .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
             );
             tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
@@ -295,17 +300,17 @@ impl Deployment {
         );
         (self.progress)(Progress::Readiness);
         let agent = &document.spec.sandboxes[0].agents[0];
-        if agent.harness == "pi" {
+        if document.agent_harness(agent)?.kind == "pi" {
             sandbox.insert(
                 "pi_model_config".into(),
-                serde_json::to_string(&agent.inference.routes[0].overrides)
+                serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
                     .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
             );
             tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
         }
         client.ready(&sandbox, cancel).await?;
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
-        if document.spec.inference_providers[0].service.is_some() {
+        if document.lifecycle_provider()?.service.is_some() {
             result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
         }
         record.succeeded = true;
@@ -328,7 +333,19 @@ impl Deployment {
             if let Some(binding) = bindings.get(&target.address) {
                 expected.insert("id".into(), binding.id.clone());
             }
-            match client.read(&target.kind, &expected, false).await? {
+            let observed = if crate::ollama::proxy::supports(&target.kind) {
+                let config = document
+                    .lifecycle_provider()?
+                    .ollama_proxy
+                    .as_ref()
+                    .ok_or(Error::State("missing proxy settings"))?;
+                crate::ollama::OllamaBackend::new(self.engines.resolve(&config.engine)?)
+                    .read(&target.kind, &expected, false)
+                    .await?
+            } else {
+                client.read(&target.kind, &expected, false).await?
+            };
+            match observed {
                 Some(observed) => verify_identity(&expected, &observed)?,
                 None if bindings.contains_key(&target.address) => {
                     return Err(Error::Conflict(

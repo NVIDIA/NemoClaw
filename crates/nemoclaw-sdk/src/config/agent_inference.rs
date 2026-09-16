@@ -82,20 +82,223 @@ pub enum AuthMethod {
 pub struct AgentAuth {
     /// API-key authentication. Interactive login is not supported.
     pub method: AuthMethod,
-    /// Must equal the primary route's providerRef. Secret values stay in OpenShell.
-    pub provider_ref: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged, deny_unknown_fields)]
+/// OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+pub enum AgentTools {
+    /// Expose only the read tool, independently of the gateway's discovery mode.
+    ReadOnly {
+        /// Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.
+        allow: [AllowedTool; 1],
+    },
+    /// Select the shared gateway's tool discovery mode without granting additional tools.
+    Disclosure {
+        /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
+        disclosure: ToolDisclosure,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// OpenClaw tool presentation; this does not change tool permissions.
+pub enum ToolDisclosure {
+    /// Discover tools through structured search, with default limit 8 and maximum 20.
+    Progressive,
+    /// Disable tool search and expose permitted tools directly.
+    Direct,
+}
+impl ToolDisclosure {
+    pub(crate) fn shared<'a>(
+        tools: impl Iterator<Item = Option<&'a AgentTools>>,
+    ) -> Result<Self, ConfigError> {
+        let mut selected = None;
+        for tool in tools {
+            let mode = match tool {
+                Some(AgentTools::ReadOnly { .. }) => continue,
+                Some(AgentTools::Disclosure { disclosure }) => *disclosure,
+                None => Self::Progressive,
+            };
+            if selected.is_some_and(|prior| prior != mode) {
+                return Err(ConfigError(
+                    "OpenClaw agents must share a tool disclosure mode; omission means progressive",
+                ));
+            }
+            selected = Some(mode);
+        }
+        Ok(selected.unwrap_or(Self::Progressive))
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Tool supported by the read-only OpenClaw policy.
+pub enum AllowedTool {
+    /// Read a file within the sandbox's filesystem permissions.
+    Read,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeAgent {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference: Option<RuntimeAgentInference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<AgentTools>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
+    pub provider: String,
+    pub connection: RuntimeConnection,
+    #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<RuntimeWebSearch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observability: Option<AgentObservability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<AgentExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interfaces: Option<AgentInterfaces>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<RuntimeAgent>,
     pub api: InferenceApi,
     pub tuning: RouteTuning,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<AgentAuth>,
+    pub auth: Option<RuntimeAuth>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeConnection {
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub base_url: String,
+    pub api_key_env: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeAgentInference {
+    pub default: String,
+    pub models: std::collections::BTreeMap<String, RuntimeModel>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimeModel {
+    pub provider: String,
+    pub connection: RuntimeConnection,
+    pub api: InferenceApi,
+    pub tuning: RouteTuning,
+}
+
+// Keep the adapter wire contract while deriving authentication from the selected route.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RuntimeAuth {
+    pub method: AuthMethod,
+    pub provider_ref: String,
+}
+impl RuntimeConnection {
+    fn validate(&self, provider: &str, harness: &str) -> Result<(), ConfigError> {
+        super::validate_endpoint(&self.base_url, false)?;
+        let profile = crate::openshell::inference_profile(
+            provider,
+            &self.base_url,
+            &self.provider,
+            self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
+        )
+        .map_err(|_| ConfigError("invalid native inference connection"))?;
+        if profile
+            .credentials
+            .first()
+            .map(|c| c.name.as_str())
+            .unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY")
+            != self.api_key_env
+        {
+            return Err(ConfigError(
+                "inference credential does not match its provider",
+            ));
+        }
+        if self.model.is_none() != (harness == "pi")
+            || self
+                .model
+                .as_deref()
+                .is_some_and(|model| !super::validation::valid_model(model))
+        {
+            return Err(ConfigError("invalid native inference model"));
+        }
+        Ok(())
+    }
+}
+
 impl RuntimeInference {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+        self.connection.validate(&self.provider, harness)?;
         self.tuning.validate(harness)?;
+        if let Some(search) = &self.web_search {
+            search.validate(
+                harness,
+                self.agents
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.tools.as_ref())),
+            )?;
+        }
+        if let Some(observability) = &self.observability {
+            observability.validate(harness)?;
+            if observability.uses_relay() && self.interfaces.is_some() {
+                return Err(ConfigError(
+                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
+                ));
+            }
+        }
+        if let Some(execution) = &self.execution {
+            execution.validate(harness)?;
+        }
+        if let Some(interfaces) = &self.interfaces {
+            interfaces.validate(harness)?;
+        }
+        ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
+        let mut names = std::collections::BTreeSet::new();
+        if !self.agents.is_empty()
+            && (harness != "openclaw"
+                || self
+                    .agents
+                    .iter()
+                    .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
+        {
+            return Err(ConfigError("invalid OpenClaw agent roster"));
+        }
+        let explicit_choices = self.agents.iter().any(|agent| agent.inference.is_some());
+        if explicit_choices {
+            for agent in &self.agents {
+                let selection = agent
+                    .inference
+                    .as_ref()
+                    .ok_or(ConfigError("every agent requires model choices"))?;
+                if selection.models.is_empty()
+                    || selection.models.len() > 32
+                    || !selection.models.contains_key(&selection.default)
+                {
+                    return Err(ConfigError("invalid default model choice"));
+                }
+                for (name, model) in &selection.models {
+                    if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
+                        return Err(ConfigError("invalid native model choice"));
+                    }
+                    model.connection.validate(&model.provider, harness)?;
+                    model.tuning.validate(harness)?;
+                }
+            }
+            let selection = self.agents[0].inference.as_ref().unwrap();
+            let primary = &selection.models[&selection.default];
+            if primary.provider != self.provider
+                || primary.connection != self.connection
+                || primary.api != self.api
+                || primary.tuning != self.tuning
+            {
+                return Err(ConfigError(
+                    "default inference differs from the first agent's selection",
+                ));
+            }
+        }
         if !self.api.supported(harness)
             || self
                 .auth
@@ -108,18 +311,94 @@ impl RuntimeInference {
     }
 }
 impl Document {
-    pub(crate) fn runtime_inference(&self) -> Option<RuntimeInference> {
-        let agent = &self.spec.sandboxes[0].agents[0];
-        let provider = &self.spec.inference_providers[0];
-        let tuning = &agent.inference.routes[0].overrides.tuning;
-        (provider.api.is_some() || tuning != &RouteTuning::default() || agent.auth.is_some()).then(
-            || RuntimeInference {
-                api: provider
-                    .api
-                    .unwrap_or(InferenceApi::for_harness(&agent.harness)),
-                tuning: tuning.clone(),
-                auth: agent.auth.clone(),
-            },
+    pub(crate) fn runtime_model(
+        &self,
+        agent: &Agent,
+        route: &Route,
+    ) -> Result<RuntimeModel, ConfigError> {
+        let harness = self.agent_harness(agent)?;
+        let (_, scope) = self.scoped_inference(agent)?;
+        let provider = self.route_provider(route, scope)?;
+        let connection = self.provider_connection(provider)?;
+        let profile = crate::openshell::inference_profile(
+            &provider.name,
+            &connection.endpoint,
+            &provider.provider,
+            provider.authenticated(),
         )
+        .map_err(|_| ConfigError("invalid native inference profile"))?;
+        Ok(RuntimeModel {
+            provider: provider.name.clone(),
+            connection: RuntimeConnection {
+                provider: provider.provider.clone(),
+                model: (harness.kind != "pi").then(|| route.overrides.model.clone()),
+                base_url: connection.endpoint,
+                api_key_env: profile
+                    .credentials
+                    .first()
+                    .map(|credential| credential.name.clone())
+                    .unwrap_or_else(|| "NEMOCLAW_ANONYMOUS_API_KEY".into()),
+            },
+            api: provider
+                .api
+                .unwrap_or(InferenceApi::for_harness(&harness.kind)),
+            tuning: route.overrides.tuning.clone(),
+        })
+    }
+
+    pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
+        let agents = &self.spec.sandboxes[0].agents;
+        let agent = &agents[0];
+        let harness = self.agent_harness(agent)?;
+        let primary_inference = self.agent_inference(agent)?;
+        let primary = self.runtime_model(agent, primary_inference.default_route()?)?;
+        let choices = agents.iter().any(|agent| {
+            self.agent_inference(agent)
+                .is_ok_and(|inference| inference.routes.len() > 1 || inference != primary_inference)
+        });
+        let web_search = self.web_search()?;
+        let roster = choices
+            || web_search.is_some()
+            || agents.len() > 1
+            || agents.iter().any(|agent| agent.tools.is_some());
+        let mut runtime_agents = Vec::new();
+        if roster {
+            for agent in agents {
+                let inference = self.agent_inference(agent)?;
+                runtime_agents.push(RuntimeAgent {
+                    name: agent.name.clone(),
+                    tools: agent.tools.clone(),
+                    inference: if choices {
+                        Some(RuntimeAgentInference {
+                            default: inference.default_route()?.name.clone(),
+                            models: inference
+                                .routes
+                                .iter()
+                                .map(|route| {
+                                    Ok((route.name.clone(), self.runtime_model(agent, route)?))
+                                })
+                                .collect::<Result<_, ConfigError>>()?,
+                        })
+                    } else {
+                        None
+                    },
+                });
+            }
+        }
+        Ok(Some(RuntimeInference {
+            provider: primary.provider.clone(),
+            connection: primary.connection,
+            api: primary.api,
+            tuning: primary.tuning,
+            agents: runtime_agents,
+            web_search,
+            observability: harness.observability.clone(),
+            execution: harness.execution.clone(),
+            interfaces: harness.interfaces.clone(),
+            auth: agent.auth.as_ref().map(|auth| RuntimeAuth {
+                method: auth.method.clone(),
+                provider_ref: primary.provider,
+            }),
+        }))
     }
 }

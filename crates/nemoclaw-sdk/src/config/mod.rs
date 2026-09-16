@@ -3,8 +3,23 @@
 
 mod agent_inference;
 pub(crate) mod constraints;
+mod execution;
+pub(crate) mod integration_policy;
+mod integrations;
+pub use integrations::*;
+mod observability;
+mod ollama_proxy;
+pub use observability::*;
+pub use ollama_proxy::*;
 mod inference;
+mod interfaces;
+mod providers;
+mod references;
 pub use agent_inference::*;
+pub use execution::*;
+pub use interfaces::*;
+mod management;
+pub use management::*;
 mod network;
 pub use network::*;
 #[doc(hidden)]
@@ -20,8 +35,8 @@ pub use validation::{is_fabric_harness, validate_endpoint};
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub const DEFAULT_AGENT_IMAGE: &str =
-    "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd";
-pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792";
+    "nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b";
+pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a";
 
 /// Configuration errors contain fixed diagnostic text, never source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,31 +84,50 @@ impl Document {
         }
         // The agent owns values inside its opaque model object, including null.
         // Keep the existing null policy everywhere else in deployment intent.
+        fn omit_model_metadata(inference: &mut serde_json::Value) {
+            if let Some(routes) = inference
+                .get_mut("routes")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for route in routes {
+                    if let Some(overrides) = route
+                        .get_mut("overrides")
+                        .and_then(serde_json::Value::as_object_mut)
+                        && overrides
+                            .get("piModel")
+                            .is_some_and(serde_json::Value::is_object)
+                    {
+                        overrides.remove("piModel");
+                    }
+                }
+            }
+        }
+        fn omit_shared_metadata(scope: &mut serde_json::Value) {
+            if let Some(inferences) = scope
+                .get_mut("inferences")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                for inference in inferences.values_mut() {
+                    omit_model_metadata(inference);
+                }
+            }
+        }
         let mut structural = tree.clone();
-        if let Some(sandboxes) = structural
-            .pointer_mut("/spec/sandboxes")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for sandbox in sandboxes {
-                if let Some(agents) = sandbox
-                    .get_mut("agents")
-                    .and_then(serde_json::Value::as_array_mut)
-                {
-                    for agent in agents {
-                        if let Some(routes) = agent
-                            .pointer_mut("/inference/routes")
-                            .and_then(serde_json::Value::as_array_mut)
-                        {
-                            for route in routes {
-                                if let Some(overrides) = route
-                                    .get_mut("overrides")
-                                    .and_then(serde_json::Value::as_object_mut)
-                                    && overrides
-                                        .get("piModel")
-                                        .is_some_and(serde_json::Value::is_object)
-                                {
-                                    overrides.remove("piModel");
-                                }
+        if let Some(spec) = structural.get_mut("spec") {
+            omit_shared_metadata(spec);
+            if let Some(sandboxes) = spec
+                .get_mut("sandboxes")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for sandbox in sandboxes {
+                    omit_shared_metadata(sandbox);
+                    if let Some(agents) = sandbox
+                        .get_mut("agents")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        for agent in agents {
+                            if let Some(inference) = agent.get_mut("inference") {
+                                omit_model_metadata(inference);
                             }
                         }
                     }
@@ -155,9 +189,19 @@ impl Document {
                 tls.key.env.as_str(),
             ]);
         }
-        for provider in &self.spec.inference_providers {
-            if let Some(c) = &provider.credential {
-                names.push(c.env.as_str());
+        if let Ok(providers) = self.selected_inference_providers() {
+            for provider in providers {
+                if let Some(credential) = &provider.credential {
+                    names.push(credential.env.as_str());
+                }
+            }
+        }
+        for binding in self.spec.sandboxes[0]
+            .integration_bindings(&self.spec.integrations)
+            .expect("validated integration references")
+        {
+            match binding.definition {
+                Integration::WebSearch(search) => names.push(&search.credential.env),
             }
         }
         names
@@ -176,7 +220,7 @@ impl Document {
                 ),
             );
         }
-        for provider in &mut self.spec.inference_providers {
+        for provider in self.provider_definitions_mut() {
             if let Some(service) = &mut provider.service {
                 service.defaults();
             }
@@ -213,17 +257,16 @@ impl Gateway {
         bridge_address(&self.network_cidr)
     }
 }
-impl Agent {
-    pub fn runtime(&self) -> String {
-        format!("fabric-{}", self.harness)
-    }
-}
 impl Service {
     pub fn served_model(&self) -> &str {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;
         }
-        &self.model.repository
+        if self.serving.model_name.is_empty() {
+            &self.model.repository
+        } else {
+            &self.serving.model_name
+        }
     }
 
     pub fn defaults(&mut self) {
@@ -249,7 +292,14 @@ impl Service {
                 &mut self.memory.host_reserve_gib,
                 constraints::HOST_RESERVE.default,
             ),
-            (&mut self.memory.kv_cache_gib, constraints::KV_CACHE.default),
+            (
+                &mut self.memory.kv_cache_gib,
+                if self.memory.gpu_memory_utilization.is_some() {
+                    0
+                } else {
+                    constraints::KV_CACHE.default
+                },
+            ),
             (
                 &mut self.memory.min_available_gib,
                 constraints::MIN_AVAILABLE.default,
@@ -274,3 +324,6 @@ impl Service {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+mod service_hardware;
+pub use service_hardware::{ServiceContainer, ServiceHardware, ServiceIpc};

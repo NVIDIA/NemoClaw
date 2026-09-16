@@ -55,7 +55,7 @@ impl Record {
             );
         }
         Ok(Self {
-            version: 1,
+            version: 2,
             digest: document.digest(),
             document,
             generations,
@@ -63,8 +63,12 @@ impl Record {
         })
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 1
-            || self.document.validate().is_err()
+        if self.version != 2 {
+            return Err(Error::State(
+                "deployment predates native inference; retain state and use the original NemoClaw version for recovery or teardown",
+            ));
+        }
+        if self.document.validate().is_err()
             || self.digest != self.document.digest()
             || ![3, 4, 6].contains(&self.generations.len())
             || ["workspace", "provider", "sandbox"]

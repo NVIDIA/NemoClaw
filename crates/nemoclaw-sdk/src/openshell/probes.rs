@@ -8,6 +8,20 @@ use std::time::Duration;
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
+fn hermes_response_text(bytes: &[u8]) -> Result<String, Error> {
+    if bytes.len() > 1 << 20 {
+        return Err(Error::Conflict("agent response exceeds the probe limit"));
+    }
+    let response: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| Error::Conflict("agent returned no confirmed response"))?;
+    let text = response["output"]["response"].as_str().unwrap_or("").trim();
+    if response["status"] != "succeeded" || text.is_empty() || text.len() > 16 << 10 {
+        return Err(Error::Conflict(
+            "agent returned no confirmed successful response",
+        ));
+    }
+    Ok(text.into())
+}
 fn response_text(bytes: &[u8]) -> Result<String, Error> {
     if bytes.len() > 1 << 20 {
         return Err(Error::Conflict("agent response exceeds the probe limit"));
@@ -41,7 +55,7 @@ impl OpenShell {
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();
-        if info.gateway_version != "0.0.116"
+        if info.gateway_version != "0.0.117-dev.155+gb3e4ad457"
             || info.compute_drivers.len() != 1
             || (info.compute_drivers[0].name != driver
                 && info.compute_drivers[0]
@@ -60,7 +74,7 @@ impl OpenShell {
             .grpc()
             .get_sandbox(self.request(proto::GetSandboxRequest {
                 name: value(binding, "name").into(),
-                workspace: value(binding, "workspace").into(),
+                workspace_scope: Some(proto::workspace_selector(value(binding, "workspace"))),
             }))
             .await
             .map_err(|error| remote_error(&error))?
@@ -204,6 +218,19 @@ impl OpenShell {
         }
         Ok(())
     }
+    pub(super) async fn agent_configuration(&self, binding: &Row) -> Result<(), Error> {
+        if self
+            .bound_sandbox(binding)
+            .await?
+            .status
+            .ok_or(ObservationError::Incomplete)?
+            .phase
+            != proto::SandboxPhase::Ready as i32
+        {
+            return Err(ObservationError::Incomplete.into());
+        }
+        self.configuration(binding).await
+    }
     pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let (command, environment) = self.configuration_command(binding)?;
         let (exit, _) = self.exec_bound(binding, command, environment, 20).await?;
@@ -268,24 +295,15 @@ impl OpenShell {
                 ))
             };
         }
-        use crate::config::InferenceApi;
-        let api = inference_settings(
+        inference_settings(
             value(binding, "inference_json"),
             value(binding, "agent_runtime"),
         )?
-        .map(|s| s.api)
-        .unwrap_or_else(|| {
-            InferenceApi::for_harness(value(binding, "agent_runtime").trim_start_matches("fabric-"))
-        });
-        let script = match api {
-            InferenceApi::AnthropicMessages => ANTHROPIC_PROBE,
-            InferenceApi::OpenaiResponses => RESPONSES_PROBE,
-            InferenceApi::OpenaiCompletions => INFERENCE_PROBE,
-        };
+        .ok_or(ObservationError::Incomplete)?;
         let (exit, _) = self
             .exec_bound(
                 binding,
-                vec!["node".into(), "-e".into(), script.into()],
+                vec!["node".into(), "/opt/nemoclaw/inference-probe.mts".into()],
                 Row::new(),
                 90,
             )
@@ -311,30 +329,45 @@ impl OpenShell {
             &hex[16..20],
             &hex[20..]
         );
-        let command = [
-            "openclaw",
-            "agent",
-            "--agent",
-            value(binding, "agent_name"),
-            "--session-id",
-            &session,
-            "--message",
-            "Reply with the word FOUR.",
-            "--thinking",
-            "off",
-            "--json",
-            "--timeout",
-            "300",
-        ]
-        .map(String::from)
-        .to_vec();
+        let hermes = value(binding, "agent_runtime") == "fabric-hermes";
+        let command = if hermes {
+            vec![
+                "/opt/fabric/bin/python".into(),
+                "/opt/nemoclaw/fabric.py".into(),
+                "probe".into(),
+                value(binding, "agent_name").into(),
+                "hermes".into(),
+            ]
+        } else {
+            [
+                "openclaw",
+                "agent",
+                "--agent",
+                value(binding, "agent_name"),
+                "--session-id",
+                &session,
+                "--message",
+                "Reply with the word FOUR.",
+                "--thinking",
+                "off",
+                "--json",
+                "--timeout",
+                "300",
+            ]
+            .map(String::from)
+            .to_vec()
+        };
         let (exit, output) = self.exec_bound(binding, command, Row::new(), 360).await?;
         if exit != 0 {
             return Err(Error::Conflict(
                 "actual agent response failed; resources retained",
             ));
         }
-        let text = response_text(&output)?;
+        let text = if hermes {
+            hermes_response_text(&output)?
+        } else {
+            response_text(&output)?
+        };
         if !text
             .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
             .eq_ignore_ascii_case("FOUR")
@@ -347,13 +380,21 @@ impl OpenShell {
     }
 }
 
-const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const ANTHROPIC_PROBE: &str = r###"fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))"###;
-const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))"###;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hermes_reply_requires_success_before_accepting_text() {
+        assert_eq!(
+            hermes_response_text(br#"{"status":"succeeded","output":{"response":"FOUR"}}"#)
+                .unwrap(),
+            "FOUR"
+        );
+        assert!(
+            hermes_response_text(br#"{"status":"failed","output":{"response":"FOUR"}}"#).is_err()
+        );
+        assert!(hermes_response_text(br#"{"status":"succeeded","output":{}}"#).is_err());
+    }
     #[test]
     fn agent_reply_requires_confirmed_success_and_non_error_payloads() {
         assert_eq!(

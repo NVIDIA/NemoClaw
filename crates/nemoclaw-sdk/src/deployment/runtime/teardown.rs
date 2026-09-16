@@ -7,9 +7,17 @@ use super::*;
 // retained document and resource graph intact; narrow only subprocess secrets.
 fn destroy_environment(document: &Document) -> Document {
     let mut environment = document.clone();
-    for provider in &mut environment.spec.inference_providers {
+    for provider in environment.provider_definitions_mut() {
         provider.credential = None;
     }
+    for sandbox in &mut environment.spec.sandboxes {
+        sandbox.integrations.clear();
+        for agent in &mut sandbox.agents {
+            agent.integrations.clear();
+            agent.integration_refs.clear();
+        }
+    }
+    environment.spec.integrations.clear();
     environment
 }
 
@@ -153,6 +161,7 @@ fn retained_addresses(runtime: bool) -> BTreeSet<String> {
         [
             "nemoclaw_workspace.deployment".into(),
             crate::deployment::ollama::STORAGE.into(),
+            "nemoclaw_ollama_proxy_storage.credentials".into(),
         ]
         .into()
     }
@@ -265,7 +274,7 @@ fn validate_teardown_state(
             "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
         ));
     }
-    if record.document.spec.inference_providers[0].ollama.is_some()
+    if record.document.lifecycle_provider()?.ollama.is_some()
         && bindings.contains_key("nemoclaw_ollama.service")
         && !bindings.contains_key(crate::deployment::ollama::STORAGE)
     {

@@ -21,8 +21,11 @@ endpoint = os.environ.get("DOCKER_HOST") or context["Endpoints"]["docker"]["Host
 if not endpoint.startswith("unix:///") or not context["Endpoints"]["docker"]["Host"].startswith("unix:///"):
     raise ValueError("Docker daemon is not on the observed SSH host")
 info = json.loads(run("docker", "info", "--format", "{{json .}}"))
-if info["OSType"] != "linux" or info["Architecture"] not in ("arm64", "aarch64"):
-    raise ValueError("Linux ARM64 daemon required")
+if info["OSType"] != "linux" or info["Architecture"] not in ("arm64", "aarch64", "amd64", "x86_64"):
+    raise ValueError("Linux ARM64 or AMD64 daemon required")
+architecture = {"aarch64": "arm64", "x86_64": "amd64"}
+if architecture.get(info["Architecture"], info["Architecture"]) != architecture.get(platform.machine(), platform.machine()):
+    raise ValueError("daemon architecture differs from the observed host")
 root = info["DockerRootDir"]
 if not os.path.isabs(root):
     raise ValueError("absolute daemon storage root required")
@@ -34,6 +37,7 @@ if len(memory) > 65536:
 print(json.dumps({
     "daemon": info["ID"], "architecture": platform.machine(), "memory": memory,
     "gpu": run("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader,nounits"),
+    "gpu_memory": run("nvidia-smi", "--query-gpu=memory.total,memory.free,compute_cap", "--format=csv,noheader,nounits") if platform.machine() in ("amd64", "x86_64") else None,
     "processes": run("nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"),
     "disk_free": stat.f_bavail * stat.f_frsize,
 }))

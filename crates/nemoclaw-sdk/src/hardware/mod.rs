@@ -12,11 +12,19 @@ pub struct Capacity {
     pub architecture: String,
     pub gpu: String,
     pub driver_major: u32,
+    pub gpu_memory: Option<DedicatedGpu>,
     pub total: u64,
     pub available: u64,
     pub free: u64,
     pub disk_free: u64,
     pub foreign_gpu_processes: usize,
+}
+/// Measurements for the single dedicated-memory GPU; bytes are independent of host RAM.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DedicatedGpu {
+    pub total: u64,
+    pub free: u64,
+    pub compute_capability: u32,
 }
 pub fn read_memory(reader: impl Read) -> Result<Capacity, Error> {
     let mut text = String::new();
@@ -127,7 +135,7 @@ impl Watchdog {
 
 mod capacity;
 mod spark;
-pub use capacity::check_capacity;
+pub use capacity::{check_capacity, check_memory, serving_memory};
 pub(crate) use spark::validate_memory;
 
 #[cfg(target_os = "linux")]

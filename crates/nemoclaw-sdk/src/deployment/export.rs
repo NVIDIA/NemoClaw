@@ -5,6 +5,10 @@ use super::*;
 
 impl Deployment {
     pub async fn export(&self, cancel: &CancellationToken) -> Result<Document, Error> {
+        Box::pin(self.export_inner(cancel)).await
+    }
+
+    async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         let (_, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
             "export requires established resource bindings",
@@ -33,17 +37,34 @@ impl Deployment {
                     .id
                     .clone(),
             );
-            let observed =
-                client
+            let observed = if crate::ollama::proxy::supports(&target.kind) {
+                let proxy = document
+                    .lifecycle_provider()?
+                    .ollama_proxy
+                    .as_ref()
+                    .ok_or(Error::State("missing proxy settings"))?;
+                crate::ollama::OllamaBackend::new(self.engines.resolve(&proxy.engine)?)
                     .read(&target.kind, &expected, false)
                     .await?
-                    .ok_or(Error::Conflict(
-                        "resource is confirmed absent; no configuration exported",
-                    ))?;
+            } else {
+                client.read(&target.kind, &expected, false).await?
+            }
+            .ok_or(Error::Conflict(
+                "resource is confirmed absent; no configuration exported",
+            ))?;
             verify_identity(&expected, &observed)?;
             match target.kind.as_str() {
+                "provider" if target.address == "nemoclaw_provider.web_search" => {
+                    if expected
+                        .iter()
+                        .any(|(key, value)| observed.get(key) != Some(value))
+                    {
+                        return Err(Error::Conflict(
+                            "web search provider drift requires inspection",
+                        ));
+                    }
+                }
                 "provider" => export_provider(&mut document, &expected, &observed)?,
-                "route" => export_route(&mut document, &observed)?,
                 "sandbox" => export_sandbox(&client, &document, &mut expected, &observed).await?,
                 _ => {}
             }
@@ -55,34 +76,44 @@ impl Deployment {
 }
 
 fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> Result<(), Error> {
-    if observed["provider_type"] != expected["provider_type"] {
-        return Err(Error::Conflict("provider type drift requires inspection"));
-    }
-    if document.spec.inference_providers[0].service.is_some() {
-        if observed["endpoint"] != document.inference_endpoint()?
-            || !observed["credential_env"].is_empty()
-        {
-            return Err(Error::Conflict("managed inference registration drifted"));
-        }
-    } else {
-        document.spec.inference_providers[0].endpoint = observed["endpoint"].clone();
-    }
-    document.spec.inference_providers[0].credential = (!observed["credential_env"].is_empty())
-        .then(|| Credential {
-            env: observed["credential_env"].clone(),
-        });
-    Ok(())
-}
-
-fn export_route(document: &mut Document, observed: &Row) -> Result<(), Error> {
-    if observed["provider_name"] != document.spec.inference_providers[0].name {
+    if observed["provider_type"] != expected["provider_type"]
+        || observed["endpoint"] != expected["endpoint"]
+        || observed["credential_env"].is_empty() != expected["credential_env"].is_empty()
+    {
         return Err(Error::Conflict(
-            "route references a provider outside this deployment",
+            "native provider profile binding drift requires inspection",
         ));
     }
-    document.spec.sandboxes[0].agents[0].inference.routes[0]
-        .overrides
-        .model = observed["model"].clone();
+    if expected
+        .get("credential_source")
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        if expected.get("credential_source") != observed.get("credential_source")
+            || expected.get("endpoint") != observed.get("endpoint")
+        {
+            return Err(Error::Conflict(
+                "managed inference credential or endpoint drift",
+            ));
+        }
+        return Ok(());
+    }
+    let provider = document
+        .selected_inference_providers()?
+        .into_iter()
+        .find(|provider| provider.name == expected["name"])
+        .ok_or(Error::Conflict("observed provider is not selected"))?;
+    let managed = provider.service.is_some();
+    if managed
+        && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
+            || !observed["credential_env"].is_empty())
+    {
+        return Err(Error::Conflict("managed inference registration drifted"));
+    }
+    let provider = document.selected_provider_mut(&expected["name"])?;
+    provider.credential = (!observed["credential_env"].is_empty()).then(|| Credential {
+        env: observed["credential_env"].clone(),
+    });
     Ok(())
 }
 
@@ -110,11 +141,18 @@ async fn export_sandbox(
             "sandbox configuration drift requires inspection",
         ));
     }
-    if document.spec.sandboxes[0].agents[0].harness == "pi" {
+    if document
+        .agent_harness(&document.spec.sandboxes[0].agents[0])?
+        .kind
+        == "pi"
+    {
         expected.insert(
             "pi_model_config".into(),
             serde_json::to_string(
-                &document.spec.sandboxes[0].agents[0].inference.routes[0].overrides,
+                &document
+                    .agent_inference(&document.spec.sandboxes[0].agents[0])?
+                    .default_route()?
+                    .overrides,
             )
             .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
         );
@@ -138,18 +176,31 @@ mod tests {
     }
 
     #[test]
-    fn export_preserves_external_provider_references_and_observed_route_model() {
+    fn export_preserves_external_provider_references() {
         let mut document =
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
+        document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+        document.spec.inference_providers[0].credential = Some(Credential {
+            env: "OLD_KEY".into(),
+        });
         let expected = provider_row(&document);
+        for (field, value) in [
+            ("endpoint", "https://changed.example/v1"),
+            ("credential_env", ""),
+        ] {
+            let mut drift = expected.clone();
+            drift.insert(field.into(), value.into());
+            let original = document.clone();
+            assert!(export_provider(&mut document, &expected, &drift).is_err());
+            assert_eq!(document, original);
+        }
         let mut observed = expected.clone();
-        observed.insert("endpoint".into(), "https://changed.example/v1".into());
         observed.insert("credential_env".into(), "NEW_INFERENCE_KEY".into());
         export_provider(&mut document, &expected, &observed).unwrap();
         assert_eq!(
             document.spec.inference_providers[0].endpoint,
-            "https://changed.example/v1"
+            "https://models.example/v1"
         );
         assert_eq!(
             document.spec.inference_providers[0]
@@ -158,20 +209,6 @@ mod tests {
                 .unwrap()
                 .env,
             "NEW_INFERENCE_KEY"
-        );
-        let route = Row::from([
-            (
-                "provider_name".into(),
-                document.spec.inference_providers[0].name.clone(),
-            ),
-            ("model".into(), "updated-model".into()),
-        ]);
-        export_route(&mut document, &route).unwrap();
-        assert_eq!(
-            document.spec.sandboxes[0].agents[0].inference.routes[0]
-                .overrides
-                .model,
-            "updated-model"
         );
         document.validate().unwrap();
     }
@@ -200,18 +237,37 @@ mod tests {
         export_provider(&mut exported, &expected, &expected).unwrap();
         assert_eq!(exported, document);
     }
-
     #[test]
-    fn export_rejects_a_route_outside_the_deployment_without_rewriting_intent() {
-        let document =
+    fn export_updates_only_the_observed_provider_definition() {
+        let mut value: serde_json::Value = serde_json::to_value(
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
-                .unwrap();
-        let mut exported = document.clone();
-        let observed = Row::from([
-            ("provider_name".into(), "foreign".into()),
-            ("model".into(), "foreign-model".into()),
-        ]);
-        assert!(export_route(&mut exported, &observed).is_err());
-        assert_eq!(exported, document);
+                .unwrap(),
+        )
+        .unwrap();
+        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle","provider":"openai","endpoint":"https://oracle.example/v1","credential":{"env":"OLD_KEY"}}));
+        let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+        inference["default"] = serde_json::json!("primary");
+        inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart"}}));
+        let mut document = Document::parse(value.to_string().as_bytes()).unwrap();
+        let original = document.inference_provider().unwrap().clone();
+        let record = Record::new(document.clone()).unwrap();
+        let expected = compile::targets(&document, &record.generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "provider" && target.values["name"] == "oracle")
+            .unwrap()
+            .values;
+        let mut observed = expected.clone();
+        observed.insert("credential_env".into(), "NEW_KEY".into());
+        export_provider(&mut document, &expected, &observed).unwrap();
+        assert_eq!(document.inference_provider().unwrap(), &original);
+        assert_eq!(
+            document.spec.inference_providers[1]
+                .credential
+                .as_ref()
+                .unwrap()
+                .env,
+            "NEW_KEY"
+        );
     }
 }

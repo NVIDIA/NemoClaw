@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 fn input(harness: &str) -> Value {
     let mut v: Value =
         serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
-    v["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!(harness);
+    v["spec"]["sandboxes"][0]["agents"][0]["harness"]["kind"] = json!(harness);
     v
 }
 fn parse(v: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
@@ -42,11 +42,10 @@ fn api_and_tuning_survive_compilation_and_yaml() {
 #[test]
 fn hermes_auth_requires_the_routed_credential_provider() {
     let mut v = input("hermes");
-    let name = v["spec"]["inferenceProviders"][0]["name"].clone();
     v["spec"]["inferenceProviders"][0]["endpoint"] =
         json!("https://inference-api.nousresearch.com/v1");
     v["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"NOUS_API_KEY"});
-    v["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key","providerRef":name});
+    v["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key"});
     assert!(parse(&v).is_ok());
     v["spec"]["sandboxes"][0]["agents"][0]["auth"]["providerRef"] = json!("foreign");
     assert!(parse(&v).is_err());
@@ -127,9 +126,7 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
     );
     for harness in ["hermes", "openclaw"] {
         let mut v = input(harness);
-        let name = v["spec"]["inferenceProviders"][0]["name"].clone();
-        v["spec"]["sandboxes"][0]["agents"][0]["auth"] =
-            json!({"method":"api-key", "providerRef":name});
+        v["spec"]["sandboxes"][0]["agents"][0]["auth"] = json!({"method":"api-key"});
         assert!(parse(&v).is_err());
         assert!(
             !jsonschema::validator_for(&input_schema())

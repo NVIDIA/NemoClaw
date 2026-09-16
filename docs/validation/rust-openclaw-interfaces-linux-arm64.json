@@ -1,0 +1,29 @@
+{
+  "harness": "openclaw",
+  "readiness_without_inference": true,
+  "authenticated_interfaces_verified": true,
+  "tool_file_verified": false,
+  "stopped": true,
+  "ordered_invocations": 2,
+  "runtime_id": "runtime-1789474507253-1-2",
+  "request_paths": [
+    "/v1/chat/completions"
+  ],
+  "network": "none; local TLS protocol fixture; no live model",
+  "date": "2026-09-15",
+  "platform": "Linux ARM64",
+  "base_revision": "d04ae8aee5",
+  "sdk_cli_lifecycle": "verified bundle apply, export, unchanged reapply, drift rejection, destroy",
+  "bundle_version": "0.1.0-dev.b2304eb8df628c16",
+  "source_sha256": {
+    "image/fabric/interfaces.py": "f253060f613a72064245e69cd952aab3d7254180326cb3b61c1a6b93482912d2",
+    "image/fabric/openclaw_adapter.py": "e7db08382d230fa37d92059b83bc521db3d8ccb8f7b4dce5f1e61bd53f25d486",
+    "image/fabric/fabric.py": "2ae3ac9060171521907af578471e0d4b7422ea42fa8a0781a6786ca5aed3af29",
+    "test/fabric_adapters.py": "844e01681e4f36030a14545654229c0194abbedb165e132cdb89679f3751de91",
+    "tools/fabric-adapter-experiment.py": "66cc3d2d9c41e9486f75f6b86abeb1689df6cb06c4a88126c89bc80a961eac29"
+  },
+  "limits": [
+    "Local image derived from pinned OpenClaw dependency layer with current adapter sources.",
+    "No live OpenShell forwarding or browser session qualification."
+  ]
+}

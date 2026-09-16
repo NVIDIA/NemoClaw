@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-15",
+  "platform": "Linux ARM64",
+  "base_revision": "60cff0b6ac",
+  "hermes_revision": "29112bef099274229cadff79cdff7bf7b99c4b77",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "source_sha256": {
+    "image/fabric/hermes_adapter.py": "f6b7ce2f92ae434d2283d8d64b99bac0147608ea72e662e469fd6b4f7c64b7f4",
+    "image/fabric/fabric.py": "71db9eb160bdd2cccbe22b25d078538282d29b5a584731b302231955cba5777d",
+    "image/fabric/interfaces.py": "f253060f613a72064245e69cd952aab3d7254180326cb3b61c1a6b93482912d2",
+    "image/fabric/hermes.fabric-adapter.json": "71b441530f37dba6fa57fe6066e8dfba87307bad9a0a5ff21aa1f409eb3ca415",
+    "test/fabric_adapters.py": "1d48a99fa00ade052580a826642148b9244eb9ec356ef5481939dbd69cef29bd",
+    "tools/fabric-adapter-experiment.py": "f5b9ffaecfe40aa7ced02872e699b6c17c68af522f902a2f2608dc94c3ddaa53"
+  },
+  "native_cases": [
+    {
+      "mode": "enabled",
+      "image": "sha256:571f92b2b663527b4661dde9cfcbf58a200dab1dc214c7c4499c6e273725b146",
+      "harness": "hermes",
+      "readiness_without_inference": true,
+      "authenticated_interfaces_verified": true,
+      "hermes_dashboard": {
+        "enabled": true,
+        "port": 18800,
+        "internalPort": 19120,
+        "tui": {
+          "enabled": true
+        }
+      },
+      "hermes_api_port": 8643,
+      "tool_file_verified": false,
+      "stopped": true,
+      "ordered_invocations": 2,
+      "runtime_id": "runtime-1789476523357-1-2",
+      "request_paths": [
+        "/api/show",
+        "/v1/chat/completions"
+      ],
+      "network": "none; local TLS protocol fixture; no live model"
+    },
+    {
+      "mode": "notui",
+      "image": "sha256:571f92b2b663527b4661dde9cfcbf58a200dab1dc214c7c4499c6e273725b146",
+      "harness": "hermes",
+      "readiness_without_inference": true,
+      "authenticated_interfaces_verified": true,
+      "hermes_dashboard": {
+        "enabled": true,
+        "port": 18800,
+        "internalPort": 19120,
+        "tui": {
+          "enabled": false
+        }
+      },
+      "hermes_api_port": 8643,
+      "tool_file_verified": false,
+      "stopped": true,
+      "ordered_invocations": 2,
+      "runtime_id": "runtime-1789476543983-1-2",
+      "request_paths": [
+        "/api/show",
+        "/v1/responses"
+      ],
+      "network": "none; local TLS protocol fixture; no live model"
+    },
+    {
+      "mode": "headless",
+      "image": "sha256:571f92b2b663527b4661dde9cfcbf58a200dab1dc214c7c4499c6e273725b146",
+      "harness": "hermes",
+      "readiness_without_inference": true,
+      "authenticated_interfaces_verified": true,
+      "hermes_dashboard": {
+        "enabled": false,
+        "port": 18789,
+        "internalPort": 19119,
+        "tui": {
+          "enabled": true
+        }
+      },
+      "hermes_api_port": 8643,
+      "tool_file_verified": false,
+      "stopped": true,
+      "ordered_invocations": 2,
+      "runtime_id": "runtime-1789476542154-1-2",
+      "request_paths": [
+        "/api/show",
+        "/v1/messages"
+      ],
+      "network": "none; local TLS protocol fixture; no live model"
+    }
+  ],
+  "bundle_fixtures": {
+    "managed_service": "0.1.0-dev.115b8f1fc033ce71",
+    "interfaces": "0.1.0-dev.04885f3c2fdeea78",
+    "result": "apply, export/reapply, drift or observation failure, and retained-data teardown passed against simulated services"
+  },
+  "limits": [
+    "Derived local image uses pinned Hermes dependency layer, added hashed aiohttp dependencies, built native dashboard/TUI assets, and current adapter sources. Full image-builder path was not rerun.",
+    "No live model, OpenShell forwarding, browser rendering, or interactive terminal qualification.",
+    "API and dashboard active conversations remain separate."
+  ]
+}

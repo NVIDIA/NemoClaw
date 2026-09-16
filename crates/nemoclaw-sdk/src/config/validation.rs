@@ -9,7 +9,7 @@ use std::{
 };
 use url::Url;
 
-static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::SLUG).unwrap());
+pub(super) static SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::SLUG).unwrap());
 static UUID: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::UUID).unwrap());
 static ENV: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::ENV).unwrap());
 static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(constraints::MODEL).unwrap());
@@ -35,7 +35,7 @@ fn local(ip: IpAddr) -> bool {
 fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
-fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
+pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
     require(
         value.as_ref().is_none_or(|c| ENV.is_match(&c.env)),
         "credential references require an uppercase environment variable name",
@@ -128,7 +128,9 @@ impl Document {
             require(
                 gateway.engine.is_empty()
                     && gateway.image.is_empty()
-                    && gateway.network_cidr.is_empty(),
+                    && gateway.network_cidr.is_empty()
+                    && gateway.network.is_none()
+                    && gateway.storage.is_none(),
                 "external gateway cannot declare managed runtime settings",
             )?;
         }
@@ -148,35 +150,16 @@ impl Document {
             "gateway credentials require HTTPS",
         )?;
         require(
-            self.spec.inference_providers.len() == 1 && self.spec.sandboxes.len() == 1,
-            "this slice requires exactly one inference provider and one sandbox",
+            self.spec.sandboxes.len() == 1,
+            "exactly one sandbox is required",
         )?;
-        let provider = &self.spec.inference_providers[0];
-        require(
-            SLUG.is_match(&provider.name)
-                && constraints::PROVIDERS.contains(&provider.provider.as_str()),
-            "provider requires a lowercase name and openai or anthropic implementation",
-        )?;
-        if let Some(service) = &provider.service {
-            require(
-                provider.endpoint.is_empty()
-                    && provider.ollama.is_none()
-                    && provider.credential.is_none(),
-                "managed service excludes endpoint, Ollama, and external credentials",
-            )?;
-            require(
-                gateway.management == "managed" || service.placement.is_some(),
-                "service requires a managed gateway or explicit placement",
-            )?;
-            service.validate()?;
-        } else {
-            validate_endpoint(&provider.endpoint, false)?;
+        self.validate_harness_references()?;
+        let selected_providers = self.selected_inference_providers()?;
+        self.lifecycle_provider()?;
+        self.validate_inference_references()?;
+        for definition in self.provider_definitions() {
+            validate_provider(definition, gateway)?;
         }
-        credential(&provider.credential)?;
-        require(
-            provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
-            "inference credentials require HTTPS",
-        )?;
         let sandbox = &self.spec.sandboxes[0];
         require(
             SLUG.is_match(&sandbox.name) && IMAGE.is_match(&sandbox.image.ref_),
@@ -191,101 +174,154 @@ impl Document {
             "managed gateway requires the qualified Docker driver",
         )?;
         sandbox.network.validate()?;
-        require(
-            sandbox.agents.len() == 1,
-            "this slice requires exactly one agent",
+        require(!sandbox.agents.is_empty(), "at least one agent is required")?;
+        let web_search = self.web_search()?;
+        sandbox.policy_proto(
+            web_search.is_some(),
+            self.agent_harness(&sandbox.agents[0])?
+                .observability
+                .as_ref(),
         )?;
-        let agent = &sandbox.agents[0];
-        require(
-            SLUG.is_match(&agent.name),
-            "agent requires a lowercase name",
-        )?;
-        require(
-            is_fabric_harness(&agent.harness),
-            "agent requires a supported harness",
-        )?;
-        require(
-            agent.harness == "openclaw"
-                || (gateway.management == "external"
-                    && provider.service.is_none()
-                    && provider.ollama.is_none()),
-            "this harness requires external gateway and inference services",
-        )?;
-        require(
-            agent.harness != "pi" || provider.api.is_none(),
-            "Pi selects its API through model metadata; omit provider api",
-        )?;
-        let api = provider
-            .api
-            .unwrap_or(InferenceApi::for_harness(&agent.harness));
-        require(
-            api.supported(&agent.harness)
-                && (api == InferenceApi::AnthropicMessages) == (provider.provider == "anthropic"),
-            "API must match the provider implementation and be supported by the harness",
-        )?;
-        if let Some(auth) = &agent.auth {
+        if let Some(search) = web_search {
             require(
-                agent.harness == "hermes"
-                    && auth.provider_ref == provider.name
-                    && provider.credential.is_some(),
-                "Hermes API-key auth must reference the routed provider with a credential",
+                selected_providers
+                    .iter()
+                    .all(|provider| provider.name != "brave-search"),
+                "brave-search is reserved for web search",
+            )?;
+            search.validate(
+                &self.agent_harness(&sandbox.agents[0])?.kind,
+                sandbox
+                    .agents
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.tools.as_ref())),
             )?;
         }
-        require(
-            agent.inference.routes.len() == 1,
-            "this slice requires exactly one primary route",
-        )?;
-        let route = &agent.inference.routes[0];
-        require(
-            route.name == "primary"
-                && route.provider_ref == provider.name
-                && MODEL.is_match(&route.overrides.model),
-            "primary route must reference the declared provider and valid model",
-        )?;
-        route.overrides.tuning.validate(&agent.harness)?;
-        require(
-            route.overrides.pi_model.is_none() || agent.harness == "pi",
-            "piModel is supported only by the Pi harness",
-        )?;
-        require(
-            provider.service.is_none()
-                || (route.overrides.model == provider.service.as_ref().unwrap().served_model()
-                    && (sandbox.runtime.provider == "docker"
-                        || provider.service.as_ref().unwrap().placement.is_some())),
-            "service requires its declared served model and compatible sandbox placement",
-        )?;
-        if let Some(ollama) = &provider.ollama {
-            let url = Url::parse(&provider.endpoint)
-                .map_err(|_| ConfigError("invalid Ollama endpoint"))?;
-            let authority = provider
-                .endpoint
-                .strip_prefix("http://")
-                .unwrap_or("")
-                .split('/')
-                .next()
-                .unwrap_or("");
-            let bind = authority.parse::<SocketAddr>().ok();
+        ToolDisclosure::shared(sandbox.agents.iter().map(|a| a.tools.as_ref()))?;
+        let mut names = std::collections::BTreeSet::new();
+        for agent in &sandbox.agents {
+            require(names.insert(&agent.name), "agent names must be unique")?;
             require(
-                provider.credential.is_none()
-                    && url.scheme() == "http"
-                    && url.path() == "/v1"
-                    && bind.is_some_and(|a| a.port() != 0 && local(a.ip())),
-                "Ollama requires an explicit private IP:port/v1 HTTP endpoint without credentials",
+                sandbox.agents.len() == 1 || self.agent_harness(agent)?.kind == "openclaw",
+                "multiple agents require OpenClaw",
             )?;
             require(
-                ollama.engine.starts_with("unix:///")
-                    && !ollama
-                        .engine
-                        .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-                    && SLUG.is_match(&ollama.network)
-                    && IMAGE.is_match(&ollama.image)
-                    && ollama.image.starts_with("ollama/ollama@sha256:"),
-                "Ollama requires a local Unix socket, named network, and pinned ollama/ollama image",
+                agent.tools.is_none() || self.agent_harness(agent)?.kind == "openclaw",
+                "tool restrictions require OpenClaw",
             )?;
             require(
-                OLLAMA_MODEL.is_match(&route.overrides.model),
-                "Ollama requires an explicit registry-library model:tag",
+                SLUG.is_match(&agent.name),
+                "agent requires a lowercase name",
             )?;
+            require(
+                is_fabric_harness(&self.agent_harness(agent)?.kind),
+                "agent requires a supported harness",
+            )?;
+            require(
+                self.agent_inference(agent)?.routes.len() == 1
+                    || self.agent_harness(agent)?.kind == "openclaw",
+                "multiple model choices require OpenClaw",
+            )?;
+            for route in &self.agent_inference(agent)?.routes {
+                let (_, scope) = self.scoped_inference(agent)?;
+                let provider = self.route_provider(route, scope)?;
+                require(
+                    matches!(
+                        self.agent_harness(agent)?.kind.as_str(),
+                        "openclaw" | "hermes"
+                    ) || (gateway.management == "external"
+                        && provider.service.is_none()
+                        && provider.ollama.is_none()),
+                    "this harness requires external gateway and inference services",
+                )?;
+                require(
+                    self.agent_harness(agent)?.kind != "pi" || provider.api.is_none(),
+                    "Pi selects its API through model metadata; omit provider api",
+                )?;
+                let api = provider
+                    .api
+                    .unwrap_or(InferenceApi::for_harness(&self.agent_harness(agent)?.kind));
+                require(
+                    api.supported(&self.agent_harness(agent)?.kind)
+                        && (api == InferenceApi::AnthropicMessages)
+                            == (provider.provider == "anthropic"),
+                    "API must match the provider implementation and be supported by the harness",
+                )?;
+                if agent.auth.is_some() {
+                    require(
+                        self.agent_harness(agent)?.kind == "hermes"
+                            && (provider.credential.is_some()
+                                || provider.ollama_proxy.is_some()
+                                || provider
+                                    .service
+                                    .as_ref()
+                                    .is_some_and(|s| s.authentication.is_some())),
+                        "Hermes API-key auth must reference the routed provider with a credential",
+                    )?;
+                }
+                route
+                    .overrides
+                    .tuning
+                    .validate(&self.agent_harness(agent)?.kind)?;
+                require(
+                    route.overrides.pi_model.is_none() || self.agent_harness(agent)?.kind == "pi",
+                    "piModel is supported only by the Pi harness",
+                )?;
+                require(
+                    provider.service.is_none()
+                        || (route.overrides.model
+                            == provider.service.as_ref().unwrap().served_model()
+                            && (sandbox.runtime.provider == "docker"
+                                || provider.service.as_ref().unwrap().placement.is_some())),
+                    "service requires its declared served model and compatible sandbox placement",
+                )?;
+                if let Some(proxy) = &provider.ollama_proxy {
+                    proxy.validate(
+                        provider,
+                        &route.overrides.model,
+                        &self.agent_harness(agent)?.kind,
+                    )?;
+                }
+                if provider.ollama.is_some() || provider.ollama_proxy.is_some() {
+                    require(
+                        route.overrides.model == self.provider_model(provider)?,
+                        "managed Ollama and its proxy support one selected model",
+                    )?;
+                }
+                if let Some(ollama) = &provider.ollama {
+                    let url = Url::parse(&provider.endpoint)
+                        .map_err(|_| ConfigError("invalid Ollama endpoint"))?;
+                    let authority = provider
+                        .endpoint
+                        .strip_prefix("http://")
+                        .unwrap_or("")
+                        .split('/')
+                        .next()
+                        .unwrap_or("");
+                    let bind = authority.parse::<SocketAddr>().ok();
+                    require(
+                        provider.credential.is_none()
+                            && url.scheme() == "http"
+                            && url.path() == "/v1"
+                            && bind.is_some_and(|a| a.port() != 0 && local(a.ip())),
+                        "Ollama requires an explicit private IP:port/v1 HTTP endpoint without credentials",
+                    )?;
+                    require(
+                        ollama.engine.starts_with("unix:///")
+                            && !ollama
+                                .engine
+                                .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
+                            && SLUG.is_match(ollama.network.name())
+                            && IMAGE.is_match(&ollama.image)
+                            && ollama.image.starts_with("ollama/ollama@sha256:"),
+                        "Ollama requires a local Unix socket, named network, and pinned ollama/ollama image",
+                    )?;
+                    require(
+                        OLLAMA_MODEL.is_match(&route.overrides.model),
+                        "Ollama requires an explicit registry-library model:tag",
+                    )?;
+                }
+            }
         }
         Ok(())
     }
@@ -370,4 +406,48 @@ impl Service {
         )?;
         crate::backends::validation::validate(self)
     }
+}
+
+fn validate_provider(provider: &InferenceProvider, gateway: &Gateway) -> Result<(), ConfigError> {
+    let management = if provider.service.is_some() || provider.ollama.is_some() {
+        Management::Managed
+    } else {
+        Management::External
+    };
+    require(
+        provider
+            .management
+            .is_none_or(|declared| declared == management),
+        "inference management must match service or Ollama (managed) or endpoint alone (external)",
+    )?;
+    require(
+        SLUG.is_match(&provider.name)
+            && constraints::PROVIDERS.contains(&provider.provider.as_str()),
+        "provider requires a lowercase name and openai or anthropic implementation",
+    )?;
+    if let Some(service) = &provider.service {
+        require(
+            provider.endpoint.is_empty()
+                && provider.ollama.is_none()
+                && provider.credential.is_none(),
+            "managed service excludes endpoint, Ollama, and external credentials",
+        )?;
+        require(
+            gateway.management == "managed" || service.placement.is_some(),
+            "service requires a managed gateway or explicit placement",
+        )?;
+        service.validate()?;
+    } else {
+        validate_endpoint(&provider.endpoint, false)?;
+    }
+    credential(&provider.credential)?;
+    require(
+        provider.credential.is_none() || !provider.endpoint.starts_with("http:"),
+        "inference credentials require HTTPS",
+    )?;
+    Ok(())
+}
+
+pub(super) fn valid_model(model: &str) -> bool {
+    MODEL.is_match(model)
 }

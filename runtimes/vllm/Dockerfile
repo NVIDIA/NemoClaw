@@ -7,5 +7,6 @@ COPY NOTICE.md /opt/nemoclaw/source/NOTICE.md
 COPY Dockerfile build.json /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
-LABEL org.nemoclaw.backend="vllm" \
+LABEL org.nemoclaw.inference.authentication="bearer-v1" \
+      org.nemoclaw.backend="vllm" \
       org.nemoclaw.recipe.protocol="v1"

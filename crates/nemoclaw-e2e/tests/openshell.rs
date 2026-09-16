@@ -18,7 +18,16 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    struct Keys;
+    impl nemoclaw_sdk::openshell::Secrets for Keys {
+        fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            Ok("owned-fixture-credential".into())
+        }
+    }
+    document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+    document.spec.inference_providers[0].credential =
+        Some(serde_json::from_value(serde_json::json!({"env":"FIRST_KEY"})).unwrap());
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(Keys)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -27,16 +36,34 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     let workspace = client.ensure("workspace", &targets[0].values).await;
     assert!(workspace.error().is_none());
     assert!(workspace.state().is_some());
+    assert!(
+        client
+            .ensure("provider_profile", &targets[1].values)
+            .await
+            .error()
+            .is_none()
+    );
     fixture.state.lock().unwrap().lose_create = true;
-    let first = client.ensure("provider", &targets[1].values).await;
+    let first = client.ensure("provider", &targets[2].values).await;
     assert!(first.error().is_some());
     let effects = fixture.state.lock().unwrap().effects;
-    let recovered = client.ensure("provider", &targets[1].values).await;
+    let recovered = client.ensure("provider", &targets[2].values).await;
     assert!(recovered.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let mut provider = recovered.into_parts().0.unwrap();
     let id = provider["id"].clone();
-    provider.insert("endpoint".into(), "https://changed.example/v1".into());
+    let mut changed_endpoint = provider.clone();
+    changed_endpoint.insert("endpoint".into(), "https://changed.example/v1".into());
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(
+        client
+            .ensure("provider", &changed_endpoint)
+            .await
+            .error()
+            .is_some()
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    provider.insert("credential_env".into(), "SECOND_KEY".into());
     let updated = client.ensure("provider", &provider).await;
     assert!(updated.error().is_none());
     assert_eq!(updated.into_parts().0.unwrap()["id"], id);
@@ -59,7 +86,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
 }
 
 #[tokio::test]
-async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
+async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -88,7 +115,22 @@ async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
         assert!(client.ensure(&target.kind, row).await.error().is_none());
     }
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(rows[2]["id"], format!("{}/primary", rows[0]["id"]));
+    assert_ne!(rows[2]["id"], rows[0]["id"]);
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .values()
+            .next()
+            .unwrap()
+            .spec
+            .as_ref()
+            .unwrap()
+            .providers,
+        ["local"]
+    );
     fixture.state.lock().unwrap().fail_read = Some(("policy", tonic::Code::NotFound));
     assert!(client.read("sandbox", &rows[3], false).await.is_err());
     fixture.state.lock().unwrap().fail_read = None;
@@ -209,7 +251,7 @@ async fn incomplete_desired_ownership_is_rejected_before_any_create() {
 
 #[tokio::test]
 async fn failed_readback_retains_each_created_identity_until_explicit_recovery() {
-    for failed_kind in ["workspace", "provider", "route", "sandbox"] {
+    for failed_kind in ["workspace", "provider_profile", "provider", "sandbox"] {
         let fixture = Fixture::start().await;
         let mut document = Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -290,10 +332,7 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .unwrap();
     assert_eq!(
         nemoclaw_sdk::openshell::policy_json(spec.policy.as_ref().unwrap()).unwrap(),
-        nemoclaw_sdk::openshell::policy_json(
-            &document.spec.sandboxes[0].network.policy_proto().unwrap()
-        )
-        .unwrap()
+        sandbox["policy_json"]
     );
     assert_eq!(spec.command[0], "/usr/bin/env");
     assert!(
@@ -362,4 +401,135 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .unwrap()
         .spec = Some(spec);
     assert!(client.remove("sandbox", sandbox, true).await.is_ok());
+}
+
+#[tokio::test]
+async fn agent_roster_refresh_verifies_native_policy_without_mutation() {
+    let fixture = Fixture::start().await;
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let primary = document.spec.sandboxes[0].agents[0].clone();
+    for name in ["reader", "reviewer"] {
+        let mut agent = primary.clone();
+        agent.name = name.into();
+        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
+            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        });
+        document.spec.sandboxes[0].agents.push(agent);
+    }
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|k| (k.into(), format!("{k}-generation")))
+        .into();
+    let targets = targets(&document, &generations).unwrap();
+    let mut rows = Vec::new();
+    // Native startup can lag behind sandbox creation; SDK readiness waits separately.
+    fixture.state.lock().unwrap().exec_exit = 2;
+    for target in &targets {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none(), "{:?}", result.error());
+        rows.push(result.into_parts().0.unwrap());
+    }
+    fixture.state.lock().unwrap().exec_exit = 0;
+    let effects = fixture.state.lock().unwrap().effects;
+    client
+        .read("sandbox", &rows[3], false)
+        .await
+        .unwrap()
+        .unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.effects, effects);
+        assert!(
+            state
+                .exec_calls
+                .iter()
+                .any(|c| c.iter().any(|a| a == "--inference"))
+        );
+    }
+    fixture.state.lock().unwrap().exec_exit = 2;
+    assert!(client.read("sandbox", &rows[3], false).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // An unavailable runtime cannot establish its tool restrictions either.
+    let key = format!(
+        "{}/{}",
+        document.workspace(),
+        document.spec.sandboxes[0].name
+    );
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .phase = openshell_core::proto::SandboxPhase::Stopped as i32;
+    assert!(client.read("sandbox", &rows[3], false).await.is_err());
+    // Broken native configuration must not prevent deliberate teardown.
+    assert!(
+        client
+            .read("sandbox", &rows[3], true)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
+    let fixture = Fixture::start().await;
+    let mut value: serde_json::Value = serde_json::to_value(
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    value["spec"]["gateway"]["endpoint"] = serde_json::json!(fixture.endpoint);
+    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle", "provider":"openai", "endpoint":"http://172.20.0.1:19999/v1"}));
+    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    inference["default"] = serde_json::json!("primary");
+    inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart-model"}}));
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let targets = targets(&document, &generations).unwrap();
+    for target in targets.iter().filter(|target| target.kind != "sandbox") {
+        assert!(
+            client
+                .ensure(&target.kind, &target.values)
+                .await
+                .error()
+                .is_none()
+        );
+    }
+    let desired = &targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap()
+        .values;
+    let mutation = client.ensure("sandbox", desired).await;
+    assert!(mutation.error().is_none());
+    let row = mutation.into_parts().0.unwrap();
+    let key = format!(
+        "{}/{}",
+        document.workspace(),
+        document.spec.sandboxes[0].name
+    );
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let sandbox = state
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap();
+        assert_eq!(sandbox.providers, vec!["local", "oracle"]);
+        sandbox.providers.pop();
+    }
+    assert!(client.read("sandbox", &row, false).await.is_err());
 }

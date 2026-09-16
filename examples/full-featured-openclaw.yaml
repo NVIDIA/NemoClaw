@@ -1,0 +1,179 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Broad compatible feature example, not an all-fields template or a live-qualified deployment.
+# Replace the UID, image placeholders, SSH alias, addresses, and model settings for your hosts.
+# Requires local Docker/OpenShell, a compatible remote NVIDIA GPU, an existing proxy and OTLP collector,
+# and BRAVE_API_KEY on the applying host. Apply provisions resources and invokes inference.
+# See docs/configuration-references.md#combine-supported-features for alternatives and limits.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: full-featured-openclaw
+  uid: c5641f3b-688b-4d2b-935d-ab21718e6ef8
+spec:
+  harnesses:
+    assistant:
+      kind: openclaw
+      interfaces:
+        dashboard:
+          port: 18800
+          bind: 127.0.0.1
+      observability:
+        otlp:
+          enabled: true
+          endpoint: http://host.openshell.internal:4318
+          serviceName: research-team
+          sampleRate: 0.5
+      execution:
+        timeoutSeconds: 900
+        heartbeatEvery: 30m
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17695
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a
+    networkCIDR: 172.30.121.0/24
+    network:
+      management: managed
+    storage:
+      management: managed
+  inferenceProviders:
+    - name: nemotron
+      management: managed
+      provider: openai
+      api: openai-completions
+      service:
+        management: managed
+        backend: vllm
+        authentication: bearer
+        # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
+        image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        placement:
+          engine: ssh://gpu-box
+          networkCidr: 172.30.119.0/24
+          network:
+            management: managed
+        publication:
+          endpoint: http://10.0.0.8:18898/v1
+          bindAddress: 10.0.0.8
+        storage:
+          management: managed
+        hardware:
+          architecture: amd64
+          minComputeCapability: 90
+          minGpuMemoryBytes: 96000000000
+          minDriverMajor: 580
+        container:
+          ipc: host
+          sharedMemoryGiB: 32
+        model:
+          management: managed
+          repository: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+          revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
+        serving:
+          modelName: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+          toolParser: qwen3_coder
+          reasoningParser: nemotron_v3
+          mambaBackend: flashinfer
+          enforceEager: false
+          port: 18898
+          contextTokens: 65536
+          maxSequences: 1
+          batchTokens: 4096
+          startupTimeoutSeconds: 1800
+        memory:
+          gpuMemoryUtilization: 0.75
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+  sandboxes:
+    - name: assistant
+      image:
+        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        proxy:
+          management: external
+          host: 10.200.0.1
+          port: 3128
+        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    tls: terminate
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: GET
+                          path: /docs/**
+                binaries:
+                  - path: /usr/local/bin/node
+      agents:
+        - name: researcher
+          harnessRef: assistant
+          integrationRefs: [search]
+          tools:
+            disclosure: progressive
+          inference:
+            routes:
+              - name: primary
+                providerRef: nemotron
+                overrides:
+                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                  contextWindow: 65536
+                  maxTokens: 8192
+                  reasoning: true
+                  reasoningEffort: high
+        - name: writer
+          harnessRef: assistant
+          integrationRefs: [search]
+          tools:
+            disclosure: progressive
+          inference:
+            routes:
+              - name: primary
+                providerRef: nemotron
+                overrides:
+                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                  contextWindow: 65536
+                  maxTokens: 8192
+                  reasoning: true
+                  reasoningEffort: high
+        # Tool restriction, not filesystem isolation. This agent receives no search grant.
+        - name: reader
+          harnessRef: assistant
+          tools:
+            allow: [read]
+          inference:
+            routes:
+              - name: primary
+                providerRef: nemotron
+                overrides:
+                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                  contextWindow: 65536
+                  maxTokens: 8192
+                  reasoning: true
+                  reasoningEffort: high

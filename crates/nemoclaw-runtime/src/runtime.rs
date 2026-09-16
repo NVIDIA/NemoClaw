@@ -52,6 +52,10 @@ async fn run_owned(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
+    let credential = spec
+        .authentication
+        .map(|_| crate::authentication::load(Path::new(ROOT)))
+        .transpose()?;
     let prepared = crate::recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
@@ -59,7 +63,12 @@ async fn run_owned(
         ));
     }
     let capacity = crate::hardware::before_start(spec, cancel).await?;
-    let (mut command, readiness) = crate::backend::launch(spec, &prepared, capacity.total)?;
+    let (mut command, readiness) = crate::backend::launch(
+        spec,
+        &prepared,
+        nemoclaw_sdk::hardware::serving_memory(spec, &capacity)?,
+        credential,
+    )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
     let mut child = command
         .spawn()

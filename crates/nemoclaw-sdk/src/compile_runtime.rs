@@ -19,7 +19,7 @@ pub fn runtime_targets(
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
-        gateway: document.spec.gateway.clone(),
+        gateway: document.spec.gateway.runtime_settings(),
         service: None,
     };
     let mut storage = gateway.clone();
@@ -37,7 +37,7 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    if let Some(service) = document.spec.inference_providers[0].service.as_ref() {
+    if let Some(service) = document.lifecycle_provider()?.service.as_ref() {
         let spec = Spec {
             layout: 0,
             kind: SERVICE_KIND.into(),
@@ -47,9 +47,9 @@ pub fn runtime_targets(
             gateway: if service.placement.is_some() {
                 Default::default()
             } else {
-                document.spec.gateway.clone()
+                document.spec.gateway.runtime_settings()
             },
-            service: Some(service.clone()),
+            service: Some(service.runtime_settings()),
         };
         let storage = Storage {
             name: format!("{}-inference-data", document.workspace()),
@@ -70,7 +70,8 @@ pub fn compile_runtime(
     let mut graph = compile(document, generations, version)?;
     graph["resource"] = json!({});
     for target in runtime_targets(document, generations)? {
-        let mut attrs = json!({"spec":target.values["spec"]});
+        let mut attrs =
+            json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         match target.kind.as_str() {
             GATEWAY_STORAGE_KIND | STORAGE_KIND => {
                 attrs["lifecycle"] = json!({"prevent_destroy":true})
@@ -78,7 +79,8 @@ pub fn compile_runtime(
             GATEWAY_KIND => attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]),
             SERVICE_KIND => {
                 attrs["depends_on"] = if document.spec.gateway.management == "managed"
-                    && document.spec.inference_providers[0]
+                    && document
+                        .lifecycle_provider()?
                         .service
                         .as_ref()
                         .is_some_and(|s| s.placement.is_none())

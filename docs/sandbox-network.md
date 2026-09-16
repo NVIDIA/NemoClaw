@@ -35,6 +35,29 @@ See the [generated field reference](reference/configuration.md#explicitpolicy) f
 Use `hard_requirement` to require enforcement; the `strict` spelling used by main's exported schema maps to `hard_requirement`.
 Kernel enforcement still requires qualification on the deployment host.
 
+## Choose TLS Inspection and Enforcement
+
+For an explicit endpoint with a supported application protocol, choose TLS handling and request enforcement separately:
+
+| Endpoint setting | Behavior in the pinned OpenShell implementation |
+|---|---|
+| Omit `tls` | Automatic TLS detection and termination for inspectable traffic |
+| `tls: terminate` or `tls: passthrough` | Deprecated spellings that both select automatic handling; `passthrough` does not request a raw tunnel |
+| `tls: skip` | Raw TCP tunnel with no TLS termination, HTTP inspection, or credential injection |
+| `enforcement: enforce` | Enforce the configured application-level request rules on inspected traffic |
+| `enforcement: audit`, or omit `enforcement` | Audit application-level decisions rather than block requests based on those rules |
+
+Destination and executable grants still determine which connections are allowed.
+An allowed raw tunnel cannot enforce encrypted HTTP methods/paths or replace a placeholder credential inside the request.
+Do not choose `tls: skip` for an endpoint that relies on those controls, including the declared Brave integration's credential injection.
+Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
+The checked-in example uses that enforcement setting with automatic TLS handling.
+
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [SDK policy validator](../crates/nemoclaw-sdk/src/config/network.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
+Live enforcement and application trust on your host remain qualification requirements.
+Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
+
 ## Select the Agent Proxy
 
 ```yaml
@@ -76,3 +99,11 @@ If an operation fails, preserve the state directory, resolve the reported observ
 
 Local fixture tests exercise creation, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.
+
+## Earlier Policy Workflows
+
+V1 has no NemoClaw commands for named preset installation, interactive network-request approval, or explaining policy to an agent.
+Use the [isolated preset or complete explicit policy](#choose-a-policy) as declared intent.
+External OpenShell policy edits can conflict with that intent and stop export; they are not a supported bypass for refused replacement.
+Equivalent managed approval/explanation workflows remain **TBD** pending implementation.
+Integration-specific examples, including raw TLS applications, require their own endpoint, credential, and live enforcement qualification.

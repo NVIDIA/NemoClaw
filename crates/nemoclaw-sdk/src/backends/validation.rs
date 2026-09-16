@@ -10,6 +10,12 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
     if let Some(recipe) = &service.recipe {
         return recipe.resources.gpu_memory_bytes;
     }
+    if let (Some(hardware), Some(ratio)) =
+        (&service.hardware, &service.memory.gpu_memory_utilization)
+    {
+        return (hardware.min_gpu_memory_bytes as f64 * ratio.as_f64().unwrap_or(0.0)).floor()
+            as u64;
+    }
     (if service.memory.gpu_memory_gib == 0 {
         c::GPU_MEMORY_DEFAULT
     } else {
@@ -21,11 +27,23 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
     if service.backend != c::BACKEND {
         return Err(ConfigError("unsupported inference backend"));
     }
+    service.validate_hardware()?;
     crate::recipes::huggingface::validate_model(service)?;
     if let Some(recipe) = &service.recipe {
         recipe.validate(service)?;
     }
     let v = &service.serving;
+    if (!v.model_name.is_empty() && !regex::Regex::new(c::MODEL).unwrap().is_match(&v.model_name))
+        || !["", "flashinfer"].contains(&v.mamba_backend.as_str())
+        || (service.recipe.is_some()
+            && (!v.model_name.is_empty()
+                || !v.mamba_backend.is_empty()
+                || v.enforce_eager.is_some()))
+    {
+        return Err(ConfigError(
+            "native serving overrides must be valid and cannot override an inline recipe",
+        ));
+    }
     if !c::PORT.contains(v.port)
         || !c::CONTEXT_TOKENS.contains(v.context_tokens)
         || !c::MAX_SEQUENCES.contains(v.max_sequences)

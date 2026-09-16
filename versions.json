@@ -1,6 +1,6 @@
 {
   "opentofu": "1.12.6",
-  "openshell": "0.0.116",
+  "openshell": "0.0.117-dev.155+gb3e4ad457",
   "openclaw": "2026.9.4",
   "ollama": "0.34.0",
   "platforms": {
@@ -56,5 +56,6 @@
     }
   },
   "rust": "1.98.1",
-  "protobuf": "36.1"
+  "protobuf": "36.1",
+  "openshellRevision": "b3e4ad4579e24dacfb285924876473b50a04b988"
 }

@@ -25,7 +25,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: deepagents
+          harness:
+            kind: deepagents
           inference:
             routes:
               - name: primary

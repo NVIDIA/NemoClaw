@@ -66,6 +66,9 @@ impl Engine {
                 .service
                 .as_ref()
                 .ok_or(Error::State("missing inference specification"))?;
+            if service.authentication.is_some() {
+                crate::inference_auth::read_key(self, &observed.container_id).await?;
+            }
             let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
             let bytes = self
                 .read_file(

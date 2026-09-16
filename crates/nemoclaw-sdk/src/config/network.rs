@@ -21,6 +21,10 @@ pub struct ExplicitPolicySelection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Proxy {
+    /// Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::ExternalManagement")]
+    pub management: Option<super::ExternalManagement>,
     /// Proxy hostname or IPv4 address, without scheme, path, or credentials.
     pub host: String,
     /// Proxy TCP port, from 1 through 65535.
@@ -241,6 +245,10 @@ pub struct PolicyJsonRpc {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyMcp {
+    /// Supported MCP protocol revisions; omission uses the pinned OpenShell default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Vec<String>")]
+    pub versions: Option<Vec<String>>,
     /// Maximum buffered request bytes, 1 through 1048576.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32")]

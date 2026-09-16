@@ -56,6 +56,49 @@ pub(super) fn constrain(root: &mut Value) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
     let defs = root["$defs"].as_object_mut().unwrap();
+    for variant in defs["Integration"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged integration variants")
+    {
+        property(
+            variant,
+            "kind",
+            json!({"description": "Integration implementation selected by this definition."}),
+        );
+    }
+    for name in ["Spec", "Sandbox", "Agent"] {
+        property(
+            &mut defs[name],
+            "integrations",
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+    }
+    for name in ["Spec", "Sandbox"] {
+        property(
+            &mut defs[name],
+            "inferences",
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+        property(
+            &mut defs[name],
+            "harnesses",
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+    }
+    property(
+        &mut defs["Agent"],
+        "inferenceRef",
+        json!({"pattern": c::SLUG}),
+    );
+    defs["Agent"]["oneOf"] = json!([
+        {"required": ["inference"], "not": {"required": ["inferenceRef"]}},
+        {"required": ["inferenceRef"], "not": {"required": ["inference"]}}
+    ]);
+    property(
+        &mut defs["Agent"],
+        "integrationRefs",
+        json!({"uniqueItems": true, "items": {"type": "string", "pattern": c::SLUG}}),
+    );
     for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
         property(
             defs.get_mut(name).unwrap(),
@@ -65,18 +108,27 @@ pub(super) fn constrain(root: &mut Value) {
     }
     property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
     property(&mut defs["Credential"], "env", json!({"pattern": c::ENV}));
-    for (name, field) in [
-        ("Spec", "inferenceProviders"),
-        ("Spec", "sandboxes"),
-        ("Sandbox", "agents"),
-        ("Inference", "routes"),
-    ] {
-        property(
-            defs.get_mut(name).unwrap(),
-            field,
-            json!({"minItems": 1, "maxItems": 1}),
-        );
-    }
+    property(
+        &mut defs["Spec"],
+        "sandboxes",
+        json!({"minItems":1,"maxItems":1}),
+    );
+    property(
+        &mut defs["Sandbox"],
+        "agents",
+        json!({
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/Agent"}
+        }),
+    );
+    defs["Sandbox"]["allOf"] = json!([{
+        "if": {"properties": {"agents": {"minItems": 2}}, "required": ["agents"]},
+        "then": {"properties": {"agents": {"items": {"properties": {"harness": {"properties": {"kind": {"const": "openclaw"}}}}}}}}
+    }]);
+    defs["Agent"]["allOf"] = json!([{
+        "if": {"required": ["tools"]},
+        "then": {"properties": {"harness": {"properties": {"kind": {"const": "openclaw"}}}}}
+    }]);
     optional_string(
         &mut defs["Image"],
         "ref",
@@ -140,13 +192,41 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
         );
     }
+    property(&mut defs["Harness"], "kind", json!({"enum": c::HARNESSES}));
     property(
-        &mut defs["AgentAuth"],
-        "providerRef",
+        &mut defs["Agent"],
+        "harnessRef",
         json!({"pattern": c::SLUG}),
     );
-    property(&mut defs["Agent"], "harness", json!({"enum": c::HARNESSES}));
-    property(&mut defs["Route"], "name", json!({"const": "primary"}));
+    defs["Agent"]["allOf"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"oneOf": [
+            {"required": ["harness"], "not": {"required": ["harnessRef"]}},
+            {"required": ["harnessRef"], "not": {"required": ["harness"]}}
+        ]}));
+    defs["Harness"]["allOf"] = json!([]);
+    property(&mut defs["Route"], "name", json!({"pattern": c::SLUG}));
+    property(
+        &mut defs["Inference"],
+        "default",
+        json!({"pattern": c::SLUG}),
+    );
+    property(
+        &mut defs["Inference"],
+        "routes",
+        json!({"minItems":1,"maxItems":32}),
+    );
+    defs["Inference"]["if"] = json!({"properties":{"routes":{"minItems":2}},"required":["routes"]});
+    defs["Inference"]["then"] = json!({"required":["default"]});
+    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("inference/routes",json!({"minItems":2}),true),
+        "then": at("harness/kind",json!({"const":"openclaw"}),false)
+    }));
+    defs["Route"]["oneOf"] = json!([
+        {"required":["providerRef"],"not":{"required":["provider"]}},
+        {"required":["provider"],"not":{"required":["providerRef"]}}
+    ]);
     property(
         &mut defs["Route"],
         "providerRef",
@@ -171,7 +251,7 @@ pub(super) fn constrain(root: &mut Value) {
         {"title": "External gateway", "required": ["endpoint"], "properties": {
             "management": {"const": "external"}, "endpoint": {"pattern": "^https?://"},
             "engine": {"const": ""}, "image": {"const": ""}, "networkCIDR": {"const": ""}
-        }}
+        }, "allOf": [forbid(&["network", "storage"])]}
     ]);
     gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
     gateway["then"] = forbid(&["credential", "tls"]);
@@ -185,24 +265,40 @@ pub(super) fn constrain(root: &mut Value) {
     let provider = &mut defs["InferenceProvider"];
     property(provider, "provider", json!({"enum": c::PROVIDERS}));
     provider["if"] = json!({"required": ["service"]});
-    provider["then"] = json!({"properties": {"endpoint": {"const": ""}}, "allOf": [forbid(&["credential", "ollama"])]});
+    provider["then"] = json!({"properties": {"endpoint": {"const": ""}}, "allOf": [forbid(&["credential", "ollama", "ollamaProxy"])]});
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
+        {"if": {"anyOf": [{"required": ["service"]}, {"required": ["ollama"]}]},
+         "then": {"properties": {"management": {"const": "managed"}}},
+         "else": {"properties": {"management": {"const": "external"}}}},
         {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])},
         {"if": {"required": ["ollama"]}, "then": {
             "properties": {"endpoint": {"pattern": "^http://.+:[0-9]+/v1$"}},
             "allOf": [forbid(&["credential"])]
         }}
     ]);
+    provider["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["ollamaProxy"]},"then":{
+        "properties":{"provider":{"const":"openai"},"management":{"const":"external"}},"allOf":[forbid(&["ollama","service","credential"])]}}));
+    property(
+        &mut defs["OllamaProxy"],
+        "engine",
+        json!({"pattern":"^unix:///"}),
+    );
+    property(
+        &mut defs["OllamaProxy"],
+        "image",
+        json!({"pattern":c::IMAGE}),
+    );
     property(
         &mut defs["ManagedOllama"],
         "engine",
         json!({"pattern": "^unix:///"}),
     );
+    defs["NetworkReference"]["anyOf"][0]["pattern"] = json!(c::SLUG);
     property(
-        &mut defs["ManagedOllama"],
-        "network",
+        &mut defs["ExternalNetwork"],
+        "name",
         json!({"pattern": c::SLUG}),
     );
     property(
@@ -210,43 +306,129 @@ pub(super) fn constrain(root: &mut Value) {
         "image",
         json!({"pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$"}),
     );
+    property(
+        &mut defs["OpenClawDashboard"],
+        "port",
+        json!({"not":{"minimum":8642,"maximum":8652}}),
+    );
+    defs["OpenClawDashboard"]["minProperties"] = json!(1);
+    defs["AgentExecution"]["minProperties"] = json!(1);
+    property(&mut defs["OtlpTracing"], "enabled", json!({"const":true}));
+    property(&mut defs["RelayTracing"], "enabled", json!({"const":true}));
+    property(
+        &mut defs["OtlpTracing"],
+        "endpoint",
+        json!({"const":super::super::observability::OTLP_ENDPOINT}),
+    );
+    property(
+        &mut defs["OtlpTracing"],
+        "serviceName",
+        json!({"minLength":1,"maxLength":256,"pattern":"^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"}),
+    );
+    defs["AgentObservability"]["oneOf"] = json!([
+        {"required":["otlp"],"not":{"required":["relay"]}},
+        {"required":["relay"],"not":{"required":["otlp"]}}
+    ]);
+    defs["Harness"]["allOf"].as_array_mut().unwrap().extend([
+        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["otlp"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}),
+        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"kind":{"const":"hermes"}},"not":{"required":["interfaces"]}}})
+    ]);
+    // JSON Schema's dollar anchor also matches before a trailing newline.
+    property(
+        &mut defs["AgentExecution"],
+        "heartbeatEvery",
+        json!({"pattern":"^[0-9]+[smh]$(?![\\s\\S])"}),
+    );
+    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["execution"]},"then":{"properties":{"kind":{"const":"openclaw"}}}}));
+    defs["HermesInterfaces"]["minProperties"] = json!(1);
+    for field in ["port", "internalPort"] {
+        property(
+            &mut defs["HermesDashboard"],
+            field,
+            json!({"not":{"anyOf":[{"minimum":8642,"maximum":8652},{"const":18642}]}}),
+        );
+    }
+    defs["HermesDashboard"]["allOf"] = json!([{"if":{"properties":{"enabled":{"const":false}}},"then":forbid(&["port","internalPort","tui"])}]);
+    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"kind":{"enum":["openclaw","hermes"]}},"allOf":[
+        {"if":{"properties":{"kind":{"const":"openclaw"}}},"then":{"properties":{"interfaces":{"$ref":"#/$defs/OpenClawInterfaces"}}},"else":{"properties":{"interfaces":{"$ref":"#/$defs/HermesInterfaces"}}}}
+    ]}}));
     service_constraints(defs);
 
-    let provider = "spec/inferenceProviders/[]";
-    let agent = "spec/sandboxes/[]/agents/[]";
-    let runtime = "spec/sandboxes/[]/runtime/provider";
-    let route = format!("{agent}/inference/routes/[]/overrides");
-    let service = format!("{provider}/service");
-    root["allOf"] = json!([
-        {"if": at(&format!("{agent}/harness"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
-        {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
-         "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
-        {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
-            at("spec/gateway/management", json!({"const": "external"}), true),
-            at(runtime, json!({"const": "podman"}), true)
-         ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
-         "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
-        {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
-            {"allOf": [at(&format!("{agent}/harness"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
-         "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
-         "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "openclaw"}}), true),
-         "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
-        {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness"), json!({"const": "hermes"}), false), at(provider, json!({"required": ["credential"]}), true)]}},
-        {"if": at(&format!("{agent}/harness"), json!({"not": {"const": "pi"}}), true),
-         "then": at(&route, forbid(&["piModel"]), false)},
-        {"if": at(&format!("{provider}/ollama"), json!({}), true),
-         "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
-    ]);
+    root["allOf"] = json!([]);
+    let route_path = "spec/sandboxes/[]/agents/[]/inference/routes/[]";
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at(route_path, json!({"required":["providerRef"]}), true),
+        "then": {"anyOf":[
+            at("spec/inferenceProviders", json!({"minItems":1}), true),
+            at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1}), true)
+        ]}
+    }));
+    for (provider, selection) in [
+        (
+            "spec/inferenceProviders/[]",
+            json!({"allOf": [
+                at("spec/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
+                at("spec/sandboxes/[]/inferenceProviders", json!({"maxItems":0}), false),
+                at(route_path, json!({"required":["providerRef"]}), true)
+            ]}),
+        ),
+        (
+            "spec/sandboxes/[]/inferenceProviders/[]",
+            json!({"allOf": [
+                at("spec/inferenceProviders", json!({"maxItems":0}), false),
+                at("spec/sandboxes/[]/inferenceProviders", json!({"minItems":1,"maxItems":1}), true),
+                at(route_path, json!({"required":["providerRef"]}), true)
+            ]}),
+        ),
+        (
+            "spec/sandboxes/[]/agents/[]/inference/routes/[]/provider",
+            at(route_path, json!({"required":["provider"]}), true),
+        ),
+    ] {
+        let agent = "spec/sandboxes/[]/agents/[]";
+        let runtime = "spec/sandboxes/[]/runtime/provider";
+        let route = format!("{agent}/inference/routes/[]/overrides");
+        let service = format!("{provider}/service");
+        let rules = json!([
+            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
+            {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
+             "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
+            {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
+                at("spec/gateway/management", json!({"const": "external"}), true),
+                at(runtime, json!({"const": "podman"}), true)
+             ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"enum": ["openclaw", "hermes"]}}), true),
+             "then": {"allOf": [at("spec/gateway/management", json!({"const": "external"}), false), at(provider, forbid(&["service", "ollama"]), false)]}},
+            {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
+                {"allOf": [at(&format!("{agent}/harness/kind"), json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
+             "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
+             "else": at(&format!("{provider}/provider"), json!({"const": "openai"}), false)},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "claude"}), true), "then": at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), false)},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"const": "openclaw"}}), true),
+             "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
+            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at(&format!("{agent}/harness/kind"), json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
+            {"if": at(&format!("{agent}/harness/kind"), json!({"not": {"const": "pi"}}), true),
+             "then": at(&route, forbid(&["piModel"]), false)},
+            {"if": at(&format!("{provider}/ollama"), json!({}), true),
+             "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
+        ]);
+        root["allOf"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"if":{"allOf":[selection,at(&format!("{agent}/harness/kind"),json!({}),true)]},"then":{"allOf":rules}}));
+    }
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-        "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
+        "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+        "The parser resolves harnessRef from enclosing harnesses and requires identical resolved harness settings across agents in a sandbox. Shared definitions reuse configuration, not runtime processes across sandboxes.",
+        "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
+        "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);
@@ -256,6 +438,11 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     let service = &mut defs["Service"];
     property(service, "backend", json!({"const": c::BACKEND}));
     property(service, "image", json!({"pattern": c::IMAGE}));
+    service["allOf"] = json!([
+        {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
+        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
+        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
+    ]);
     service["dependentRequired"] =
         json!({"placement": ["publication"], "publication": ["placement"]});
     service["if"] = json!({"required": ["recipe"]});
@@ -326,8 +513,65 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         memory,
         "gpuMemoryGiB",
         json!({"minimum": 0, "maximum": c::GPU_MEMORY_MAX,
-        "x-nemoclaw-default-rule": format!("Omitted or zero stays zero in the document. Without a recipe, the backend uses {} GiB. With a recipe, resources.gpuMemoryBytes supplies the budget.", c::GPU_MEMORY_DEFAULT)}),
+        "x-nemoclaw-default-rule": format!("Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses {} GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here.", c::GPU_MEMORY_DEFAULT)}),
     );
+    property(
+        &mut defs["Serving"],
+        "modelName",
+        json!({"anyOf":[{"const":""},{"pattern":c::MODEL}],"default":""}),
+    );
+    property(
+        &mut defs["Serving"],
+        "mambaBackend",
+        json!({"enum":["","flashinfer"],"default":""}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "architecture",
+        json!({"const":"amd64"}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minComputeCapability",
+        json!({"minimum":10,"maximum":999}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minGpuMemoryBytes",
+        json!({"minimum":4_u64*(1<<30),"maximum":4_u64*(1<<40)}),
+    );
+    property(
+        &mut defs["ServiceHardware"],
+        "minDriverMajor",
+        json!({"minimum":1,"maximum":9999}),
+    );
+    property(
+        &mut defs["ServiceContainer"],
+        "sharedMemoryGiB",
+        json!({"minimum":1,"maximum":64}),
+    );
+    property(
+        &mut defs["Memory"],
+        "gpuMemoryUtilization",
+        json!({"minimum":0.05,"maximum":0.95}),
+    );
+    // A fractional GPU budget delegates KV allocation to vLLM. The fixed-budget
+    // path keeps its existing authored zero/default behavior and 4..12 GiB bound.
+    defs["Memory"]["properties"]["kvCacheGiB"]
+        .as_object_mut()
+        .unwrap()
+        .remove("minimum");
+    defs["Memory"]["properties"]["kvCacheGiB"]
+        .as_object_mut()
+        .unwrap()
+        .remove("anyOf");
+    defs["Memory"]["properties"]["kvCacheGiB"]["minimum"] = json!(0);
+    defs["Memory"]["properties"]["kvCacheGiB"]["x-nemoclaw-default-rule"] = json!(
+        "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
+    );
+    defs["Memory"]["allOf"] = json!([
+        {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf":[{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]}}}}
+    ]);
     recipe_constraints(defs);
 }
 
@@ -424,7 +668,7 @@ fn recipe_constraints(defs: &mut serde_json::Map<String, Value>) {
         property(
             settings,
             field,
-            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$"}, "default": {}}),
+            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$", "not":{"const":"VLLM_API_KEY"}}, "default": {}}),
         );
     }
     property(

@@ -55,6 +55,9 @@ Keep schema changes, descriptions, examples, tests, and regenerated files in the
 
 ## Preserve the Input Contract
 
+Reusable application objects follow the [definitions and references contract](configuration-references.md).
+Keep its coverage table accurate when adding a family or changing supported scopes.
+
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
 Schema annotations restore required fields that the parser validates after deserialization.
 They also distinguish an omitted option from an explicit null value.
@@ -71,6 +74,14 @@ For a rule that the schema cannot express, document the parser check in the gene
 `Document::parse` remains authoritative for YAML syntax, cross-field comparisons, and transport policy.
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
 The [reference's validation limits](reference/configuration.md#validation-beyond-the-schema) list those boundaries.
+
+## Add a Reusable Configuration Family
+
+Follow the [definitions and references contract](configuration-references.md).
+Specify the definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
+Use the same typed definition and resolved behavior for inline and reference forms.
+Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply.
+Add the family to the authoring guide's coverage table only when its runtime behavior is implemented.
 
 ## Keep Generation Reproducible
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use std::io::{Cursor, Read};
+pub mod docs;
 pub mod schema;
 mod source;
 pub use source::{hex, source_inputs, source_version};

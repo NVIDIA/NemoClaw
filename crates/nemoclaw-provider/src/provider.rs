@@ -243,6 +243,49 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
         let definitions = [
             Definition::new(
+                "ollama_proxy_storage",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                ],
+                &[],
+            ),
+            Definition::new(
+                "ollama_proxy",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                    "running",
+                ],
+                &["running"],
+            ),
+            Definition::new(
+                "ollama_external_model",
+                &[
+                    "name",
+                    "owner",
+                    "generation",
+                    "image",
+                    "bind_address",
+                    "upstream",
+                    "model",
+                    "digest",
+                ],
+                &[],
+            ),
+            Definition::new(
                 "ollama_storage",
                 &[
                     "name",
@@ -276,6 +319,19 @@ impl Provider for NemoClawProvider {
             Definition::new("inference_service", &["spec", "running"], &["running"]),
             Definition::new("gateway_storage", &["spec"], &[]),
             Definition::new("inference_storage", &["spec"], &[]),
+            Definition::new(
+                "provider_profile",
+                &[
+                    "workspace",
+                    "name",
+                    "owner",
+                    "generation",
+                    "endpoint",
+                    "provider_type",
+                    "authenticated",
+                ],
+                &[],
+            ),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
             Definition::new(
                 "provider",
@@ -287,20 +343,9 @@ impl Provider for NemoClawProvider {
                     "endpoint",
                     "credential_env",
                     "provider_type",
+                    "credential_source",
                 ],
                 &["endpoint", "credential_env"],
-            ),
-            Definition::new(
-                "route",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "provider_name",
-                    "model",
-                ],
-                &["provider_name", "model"],
             ),
             Definition::new(
                 "sandbox",

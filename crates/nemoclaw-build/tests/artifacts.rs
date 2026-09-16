@@ -204,3 +204,17 @@ fn artifact_inputs_cannot_overwrite_the_retained_build_manifest() {
     let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }
+
+#[test]
+fn runtime_artifacts_can_select_native_linux_amd64() {
+    let input = serde_json::json!({"name":"vllm-amd64","platform":"linux_amd64","image":"nc-vllm-amd64:test","sourceDateEpoch":1789516800,"files":["Dockerfile","NOTICE.md"],"downloads":{}});
+    let artifact = nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&input).unwrap())
+        .expect("AMD64 runtime manifest must parse");
+    artifact.require_native_host("linux_amd64").unwrap();
+    assert!(artifact.require_native_host("linux_arm64").is_err());
+    let mut invalid = input;
+    invalid["platform"] = "darwin_arm64".into();
+    assert!(
+        nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()).is_err()
+    );
+}

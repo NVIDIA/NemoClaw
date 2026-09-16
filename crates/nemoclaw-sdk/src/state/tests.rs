@@ -83,3 +83,20 @@ fn module_indexed_and_deposed_state_cannot_alias_a_root_binding() {
         );
     }
 }
+
+#[test]
+fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let document = crate::config::Document::parse(
+        include_str!("../../tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    let mut record = Record::new(document).unwrap();
+    record.version = 1;
+    let bytes = serde_json::to_vec(&record).unwrap();
+    let path = dir.path().join("intent.json");
+    std::fs::write(&path, &bytes).unwrap();
+    assert!(store.load().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}

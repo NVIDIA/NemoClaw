@@ -25,6 +25,21 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
+    fn optional(&self, field: &str) -> bool {
+        (self.definition.kind == "provider_profile"
+            && matches!(field, "endpoint" | "authenticated"))
+            || matches!(
+                field,
+                "credential_source"
+                    | "credential_env"
+                    | "agent_runtime"
+                    | "provider_type"
+                    | "policy_json"
+                    | "proxy_host"
+                    | "proxy_port"
+                    | "inference_json"
+            )
+    }
     fn computed_digest(&self) -> bool {
         self.definition.kind == "ollama_model"
     }
@@ -45,7 +60,7 @@ impl ResourceAdapter {
                 {
                     Ok((k.clone(), String::new()))
                 }
-                Value::Null if optional(k) => Ok((k.clone(), String::new())),
+                Value::Null if self.optional(k) => Ok((k.clone(), String::new())),
                 Value::Unknown | Value::Null if creating && k == "id" => {
                     Ok((k.clone(), String::new()))
                 }
@@ -64,7 +79,7 @@ impl ResourceAdapter {
         {
             if observed
                 .get(field)
-                .is_none_or(|value| value.is_empty() && !optional(field))
+                .is_none_or(|value| value.is_empty() && !self.optional(field))
             {
                 return Err(ObservationError::Incomplete);
             }
@@ -127,18 +142,6 @@ impl ResourceAdapter {
         }
     }
 }
-fn optional(field: &str) -> bool {
-    matches!(
-        field,
-        "credential_env"
-            | "agent_runtime"
-            | "provider_type"
-            | "policy_json"
-            | "proxy_host"
-            | "proxy_port"
-            | "inference_json"
-    )
-}
 
 #[async_trait]
 impl Resource for ResourceAdapter {
@@ -164,7 +167,7 @@ impl Resource for ResourceAdapter {
                             || (name == "running" && self.observed_running())
                         {
                             AttributeConstraint::Computed
-                        } else if optional(name) {
+                        } else if self.optional(name) {
                             AttributeConstraint::OptionalComputed
                         } else {
                             AttributeConstraint::Required
@@ -231,7 +234,7 @@ impl Resource for ResourceAdapter {
             proposed.insert("running".into(), Value::Unknown);
         }
         for field in &self.definition.fields {
-            if optional(field)
+            if self.optional(field)
                 && matches!(
                     proposed.get(*field),
                     Some(Value::Null | Value::Unknown) | None

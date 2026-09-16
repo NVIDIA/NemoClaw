@@ -18,49 +18,312 @@
         "additionalProperties": false,
         "required": [
           "api",
-          "tuning"
+          "tuning",
+          "provider",
+          "connection"
         ],
         "properties": {
           "api": {
-            "enum": [
-              "openai-completions",
-              "openai-responses",
-              "anthropic-messages"
-            ]
+            "$ref": "#/$defs/api"
           },
           "tuning": {
+            "$ref": "#/$defs/tuning"
+          },
+          "agents": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,39}$"
+                },
+                "tools": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "allow"
+                      ],
+                      "properties": {
+                        "allow": {
+                          "const": [
+                            "read"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "disclosure"
+                      ],
+                      "properties": {
+                        "disclosure": {
+                          "enum": [
+                            "progressive",
+                            "direct"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "inference": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "default",
+                    "models"
+                  ],
+                  "properties": {
+                    "default": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "models": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "additionalProperties": {
+                        "$ref": "#/$defs/model"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "interfaces": {
             "type": "object",
+            "required": [
+              "dashboard"
+            ],
             "additionalProperties": false,
             "properties": {
-              "contextWindow": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 4194304
-              },
-              "maxTokens": {
+              "dashboard": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": false,
+                "properties": {
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "not": {
+                      "minimum": 8642,
+                      "maximum": 8652
+                    }
+                  },
+                  "bind": {
+                    "enum": [
+                      "127.0.0.1",
+                      "0.0.0.0"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "execution": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "timeoutSeconds": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 1000000000
               },
-              "reasoning": {
-                "type": "boolean"
-              },
-              "reasoningEffort": {
-                "enum": [
-                  "default",
-                  "low",
-                  "medium",
-                  "high"
-                ]
+              "heartbeatEvery": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
               }
             }
+          },
+          "observability": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "otlp"
+            ],
+            "properties": {
+              "otlp": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled",
+                  "endpoint",
+                  "serviceName",
+                  "sampleRate"
+                ],
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  },
+                  "endpoint": {
+                    "const": "http://host.openshell.internal:4318"
+                  },
+                  "serviceName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                  },
+                  "sampleRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              }
+            }
+          },
+          "webSearch": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "provider",
+              "agentRefs",
+              "credential"
+            ],
+            "properties": {
+              "provider": {
+                "const": "brave"
+              },
+              "agentRefs": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,39}$"
+                }
+              },
+              "credential": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "env"
+                ],
+                "properties": {
+                  "env": {
+                    "type": "string",
+                    "pattern": "^[A-Z_][A-Z0-9_]*$"
+                  }
+                }
+              }
+            }
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "connection": {
+            "$ref": "#/$defs/connection"
           }
         }
       }
     },
     "required": [
       "agent_name"
-    ]
+    ],
+    "$defs": {
+      "api": {
+        "enum": [
+          "openai-completions",
+          "openai-responses",
+          "anthropic-messages"
+        ]
+      },
+      "tuning": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4194304
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000000
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "reasoningEffort": {
+            "enum": [
+              "default",
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        }
+      },
+      "connection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "model",
+          "base_url",
+          "api_key_env"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "base_url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "api_key_env": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "model": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "connection",
+          "api",
+          "tuning"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "connection": {
+            "$ref": "#/$defs/connection"
+          },
+          "api": {
+            "$ref": "#/$defs/api"
+          },
+          "tuning": {
+            "$ref": "#/$defs/tuning"
+          }
+        }
+      }
+    }
   },
   "config": {
     "accepts": [

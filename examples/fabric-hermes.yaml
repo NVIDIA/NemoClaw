@@ -25,7 +25,8 @@ spec:
         tier: isolated
       agents:
         - name: main
-          harness: hermes
+          harness:
+            kind: hermes
           inference:
             routes:
               - name: primary

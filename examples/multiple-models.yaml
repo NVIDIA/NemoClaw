@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# Replace the UID, endpoint, model IDs, and agent image for your services.
+# The existing endpoint must serve both models; this example does not start it.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: multiple-models
+  uid: 51d3ac63-7e34-4aca-b3e4-13381f1dcb76
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11434/v1
+  harnesses:
+    assistant:
+      kind: openclaw
+  inferences:
+    smart-and-fast:
+      default: smart
+      routes:
+        - name: smart
+          providerRef: local
+          overrides:
+            model: qwen3:32b
+            contextWindow: 32768
+        - name: fast
+          providerRef: local
+          overrides:
+            model: qwen3:4b
+            contextWindow: 8192
+  sandboxes:
+    - name: assistant
+      agents:
+        - name: researcher
+          harnessRef: assistant
+          inferenceRef: smart-and-fast
+        - name: writer
+          harnessRef: assistant
+          inference:
+            routes:
+              - name: fast
+                providerRef: local
+                overrides:
+                  model: qwen3:4b
+                  contextWindow: 8192

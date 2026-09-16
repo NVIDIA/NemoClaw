@@ -1,0 +1,36 @@
+{
+  "contract_version": "fabric.adapter/v1alpha2",
+  "adapter_id": "nemoclaw.local.hermes",
+  "adapter_kind": "python",
+  "runner": {
+    "module": "hermes_adapter"
+  },
+  "settings_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "agent_name"
+    ],
+    "properties": {
+      "agent_name": {
+        "type": "string"
+      },
+      "inference": {
+        "type": "object"
+      },
+      "api_mode": {
+        "enum": [
+          "chat_completions",
+          "codex_responses",
+          "anthropic_messages"
+        ]
+      }
+    }
+  },
+  "config": {
+    "accepts": [
+      "models",
+      "models.base_url"
+    ]
+  }
+}

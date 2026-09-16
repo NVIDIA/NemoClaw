@@ -17,6 +17,7 @@ struct State {
 #[tokio::test]
 async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
     let spec = ServiceSpec {
+        proxy: None,
         name: "nc-0123456789abcdef-ollama".into(),
         owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
         generation: "b".repeat(32),

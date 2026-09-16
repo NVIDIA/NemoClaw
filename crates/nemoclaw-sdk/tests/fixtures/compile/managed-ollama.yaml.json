@@ -9,6 +9,9 @@
     "nemoclaw_ollama": {
       "service": {
         "bind_address": "172.20.0.1:11436",
+        "depends_on": [
+          "nemoclaw_ollama_storage.models"
+        ],
         "generation": "ollama-generation",
         "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
         "lifecycle": {
@@ -17,10 +20,7 @@
         "name": "nc-8bb56695710753e3-ollama",
         "network": "nc-prototype-slice",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
-        "running": "true",
-        "depends_on": [
-          "nemoclaw_ollama_storage.models"
-        ]
+        "running": "true"
       }
     },
     "nemoclaw_ollama_model": {
@@ -33,9 +33,26 @@
         "service_id": "${nemoclaw_ollama.service.id}"
       }
     },
+    "nemoclaw_ollama_storage": {
+      "models": {
+        "bind_address": "172.20.0.1:11436",
+        "generation": "ollama-generation",
+        "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "nc-8bb56695710753e3-ollama",
+        "network": "nc-prototype-slice",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
+      }
+    },
     "nemoclaw_provider": {
       "inference": {
         "credential_env": "",
+        "depends_on": [
+          "nemoclaw_provider_profile.inference",
+          "nemoclaw_ollama_model.inference"
+        ],
         "endpoint": "http://172.20.0.1:11436/v1",
         "generation": "provider-generation",
         "lifecycle": {
@@ -47,19 +64,17 @@
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },
-    "nemoclaw_route": {
-      "primary": {
-        "depends_on": [
-          "nemoclaw_ollama_model.inference"
-        ],
-        "generation": "workspace-generation",
+    "nemoclaw_provider_profile": {
+      "inference": {
+        "authenticated": "false",
+        "endpoint": "http://172.20.0.1:11436/v1",
+        "generation": "provider-generation",
         "lifecycle": {
           "prevent_destroy": true
         },
-        "model": "qwen3:0.6b",
-        "name": "primary",
+        "name": "nemoclaw-inference-local",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
-        "provider_name": "${nemoclaw_provider.inference.name}",
+        "provider_type": "",
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },
@@ -68,15 +83,17 @@
         "agent_name": "main",
         "agent_runtime": "fabric-openclaw",
         "depends_on": [
-          "nemoclaw_route.primary"
+          "nemoclaw_provider.inference"
         ],
         "generation": "sandbox-generation",
-        "image": "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+        "image": "nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b",
+        "inference_json": "{\"provider\":\"local\",\"connection\":{\"provider\":\"openai\",\"model\":\"qwen3:0.6b\",\"base_url\":\"http://172.20.0.1:11436/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}",
         "lifecycle": {
           "prevent_destroy": true
         },
         "name": "assistant",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
+        "policy_json": "{\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/app\",\"/bin\",\"/etc\",\"/lib\",\"/lib64\",\"/opt\",\"/proc\",\"/sbin\",\"/usr\"],\"read_write\":[\"/dev/null\",\"/dev/urandom\",\"/home/node\",\"/sandbox\",\"/tmp\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"network_policies\":{\"nemoclaw-inference-local\":{\"binaries\":[{\"path\":\"/opt/fabric/bin/python\"},{\"path\":\"/usr/local/bin/node\"}],\"endpoints\":[{\"access\":\"full\",\"allowed_ips\":[\"172.20.0.1/32\"],\"host\":\"172.20.0.1\",\"path\":\"/v1/**\",\"port\":11436,\"protocol\":\"rest\"}],\"name\":\"nemoclaw-inference-local\"}},\"process\":{\"run_as_group\":\"1000\",\"run_as_user\":\"1000\"},\"version\":1}",
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },
@@ -87,19 +104,6 @@
           "prevent_destroy": true
         },
         "name": "nc-8bb56695710753e3",
-        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
-      }
-    },
-    "nemoclaw_ollama_storage": {
-      "models": {
-        "bind_address": "172.20.0.1:11436",
-        "generation": "ollama-generation",
-        "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
-        "lifecycle": {
-          "prevent_destroy": true
-        },
-        "name": "nc-8bb56695710753e3-ollama",
-        "network": "nc-prototype-slice",
         "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
       }
     }
