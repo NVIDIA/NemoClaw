@@ -192,7 +192,10 @@ impl Spec {
             let url = url::Url::parse(&self.gateway.endpoint)
                 .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
             config["User"] = json!("0:0");
-            config["Env"] = json!([format!("XDG_STATE_HOME={data_path}/state")]);
+            config["Env"] = json!([
+                format!("XDG_STATE_HOME={data_path}/state"),
+                format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db")
+            ]);
             config["Entrypoint"] = json!(["/usr/local/bin/openshell-gateway"]);
             config["Cmd"] = json!([
                 "--config",
@@ -204,12 +207,7 @@ impl Spec {
                 "--port",
                 &url.port()
                     .ok_or(Error::Conflict("missing gateway port"))?
-                    .to_string(),
-                "--drivers",
-                "docker",
-                "--disable-tls",
-                "--db-url",
-                &format!("sqlite:{data_path}/gateway.db")
+                    .to_string()
             ]);
             host["NetworkMode"] = json!("host");
             host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":"/var/run/docker.sock","Target":"/var/run/docker.sock"}]);
@@ -256,7 +254,7 @@ impl Spec {
     }
     pub fn gateway_config(&self, data_path: &str) -> String {
         format!(
-            "[openshell.drivers.docker]\nnetwork_name = {:?}\nssh_socket_path = {:?}\nsupervisor_bin = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = {:?}\nssh_socket_path = {:?}\nsupervisor_bin = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
             self.network(),
             format!("{data_path}/ssh"),
             format!("{data_path}/openshell-supervisor"),

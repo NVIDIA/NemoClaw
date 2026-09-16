@@ -12,19 +12,15 @@
         "--bind-address",
         "127.0.0.1",
         "--port",
-        "17681",
-        "--drivers",
-        "docker",
-        "--disable-tls",
-        "--db-url",
-        "sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
+        "17681"
       ],
       "Domainname": "",
       "Entrypoint": [
         "/usr/local/bin/openshell-gateway"
       ],
       "Env": [
-        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state"
+        "XDG_STATE_HOME=/var/lib/docker/volumes/fixture/_data/state",
+        "OPENSHELL_DB_URL=sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
       ],
       "Hostname": "",
       "Image": "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a",
@@ -40,7 +36,7 @@
       "Volumes": null,
       "WorkingDir": ""
     },
-    "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-supervisor\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-supervisor\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
       "AutoRemove": false,
       "Binds": null,
@@ -167,7 +163,7 @@
       "Volumes": null,
       "WorkingDir": ""
     },
-    "gatewayConfig": "[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-supervisor\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-inference\"\nttl_secs = 0\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nssh_socket_path = \"/var/lib/docker/volumes/fixture/_data/ssh\"\nsupervisor_bin = \"/var/lib/docker/volumes/fixture/_data/openshell-supervisor\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-inference\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
       "AutoRemove": false,
       "Binds": null,
