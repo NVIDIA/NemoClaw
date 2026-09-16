@@ -201,7 +201,9 @@ export function resolveRebuildMessagingPolicyDeltas(
     };
   }
   const disabledChannels = new Set(plan.disabledChannels);
-  const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
+  const policyKeysByChannel = getMessagingPolicyKeysByChannel({
+    agent: plan.agent,
+  });
   return {
     requiredNetworkPolicyKeys: [
       ...new Set(
@@ -444,7 +446,10 @@ export function createFinalHandoffCheckpointPersistence(input: {
     },
     persistResumedFinalHandoffAcknowledgement(): void {
       update((checkpoint) =>
-        persistRecoveredFinalHandoffAcknowledgement({ checkpoint, persist: input.persist }),
+        persistRecoveredFinalHandoffAcknowledgement({
+          checkpoint,
+          persist: input.persist,
+        }),
       );
     },
   };
@@ -902,18 +907,11 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
   readonly restartGateway: (
     sandboxName: string,
     revalidateSandboxIdentity: (operation: string) => void,
-  ) => {
+  ) => Promise<{
     readonly status: number;
     readonly stdout: string;
     readonly stderr: string;
-  } | null;
-  readonly parseRestartCompletion: (
-    result: {
-      readonly status: number;
-      readonly stdout: string;
-      readonly stderr: string;
-    } | null,
-  ) => unknown | null;
+  } | null>;
   readonly waitForGateway: (
     sandboxName: string,
     revalidateSandboxIdentity: (operation: string) => void,
@@ -924,7 +922,7 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
 /**
  * Reconcile credentials rendered by an older managed Hermes image before
  * onboarding reports success. A changed env file is not effective until the
- * exact managed gateway supervisor restarts and passes its authenticated probe.
+ * native Hermes gateway restarts and passes its health probe.
  */
 export async function reconcileCreatedHermesCredentialEnvironment(
   input: {
@@ -946,15 +944,15 @@ export async function reconcileCreatedHermesCredentialEnvironment(
     );
     if (!reconciliation.changed) return;
 
-    const restart = deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
-    if (!deps.parseRestartCompletion(restart)) {
+    const restart = await deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
+    if (!restart || restart.status !== 0) {
       throw new Error(
-        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
+        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
       );
     }
     if (!(await deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity))) {
       throw new Error(
-        `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
+        `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the native gateway did not remain healthy.`,
       );
     }
     deps.revalidateSandboxIdentity(
@@ -1950,7 +1948,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
-        target: { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+        target: {
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+        },
         agentName: getRequestedSandboxAgentName(agent) || "openclaw",
         note,
         observe: (probeTarget) =>
@@ -2043,7 +2045,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hasMessagingTokens && providerExistence.some(({ token, exists }) => token && !exists);
       const selectionDrift = isManagedDcodeAgent
         ? await readManagedDcodeCreateSelectionDrift(
-            { sandboxName, provider, model, preferredInferenceApi, createIntent },
+            {
+              sandboxName,
+              provider,
+              model,
+              preferredInferenceApi,
+              createIntent,
+            },
             readDcodeSelectionDrift,
           )
         : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
@@ -2425,7 +2433,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   redact,
                   tolerateMissingSandbox: true,
                   ...(verifiedIdentityRevalidation
-                    ? { revalidateSandboxIdentity: verifiedIdentityRevalidation }
+                    ? {
+                        revalidateSandboxIdentity: verifiedIdentityRevalidation,
+                      }
                     : {
                         observeSandbox: () =>
                           getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
@@ -2766,7 +2776,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ? { finalHandoffCommitStarted: true as const }
           : {}),
         ...(resumedCheckpoint.exactFinalHandoffRuntimeId
-          ? { finalHandoffRuntimeId: resumedCheckpoint.exactFinalHandoffRuntimeId }
+          ? {
+              finalHandoffRuntimeId: resumedCheckpoint.exactFinalHandoffRuntimeId,
+            }
           : {}),
         ...(resumedCheckpoint.createAttemptNonce
           ? { createAttemptNonce: resumedCheckpoint.createAttemptNonce }
@@ -3040,7 +3052,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agent,
       fromDockerfile,
       { customOpenClawImage, isManagedDcodeAgent },
-      { provider, model, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null },
+      {
+        provider,
+        model,
+        preferredInferenceApi,
+        endpointUrl: createIntent?.endpointUrl ?? null,
+      },
       { createIntent, resolvedCreateIntent },
       sandboxRuntimeFields,
       agentCreateInput.portableLifecycle,
@@ -3048,7 +3065,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         toolDisclosure: effectiveToolDisclosure,
         dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode,
       },
-      { webSearchConfig, hermesAuthMethod: normalizeHermesAuthMethod(hermesAuthMethod) },
+      {
+        webSearchConfig,
+        hermesAuthMethod: normalizeHermesAuthMethod(hermesAuthMethod),
+      },
       { plannedMessagingState, hermesToolGateways },
       hermesApiPortReservationScope.effectivePort,
       { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },

@@ -29,13 +29,6 @@ function verifyGateway(sandboxName: string): Promise<void> {
   });
 }
 
-type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
-
-function restoreProcessState(sandboxName: string): Promise<SandboxStartupRecoveryResult> {
-  const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
-  return restoreSandboxStartupState(sandboxName);
-}
-
 /** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
 async function waitForSandboxReady(
   sandboxName: string,
@@ -53,71 +46,17 @@ async function waitForSandboxReady(
   });
 }
 
-export interface SandboxStartupStateDeps {
-  waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
-  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
-}
-
-export async function restoreStoppedSandboxStartupState(
-  sandboxName: string,
-  deps: SandboxStartupStateDeps = {},
-): Promise<SandboxStartupRecoveryResult> {
-  await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
-  return await (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
-}
-
 export interface SandboxStartDeps {
   allowDockerRuntimeInspection?: boolean;
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
-  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
-  waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
-}
-
-function isMissingManagedSupervisorStartupFailure(
-  check: SandboxStartupRecoveryResult,
-  failure: string,
-): boolean {
-  return (
-    failure === "supervisor not running: SUPERVISOR_NOT_RUNNING" &&
-    check.recoveryFailureLayer === "supervisor not running" &&
-    check.recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING"
-  );
-}
-
-function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | null {
-  if (!check.checked) return "managed agent gateway inspection did not complete";
-  if ("runtime" in check && check.runtime === "terminal") return null;
-  if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
-    return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
-  }
-  if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
-    return String(check.forwardRecoveryFailureDetail);
-  }
-  if (check.wasRunning || check.recovered) return null;
-  const layer = check.recoveryFailureLayer ?? "managed agent gateway recovery";
-  return check.recoveryFailureDetail
-    ? `${layer}: ${check.recoveryFailureDetail}`
-    : `${layer}: the agent gateway did not recover`;
-}
-
-function startupRecoveryError(sandboxName: string, detail: unknown): Error {
-  const { sanitizeSandboxStartupRecoveryDetail } =
-    require("./connect") as typeof import("./connect");
-  const rawDetail = detail instanceof Error && detail.message ? detail.message : String(detail);
-  const safeDetail = sanitizeSandboxStartupRecoveryDetail(rawDetail);
-  return new Error(
-    `Sandbox '${sandboxName}' started, but startup recovery failed: ${safeDetail}. ` +
-      `Inspect the current sandbox state before retrying. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
-  );
 }
 
 /**
@@ -212,45 +151,12 @@ async function startSandboxWithinLifecycleFence(
     return { exitCode: 0 };
   }
 
-  const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
+  const readiness: { inference: SandboxInferenceInvocationResult | null } = {
+    inference: null,
+  };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
-    log("  Restoring sandbox startup state…");
-    const restoreStartupState =
-      deps.restoreStartupState ??
-      ((sandboxNameToRestore: string) =>
-        restoreStoppedSandboxStartupState(sandboxNameToRestore, {
-          restoreProcessState: deps.restoreProcessState,
-          waitForSandboxReady: (readyName) =>
-            waitForSandboxReady(readyName, deps.observer, deps.allowDockerRuntimeInspection),
-        }));
-    let recovery: SandboxStartupRecoveryResult;
-    try {
-      recovery = await restoreStartupState(name);
-    } catch (error) {
-      throw startupRecoveryError(name, error);
-    }
-    let failure = startupRecoveryFailure(recovery);
-    if (failure && isMissingManagedSupervisorStartupFailure(recovery, failure)) {
-      let supervisorReady = false;
-      try {
-        const waitForSupervisor =
-          deps.waitForManagedGatewaySupervisor ??
-          (require("./connect") as typeof import("./connect")).waitForManagedGatewaySupervisor;
-        supervisorReady = waitForSupervisor(name);
-      } catch {
-        // Preserve the authoritative first recovery failure when the bounded
-        // read-only settling probe itself cannot complete.
-      }
-      if (supervisorReady) {
-        try {
-          recovery = await restoreStartupState(name);
-        } catch (error) {
-          throw startupRecoveryError(name, error);
-        }
-        failure = startupRecoveryFailure(recovery);
-      }
-    }
-    if (failure) throw startupRecoveryError(name, failure);
+    log("  Waiting for OpenShell sandbox readiness…");
+    await waitForSandboxReady(name, deps.observer, deps.allowDockerRuntimeInspection);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
