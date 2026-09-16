@@ -1122,7 +1122,19 @@ describe("socket-free MXC action contract", () => {
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      const runOpenshell = vi.fn((args: string[]) => {
+        switch (`${String(args[0])}:${String(args[1])}`) {
+          case "sandbox:get":
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
 
       await expect(
         startSandbox(sandboxName, {
