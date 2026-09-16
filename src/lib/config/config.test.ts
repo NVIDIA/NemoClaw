@@ -683,7 +683,7 @@ describe("NemoClawConfig v1", () => {
   it("rejects unsafe endpoints without including their contents in diagnostics (#10938)", () => {
     const canary = "DO_NOT_LOG_ENDPOINT_SECRET";
     const value = structuredClone(config()) as unknown as Record<string, any>;
-    value.spec.inferenceProviders[0].endpoint = `https://user:${canary}@api.example.com/v1`;
+    value.spec.inferenceProviders[0].endpoint = `http://user:${canary}@api.example.com/v1`;
     try {
       validateNemoClawConfig(value);
       throw new Error("Expected validation to fail");
@@ -693,7 +693,7 @@ describe("NemoClawConfig v1", () => {
     }
   });
 
-  it.each(["http://api.example.com/v1", `https://api.example.com/${"a".repeat(2049)}`])(
+  it.each(["ftp://api.example.com/v1", `https://api.example.com/${"a".repeat(2049)}`])(
     "rejects an endpoint outside the complete v1 contract",
     (endpoint) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
@@ -704,6 +704,8 @@ describe("NemoClawConfig v1", () => {
 
   it("uses the model guard for complete inference-endpoint semantics", () => {
     expect(isValidNemoClawInferenceEndpoint("https://api.example.com/v1")).toBe(true);
+    expect(isValidNemoClawInferenceEndpoint("http://api.example.com/v1")).toBe(true);
+    expect(isValidNemoClawInferenceEndpoint("http://host.openshell.internal:35271/v1")).toBe(true);
     expect(isValidNemoClawInferenceEndpoint("https://user:secret@api.example.com/v1")).toBe(false);
     expect(isValidNemoClawInferenceEndpoint(42)).toBe(false);
   });
