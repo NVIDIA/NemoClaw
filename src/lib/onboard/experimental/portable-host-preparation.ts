@@ -26,7 +26,9 @@ import {
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
   PORTABLE_REGISTRY_IP,
+  PORTABLE_REGISTRY_PORT,
   resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
@@ -700,6 +702,7 @@ function registryInspectionArgs(networkName: string): readonly string[] {
   ];
 }
 
+/** Reconcile only an owned registry; preserve running instances and reject foreign network identity. */
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
@@ -755,7 +758,7 @@ function ensureRegistryContainer(
         "--ip",
         PORTABLE_REGISTRY_IP,
         "-p",
-        "127.0.0.1:5000:5000",
+        `${PORTABLE_REGISTRY_HOST}:${PORTABLE_REGISTRY_PORT}:5000`,
         "--restart=always",
         REGISTRY_IMAGE,
       ],

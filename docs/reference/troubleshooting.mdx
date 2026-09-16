@@ -4367,6 +4367,64 @@ $$nemoclaw <original-arguments>
 
 The default cold-start budget is 60,000 ms. The later steady-state API deadline is fixed at 10,000 ms and does not use this setting. A successful cold path uses the `cold` timing label and reports activation, API, and total time in milliseconds. A successful warm path uses the `warm` timing label and reports steady-state API and total time in milliseconds.
 
+### Portable Managed Registry Is Unavailable
+
+`Managed local registry at http://127.0.0.1:5000 is unavailable` means Portable onboarding stopped before building or publishing the sandbox image.
+The registry must return HTTP `200` from `/v2/` within 5 seconds without a redirect.
+Podman API health alone does not establish registry readiness.
+
+Run these checks on the onboarding host as the same Linux user.
+They inspect user services and send one credential-free request to host loopback without changing registry state or using an HTTP proxy:
+
+```bash
+systemctl --user status podman.socket podman.service --no-pager
+curl --disable --noproxy '*' --silent --show-error --output /dev/null \
+  --write-out '%{http_code}\n' --max-time 5 http://127.0.0.1:5000/v2/
+```
+
+The readiness check passes only when `curl` exits with status `0` and prints `200`.
+A redirect, another HTTP status, `000`, or a connection error does not pass this check.
+If Podman is unavailable, follow [Portable Podman Readiness Fails](#portable-podman-readiness-fails) before retrying.
+
+For registry inspection, use the current-user socket recorded for the Portable session.
+Replace `<recorded-socket-path>` below with that verified path, not a socket selected by an ambient variable or named connection.
+If you cannot establish the recorded socket, stop and follow the socket-authority recovery above.
+List managed candidates and the host listener without stopping either:
+
+```bash
+podman --remote --url 'unix://<recorded-socket-path>' ps --all --no-trunc \
+  --filter label=com.nvidia.nemoclaw.portable=1 \
+  --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+lsof -nP -iTCP:5000 -sTCP:LISTEN
+```
+
+The managed registry publishes container port `5000` at host address `127.0.0.1:5000`.
+An empty listener result does not prove absence if your user cannot inspect the owning process.
+Do not stop or remove a resource based only on its name, label, or port.
+Use the following results to choose recovery:
+
+- If the registry is absent or stopped and port `5000` has no conflicting owner, retry Portable onboarding below.
+  Host preparation creates an absent registry or replaces a stopped managed registry after its ownership and network checks.
+  Replacement does not reuse the stopped registry's cached image data and can require later image builds or pulls.
+- If another application owns the listener, ask its owner to release or move its port through that application's lifecycle procedure.
+  Do not delete that application or change the registry to a public bind address.
+- If the managed registry is running but the request still fails, preserve it and its diagnostic output for maintainer support.
+  Onboarding does not recreate a running registry whose recorded network address already matches, so repeated retries do not repair that condition.
+- If ownership or inspection is ambiguous, preserve the resources and stop before retrying.
+
+After resolving the condition, retry the original Portable onboarding command.
+For a checkpoint schema 4 resumable session, run:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable --resume
+```
+
+Without a resumable session, run `$$nemoclaw onboard --experimental-profile portable`.
+The retry can refresh the current user's Podman service, prepare managed resources, and continue the original onboarding flow, including image downloads and builds.
+Verify that the loopback request returns `200` and onboarding continues past registry readiness.
+If it fails again, retain the error and inspection results for support instead of bypassing the check.
+Remove credentials and personal host details before sharing diagnostics.
+
 ### Portable Host Gateway Is Unreachable
 
 The portable experimental profile maps `host.openshell.internal` to the OpenShell Podman host gateway. Do not apply the Docker bridge UFW command when portable onboarding reports this route as unreachable.

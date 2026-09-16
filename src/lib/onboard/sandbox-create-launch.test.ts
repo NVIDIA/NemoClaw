@@ -32,6 +32,7 @@ function createTrustedBuildContext(): string {
   return buildCtx;
 }
 
+/** Restore global probes and remove staged contexts after either success or failure. */
 afterEach(() => {
   vi.restoreAllMocks();
   for (const buildCtx of temporaryBuildContexts.splice(0)) {
@@ -799,9 +800,10 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
   });
 
+  /** A healthy registry must not suppress the existing portable build-failure fallback. */
   it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
-    const buildImage = vi.fn(async () => 1);
+    const buildImage = vi.fn().mockResolvedValue(1);
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
