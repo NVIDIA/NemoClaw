@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as importedPortBoundary from "../shared/port-boundary.cjs";
-
-const sourceOrGeneratedPortBoundary = importedPortBoundary as typeof importedPortBoundary & {
-  default?: typeof importedPortBoundary;
-};
-const { parseServicePortOverride } =
-  sourceOrGeneratedPortBoundary.default ?? sourceOrGeneratedPortBoundary;
+import { parseServicePortOverride } from "../shared/port-boundary.cjs";
 
 /** Dashboard port parsing for the NemoClaw plugin. */
 

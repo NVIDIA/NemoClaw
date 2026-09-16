@@ -31,19 +31,19 @@ export function isTruthyEnv(value: string | undefined): boolean {
   }
 }
 
-function parsePortEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  return parseServicePortOverride(name, env[name], fallback);
-}
-
 export function readHermesDashboardConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): HermesDashboardConfig {
   return {
     enabled: isTruthyEnv(env[HERMES_DASHBOARD_ENABLE_ENV]),
-    port: parsePortEnv(env, HERMES_DASHBOARD_PORT_ENV, HERMES_DASHBOARD_DEFAULT_PORT),
-    internalPort: parsePortEnv(
-      env,
+    port: parseServicePortOverride(
+      HERMES_DASHBOARD_PORT_ENV,
+      env[HERMES_DASHBOARD_PORT_ENV],
+      HERMES_DASHBOARD_DEFAULT_PORT,
+    ),
+    internalPort: parseServicePortOverride(
       HERMES_DASHBOARD_INTERNAL_PORT_ENV,
+      env[HERMES_DASHBOARD_INTERNAL_PORT_ENV],
       HERMES_DASHBOARD_DEFAULT_INTERNAL_PORT,
     ),
     tuiEnabled: isTruthyEnv(env[HERMES_DASHBOARD_TUI_ENV]),
