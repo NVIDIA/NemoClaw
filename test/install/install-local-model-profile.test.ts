@@ -11,6 +11,9 @@ const INSTALLER = path.join(import.meta.dirname, "../..", "scripts", "install.sh
 function runInstallerMain(args: readonly string[], env: NodeJS.ProcessEnv = {}) {
   const harness = [
     'source "$INSTALLER_UNDER_TEST"',
+    "prepare_installer_node_runtime() { printf 'MUTATION_REACHED prepare_installer_node_runtime\\n'; }",
+    "prepare_installer_host() { printf 'MUTATION_REACHED prepare_installer_host\\n'; }",
+    "install_nemoclaw_before_onboarding() { printf 'MUTATION_REACHED install_nemoclaw_before_onboarding\\n'; }",
     "load_station_vllm_conflict_helpers() {",
     '  printf \'HARNESS_REACHED runtime=%s gate=%s no_express=%s non_interactive=%s source=%s\\n\' "$NEMOCLAW_LOCAL_MODEL_RUNTIME" "$NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE" "$NEMOCLAW_NO_EXPRESS" "$NON_INTERACTIVE" "$NON_INTERACTIVE_SOURCE"',
     "  exit 0",
@@ -86,5 +89,6 @@ describe("local model installer gate", () => {
     expect(result.status).not.toBe(0);
     expect(output).toContain("NEMOCLAW_VLLM_PORT must be an integer between 1024 and 65535");
     expect(output).not.toContain("HARNESS_REACHED");
+    expect(output).not.toContain("MUTATION_REACHED");
   });
 });
