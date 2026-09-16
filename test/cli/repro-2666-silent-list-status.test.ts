@@ -387,7 +387,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
   it("nemoclaw <name> status prints the classifier header before gateway_unreachable_after_restart guidance", () => {
     writeFakeDocker([
       "#!/usr/bin/env bash",
-      "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+      'if [ "$1" = info ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
       "if [ \"$1\" = ps ]; then echo 'openshell-cluster-nemoclaw'; exit 0; fi",
       "exit 0",
     ]);
@@ -430,7 +430,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
   it("nemoclaw <name> status prints the classifier header before gateway_missing_after_restart guidance", () => {
     writeFakeDocker([
       "#!/usr/bin/env bash",
-      "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+      'if [ "$1" = info ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
       'if [ "$1" = ps ]; then exit 0; fi',
       "exit 0",
     ]);
@@ -486,7 +486,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       // openshell-cluster-nemoclaw container (i.e. it exited cleanly).
       writeFakeDocker([
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+        'if [ "$1" = info ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
         `if [ "$1" = ps ] && [ "$2" = -a ]; then echo 'openshell-cluster-nemoclaw-${port}'; exit 0; fi`,
         'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",

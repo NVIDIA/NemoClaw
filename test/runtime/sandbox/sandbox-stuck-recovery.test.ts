@@ -108,7 +108,7 @@ process.exit(0);
   fs.writeFileSync(
     path.join(homeLocalBin, "docker"),
     `#!${process.execPath}
-if (process.argv[2] === "info") { process.stdout.write("24.0.0\\n"); process.exit(0); }
+if (process.argv[2] === "info") { process.stdout.write('{"ServerVersion":"24.0.0"}\\n'); process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },

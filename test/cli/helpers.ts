@@ -398,9 +398,11 @@ export function writeDoctorSandboxRegistry(
 export function writeHealthyDockerStub(localBin: string): void {
   fs.writeFileSync(
     path.join(localBin, "docker"),
-    ["#!/usr/bin/env bash", 'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi', "exit 0"].join(
-      "\n",
-    ),
+    [
+      "#!/usr/bin/env bash",
+      'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
+      "exit 0",
+    ].join("\n"),
     { mode: 0o755 },
   );
 }
@@ -554,7 +556,7 @@ export function createDoctorTestSetup(
     path.join(localBin, "docker"),
     [
       "#!/usr/bin/env bash",
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+      'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
       'if [ "$1" = "inspect" ]; then printf "true\\tnone\\topenshell:test\\n"; exit 0; fi',
       'if [ "$1" = "port" ]; then echo "0.0.0.0:8080"; exit 0; fi',
       "exit 0",

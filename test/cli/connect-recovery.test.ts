@@ -78,7 +78,7 @@ function writeGatewayControlDockerStub(
       `old_pid=${oldPid}`,
       `new_pid=${newPid}`,
       'printf \'%s\\n\' "$*" >> "$calls"',
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+      'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
       'if [ "$1" = "ps" ]; then',
       '  if [[ "$*" == *"{{.ID}}"* ]]; then',
       "    printf 'container-id\\topenshell-alpha\\n'",
