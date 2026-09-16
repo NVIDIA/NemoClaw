@@ -102,7 +102,7 @@ async function waitForNativeChannelGateway(
     [
       "set -eu",
       "attempt=0",
-      'while [ "$attempt" -lt 30 ]; do',
+      'while [ "$attempt" -lt 15 ]; do',
       `  code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(port)}/health 2>/dev/null || true)"`,
       '  case "$code" in 200|401) printf "native-ready\\n"; exit 0 ;; esac',
       "  attempt=$((attempt + 1))",

@@ -52,7 +52,7 @@ function buildHermesTelegramPlan(
     isInteractive: false,
     configuredChannels: ["telegram"],
     disabledChannels,
-    credentialAvailability: { "telegram.telegramBotToken": true },
+    credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
   });
 }
 
@@ -211,6 +211,26 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     expect(files[HERMES_ENV_PATH] ?? "").toContain(
       "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
+    expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
+  });
+
+  it("removes a stale resolver placeholder that targets an unrelated active credential", async () => {
+    const plan = await buildHermesTelegramPlan();
+    const { files, writes, runOpenshell } = sandboxFiles({
+      [HERMES_ENV_PATH]: [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+        "OPERATOR_OWNED=keep-me",
+        "",
+      ].join("\n"),
+    });
+
+    const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
+      runOpenshell,
+    });
+
+    expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
+    expect(writes).toEqual([HERMES_ENV_PATH]);
+    expect(files[HERMES_ENV_PATH] ?? "").not.toContain("TELEGRAM_BOT_TOKEN=");
     expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
   });
 

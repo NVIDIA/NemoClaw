@@ -174,7 +174,7 @@ test(
       },
     );
     assertExitZero(add, "native OpenClaw cron add");
-    const cronId = findCronId(resultText(add), cronName);
+    const cronId = findCronId(add.stdout, cronName);
     expect(cronId, resultText(add)).not.toBe("");
 
     progress.phase("run native scheduled work through inference");
@@ -185,11 +185,12 @@ test(
       timeoutMs: 5 * 60_000,
     });
     const runOutput = resultText(run);
+    const runStdout = run.stdout;
     assertExitZero(run, "native OpenClaw cron run");
     expect(runOutput).not.toMatch(
       /EAI_AGAIN|local provider endpoint is not reachable|request timed out/iu,
     );
-    expect(nativeCronRunAccepted(runOutput), runOutput).toBe(true);
+    expect(nativeCronRunAccepted(runStdout), runOutput).toBe(true);
 
     progress.phase("remove the native cron fixture");
     const remove = await sandbox.exec(SANDBOX_NAME, ["openclaw", "cron", "remove", cronId], {

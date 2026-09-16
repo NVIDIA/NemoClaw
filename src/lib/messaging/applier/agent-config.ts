@@ -552,9 +552,13 @@ function applyEnvLines(
   }
   const stale = new Set(staleCredentialEnvKeys(plan, new Set(desired.keys())));
   if (options.preserveResolverCredentialLines) {
+    const allowedResolvers = activeResolverEnvAssignments(plan);
     for (const line of (existing ?? "").split(/\n/u)) {
       const key = readEnvLineKey(line);
-      if (key && stale.has(key) && isOpenShellResolverEnvLine(line)) stale.delete(key);
+      const sourceKey = readOpenShellResolverSourceKey(line);
+      if (key && sourceKey && stale.has(key) && allowedResolvers.has(`${key}\0${sourceKey}`)) {
+        stale.delete(key);
+      }
     }
   }
 
@@ -578,10 +582,29 @@ function applyEnvLines(
   return output.length > 0 ? `${output.join("\n")}\n` : "";
 }
 
-function isOpenShellResolverEnvLine(line: string): boolean {
+function activeResolverEnvAssignments(plan: SandboxMessagingPlan): ReadonlySet<string> {
+  const assignments = new Set<string>();
+  for (const binding of activeCredentialBindings(plan)) {
+    if (ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+      assignments.add(`${binding.providerEnvKey}\0${binding.providerEnvKey}`);
+    }
+  }
+  for (const alias of filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? [])) {
+    if (
+      alias.targetEnvKey &&
+      ENV_KEY_PATTERN.test(alias.targetEnvKey) &&
+      ENV_KEY_PATTERN.test(alias.envKey)
+    ) {
+      assignments.add(`${alias.targetEnvKey}\0${alias.envKey}`);
+    }
+  }
+  return assignments;
+}
+
+function readOpenShellResolverSourceKey(line: string): string | null {
   const assignment = line.trim().replace(/^export\s+/u, "");
   const separator = assignment.indexOf("=");
-  if (separator < 1) return false;
+  if (separator < 1) return null;
   const rawValue = assignment.slice(separator + 1).trim();
   const value =
     rawValue.length >= 2 &&
@@ -590,10 +613,13 @@ function isOpenShellResolverEnvLine(line: string): boolean {
       ? rawValue.slice(1, -1)
       : rawValue;
   return (
-    value.startsWith("openshell:resolve:env:") ||
-    /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]{0,127}$/u.test(
-      value,
-    )
+    value.match(
+      /^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    value.match(
+      /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    null
   );
 }
 
