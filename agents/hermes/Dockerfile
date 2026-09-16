@@ -309,7 +309,7 @@ RUN rm /scripts/npm-12.0.2.tgz \
         "$NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256" /opt/hermes/hermes_cli/config.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes secure-directory patched output identity mismatch" >&2; exit 1; } \
-    && rm /scripts/hermes-secure-dir-skip-chmod.patch \
+    && rm /scripts/hermes-secure-dir-skip-chmod.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
