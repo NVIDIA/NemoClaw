@@ -3528,6 +3528,13 @@ export function createDockerManagedBootstrapAdapter(
         detail: supervisorReconnectFailureDetail(transaction.replacementRuntimeId, deps),
       });
     }
+    if (observeRecoveredOpenShellHandoff(transaction.sandbox, deps) !== "wait") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: transaction.bootstrapIdentity,
+        runtimeId: transaction.replacementRuntimeId,
+        detail: "the committed OpenShell sandbox identity changed during supervisor reconnect",
+      });
+    }
     const afterHandoff = deps.journalStore.load(transaction.bootstrapIdentity);
     if (!afterHandoff || !sameDockerBootstrapJournal(afterHandoff, transaction)) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -4507,6 +4514,13 @@ export function createDockerManagedBootstrapAdapter(
         ))
       ) {
         throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
+      }
+      if (observeRecoveredOpenShellHandoff(bootstrapCompleteJournal.sandbox, deps) !== "wait") {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.replacementRuntimeId,
+          detail: "OpenShell sandbox identity changed during the readiness handoff",
+        });
       }
       const afterHandoffJournal = deps.journalStore.load(journal.bootstrapIdentity);
       if (

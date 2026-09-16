@@ -673,6 +673,8 @@ async function probeRuntimeApiServerKey(
     [
       "run",
       "--rm",
+      "--user",
+      "root",
       "--entrypoint",
       "/usr/local/bin/nemoclaw-start",
       image,

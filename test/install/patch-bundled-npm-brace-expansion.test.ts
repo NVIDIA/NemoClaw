@@ -35,7 +35,7 @@ function fixture(braceExpansionVersion: string) {
   const replacementRoot = path.join(root, "replacement");
   writeJson(path.join(npmRoot, "package.json"), {
     name: "npm",
-    version: "11.18.0",
+    version: "12.0.2",
   });
   writeJson(path.join(npmRoot, "node_modules", "brace-expansion", "package.json"), {
     dependencies: { "balanced-match": "^4.0.2" },
@@ -77,7 +77,7 @@ describe("npm bundled brace-expansion remediation", () => {
 
     expect(patchBundledNpmBraceExpansion(target)).toMatchObject({
       braceExpansionVersion: FIXED_BRACE_EXPANSION_VERSION,
-      npmVersion: "11.18.0",
+      npmVersion: "12.0.2",
       state: "fixed",
     });
     expect(

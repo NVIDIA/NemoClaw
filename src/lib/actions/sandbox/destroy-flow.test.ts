@@ -1481,6 +1481,8 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function), {
+      runtimeSelection: { gatewayName: "nemoclaw-19080", workspace: "default" },
+    });
   });
 });
