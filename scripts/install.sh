@@ -236,9 +236,21 @@ error_with_status() {
 error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+resolve_canonical_service_port_override() {
+  local env_name="$1" raw="$2" port
+  port="${raw#"${raw%%[![:space:]]*}"}"
+  port="${port%"${port##*[![:space:]]}"}"
+  if [[ ! "$port" =~ ^[1-9][0-9]{3,4}$ ]] \
+    || [ "$((10#$port))" -lt 1024 ] || [ "$((10#$port))" -gt 65535 ]; then
+    error "${env_name} must be an integer between 1024 and 65535."
+  fi
+  printf '%s' "$port"
+}
+
 validate_forwarded_service_port_overrides() {
-  local env_name raw port
+  local env_name raw
   local -a env_names=(
+    NEMOCLAW_GATEWAY_PORT
     NEMOCLAW_DASHBOARD_PORT
     NEMOCLAW_VLLM_PORT
     NEMOCLAW_OLLAMA_PORT
@@ -250,12 +262,7 @@ validate_forwarded_service_port_overrides() {
   for env_name in "${env_names[@]}"; do
     raw="${!env_name:-}"
     [[ -n "$raw" ]] || continue
-    port="${raw#"${raw%%[![:space:]]*}"}"
-    port="${port%"${port##*[![:space:]]}"}"
-    if [[ ! "$port" =~ ^[1-9][0-9]{3,4}$ ]] \
-      || [ "$((10#$port))" -lt 1024 ] || [ "$((10#$port))" -gt 65535 ]; then
-      error "${env_name} must be an integer between 1024 and 65535."
-    fi
+    resolve_canonical_service_port_override "$env_name" "$raw" >/dev/null
   done
 }
 
@@ -273,15 +280,7 @@ resolve_nemoclaw_gateway_port() {
       esac
     fi
   fi
-  port="${port#"${port%%[![:space:]]*}"}"
-  port="${port%"${port##*[![:space:]]}"}"
-  if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
-    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
-  fi
-  port="$((10#${BASH_REMATCH[1]}))"
-  if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
-    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
-  fi
+  port="$(resolve_canonical_service_port_override NEMOCLAW_GATEWAY_PORT "$port")" || return 1
   if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
