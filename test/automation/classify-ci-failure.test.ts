@@ -212,6 +212,7 @@ async function waitForFile(path: string): Promise<void> {
 /** Accept termination without requiring the host init process to reap orphaned children. */
 async function expectProcessTerminated(pid: number): Promise<void> {
   await vi.waitFor(
+    /** A terminated orphan may remain in procfs until the host init process reaps it. */
     () => {
       let stat: string;
       try {
@@ -1018,10 +1019,12 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(result.stdout).not.toContain(secret);
   });
 
+  /** Reject the current process so zombie acceptance cannot mask a surviving child. */
   test("does not accept a live process as terminated", async () => {
     await expect(expectProcessTerminated(process.pid)).rejects.toThrow();
   });
 
+  /** An ignored-stdio descendant must remain supervised even after its parent exits. */
   test("retains a leader for an ignored-stdio process-group member until timeout", async () => {
     const root = mkdtempSync(join(tmpdir(), "classify-ci-timeout-"));
     roots.push(root);
@@ -1043,6 +1046,7 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     await expectProcessTerminated(descendantPid);
   });
 
+  /** Confirm termination without depending on the host's orphan-reaping schedule. */
   test("drains a process group whose command exits promptly on SIGTERM", async () => {
     const item = fixture("AssertionError: retained tail");
     const marker = join(item.root, "blocked");
@@ -1136,6 +1140,7 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     ["artifact", "BLOCK_ARTIFACT", ["--artifact-name", "results"], "SIGTERM", 143, true],
   ] as const)(
     "kills the detached group and its ignoring descendant during %s cancellation",
+    /** Cancellation must terminate descendants even when the original group leader has already exited. */
     async (_kind, block, extra, signal, exitCode, exitGroupLeader) => {
       const item = fixture("AssertionError: retained tail");
       const marker = join(item.root, "blocked");

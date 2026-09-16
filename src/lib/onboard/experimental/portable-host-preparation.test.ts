@@ -297,7 +297,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(prepared).not.toBeNull();
     expect(prepared?.authority.uid).toBe(1001);
   });
-
+  /** Registry configuration and host publication must name the same reachable IPv4 authority. */
   it("prepares the rootless socket and managed portable registry deterministically", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);

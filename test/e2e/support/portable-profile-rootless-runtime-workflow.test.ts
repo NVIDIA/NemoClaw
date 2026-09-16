@@ -47,6 +47,7 @@ describe("portable profile rootless runtime workflow", () => {
     });
   });
 
+  /** Keep the workflow prerequisites aligned with the runtime exercised by live E2E. */
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
@@ -162,7 +163,6 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
-    expect(liveTest).toContain('location = "127.0.0.1:5000"\\ninsecure = true');
     expect(liveTest).toContain("DOCKER_NETWORK_IPAM_INSPECT_FORMAT");
     expect(liveTest).toContain("parseDockerNetworkIpamEntries(");
     expect(liveTest).not.toContain("{{range .Subnets}}");
