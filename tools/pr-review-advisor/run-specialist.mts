@@ -36,7 +36,10 @@ import {
 } from "./specialist-catalog.mts";
 import { buildSpecialistInvestigateTurn } from "./specialists.mts";
 import { specialistCustomTools } from "./specialist-tools.mts";
-import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
+import {
+  SPECIALIST_DIFF_FILE_NAME,
+  SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME,
+} from "./specialist-context.mts";
 import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
   buildCorrectnessTurnContext,
@@ -119,6 +122,19 @@ async function main(): Promise<void> {
   if (!diffStat.isFile() || diffStat.isSymbolicLink()) {
     throw new Error("Prepared specialist diff must be a regular file");
   }
+  const followUpReview = deterministic.github?.followUpReview;
+  const followUpDiffPath = followUpReview
+    ? path.join(
+        process.env.PR_REVIEW_ADVISOR_CONTEXT_DIR || "/pr-review-advisor-context/specialist",
+        SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME,
+      )
+    : undefined;
+  if (followUpDiffPath) {
+    const followUpDiffStat = fs.lstatSync(followUpDiffPath);
+    if (!followUpDiffStat.isFile() || followUpDiffStat.isSymbolicLink()) {
+      throw new Error("Prepared specialist follow-up diff must be a regular file");
+    }
+  }
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),
@@ -135,6 +151,10 @@ async function main(): Promise<void> {
     tests: buildTestsTurnContext(deterministic),
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
+    followUp:
+      followUpReview && followUpDiffPath
+        ? { review: followUpReview, diffPath: followUpDiffPath }
+        : undefined,
   });
   const findingController = createAdvisorFindingToolController({ headSha, interest });
   const inventory = trustedE2eRecommendationInventory();
