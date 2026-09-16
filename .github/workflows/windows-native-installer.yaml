@@ -881,6 +881,12 @@ jobs:
             --node-path "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
             --output "$env:RUNNER_TEMP\system-root-mxc-proof\system-drive-build-gate.json"
           if ($LASTEXITCODE -ne 0) { throw 'The package verifier rejected the actual system-drive proof.' }
+      - name: Verify acceptance-controller Windows shell compatibility
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" --experimental-strip-types --no-warnings `
+            --test --test-reporter=tap packaging/windows/installer/run-installed-acceptance.test.mts
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows acceptance-controller shell controls failed.' }
       - name: Preserve fixed-purpose preparation evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

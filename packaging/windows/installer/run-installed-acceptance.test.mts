@@ -7,6 +7,18 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+const WINDOWS_POWERSHELL_ENVIRONMENT =
+  /^(APPDATA|COMSPEC|HOMEDRIVE|HOMEPATH|LOCALAPPDATA|OS|PATH|PATHEXT|PROCESSOR_ARCHITECTURE|PROCESSOR_ARCHITEW6432|SystemRoot|TEMP|TMP|USERPROFILE|WINDIR)$/iu;
+
+function powershellEnvironment(extra: NodeJS.ProcessEnv = {}) {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => WINDOWS_POWERSHELL_ENVIRONMENT.test(name)),
+    ),
+    ...extra,
+  };
+}
+
 test(
   "acceptance rejects unsupported scopes and credentials before installing",
   { skip: process.platform !== "win32" },
@@ -58,18 +70,13 @@ test(
     `,
         ],
         {
-          env: {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(([name]) =>
-                /^(SystemRoot|WINDIR|PATH|PATHEXT|TEMP|TMP|OS)$/iu.test(name),
-              ),
-            ),
+          env: powershellEnvironment({
             NEMOCLAW_ACCEPTANCE_SOURCE: source,
             TEST_AGENT: agent,
             TEST_SCOPE: scope,
             TEST_MODE: mode,
             ...(secret ? { [secret]: "synthetic-never-log-this-value" } : {}),
-          },
+          }),
           encoding: "utf8",
           windowsHide: true,
           timeout: 30_000,
@@ -142,14 +149,9 @@ Write-Output $count
         Buffer.from(script, "utf16le").toString("base64"),
       ],
       {
-        env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(([name]) =>
-              /^(SystemRoot|WINDIR|PATH|PATHEXT|TEMP|TMP)$/iu.test(name),
-            ),
-          ),
+        env: powershellEnvironment({
           NEMOCLAW_ACCEPTANCE_SOURCE: source,
-        },
+        }),
         encoding: "utf8",
         windowsHide: true,
         timeout: 30_000,
@@ -226,14 +228,9 @@ ConvertTo-Json -InputObject @($results) -Compress
           Buffer.from(script, "utf16le").toString("base64"),
         ],
         {
-          env: {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(([name]) =>
-                /^(SystemRoot|WINDIR|PATH|PATHEXT|TEMP|TMP)$/iu.test(name),
-              ),
-            ),
+          env: powershellEnvironment({
             NEMOCLAW_ACCEPTANCE_SOURCE: source,
-          },
+          }),
           encoding: "utf8",
           windowsHide: true,
           timeout: 30_000,
