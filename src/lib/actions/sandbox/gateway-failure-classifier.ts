@@ -11,6 +11,7 @@ import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-own
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
 import type { RuntimeProviderSnapshotLifecycleState } from "../../onboard/runtime-provider/contract";
+import { redactFull } from "../../security/redact";
 import {
   inspectPortableRuntimeReceiptReadiness,
   type PortableRuntimeReceiptReadinessDeps,
@@ -25,6 +26,17 @@ const portableRuntimeFailures = new Map<
   string,
   Extract<PortablePodmanReadinessResult, { ok: false }>
 >();
+
+type DockerRuntimeFailure = {
+  kind: "daemon_connection" | "client_configuration";
+  detail: string;
+};
+
+type DockerRuntimeProbeResult =
+  | { reachable: true }
+  | ({ reachable: false } & DockerRuntimeFailure);
+
+const dockerRuntimeFailures = new Map<string, DockerRuntimeFailure>();
 
 export type GatewayFailureLayer =
   | "docker_unreachable"
@@ -41,7 +53,7 @@ export type GatewayFailureResult = {
 };
 
 export type GatewayFailureRunners = {
-  dockerInfo: () => boolean;
+  dockerInfo: () => boolean | DockerRuntimeProbeResult;
   dockerIsRunning: (container: string) => boolean;
   dockerExists: (container: string) => boolean;
   portProbe: (port: number) => Promise<boolean>;
@@ -63,13 +75,50 @@ export type SandboxContainerFailureRunners = {
   portProbe: (port: number) => Promise<boolean>;
 };
 
-export function probeDockerDaemonReachability(): boolean {
+function dockerDiagnosticText(value: unknown): string {
+  const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value ?? "");
+  return redactFull(raw).trim().replace(/\s+/gu, " ");
+}
+
+function probeDockerRuntime(): DockerRuntimeProbeResult {
   const result = dockerRun(["info", "--format", "{{json .}}"], {
     ignoreError: true,
     suppressOutput: true,
     timeout: DOCKER_TIMEOUT_MS,
   });
-  return isDockerInfoResultReachable(result);
+  if (isDockerInfoResultReachable(result)) return { reachable: true };
+
+  const detail =
+    dockerDiagnosticText(result.stderr) ||
+    dockerDiagnosticText(result.stdout) ||
+    "docker info returned no valid server data.";
+  const daemonConnectionFailure =
+    result.status === null ||
+    /cannot connect to the docker daemon|error during connect|is the docker daemon running|connection refused|timed out/iu.test(
+      detail,
+    );
+  return {
+    reachable: false,
+    kind: daemonConnectionFailure ? "daemon_connection" : "client_configuration",
+    detail,
+  };
+}
+
+export function probeDockerDaemonReachability(): boolean {
+  return probeDockerRuntime().reachable;
+}
+
+function normalizeDockerRuntimeProbe(
+  result: boolean | DockerRuntimeProbeResult,
+): DockerRuntimeProbeResult {
+  if (typeof result !== "boolean") return result;
+  return result
+    ? { reachable: true }
+    : {
+        reachable: false,
+        kind: "daemon_connection",
+        detail: "docker info failed or timed out.",
+      };
 }
 
 function dockerContainerListed(container: string, allFlag: boolean): boolean {
@@ -106,7 +155,7 @@ function defaultPortProbe(port: number): Promise<boolean> {
 }
 
 const defaultRunners: GatewayFailureRunners = {
-  dockerInfo: probeDockerDaemonReachability,
+  dockerInfo: probeDockerRuntime,
   dockerIsRunning: defaultDockerIsRunning,
   dockerExists: defaultDockerExists,
   portProbe: defaultPortProbe,
@@ -125,10 +174,11 @@ export async function classifyGatewayFailure(
     };
   }
 
-  if (!runners.dockerInfo()) {
+  const dockerRuntime = normalizeDockerRuntimeProbe(runners.dockerInfo());
+  if (!dockerRuntime.reachable) {
     return {
       layer: "docker_unreachable",
-      detail: "Docker daemon is not reachable (docker info failed or timed out).",
+      detail: `Docker runtime is not reachable: ${dockerRuntime.detail}`,
     };
   }
 
@@ -320,6 +370,7 @@ export function isDockerRuntimeDown(
 ): boolean {
   const portable = inspectPortableRuntimeReceiptReadiness(sandboxName, opts?.portableLifecycle);
   if (portable) {
+    dockerRuntimeFailures.delete(sandboxName);
     if (portable.ok) {
       portableRuntimeFailures.delete(sandboxName);
       console.log(
@@ -332,9 +383,18 @@ export function isDockerRuntimeDown(
   }
   portableRuntimeFailures.delete(sandboxName);
   const getSandbox = opts?.getSandbox ?? registry.getSandbox;
-  if (!isDockerBackedSandbox(sandboxName, getSandbox)) return false;
+  if (!isDockerBackedSandbox(sandboxName, getSandbox)) {
+    dockerRuntimeFailures.delete(sandboxName);
+    return false;
+  }
   const probe = opts?.runners?.dockerInfo ?? defaultRunners.dockerInfo;
-  return !probe();
+  const result = normalizeDockerRuntimeProbe(probe());
+  if (result.reachable) {
+    dockerRuntimeFailures.delete(sandboxName);
+    return false;
+  }
+  dockerRuntimeFailures.set(sandboxName, result);
+  return true;
 }
 
 /**
@@ -382,6 +442,8 @@ export function printDockerRuntimeDownGuidance(
     writer(`    3. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
     return;
   }
+  const dockerFailure = dockerRuntimeFailures.get(sandboxName);
+  dockerRuntimeFailures.delete(sandboxName);
   writer(`  ${getLayerHeader("docker_unreachable")}`);
   writer(
     `  The Docker daemon is not reachable, so sandbox '${sandboxName}' cannot be verified or started.`,
@@ -389,6 +451,14 @@ export function printDockerRuntimeDownGuidance(
   writer(
     "  This is a Docker runtime outage on the host, not a sandbox failure — do not rebuild, destroy, or re-onboard the sandbox.",
   );
+  if (dockerFailure?.kind === "client_configuration") {
+    writer(`  Docker reported: ${dockerFailure.detail}`);
+    writer("  Recovery:");
+    writer("    1. Correct the Docker permission, context, or TLS configuration for this user.");
+    writer("    2. Confirm the configured Docker endpoint with `docker info`.");
+    writer(`    3. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
+    return;
+  }
   writer("  Recovery:");
   writer(
     "    1. Start the Docker daemon (e.g. `sudo systemctl start docker`, or start Docker Desktop).",

@@ -35,6 +35,7 @@ import {
   classifyObservedSandboxContainerFailure,
   type GatewayFailureRunners,
   isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
   probeDockerDaemonReachability,
 } from "./gateway-failure-classifier";
 
@@ -176,6 +177,24 @@ describe("isDockerRuntimeDown", () => {
     expect(probeDockerDaemonReachability()).toBe(false);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
     expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
+  it("preserves a Docker permission failure for recovery guidance (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 1,
+      stderr: "permission denied while connecting to the Docker socket",
+      stdout: "",
+    });
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+    const lines: string[] = [];
+    printDockerRuntimeDownGuidance("alpha", { writer: (line) => lines.push(line) });
+    const guidance = lines.join("\n");
+
+    expect(guidance).toContain("permission denied while connecting to the Docker socket");
+    expect(guidance).toContain("Correct the Docker permission, context, or TLS configuration");
+    expect(guidance).not.toContain("Start the Docker daemon");
   });
 
   it("treats absent Docker stdout as an unreachable daemon (#11715)", () => {

@@ -19,10 +19,17 @@ describe("Docker daemon outage classification (#4428)", () => {
     prefix: string,
     {
       dockerInfoOk,
+      dockerInfoError = "Cannot connect to the Docker daemon",
       phase = "Provisioning",
       driver = "docker",
       logCalls = false,
-    }: { dockerInfoOk: boolean; phase?: string; driver?: string; logCalls?: boolean },
+    }: {
+      dockerInfoOk: boolean;
+      dockerInfoError?: string;
+      phase?: string;
+      driver?: string;
+      logCalls?: boolean;
+    },
   ): { callLog: string; home: string; localBin: string; env: Record<string, string> } {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     const localBin = path.join(home, "bin");
@@ -59,7 +66,7 @@ describe("Docker daemon outage classification (#4428)", () => {
     );
     const dockerInfoBody = dockerInfoOk
       ? 'echo \'{"ServerVersion":"24.0.0"}\'; exit 0'
-      : 'echo "Cannot connect to the Docker daemon" >&2; exit 1';
+      : `echo ${JSON.stringify(dockerInfoError)} >&2; exit 1`;
     fs.writeFileSync(
       path.join(localBin, "docker"),
       [
@@ -185,6 +192,31 @@ describe("Docker daemon outage classification (#4428)", () => {
       expect(r.code).toBe(1);
       expect(r.out).toContain(DOCKER_DOWN_HEADER);
       expect(r.out).toContain(DOCKER_DOWN_HINT);
+
+      const calls = fs.readFileSync(callLog, "utf8");
+      expect(calls).toContain("docker:info --format {{json .}}");
+      expect(calls).not.toMatch(/^docker:ps(?:\s|$)/mu);
+      expect(calls).not.toMatch(/^openshell:sandbox (?:start|recover|restart)(?:\s|$)/mu);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("start reports Docker permission failures without daemon-start guidance (#11715)", () => {
+    const { callLog, home, env } = setupDockerOutageEnv(
+      "nemoclaw-cli-11715-start-permission-",
+      {
+        dockerInfoOk: false,
+        dockerInfoError: "permission denied while connecting to the Docker socket",
+        logCalls: true,
+      },
+    );
+    try {
+      const r = runWithEnv("v053-baseline start", env);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("permission denied while connecting to the Docker socket");
+      expect(r.out).toContain("Correct the Docker permission, context, or TLS configuration");
+      expect(r.out).not.toContain(DOCKER_DOWN_HINT);
 
       const calls = fs.readFileSync(callLog, "utf8");
       expect(calls).toContain("docker:info --format {{json .}}");
