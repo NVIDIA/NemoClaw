@@ -47,7 +47,9 @@ The host type check covers OpenClaw fixtures; the Pi build checks its model code
 OpenClaw's private bundles ship no declarations, so [small fixture declarations](../test/openclaw.d.ts) describe the consumed API shapes and native tests verify those boundaries.
 Upstream sources and model-specific recipe code retain their own conventions and checks.
 
-The [image workflow](../.github/workflows/images.yml) runs these checks on changes targeting `v1`, builds all ten agent images plus the proxy, and exercises native adapters against isolated local protocol fixtures.
+The [image workflow](../.github/workflows/images.yml) runs for every pull request targeting `v1`, for pushes changing image inputs or tests, and on manual dispatch.
+It builds all ten agent images plus the proxy and exercises native adapters against isolated local protocol fixtures.
+Rust- or documentation-only pushes skip that image build; their schema and adapter-descriptor checks remain in the Rust suite.
 It also runs OpenClaw tools, execution, search, and tracing checks.
 Native messaging belongs to OpenClaw; NemoClaw tests that its adapter preserves unrelated native configuration and rejects drift in deployment-owned settings.
 These fixtures use no live credentials, send no external messages, and do not qualify GPU inference or live OpenShell deployments.

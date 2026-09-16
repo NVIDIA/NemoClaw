@@ -174,3 +174,36 @@ fn native_cache_retains_only_dependencies_in_both_build_profiles() {
         .unwrap();
     assert!(toolchain_index < cache_index && cache_index < compile_index);
 }
+
+#[test]
+fn image_pushes_follow_image_inputs_without_skipping_pull_request_checks() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/images.yml")).unwrap();
+    let paths = workflow["on"]["push"]["paths"]
+        .as_array()
+        .expect("source-only pushes must not rebuild every image");
+    for (path, expected) in [
+        ("image/fabric/fabric.py", true),
+        ("image/package-lock.json", true),
+        ("docker-bake.hcl", true),
+        (".dockerignore", true),
+        ("ruff.toml", true),
+        ("test/openclaw.d.ts", true),
+        ("tools/fabric-adapter-experiment.py", true),
+        (".github/workflows/images.yml", true),
+        ("crates/nemoclaw-sdk/src/config/mod.rs", false),
+        ("docs/inference.md", false),
+    ] {
+        let selected = paths.iter().any(|pattern| {
+            let pattern = pattern.as_str().unwrap();
+            pattern
+                .strip_suffix("/**")
+                .map_or(path == pattern, |prefix| {
+                    path.starts_with(&format!("{prefix}/"))
+                })
+        });
+        assert_eq!(selected, expected, "{path}");
+    }
+    assert!(workflow["on"]["pull_request"].get("paths").is_none());
+    assert!(workflow["on"].get("workflow_dispatch").is_some());
+}
