@@ -378,7 +378,7 @@ function sandboxGatewayHealthProbeCommand(probeUrl: string): string {
 }
 
 function sandboxGatewayRecoveryProbeCommand(probeUrl: string): string {
-  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo STOPPED ;; esac`;
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; 0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
 }
 
 /**
