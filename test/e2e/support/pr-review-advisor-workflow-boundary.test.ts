@@ -126,6 +126,30 @@ it.each([
     "Unified advisor failure receipt must run before upload after a failed step",
   ],
   [
+    "failure receipt command",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"',
+    'run: echo "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"',
+    "Unified advisor failure receipt must run before upload after a failed step",
+  ],
+  [
+    "empty failure receipt command",
+    'run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"',
+    'run: ""',
+    "Unified advisor failure receipt must run before upload after a failed step",
+  ],
+  [
+    "failure receipt lifecycle outcome",
+    "ADVISOR_ANALYSIS_OUTCOME: ${{ steps.specialist-analysis.outcome }}",
+    "ADVISOR_ANALYSIS_OUTCOME: ${{ steps.prepare-analysis.outcome }}",
+    "Unified advisor failure receipt must run before upload after a failed step",
+  ],
+  [
+    "missing failure receipt lifecycle outcome",
+    "          ADVISOR_ANALYSIS_OUTCOME: ${{ steps.specialist-analysis.outcome }}\n",
+    "",
+    "Unified advisor failure receipt must run before upload after a failed step",
+  ],
+  [
     "failed specialist upload",
     "if: ${{ always() && matrix.advisor.interest != '' }}",
     "if: ${{ success() }}",
