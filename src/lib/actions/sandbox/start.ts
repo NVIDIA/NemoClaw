@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { setTimeout as sleep } from "node:timers/promises";
-
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
-import { retryUntilAsync } from "../../core/retry";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -19,7 +16,10 @@ import {
 } from "./inference-invocation-probe";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  waitForStartedHermesGatewayProcess,
+} from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -65,11 +65,8 @@ export interface SandboxStartDeps {
   log?: (message: string) => void;
 }
 
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
-
-/** Wait only for a definitively stopped Hermes gateway after this command started its sandbox. */
-async function waitForStartedHermesGatewayProcess(
+/** Wait for the Hermes gateway only after this command started its sandbox. */
+async function settleStartedHermesGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
@@ -77,20 +74,11 @@ async function waitForStartedHermesGatewayProcess(
 ): Promise<boolean | null | undefined> {
   if (sandbox.agent !== "hermes" || sandbox.stopped !== true) return undefined;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  return await retryUntilAsync(
-    () => (deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus)(sandboxName, gatewayName),
-    {
-      accept: (running) => running !== false,
-      retryDelaysMs: Array.from(
-        { length: HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS - 1 },
-        () => HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS,
-      ),
-      onRetry: (_running, delayMs) => {
-        log(`  Hermes gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
-      },
-      sleep: deps.delayGatewayProcessProbe ?? sleep,
-    },
-  );
+  return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
+    probe: deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus,
+    ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+    log,
+  });
 }
 
 /**
@@ -197,18 +185,18 @@ async function startSandboxWithinLifecycleFence(
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Waiting for OpenShell sandbox readiness…");
     await waitForSandboxReady(name, deps.observer, deps.allowDockerRuntimeInspection);
-    readiness.gatewayProcess = await waitForStartedHermesGatewayProcess(
+    readiness.gatewayProcess = await settleStartedHermesGatewayProcess(
       name,
       resolved.sandbox,
       deps,
       log,
     );
-    if (settleHermesGatewayProcess && readiness.gatewayProcess === false) return;
+    if (settleHermesGatewayProcess && readiness.gatewayProcess !== true) return;
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
-  if (settleHermesGatewayProcess && readiness.gatewayProcess === false) {
+  if (settleHermesGatewayProcess && readiness.gatewayProcess !== true) {
     log(
       "  The sandbox started but its Hermes gateway did not become responsive before the startup settlement window expired.",
     );

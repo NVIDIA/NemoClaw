@@ -200,6 +200,46 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("waits for a just-started Hermes gateway before process recovery", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      { log: console.log },
+    );
+    expect(harness.waitForStartedHermesGatewayProcessSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("stops before process recovery when a just-started Hermes gateway stays unavailable", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      gatewayProcessSettlement: null,
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("retains stop intent when a recovered container cannot publish the registry update", async () => {
     const harness = createConnectHarness({
       registryEntry: { stopped: true },
@@ -274,6 +314,8 @@ describe("connectSandbox probe-only observe mode", () => {
     },
   ])("keeps Error terminal when $condition (#10466)", async (testCase) => {
     const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
       dockerRuntime: testCase.dockerRuntime,
       dockerStartStatus: testCase.dockerStartStatus,
       sandboxLifecycleStartStatus: testCase.sandboxLifecycleStartStatus,
@@ -293,6 +335,7 @@ describe("connectSandbox probe-only observe mode", () => {
     ).toHaveLength(1);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.waitForStartedHermesGatewayProcessSpy).not.toHaveBeenCalled();
   });
 
   it("fails before recovery when the initial Error persists after the start (#10466)", async () => {
@@ -363,6 +406,8 @@ describe("connectSandbox probe-only observe mode", () => {
 
   it("leaves a running container untouched on probe-only recovery (#8967)", async () => {
     const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
       dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
       sandboxGetPhase: "Ready",
     });
@@ -375,6 +420,7 @@ describe("connectSandbox probe-only observe mode", () => {
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
       ),
     ).toBe(false);
+    expect(harness.waitForStartedHermesGatewayProcessSpy).not.toHaveBeenCalled();
   });
 
   it("starts a running container whose sandbox is still Stopped (#11790)", async () => {

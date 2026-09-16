@@ -210,7 +210,7 @@ describe("startSandbox native lifecycle", () => {
   it("waits for the Hermes gateway process to settle before checking gateway health", async () => {
     const probeGatewayProcess = vi
       .fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>()
-      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
     const delayGatewayProcessProbe = vi.fn(async () => {});
@@ -259,20 +259,16 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it("passes an unavailable Hermes process observation to gateway verification", async () => {
+  it("does not verify the gateway when Hermes process observations stay unavailable", async () => {
     const probeGatewayProcess = vi.fn(async () => null);
     const delayGatewayProcessProbe = vi.fn(async () => {});
     const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
     h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
-    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
 
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
-      "native gateway route unavailable",
-    );
-
-    expect(probeGatewayProcess).toHaveBeenCalledOnce();
-    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
-    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
