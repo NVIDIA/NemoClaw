@@ -259,19 +259,20 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it("does not retry an unavailable Hermes gateway process observation", async () => {
+  it("passes an unavailable Hermes process observation to gateway verification", async () => {
     const probeGatewayProcess = vi.fn(async () => null);
     const delayGatewayProcessProbe = vi.fn(async () => {});
     const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
     h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
+    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
 
-    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
-      exitCode: 1,
-    });
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "native gateway route unavailable",
+    );
 
     expect(probeGatewayProcess).toHaveBeenCalledOnce();
     expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
   });
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
