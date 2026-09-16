@@ -35,6 +35,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     originalGatewayEnv === undefined
       ? delete process.env.OPENSHELL_GATEWAY
       : (process.env.OPENSHELL_GATEWAY = originalGatewayEnv);
