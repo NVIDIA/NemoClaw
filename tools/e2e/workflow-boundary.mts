@@ -1468,8 +1468,8 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   if (job.name !== "Shared E2E (${{ matrix.execution_id }})") {
     errors.push("shared E2E job name must expose the test ID");
   }
-  if (job.needs !== "generate-matrix") {
-    errors.push("shared E2E job must depend on generate-matrix");
+  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "package-openshell-sdk"])) {
+    errors.push("shared E2E job must depend on matrix generation and reviewed SDK packaging");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.test_matrix != '[]' }}") {
     errors.push("shared E2E job must run only for a non-empty test matrix");
@@ -1537,6 +1537,25 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireFullShaAction(errors, checkout, "shared E2E checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("shared E2E checkout must disable persisted credentials");
+  }
+
+  const sdkDownload = requireJobStep(
+    errors,
+    SHARED_E2E_JOB_ID,
+    steps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("shared E2E job must download the run-scoped reviewed SDK archive");
   }
 
   const runVitest = requireJobStep(

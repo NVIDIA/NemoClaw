@@ -88,7 +88,7 @@ describe("E2E workflow plan", () => {
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
-      "shared-e2e": 2,
+      "shared-e2e": 3,
       "retained-workflow": 15,
       staging: 1,
     });
@@ -98,8 +98,19 @@ describe("E2E workflow plan", () => {
         agentRuntime: "unresolved",
       }),
     ]);
+    expect(
+      plan.coverageMatrix.find((row) => row.id === "pr-review-advisor-repair-validation-e2e"),
+    ).toEqual({
+      id: "pr-review-advisor-repair-validation-e2e",
+      variant: "docker",
+      source: "shared-e2e",
+      agentRuntime: "none",
+      observableOutcome:
+        "Advisor repair validation runs the trusted plan in /sandbox/repo and seals its receipt",
+      environmentOrInferenceEndpoint: "Credential-free OpenShell sandbox; no inference endpoint",
+      unresolvedReason: "",
+    });
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(82);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",

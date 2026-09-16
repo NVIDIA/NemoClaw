@@ -70,14 +70,72 @@ no repository write permission; the model sandbox receives neither a GitHub cred
 provider credential. A same-repository restriction belongs on automation that changes a contributor
 branch; here it would only remove static review coverage.
 
+## Manual repair workflow
+
+`.github/workflows/pr-review-advisor-repair.yaml` is a maintainer-only, manual workflow for one
+explicitly authorized repair attempt. It does not run after the Advisor automatically. Dispatch it
+from `main` with the exact same-repository PR number, PR head and base commits, successful Advisor
+run ID, and a nonempty JSON array of finding IDs. Set `repository_egress_authorized` only after
+authorizing the bounded repository context to cross the existing Advisor model boundary.
+
+Phase 1 is owned by NemoClaw CI maintainers under the accepted
+[issue #10791 maintainer decision](https://github.com/NVIDIA/NemoClaw/issues/10791#issuecomment-5502299277)
+and its recorded amendments. That decision defines the manual-only lifecycle, same-repository
+compatibility boundary, eligible repair classes, one-shot ownership, credential separation,
+the conditions required before protected publication, exact-new-head validation, bounded evidence,
+and required staging proof.
+Automatic repair remains outside the approved scope.
+
+The selected PR must be open, non-draft, based on `main`, and owned by this repository. Both the
+actor and triggering actor must have maintain or admin permission. The workflow accepts only P0 or
+P1 findings from the trusted documentation, reduction, and verification repair classes. Security
+findings, findings with exclusions, credential-bearing validation paths, workflow files, E2E files,
+and other paths outside the narrow repair allowlist fail closed.
+
+Every dispatch claims the exact PR head, Advisor run attempt, and selected finding set before model
+work. The claim is one-shot even when resolution or validation later fails, so do not rerun the
+same attempt blindly. Each repair and validation sandbox belongs only to its ephemeral
+GitHub-hosted runner. The workflow deletes it on handled exits; runner teardown is the terminal
+owner after cancellation or timeout. A later runner never claims it can recover earlier local state.
+The workflow then:
+
+1. Downloads the complete Advisor artifact set by immutable artifact ID and binds it to the live PR.
+2. Gives a credential-free OpenShell sandbox an identity-free, bounded context and a Git-free tree
+   made from the exact PR commit, then runs exactly two repair turns.
+3. Reconstructs the proposed patch in a job without model credentials or write permission. A
+   separate trusted job supplies the reviewed private SDK archive without its package credential,
+   then a second credential-free OpenShell sandbox runs `npm ci --ignore-scripts --prefer-offline
+   --no-audit --no-fund`, `npm run check:diff`, and `npm run test:changed`. A documentation repair
+   also runs `npm run docs`.
+4. Uploads the validated patch and sealed receipt for maintainer inspection. It does not update the
+   pull request branch.
+
+If the resolver cannot produce a safe patch, it restores all edits and records a bounded `blocked`
+proposal; validation stays unavailable for that outcome. The resolve job retains its
+sandbox-cleanup receipt independently so cleanup evidence survives candidate or deletion failures.
+
+Publication is intentionally unavailable. The workflow has no branch-write permission and only
+generates and validates an artifact, while still consuming its one-shot claim. Publication must not
+be enabled until a trusted-main stage validates the exact generated head through the real required
+workflows and a separate reporter binds every required result to that exact commit.
+
 ## Author and agent follow-up
 
 Authors and coding agents should follow the shared [PR CI and Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
 
 ## Safety model
 
-- Static analysis only.
-- PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
+- Normal Advisor review is static analysis only. PR-provided scripts, tests, package lifecycle
+  hooks, and build tools are never executed during analysis.
+- Manual repair validation is a separate credential-free OpenShell boundary. It reconstructs the
+  proposed patch without model credentials or write permission and runs the bounded validation
+  commands listed above, including PR-derived tests through `npm run test:changed`; package
+  lifecycle hooks remain disabled by `npm ci --ignore-scripts`, and only the public npm registry is
+  reachable. A separate trusted package job stages the reviewed private SDK archive, but its package
+  token never reaches the candidate or validation sandbox. The remote E2E target
+  `pr-review-advisor-repair-validation-e2e` runs this boundary against a minimal candidate in a real
+  OpenShell sandbox and uploads the sealed validation receipt. After this target lands on trusted
+  `main`, select it through the repository E2E workflow for staging proof; do not invoke it locally.
 - The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.99 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
 - The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. None of these tools can change repository or GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
@@ -87,9 +145,11 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The gate uses a job-scoped GitHub token to read open PR identity. It receives no model credential.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The normal Advisor comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link. The manual repair workflow has no branch-write permission and produces validation artifacts only.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
-- The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
+- The normal Advisor review workflow posts advisory comments only; it does not approve, request
+  changes, merge, push, label, or dispatch E2E. The separate manual repair workflow also cannot
+  update the PR branch.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence, but does not dispatch jobs. Maintainers decide whether to run its recommended E2E coverage through the [separate manual E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md).
 
 The checked-in risk plan selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
@@ -158,8 +218,10 @@ For a complete PR-bound run, `pr-review-coordinator-shadow-<attempt>` contains t
 coordinator decision in `decision.json`. The coordinator job also writes that decision to its job
 summary. The artifact does not authorize a review write or approval.
 
-The publisher has the only pull-request write permission. It receives neither the model credential
-nor the specialist artifacts. It posts only the workflow-run link.
+The normal Advisor comment publisher has the only pull-request write permission in the review
+workflow. It receives neither the model credential nor the specialist artifacts and posts only the
+workflow-run link. The separate manual repair workflow has no branch-write permission and produces
+only a validated patch and sealed receipt for maintainer inspection.
 
 ## Local run
 

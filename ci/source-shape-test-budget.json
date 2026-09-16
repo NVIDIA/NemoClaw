@@ -22,6 +22,61 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "has one manual entrypoint and no ambient permissions (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "separates model access from credential-free candidate validation (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "loads %s executable code only from the immutable workflow revision (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "uses immutable artifact IDs across candidate validation (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "paginates all existing attempt claims before creating a new claim (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "owns each repair sandbox within one workflow run attempt (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "retains validation evidence through the review window (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "owns inference and repair cleanup in one lifecycle command (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "retains cleanup evidence independently of repair success (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "records blocked outcomes without validating or publishing them (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "uses isolated workspace paths for the %s job (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
