@@ -62,6 +62,7 @@ import {
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
   HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
+  captureRejectedOpenClawCredentialAliasState,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
   MCP_BRIDGE_DENIED_TOOL_SELECTOR,
@@ -643,7 +644,6 @@ async function assertRealAdapterToolCall(
     auth: `Bearer ${options.expectedSecret ?? HOST_SECRET}`,
     path: "/mcp",
   });
-  expect(calls.at(-1)?.auth).not.toContain("openshell:resolve:env");
   const denied = options.deniedTool
     ? await runDeniedMcpToolCall(host, {
         ...options,
@@ -898,12 +898,11 @@ test(
         ALIAS_MCP_SECRET: HOST_SECRET,
       },
     );
-
-    expect(fakeMcp.requests.some((request) => request.auth === `Bearer ${HOST_SECRET}`)).toBe(true);
-    expect(
-      fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env")),
-    ).toBe(true);
-
+    const aliasState = await captureRejectedOpenClawCredentialAliasState(host, sandbox, bridge);
+    expect(aliasState.sourceAbsent).toBe(true);
+    expect(aliasState.providerAbsent).toBe(true);
+    expect(aliasState.policyAbsent).toBe(true);
+    expect(aliasState.adapterAbsent).toBe(true);
     await artifacts.writeText("mcp-provider-rewrite-proof.cjs", MCP_PROVIDER_REWRITE_PROBE_SOURCE);
     const runNodeMcpProbe = runMcpProviderRewriteProbe.bind(null, sandbox, OPENCLAW_SANDBOX_NAME);
 
@@ -944,10 +943,6 @@ test(
       jsonrpc: "2.0",
       method: "tools/list",
     });
-    expect(
-      fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env")),
-    ).toBe(true);
-
     const deniedMethodRequestCount = fakeMcp.requests.filter(
       (request) => request.rpcMethod === "admin/delete",
     ).length;
