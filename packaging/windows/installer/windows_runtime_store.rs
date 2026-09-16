@@ -995,7 +995,12 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir(&path).unwrap();
-        authorize_mount_point(&path).unwrap();
+        authorize_mount_point(&path).unwrap_or_else(|error| {
+            panic!(
+                "mount authorization failed: {error:?}; Windows {}",
+                diagnostic_status()
+            )
+        });
         {
             let handle = open_mount_point(&path, 0x0002_0000).unwrap();
             let mut dacl = null_mut();
