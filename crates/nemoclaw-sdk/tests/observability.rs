@@ -12,6 +12,9 @@ fn input() -> Value {
 fn telemetry() -> Value {
     json!({"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}})
 }
+fn relay() -> Value {
+    json!({"relay":{"enabled":true}})
+}
 #[test]
 fn telemetry_preserves_intent_and_adds_only_collector_egress() {
     let mut value = input();
@@ -85,4 +88,46 @@ fn invalid_telemetry_is_rejected_before_planning() {
         .push(agent);
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
+}
+
+#[test]
+fn hermes_relay_tracing_selects_in_process_runtime_without_new_egress() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
+    value["spec"]["sandboxes"][0]["agents"][0]["observability"] = relay();
+    let doc = Document::parse(value.to_string().as_bytes()).expect("Relay settings must parse");
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&doc, &generations).unwrap();
+    let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
+    assert_eq!(runtime["observability"], relay());
+    assert!(!rows[3].values.contains_key("policy_json"));
+}
+
+#[test]
+fn relay_tracing_rejects_unsupported_combinations() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    let hermes: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
+    for observability in [
+        json!({"relay":{"enabled":false}}),
+        json!({"relay":{"enabled":true},"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"fixture","sampleRate":1}}),
+    ] {
+        let mut value = hermes.clone();
+        value["spec"]["sandboxes"][0]["agents"][0]["observability"] = observability;
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        assert!(!schema.is_valid(&value));
+    }
+    let mut with_interfaces = hermes;
+    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["observability"] = relay();
+    with_interfaces["spec"]["sandboxes"][0]["agents"][0]["interfaces"] =
+        json!({"dashboard":{"enabled":false}});
+    assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_err());
+    assert!(!schema.is_valid(&with_interfaces));
 }

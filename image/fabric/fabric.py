@@ -29,6 +29,40 @@ def openclaw_execution(inference=None):
     return {'timeoutSeconds': seconds, **({'heartbeatEvery': heartbeat} if heartbeat is not None else {})}
 
 
+def hermes_relay_enabled(inference=None):
+    observability = (inference or {}).get('observability')
+    if not isinstance(observability, dict) or 'relay' not in observability:
+        return False
+    if observability != {'relay': {'enabled': True}} or (inference or {}).get('interfaces') is not None:
+        raise ValueError('Hermes Relay tracing requires the exact enabled setting and no native interfaces')
+    return True
+
+
+def relay_configuration(name):
+    output = '/sandbox/artifacts/relay'
+    return {
+        'telemetry': {'providers': {'relay': {}}},
+        'relay': {
+            'project': name,
+            'output_dir': output,
+            'observability': {
+                'version': 3,
+                'atof': {'enabled': True, 'sinks': [{
+                    'type': 'file', 'output_directory': output,
+                    'filename': 'events.atof.jsonl', 'mode': 'overwrite',
+                }]},
+                'atif': {
+                    'enabled': True, 'agent_name': name, 'agent_version': 'nemoclaw-v1alpha1',
+                    'model_name': 'primary', 'output_directory': output,
+                    'filename_template': 'trajectory-{session_id}.atif.json',
+                },
+                'enable_full_payloads': False,
+            },
+            'components': [],
+        },
+    }
+
+
 def configuration(name, harness="deepagents", model=None, inference=None):
     if harness == "pi":
         if model is None:
@@ -40,6 +74,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
                 or not isinstance(model.get("model"), str)
                 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])):
             raise ValueError("Pi requires a valid configured route model")
+    relay = harness == 'hermes' and hermes_relay_enabled(inference)
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
                "hermes": "nemoclaw.local.hermes",
                "openclaw": "nemoclaw.local.openclaw",
@@ -47,16 +82,20 @@ def configuration(name, harness="deepagents", model=None, inference=None):
                "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
                "nooa": "nvidia.fabric.nooa", "nooa-bench": "nvidia.fabric.nooa.bench-agent",
                "remote-agent": "nvidia.fabric.remote-agent", "pi": "nvidia.fabric.pi"}[harness]
+    if relay:
+        adapter = 'nvidia.fabric.hermes'
     config = {
         **({"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
            if harness == "openclaw" else {}),
-        **({"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}} if harness == "hermes" else {}),
+        **({"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}}
+           if harness == "hermes" and not relay else {}),
         **({"discovery": {"local_paths": ["/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"]}} if harness == "pi" else {}),
         "metadata": {"name": name},
         **({"workflow": {"target_id": "nvidia.nooa.coding-agent"}} if harness == "nooa" else {}),
         "harness": {"adapter_id": adapter,
                     **({"settings": {"base_url": "https://inference.local/v1", "api_type": "openai-completions"}} if harness == "remote-agent" else {}),
-                    **({"settings": {"agent_name": name}} if harness in ("openclaw", "hermes") else {})},
+                    **({"settings": {"agent_name": name}}
+                       if harness == "openclaw" or harness == "hermes" and not relay else {})},
         "models": {"default": {
             "provider": "openai", "model": model["model"] if harness == "pi" else "primary",
             **({"settings": {"model_metadata": model["piModel"]}}
@@ -66,9 +105,11 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             "api_key_env": "OPENAI_API_KEY",
         }},
         "environment": {"workspace": "/sandbox/workspace"},
-        "runtime": {**({"max_turns": 8} if harness in ("deepagents", "claude", "mini-swe-agent") else {}),
+        "runtime": {**({"max_turns": 8}
+                        if harness in ("deepagents", "claude", "mini-swe-agent") or relay else {}),
                     "timeout_seconds": openclaw_execution(inference)['timeoutSeconds'] + 60 if harness == 'openclaw' else 300,
                     "artifacts": "/sandbox/artifacts"},
+        **(relay_configuration(name) if relay else {}),
     }
 
     if inference is not None:
@@ -76,7 +117,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         if harness == 'openclaw':
             config['harness']['settings']['inference'] = inference
         elif harness == 'hermes':
-            config['harness']['settings'].update({'inference': inference, 'api_mode': {
+            settings = config['harness'].setdefault('settings', {})
+            settings.update({**({} if relay else {'inference': inference}), 'api_mode': {
                 'openai-completions': 'chat_completions',
                 'openai-responses': 'codex_responses',
                 'anthropic-messages': 'anthropic_messages',
@@ -106,8 +148,10 @@ async def serve():
             if request == {"operation": "check"}:
                 response = {"config": config, "runtime_id": runtime.runtime_id,
                             "ready": runtime.status == RuntimeStatus.ACTIVE, "inference": inference}
-            elif request == {"operation": "probe"} and config["harness"]["adapter_id"] == "nemoclaw.local.hermes":
-                response = (await asyncio.wait_for(runtime.invoke(input={"probe": True}), 300)).to_mapping()
+            elif request == {"operation": "probe"} and config["harness"]["adapter_id"] in ("nemoclaw.local.hermes", "nvidia.fabric.hermes"):
+                probe = ({"probe": True} if config["harness"]["adapter_id"] == "nemoclaw.local.hermes"
+                         else "Reply with the word FOUR.")
+                response = (await asyncio.wait_for(runtime.invoke(input=probe), 300)).to_mapping()
             else:
                 raise ValueError("invalid request")
             encoded = json.dumps(response).encode() + b"\n"
@@ -157,7 +201,7 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
         if operation == "prepare":
             return 0 if result == {"prepared": True} else 2
         if operation in ("check", "configure"):
-            if harness == "hermes":
+            if harness == "hermes" and expected["harness"]["adapter_id"] == "nemoclaw.local.hermes":
                 from hermes_adapter import healthy
                 if not await asyncio.to_thread(healthy, inference):
                     return 2

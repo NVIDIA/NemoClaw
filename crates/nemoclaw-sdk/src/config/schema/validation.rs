@@ -253,6 +253,7 @@ pub(super) fn constrain(root: &mut Value) {
     defs["OpenClawDashboard"]["minProperties"] = json!(1);
     defs["AgentExecution"]["minProperties"] = json!(1);
     property(&mut defs["OtlpTracing"], "enabled", json!({"const":true}));
+    property(&mut defs["RelayTracing"], "enabled", json!({"const":true}));
     property(
         &mut defs["OtlpTracing"],
         "endpoint",
@@ -263,7 +264,14 @@ pub(super) fn constrain(root: &mut Value) {
         "serviceName",
         json!({"minLength":1,"maxLength":256,"pattern":"^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"}),
     );
-    defs["Agent"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["observability"]},"then":{"properties":{"harness":{"const":"openclaw"}}}}));
+    defs["AgentObservability"]["oneOf"] = json!([
+        {"required":["otlp"],"not":{"required":["relay"]}},
+        {"required":["relay"],"not":{"required":["otlp"]}}
+    ]);
+    defs["Agent"]["allOf"].as_array_mut().unwrap().extend([
+        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["otlp"]}}},"then":{"properties":{"harness":{"const":"openclaw"}}}}),
+        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"harness":{"const":"hermes"}},"not":{"required":["interfaces"]}}})
+    ]);
     // JSON Schema's dollar anchor also matches before a trailing newline.
     property(
         &mut defs["AgentExecution"],

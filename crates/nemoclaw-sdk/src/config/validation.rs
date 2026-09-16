@@ -281,6 +281,10 @@ impl Document {
                     "observability belongs to the first agent in a shared sandbox",
                 )?;
                 observability.validate(&agent.harness)?;
+                require(
+                    !observability.uses_relay() || agent.interfaces.is_none(),
+                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
+                )?;
             }
             if let Some(auth) = &agent.auth {
                 require(
