@@ -553,7 +553,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
         let exit = if request
             .command
             .iter()
-            .any(|arg| arg.contains("fetch(c.base_url") || arg.ends_with("/pi-probe.js"))
+            .any(|arg| arg.ends_with("/inference-probe.mts") || arg.ends_with("/pi-probe.js"))
         {
             state.inference_exit
         } else {

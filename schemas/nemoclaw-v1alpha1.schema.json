@@ -1018,7 +1018,7 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
             }
           ],
-          "default": "nc-multi-models@sha256:19369b10ebdbefcd37852ca52ff44c4f67e6ffc5fd81644e9988eb39e2c3406d",
+          "default": "nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b",
           "description": "Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects the default."

@@ -53,7 +53,7 @@ jobs:
             --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
             -B -m unittest test_openclaw_adapter test_inference test_interfaces \
             test_execution test_observability test_web_search test_openclaw_tools_gateway
-          for test in test_openclaw_tools.mts test_openclaw_disclosure.mts test_web_search.mts; do
+          for test in test_inference_probe.mts test_openclaw_tools.mts test_openclaw_disclosure.mts test_web_search.mts; do
             docker run --rm --runtime=runc --network none --user 0 \
               -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
               --entrypoint node nc-fabric:openclaw "/tests/$test"

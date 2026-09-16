@@ -28,7 +28,9 @@ Select a gateway, current agent image, endpoint, and models using the prerequisi
 The adapter configures each agent's native model aliases, initial model, and model-selection policy.
 These are harness restrictions inside a shared sandbox, not provider credential or network isolation between agents.
 This configuration supplies no automatic fallback, oracle consultation, or agent delegation behavior.
-Apply currently probes the first agent's default model; use native requests to verify each additional choice separately.
+Apply probes each distinct configured API, endpoint, credential reference, and model combination within one 80-second request budget.
+A missing credential or failed choice fails readiness and retains the deployment resources.
+Use native requests to verify model selection through the agent interface separately.
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
 Multiple choices are currently supported only by OpenClaw, with at most 32 routes per inference definition.

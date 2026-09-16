@@ -300,11 +300,10 @@ impl OpenShell {
             value(binding, "agent_runtime"),
         )?
         .ok_or(ObservationError::Incomplete)?;
-        let script = INFERENCE_PROBE;
         let (exit, _) = self
             .exec_bound(
                 binding,
-                vec!["node".into(), "-e".into(), script.into()],
+                vec!["node".into(), "/opt/nemoclaw/inference-probe.mts".into()],
                 Row::new(),
                 90,
             )
@@ -380,17 +379,6 @@ impl OpenShell {
         Ok(text)
     }
 }
-
-const INFERENCE_PROBE: &str = r###"
-const s=JSON.parse(process.env.NEMOCLAW_INFERENCE_CONFIG), c=s.connection;
-const key=c.api_key_env ? process.env[c.api_key_env] : 'unused';
-if (!key) process.exit(1);
-const anthropic=s.api==='anthropic-messages', responses=s.api==='openai-responses';
-const path=anthropic?'messages':responses?'responses':'chat/completions';
-const headers={'content-type':'application/json',...(anthropic?{'x-api-key':key,'anthropic-version':'2023-06-01'}:{authorization:'Bearer '+key})};
-const body={model:c.model,stream:false,...(responses?{input:'Reply OK.',max_output_tokens:16}:{messages:[{role:'user',content:'Reply OK.'}],max_tokens:1})};
-fetch(c.base_url.replace(/\/$/,'')+'/'+path,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json(),items=anthropic?b.content:responses?b.output:b.choices;process.exit(r.ok&&Array.isArray(items)&&items.length>0?0:1)}).catch(()=>process.exit(1));
-"###;
 
 #[cfg(test)]
 mod tests {

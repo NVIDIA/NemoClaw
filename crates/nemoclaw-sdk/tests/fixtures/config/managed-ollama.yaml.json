@@ -1,5 +1,5 @@
 {
-  "digest": "436d207cd818a59f1865e471fb939fdf9a5b28bc7d5619fc444b4b6f428120bd",
+  "digest": "0f2033fb21b64d74082e9b29d0ae03bc6297f609096ec9bfe1b8cd3f64866cb6",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -46,7 +46,7 @@
             }
           ],
           "image": {
-            "ref": "nc-multi-models@sha256:19369b10ebdbefcd37852ca52ff44c4f67e6ffc5fd81644e9988eb39e2c3406d"
+            "ref": "nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b"
           },
           "name": "assistant",
           "network": {
