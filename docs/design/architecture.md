@@ -81,7 +81,7 @@ flowchart TD
     SaveRuntime --> Wait[Wait for gateway and inference readiness]
     Wait --> Shell[Plan and check OpenShell graph]
     Shell --> SaveShell[Save intent and apply OpenShell graph]
-    SaveShell --> Probe[Check agent configuration and managed inference reply]
+    SaveShell --> Probe[Check agent configuration and readiness]
     Probe --> Done[Record successful deployment]
     SaveRuntime -. failure .-> Keep[Retain established bindings for explicit recovery]
     Wait -. failure .-> Keep

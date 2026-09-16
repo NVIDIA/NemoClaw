@@ -91,13 +91,8 @@ async fn exercise(fresh: bool) {
     } else {
         assert!(directory.join("runtime/terraform.tfstate").is_file());
     }
-    let applied = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        applied
-            .agent_response
-            .trim_matches('.')
-            .eq_ignore_ascii_case("FOUR")
-    );
+    deployment.apply(&document, &cancel).await.unwrap();
+    let applied_reply = nemoclaw_e2e::verify_agent(&document, &directory).await;
     let before = bindings(&directory);
     assert_eq!(before.len(), 8);
     let (spec, id) = service(&directory);
@@ -189,13 +184,8 @@ async fn exercise(fresh: bool) {
             .running,
         "automatic restart loop"
     );
-    let recovered = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        recovered
-            .agent_response
-            .trim_matches('.')
-            .eq_ignore_ascii_case("FOUR")
-    );
+    deployment.apply(&document, &cancel).await.unwrap();
+    let recovered_reply = nemoclaw_e2e::verify_agent(&document, &directory).await;
     assert_eq!(bindings(&directory), before);
     assert_eq!(
         engine
@@ -225,7 +215,7 @@ async fn exercise(fresh: bool) {
         assert_eq!(retained.get(address), before.get(address));
         assert!(retained.contains_key(address));
     }
-    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied.agent_response,"recoveredReply":recovered.agent_response,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
+    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied_reply,"recoveredReply":recovered_reply,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
     fs::write(
         directory.join("model-proof.json"),
         serde_json::to_vec_pretty(&proof).unwrap(),

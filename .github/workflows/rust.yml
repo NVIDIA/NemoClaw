@@ -67,12 +67,28 @@ jobs:
           cache-all-crates: "false"
           cache-workspace-crates: "false"
           cache-bin: "false"
+      - name: Install test runner for Linux ARM64 pilot
+        if: matrix.platform == 'linux_arm64'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest"
+          cd "$RUNNER_TEMP/nextest"
+          archive=cargo-nextest-0.9.144-aarch64-unknown-linux-gnu.tar.gz
+          curl --fail --location --retry 3 "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.144/$archive" -o "$archive"
+          echo "7fecfd431b810c05c589d800524286b8f80ce2fe9fb1fef05caf16d095cea407  $archive" | sha256sum --check
+          tar -xzf "$archive" cargo-nextest
+          echo "$PWD" >> "$GITHUB_PATH"
+          ./cargo-nextest nextest --version
       - name: Formatting, lint, and deterministic behavior
         run: |
           cargo fmt --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo build --locked --workspace --all-targets
-          cargo test --locked --workspace
+          if [ "$TEST_PLATFORM" = linux_arm64 ]; then
+            cargo nextest run --locked --workspace --profile ci
+            cargo test --locked --workspace --doc
+          else
+            cargo test --locked --workspace
+          fi
       - name: Check recipe attribution and preparation adapters
         if: runner.os == 'Linux'
         run: python3 -B -m unittest discover -s runtimes/qwen38 -p 'test_*.py'
@@ -97,4 +113,8 @@ jobs:
           if [ "$TEST_PLATFORM" != windows_amd64 ]; then
             tests+=(--test ollama)
           fi
-          cargo test --locked --workspace "${tests[@]}" -- --ignored --test-threads=2
+          if [ "$TEST_PLATFORM" = linux_arm64 ]; then
+            cargo nextest run --locked --workspace --profile lifecycle "${tests[@]}" --run-ignored only
+          else
+            cargo test --locked --workspace "${tests[@]}" -- --ignored --test-threads=2
+          fi

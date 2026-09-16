@@ -39,7 +39,7 @@ use std::{path::Path, sync::Arc};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let document = Document::parse(std::fs::File::open("deployment.yaml")?)?;
     let deployment = Deployment::new(Path::new(".local/deployment"), Path::new("dist/linux_arm64"))
-        .with_progress(Arc::new(|phase| eprintln!("Deployment phase: {phase:?}")));
+        .with_progress(Arc::new(|event| eprintln!("Deployment progress: {event:?}")));
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     tokio::spawn(async move {
@@ -55,14 +55,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phases, not a persistent log or a native agent conversation.
+The progress callback reports phase changes and `Progress::Completed` timing events.
+Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
+They cover bundle verification, OpenTofu commands, and sandbox/runtime readiness, and contain no diagnostic payloads.
+Callbacks run synchronously; keep them short.
+A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
 ## Choose the Lifecycle Operation
 
 | Method | Input and result | Effect |
 |---|---|---|
 | `plan(&document, &cancel)` | `OperationResult` with changes and any deferred checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and send inference requests |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up native data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox files/history under the [retention rules](state.md) |

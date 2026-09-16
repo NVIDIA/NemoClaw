@@ -11,18 +11,20 @@ Use [inference API selection](../inference.md#choose-the-request-api) for the pr
 |---|---|---|---|
 | `openclaw` | One or more; per-agent model choices | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
 | `hermes` | One | External or managed | [Hermes](../../examples/fabric-hermes.yaml), [managed Hermes](../../examples/managed-hermes.yaml) |
-| `deepagents` | One | External only | [Deep Agents](../../examples/fabric.yaml) |
-| `claude` | One | External only | [Claude](../../examples/fabric-claude.yaml) |
-| `codex` | One | External only | [Codex](../../examples/fabric-codex.yaml) |
-| `mini-swe-agent` | One | External only | [Mini SWE Agent](../../examples/fabric-mini-swe-agent.yaml) |
-| `nooa` | One | External only | [Nooa](../../examples/fabric-nooa.yaml) |
-| `nooa-bench` | One | External only | [Nooa Bench](../../examples/fabric-nooa-bench.yaml) |
-| `remote-agent` | One | External only | [Remote Agent](../../examples/fabric-remote-agent.yaml) |
-| `pi` | One | External only | [Pi](../../examples/fabric-pi.yaml) |
+| `deepagents` | One | External or managed, subject to API compatibility | [Deep Agents](../../examples/fabric.yaml) |
+| `claude` | One | External or managed, subject to Anthropic Messages compatibility | [Claude](../../examples/fabric-claude.yaml) |
+| `codex` | One | External or managed, subject to API compatibility | [Codex](../../examples/fabric-codex.yaml) |
+| `mini-swe-agent` | One | External or managed, subject to API compatibility | [Mini SWE Agent](../../examples/fabric-mini-swe-agent.yaml) |
+| `nooa` | One | External or managed, subject to API compatibility | [Nooa](../../examples/fabric-nooa.yaml) |
+| `nooa-bench` | One | External or managed, subject to API compatibility | [Nooa Bench](../../examples/fabric-nooa-bench.yaml) |
+| `remote-agent` | One | External or managed, subject to API compatibility | [Remote Agent](../../examples/fabric-remote-agent.yaml) |
+| `pi` | One | External or managed, subject to API compatibility | [Pi](../../examples/fabric-pi.yaml) |
 
 Managed inference means an accepted Ollama or vLLM service configuration, with that mode's prerequisites.
 It does not promise arbitrary model compatibility.
-OpenClaw and Hermes also accept external Ollama with a managed proxy; the inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
+Harness API restrictions still apply; for example, Codex requires a Responses endpoint.
+Apply verifies configuration and readiness without generating a model response.
+The external Ollama proxy remains restricted to OpenClaw and Hermes using OpenAI Completions; the inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
 External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
 Build an image for the selected harness using [the Fabric image procedure](../inference.md#build-an-image-with-the-configuration-interface).

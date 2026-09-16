@@ -20,11 +20,13 @@ class PiHost:
         self.runtime = None
         self.stopping = False
         self.config = None
+        self.inference = None
         self.lock = asyncio.Lock()
 
     def status(self):
         return {
             "config": self.config,
+            "inference": self.inference,
             "runtime_id": self.runtime.runtime_id if self.runtime else None,
             "ready": self.runtime is not None
             and not self.stopping
@@ -39,9 +41,10 @@ class PiHost:
             return {"prepared": True}
 
     async def configure(self, overrides):
-        config = self.configuration(self.name, "pi", overrides)
+        inference = json.loads(os.environ.get("NEMOCLAW_INFERENCE_CONFIG", "null"))
+        config = self.configuration(self.name, "pi", overrides, inference=inference)
         async with self.lock:
-            if self.status()["ready"] and self.config == config:
+            if self.status()["ready"] and self.config == config and self.inference == inference:
                 return self.status()
             # Retain desired configuration for a sandbox process restart. Never
             # replay invocations when changing the model or recovering startup.
@@ -53,6 +56,7 @@ class PiHost:
             temporary.replace(self.model_path)
             await self.stop()
             self.config = config
+            self.inference = inference
             self.runtime = await self.start_runtime(config)
             return self.status()
 

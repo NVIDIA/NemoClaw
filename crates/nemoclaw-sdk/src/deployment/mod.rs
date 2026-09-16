@@ -8,6 +8,7 @@ mod export;
 mod ollama;
 mod plan;
 mod runtime;
+mod timing;
 use crate::{
     CancellationToken, Error,
     backend::{Backend, Row},
@@ -26,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+pub use timing::StepOutcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
@@ -35,6 +37,12 @@ pub enum Progress {
     Readiness,
     Exporting,
     Destroying,
+    /// A completed step with a fixed operation label and no diagnostic payload.
+    Completed {
+        operation: &'static str,
+        elapsed: std::time::Duration,
+        outcome: StepOutcome,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,8 +63,6 @@ pub struct OperationResult {
     pub changes: Vec<Change>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deferred: Vec<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub agent_response: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
 }
@@ -66,7 +72,6 @@ impl OperationResult {
             outcome: Outcome::Planned,
             changes,
             deferred: Vec::new(),
-            agent_response: String::new(),
             retained: Vec::new(),
         }
     }
@@ -106,7 +111,12 @@ impl Deployment {
         self
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
-        let bundle = Bundle::open(&self.bundle_directory)?;
+        let started = std::time::Instant::now();
+        let bundle = self.report_timing(
+            "bundle.verify",
+            started,
+            Bundle::open(&self.bundle_directory),
+        )?;
         let state = std::path::absolute(&self.state_directory)
             .map_err(|_| Error::State("cannot resolve state directory"))?;
         Ok((bundle, Store::open(&state)?))
@@ -299,20 +309,19 @@ impl Deployment {
                 .clone(),
         );
         (self.progress)(Progress::Readiness);
-        let agent = &document.spec.sandboxes[0].agents[0];
-        if document.sandbox_harness()?.kind == "pi" {
-            sandbox.insert(
-                "pi_model_config".into(),
-                serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
-                    .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-            );
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
-        }
-        client.ready(&sandbox, cancel).await?;
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.inference_ready(&sandbox)=>result?}
-        if document.lifecycle_provider()?.service.is_some() {
-            result.agent_response = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.agent_response(&sandbox)=>result?};
-        }
+        self.timed("sandbox.ready", async {
+            let agent = &document.spec.sandboxes[0].agents[0];
+            if document.sandbox_harness()?.kind == "pi" {
+                sandbox.insert(
+                    "pi_model_config".into(),
+                    serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
+                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
+                );
+                tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
+            }
+            client.ready(&sandbox, cancel).await?;
+            Ok(())
+        }).await?;
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
@@ -395,8 +404,18 @@ impl Deployment {
         args: &[&str],
         cancel: &CancellationToken,
     ) -> Result<Vec<u8>, Error> {
-        let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
-        crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+        let operation = match args.first().copied() {
+            Some("init") => "tofu.init",
+            Some("plan") => "tofu.plan",
+            Some("show") => "tofu.show",
+            Some("apply") => "tofu.apply",
+            _ => "tofu.command",
+        };
+        self.timed(operation, async {
+            let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
+            crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+        })
+        .await
     }
     async fn saved_plan(
         &self,

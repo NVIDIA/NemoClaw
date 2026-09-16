@@ -115,7 +115,8 @@ The current managed local topology still publishes through its bridge; that rema
 External inference keeps its explicit URL.
 
 Plan performs no reachability probe.
-Apply tests the route from the sandbox through OpenShell; a failed probe retains bindings for explicit recovery.
+The original implementation tested the route during apply.
+Current apply stops at configuration and readiness; [explicit verification](../inference.md#verify-the-result) tests inference from the sandbox through OpenShell.
 
 ### Native Podman Validation
 
@@ -213,7 +214,7 @@ Destroy touched only the selected engine and retained the model volume and compl
 
 The resident supervisor also handled its explicit protection-trip signal after the CLI exited, stopped inference without an automatic restart, and recovered on explicit apply with the same container and model data.
 Memory-threshold behavior remains covered by fixtures; the live test did not exhaust host memory.
-Managed applies still perform the actual agent-reply probe when resource plans are unchanged.
+At the recorded revision, managed applies performed the agent-reply probe even when resource plans were unchanged; current live tests invoke it separately.
 
 The results confirm that connection selection, publication and durable daemon identity are separate concerns.
 Both daemons share physical capacity: a distinct daemon ID does not imply another GPU or memory pool.

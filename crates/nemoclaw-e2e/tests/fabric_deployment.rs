@@ -88,10 +88,20 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     }
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
-    let applied = deployment.apply(&document, &cancel).await.unwrap();
+    fixture.state.lock().unwrap().inference_exit = 1;
+    deployment.apply(&document, &cancel).await.unwrap();
     assert!(
-        applied.agent_response.is_empty(),
-        "apply must not inject a conversation into {harness}"
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .flatten()
+            .any(|arg| arg.contains("inference-probe")
+                || arg.contains("pi-probe")
+                || arg == "probe"
+                || arg == "--message")
     );
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let effects = fixture.state.lock().unwrap().effects;

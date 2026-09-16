@@ -24,6 +24,7 @@ Reject unsupported state without silently adopting, replacing, or deleting its r
 - Only confirmed absence may remove a resource from state.
 - Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.
 - Plan must not create or mutate runtime resources.
+- Apply checks resources, configuration, and readiness without requesting model or agent responses; generation verification is explicit.
 - Storage survives destroy by default; failed readiness must preserve established identities and persistent data.
 
 ## Runtime and Observation

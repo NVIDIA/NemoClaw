@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from fabric import configuration
+from fabric import client, configuration
 from pi_host import PiHost
 
 
@@ -72,6 +74,34 @@ class PiRuntimeConfiguration(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(json.loads(self.host.model_path.read_text()), second)
         self.assertEqual(len(self.starts), 2)
+
+    async def test_client_accepts_configured_inference_and_rejects_drift(self):
+        model = {"model": "qwen3:4b"}
+        inference = {"api": "openai-completions", "tuning": {}}
+        socket = str(Path(self.directory.name) / "fabric.sock")
+
+        async def handle(reader, writer):
+            request = json.loads(await reader.readline())
+            response = (
+                await self.host.configure(request["model"])
+                if request["operation"] == "configure"
+                else self.host.status()
+            )
+            writer.write(json.dumps(response).encode() + b"\n")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        with (
+            patch.dict("os.environ", {"NEMOCLAW_INFERENCE_CONFIG": json.dumps(inference)}),
+            patch("fabric.SOCKET", socket),
+        ):
+            async with await asyncio.start_unix_server(handle, socket):
+                self.assertEqual(await client("configure", "main", "pi", model, inference), 0)
+                self.assertEqual(await client("check", "main", "pi", model, inference), 0)
+                drift = {**inference, "tuning": {"maxTokens": 123}}
+                self.assertEqual(await client("check", "main", "pi", model, drift), 2)
+                self.assertEqual(len(self.starts), 1)
 
     async def test_failed_start_is_not_ready_and_explicit_apply_can_recover(self):
         self.fail_start = True

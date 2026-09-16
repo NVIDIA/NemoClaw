@@ -277,59 +277,61 @@ impl Deployment {
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
         (self.progress)(Progress::Readiness);
-        let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
-        let gateway = async {
-            loop {
-                match tokio::time::timeout(
-                    Duration::from_secs(2),
-                    client.verify_gateway(&document.spec.sandboxes[0].runtime.provider),
-                )
-                .await
-                {
-                    Ok(Ok(())) => return Ok(()),
-                    Ok(Err(Error::Observation(ObservationError::Transport))) | Err(_) => {}
-                    Ok(Err(error)) => return Err(error),
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        };
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
-        let bindings = stage.bindings()?;
-        let inference = async {
-            for target in targets.iter().filter(|t| t.kind == SERVICE_KIND) {
-                let engine =
-                    crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
-                let spec: Spec = serde_json::from_str(&target.values["spec"])
-                    .map_err(|_| Error::State("invalid runtime specification"))?;
-                let binding = bindings.get(&target.address).ok_or(Error::State(
-                    "inference runtime has no established identity",
-                ))?;
+        self.timed("runtime.ready", async {
+            let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
+            let gateway = async {
                 loop {
-                    let observed = engine
-                        .observe_runtime(&spec, &binding.id)
-                        .await?
-                        .ok_or(Error::State("inference runtime is unobservable"))?;
-                    if !observed.running {
-                        return Err(Error::State(
-                            "inference runtime stopped; inspect logs and explicitly reapply; identity and model data retained",
-                        ));
+                    match tokio::time::timeout(
+                        Duration::from_secs(2),
+                        client.verify_gateway(&document.spec.sandboxes[0].runtime.provider),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => return Ok(()),
+                        Ok(Err(Error::Observation(ObservationError::Transport))) | Err(_) => {}
+                        Ok(Err(error)) => return Err(error),
                     }
-                    let status = engine.runtime_status(&observed).await?;
-                    if status.phase == "ready" {
-                        engine.verify_artifacts(&observed).await?;
-                        break;
-                    }
-                    if status.phase == "stopped" {
-                        return Err(Error::State(
-                            "inference runtime protection stopped the service; explicit recovery required",
-                        ));
-                    }
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
-            }
+            };
+            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(90),gateway)=>result.map_err(|_|Error::State("managed gateway readiness failed; identity and data retained"))??};
+            let bindings = stage.bindings()?;
+            let inference = async {
+                for target in targets.iter().filter(|t| t.kind == SERVICE_KIND) {
+                    let engine =
+                        crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
+                    let spec: Spec = serde_json::from_str(&target.values["spec"])
+                        .map_err(|_| Error::State("invalid runtime specification"))?;
+                    let binding = bindings.get(&target.address).ok_or(Error::State(
+                        "inference runtime has no established identity",
+                    ))?;
+                    loop {
+                        let observed = engine
+                            .observe_runtime(&spec, &binding.id)
+                            .await?
+                            .ok_or(Error::State("inference runtime is unobservable"))?;
+                        if !observed.running {
+                            return Err(Error::State(
+                                "inference runtime stopped; inspect logs and explicitly reapply; identity and model data retained",
+                            ));
+                        }
+                        let status = engine.runtime_status(&observed).await?;
+                        if status.phase == "ready" {
+                            engine.verify_artifacts(&observed).await?;
+                            break;
+                        }
+                        if status.phase == "stopped" {
+                            return Err(Error::State(
+                                "inference runtime protection stopped the service; explicit recovery required",
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
             Ok(())
-        };
-        tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(9*3600),inference)=>result.map_err(|_|Error::State("runtime readiness timed out; container, watchdog and data remain owned"))?}
+            };
+            tokio::select! {()=cancel.cancelled()=>Err(Error::Cancelled),result=tokio::time::timeout(Duration::from_secs(9*3600),inference)=>result.map_err(|_|Error::State("runtime readiness timed out; container, watchdog and data remain owned"))?}
+        }).await
     }
     pub(super) async fn export_runtime(
         &self,
