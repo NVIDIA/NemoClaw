@@ -415,7 +415,7 @@ exit 1
         };
         const input: RuntimeProviderLifecycleInput = {
           environment: {
-            ...process.env,
+            ...cliEnv,
             NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
           },
           log: vi.fn(),
