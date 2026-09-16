@@ -33,6 +33,7 @@ export function createNvidiaFeaturedModelSession(
 ): NvidiaFeaturedModelSession {
   const writeLine = options.writeLine ?? console.log;
   const defaultModel = options.defaultModel?.trim() || DEFAULT_CLOUD_MODEL;
+  const warn = options.warn ?? console.warn;
   const loadingMessage = options.loadingMessage ?? "  Loading NVIDIA's featured model catalog...";
   const loadPromptOptions = createNvidiaFeaturedModelPromptOptionsLoader({
     catalogLabel: options.catalogLabel,
@@ -44,11 +45,16 @@ export function createNvidiaFeaturedModelSession(
   return {
     async select(requestedModel, recoveredModel, nonInteractive, envModel, promptOptions) {
       if (requestedModel) return requestedModel;
-      if (
-        recoveredModel &&
-        !isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)
-      ) {
-        return recoveredModel;
+      if (recoveredModel) {
+        if (!isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)) {
+          return recoveredModel;
+        }
+        const configuredModel = envModel?.trim();
+        warn(
+          nonInteractive
+            ? `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; using "${configuredModel || defaultModel}" instead.`
+            : `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; choose a replacement model.`,
+        );
       }
       const configuredModel = envModel?.trim();
       if (nonInteractive) return configuredModel || defaultModel;

@@ -112,11 +112,20 @@ describe("NVIDIA featured model selection", () => {
   it("reselects instead of recovering a retired NVIDIA Endpoints model", async () => {
     const retiredModel = "minimaxai/minimax-m3";
     const replacement = "nvidia/nemotron-3-super-120b-a12b";
+    const warn = vi.fn();
     vi.mocked(promptCloudModel).mockResolvedValueOnce(replacement);
-    const session = createNvidiaFeaturedModelSession({ writeLine: vi.fn() });
+    const session = createNvidiaFeaturedModelSession({ warn, writeLine: vi.fn() });
 
     await expect(session.select(null, retiredModel, true)).resolves.toBe(replacement);
     await expect(session.select(null, retiredModel, false)).resolves.toBe(replacement);
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      `  Warning: recovered NVIDIA model "${retiredModel}" is retired; using "${replacement}" instead.`,
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      `  Warning: recovered NVIDIA model "${retiredModel}" is retired; choose a replacement model.`,
+    );
     expect(promptCloudModel).toHaveBeenCalledOnce();
   });
 

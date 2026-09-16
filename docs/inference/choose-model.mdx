@@ -16,7 +16,7 @@ Runtime route validation determines current availability because catalog entries
 ## Catalog Selection
 
 During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public featured model catalog once per onboarding session and reports progress before displaying the model picker.
-OpenRouter uses the same catalog-backed picker flow and featured model list with its own provider route and credential check.
+OpenRouter uses the same catalog-backed picker flow and featured model list with its own provider route and credential check, but it does not apply NVIDIA Endpoints retirement filters.
 NVIDIA Endpoints excludes NVIDIA-retired or unsafe choices and corrects known catalog lag before displaying the result.
 
 If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses its bundled fallback list.
