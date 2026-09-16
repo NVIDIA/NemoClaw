@@ -510,23 +510,12 @@ describe("reviewed npm image remediation contract", () => {
     expect(npm12.source).toContain(
       `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`,
     );
-    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
       npm12.source,
-      "node /scripts/upgrade-bundled-npm.mts",
-      reviewedNpmUpgradeArguments,
+      "node /scripts/lib/prepare-offline-npm-patches.mts",
+      ["/usr/local/lib/node_modules/npm", "/tmp/npm-patches", reviewedNpmArchivePath],
     ).commandStart;
-    const tarRun = requireSingleReviewedDockerfileRunCommand(
-      npm12.source,
-      patchCommand,
-      npmRootArguments,
-    ).commandStart;
-    const braceRun = npm12.source.indexOf("node /scripts/patch-bundled-npm-brace-expansion.mts");
-    const ipAddressRun = npm12.source.indexOf("node /scripts/lib/patch-bundled-npm-ip-address.mts");
-
-    expect(upgradeRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
-    expect(tarRun).toBeGreaterThan(upgradeRun);
-    expect(braceRun).toBeGreaterThan(tarRun);
-    expect(ipAddressRun).toBeGreaterThan(braceRun);
+    expect(patchRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
   });
 
   // source-shape-contract: compatibility -- Hermes archive staging and adjacent runtime checks must share existing layers so the final image stays within the Docker import ceiling.

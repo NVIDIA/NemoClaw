@@ -320,6 +320,10 @@ function stageOptimizedSandboxBuildContext(
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "prepare-offline-npm-patches.mts"),
+    path.join(stagedScriptsDir, "lib", "prepare-offline-npm-patches.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );

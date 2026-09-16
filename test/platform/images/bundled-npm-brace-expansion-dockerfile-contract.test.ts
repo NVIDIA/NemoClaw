@@ -45,7 +45,7 @@ const tarPatchArgumentsByDockerfile = {
   "agents/langchain-deepagents-code/Dockerfile": npmRootArguments,
 } as const;
 const tarPatchCountByDockerfile = {
-  Dockerfile: 2,
+  Dockerfile: 1,
   "agents/hermes/Dockerfile": 1,
   "agents/langchain-deepagents-code/Dockerfile": 1,
 } as const;
@@ -83,7 +83,11 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   it.each(finalDockerfiles)(
     "reasserts the private package fix in the completed %s filesystem",
     (file) => {
-      const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const source =
+        file === "Dockerfile"
+          ? `${dockerfile.match(/FROM scratch AS openclaw-dependency-payload\n[\s\S]*?(?=\nFROM )/u)?.[0] ?? ""}\n${dockerfile.slice(dockerfile.lastIndexOf("\nFROM "))}`
+          : dockerfile;
       const copy = requireDockerfileCopySources(
         source,
         copySource,
