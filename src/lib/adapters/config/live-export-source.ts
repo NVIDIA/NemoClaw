@@ -315,16 +315,6 @@ async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, sig
   };
 }
 
-function readFailure(stage: ExportSnapshotReadStage, error: unknown): RawExportSnapshot {
-  return {
-    kind: "read-failed",
-    stage:
-      error instanceof Error && "kind" in error && error.kind === "sdk-unavailable"
-        ? "openshell-sdk"
-        : stage,
-  };
-}
-
 async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
   let stage: ExportSnapshotReadStage = "registry";
   try {
@@ -377,8 +367,8 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       policy,
       configuration,
     };
-  } catch (error) {
-    return readFailure(stage, error);
+  } catch {
+    return { kind: "read-failed", stage };
   }
 }
 

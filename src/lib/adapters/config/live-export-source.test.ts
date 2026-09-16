@@ -286,30 +286,6 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("identifies a missing SDK without exposing import details or publishing", async () => {
-    mockSupportedLiveSource();
-    raw.getSandbox.mockRejectedValueOnce(
-      Object.assign(new Error(readFailureCanary), { code: "ERR_MODULE_NOT_FOUND" }),
-    );
-    const { result, writeStdout, publish } = await exportLiveSource();
-    expect(result).toMatchObject({
-      ok: false,
-      failure: {
-        findings: [
-          expect.objectContaining({
-            category: "live-verification-failed",
-            diagnostic: expect.stringContaining(
-              "OpenShell JavaScript SDK is missing or incomplete",
-            ),
-          }),
-        ],
-      },
-    });
-    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
-    expect(writeStdout).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-  });
-
   it("does not fall back to the selected gateway after an inference read failure", async () => {
     mockSupportedLiveSource();
     const actual =

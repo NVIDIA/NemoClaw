@@ -185,7 +185,6 @@ export interface ObservedExportSandboxIdentity {
 
 export type ExportSnapshotReadStage =
   | "registry"
-  | "openshell-sdk"
   | "gateway-binding"
   | "sandbox-inventory"
   | "sandbox-identity"

@@ -3030,8 +3030,6 @@ restore_managed_source_lockfile() {
 }
 
 finish_nemoclaw_install() {
-  spin "Installing and verifying the OpenShell SDK" \
-    node "${NEMOCLAW_SOURCE_ROOT}/scripts/lib/install-openshell-sdk.mts"
   # A backup-preparation pass defers OpenShell but still prepares the CLI. The
   # later install pass completes only the OpenShell policy for that source mode.
   # Once an out-of-range gateway has been retired, install its replacement

@@ -411,8 +411,6 @@ repair_repository() {
     return 1
   fi
   run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts || return 1
-  run_setup_step "Install and verify the OpenShell SDK" \
-    node "${REPO_ROOT}/scripts/lib/install-openshell-sdk.mts" || return 1
   run_setup_step "Install plugin dependencies" \
     npm --prefix nemoclaw install --include=dev --ignore-scripts || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1

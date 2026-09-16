@@ -181,11 +181,12 @@ if [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
-if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
-if [ "$1" = "-e" ]; then exit 0; fi
+if [ "$1" = "-e" ]; then
+  exit 0
+fi
 echo "unexpected node invocation: $*" >&2
 exit 99
 `,
@@ -245,8 +246,9 @@ if [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
-if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
-if [ "$1" = "-e" ]; then exit 0; fi
+if [ "$1" = "-e" ]; then
+  exit 0
+fi
 echo "unexpected node invocation: $*" >&2
 exit 99
 `,
@@ -1045,11 +1047,12 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
-if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
-if [ "$1" = "-e" ]; then exit 0; fi
+if [ "$1" = "-e" ]; then
+  exit 0
+fi
 exit 99
 `,
     );
@@ -1146,11 +1149,12 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.19.0"
   exit 0
 fi
-if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
-if [ "$1" = "-e" ]; then exit 0; fi
+if [ "$1" = "-e" ]; then
+  exit 0
+fi
 exit 99
 `,
     );
@@ -2312,7 +2316,6 @@ describe("curl-pipe installer release-tag resolution", () => {
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
-if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi

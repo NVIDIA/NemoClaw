@@ -38,9 +38,7 @@ export const connectOpenShellReader: ConnectOpenShellReader = async (target) =>
   (await connectManagedOpenShellSdk(target)) as OpenShellReadClient;
 
 export class OpenShellReadError extends Error {
-  constructor(
-    readonly kind: Exclude<OpenShellSandboxError["kind"], "command"> | "sdk-unavailable",
-  ) {
+  constructor(readonly kind: Exclude<OpenShellSandboxError["kind"], "command">) {
     super(`OpenShell read failed (${kind}).`);
   }
 }
@@ -70,9 +68,6 @@ export const owned = cloneAndDeepFreeze;
 function readError(error: unknown): OpenShellReadError {
   if (error instanceof OpenShellReadError) return error;
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
-    return new OpenShellReadError("sdk-unavailable");
-  }
   if ([7, 16, "permission_denied", "unauthenticated"].some((status) => status === code)) {
     return new OpenShellReadError("authentication");
   }
