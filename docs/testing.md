@@ -13,6 +13,47 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## Test Runner Pilot
+
+The Linux ARM64 native CI job uses cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
+Other platforms retain the Cargo test runner while the pilot is measured.
+The pinned prebuilt runner is installed with checksum verification; installation cannot fall back to compiling it.
+
+To run ordinary tests locally from the repository root, install the pinned runner once and use:
+
+```sh
+cargo install cargo-nextest --version 0.9.144 --locked
+cargo nextest run --locked --workspace --profile ci
+cargo test --locked --workspace --doc
+```
+
+The local install command compiles the tool; CI downloads its prebuilt executable.
+The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
+The `lifecycle` profile limits the whole fixture run to two concurrent tests with the same timeout.
+Both profiles finish the remaining tests after a failure.
+Use the [fixture prerequisites](testing/fixtures.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
+Nextest does not run doctests, so the separate Cargo command remains required.
+
+## Dependency Policy
+
+The [dependency workflow](../.github/workflows/dependencies.yml) checks changed Rust manifests, lockfiles, toolchain, and policy on pull requests and pushes to `v1`.
+It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
+The [policy](../deny.toml) permits the current license inventory and the two existing Git sources; dependency revisions remain pinned in the manifests and lockfile.
+
+Install cargo-deny 0.20.2 once, then run from the repository root:
+
+```sh
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --locked check licenses sources
+cargo deny --locked check advisories
+```
+
+Advisories use the current advisory database and are a manual check, separate from dependency-change CI.
+The workflow also defines a manual advisory step, but GitHub requires the workflow file on the repository's default branch before it accepts manual dispatch.
+Until that requirement is met, run the advisory command locally on `v1`.
+There is no scheduled advisory run on this branch.
+A denied license or source requires reviewing the dependency and policy; do not add blanket exceptions to make the check pass.
+
 ## Image Source Checks
 
 Use the [agent image build prerequisites](build.md#build-agent-images) and host Python 3.12 or newer for the target-selection test.

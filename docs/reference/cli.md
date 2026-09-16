@@ -28,6 +28,7 @@ Read [deployment lifecycle](../usage.md) and preview deletion before destroying 
 | `--state-dir DIR` | All commands | Deployment state directory; defaults to `.nemoclaw` relative to the working directory |
 | `--bundle DIR` | All commands | Explicit verified bundle; defaults to the bundle containing the CLI |
 | `--bundle-dir DIR` | All commands | Alias for `--bundle` |
+| `--verbose`, `-v` | All commands | Report completed-step timings and outcomes on stderr |
 | `--output FILE`, `-o FILE` | `export` | Write YAML to a file instead of stdout |
 | `--destroy` | `plan` | Preview destroy; cannot be combined with a YAML input |
 | `--help`, `-h` | CLI and subcommands | Display help |
@@ -43,6 +44,11 @@ Successful plan, apply, and destroy operations write JSON to stdout.
 Export writes YAML to stdout or the selected output file.
 Errors go to stderr with a nonzero exit status.
 Help and version output are plain text.
+
+With `--verbose`, completed bundle verification, OpenTofu commands, and sandbox/runtime readiness steps report a fixed operation label, outcome, and elapsed seconds on stderr.
+For example, `bundle.verify succeeded 0.092s` reports one bundle verification.
+Timing events contain no configuration values, credentials, or error diagnostics; ordinary errors are reported separately.
+Stdout retains its JSON or YAML format.
 
 The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the JSON fields:
 
