@@ -85,7 +85,7 @@ function createBoundaryProof(directory: string, relativeProofDirectory: string):
   fs.chmodSync(proofDirectory, 0o777);
 }
 
-function writeExclusive(file: string, content: string): void {
+export function writeExclusive(file: string, content: string): void {
   const fd = fs.openSync(
     file,
     fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
