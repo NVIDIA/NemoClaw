@@ -748,7 +748,9 @@ describe("sandbox BuildKit prebuild", () => {
         publishImage,
         log: vi.fn(),
       }),
-    ).rejects.toThrow(/registry/i);
+    ).rejects.toThrow(
+      "Managed local registry at http://127.0.0.1:54321 is unavailable. Sandbox image build has not started.",
+    );
     expect(buildImage).not.toHaveBeenCalled();
     expect(publishImage).not.toHaveBeenCalled();
     expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {
