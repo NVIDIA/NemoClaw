@@ -243,18 +243,66 @@ The current image recipe pins Hermes 0.21.0 and Relay 0.7.3, matching the Fabric
 Treat this as a tracing proof, not the production Relay 0.8 path.
 Production migration remains gated on a released Fabric adapter compatible with the released Hermes and Relay tuple, followed by the normal security and live end-to-end qualification.
 
+## Define and Attach Integrations
+
+Define an integration once in `spec.integrations` and select it from each consuming agent's `integrationRefs`.
+For reuse only within a sandbox, put the same definition in `spec.sandboxes[].integrations`.
+For one agent, define it directly in `spec.sandboxes[].agents[].integrations`; no reference is required.
+All three locations use the same [integration type](reference/configuration.md#integration).
+
+Definitions in deployment and sandbox scopes grant no access until an agent references them.
+References can see only those enclosing scopes, never another agent's inline definitions.
+Names must be unique in their map and must not shadow an enclosing definition.
+Unresolved or duplicate references are rejected; definitions are never implicitly merged or overridden.
+An agent can declare inline integrations and reference different enclosing definitions together, subject to the supported kinds and runtime limits.
+YAML anchors, aliases, and merge keys remain disabled.
+
+The current supported kind is `webSearch` with Brave.
+VoiceClaw and other kinds are rejected until their runtime behavior is implemented.
+The current schema still permits exactly one sandbox; deployment-level definitions do not add multi-sandbox support.
+
 ## Brave Web Search
 
-Declare web search on the sandbox, using names from its OpenClaw agent list:
+Declare a shared search integration and attach it to the selected OpenClaw agents.
+This fragment omits the deployment's other required fields; the [complete example](../examples/openclaw-web-search.yaml) includes them:
 
 ```yaml
-integrations:
-  webSearch:
-    provider: brave
-    agentRefs: [main]
-    credential:
-      env: BRAVE_API_KEY
+spec:
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+  sandboxes:
+    - name: assistant
+      agents:
+        - name: researcher
+          harness: openclaw
+          integrationRefs: [search]
+        - name: writer
+          harness: openclaw
+          integrationRefs: [search]
 ```
+
+For a single consumer, the equivalent agent-inline fragment is:
+
+```yaml
+agents:
+  - name: researcher
+    harness: openclaw
+    integrations:
+      search:
+        kind: webSearch
+        provider: brave
+        credential:
+          env: BRAVE_API_KEY
+```
+
+Inline definitions belong to that agent; use an enclosing definition and references to share one integration.
+The native gateway currently supports one attached Brave search definition per sandbox.
+Multiple agents may reference that definition, but attaching distinct search definitions is rejected, even when their settings are equal.
+Unused enclosing definitions create no provider, policy grant, or secret requirement.
 
 Set the referenced environment variable on the host running `nemoclaw apply`.
 NemoClaw resolves that reference locally and creates a workspace-scoped Brave provider profile and credential-bearing provider in OpenShell.
@@ -263,7 +311,7 @@ Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the managed provider and profile without revoking the key at Brave.
 Unchanged apply does not rotate a changed value behind the same environment reference.
 
-`agentRefs` must contain one or more unique, declared, unrestricted OpenClaw agents.
+Every attached agent must be an unrestricted OpenClaw agent.
 Selected agents receive `web_search`; other unrestricted agents explicitly deny it, and read-only agents retain only `read`.
 These are native tool restrictions within a shared sandbox, not separate process or filesystem boundaries.
 Other harnesses are rejected.
@@ -272,6 +320,7 @@ The integration adds a reserved `nemoclaw-brave` policy rule permitting the nati
 The supervisor proxy terminates TLS there to inject `X-Subscription-Token`.
 An explicit policy cannot reuse this rule name, and the inference provider cannot be named `brave-search`.
 The integration owns its profile, provider attachment, native plugin settings, and agent tool grants.
+Export preserves authored definition scope and references; the adapter's internal agent grants are derived from those attachments.
 Profile, attachment, or native configuration drift stops refresh and export without overwriting the conflicting configuration.
 Restore the declared settings before retrying.
 
@@ -279,6 +328,10 @@ Build an updated image using the [runtime build procedure](#runtime-lifecycle) a
 The builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
 Changing YAML does not update an image or migrate retained native configuration.
 Offline tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
+
+The former `integrations.webSearch.agentRefs` input is rejected.
+Move its provider and credential fields into a named `kind: webSearch` definition and put `integrationRefs` on the selected agents.
+Retained intent with the old shape is not migrated automatically; use its matching previous bundle for export or teardown.
 
 ## Hermes Native Server
 
