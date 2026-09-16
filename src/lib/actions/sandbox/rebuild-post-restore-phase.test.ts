@@ -55,7 +55,7 @@ describe("rebuild post-restore phase", () => {
         order.push("reconcile");
       },
     );
-    vi.spyOn(rebuildMessaging, "reapplyMessagingManifestAfterOpenClawDoctor").mockImplementation(
+    vi.spyOn(rebuildMessaging, "reapplyMessagingManifestBeforeOpenClawStart").mockImplementation(
       async () => {
         order.push("messaging");
       },
@@ -156,16 +156,16 @@ describe("rebuild post-restore phase", () => {
     };
   }
 
-  it("reconciles sessions after doctor, then seals config after MCP restoration (#7102, #9946)", async () => {
+  it("completes offline restoration before one doctor start and final sealing (#7102, #9946)", async () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual([
-      "doctor",
       "reconcile",
       "messaging",
       "permissions",
       "mcp",
       "permissions",
+      "doctor",
       "config-hash",
       "config-hash-final",
       "host-forward",
@@ -195,12 +195,12 @@ describe("rebuild post-restore phase", () => {
     const verification = await runRebuildPostRestorePhase(args);
 
     expect(order).toEqual([
-      "doctor",
       "reconcile",
       "messaging",
       "permissions:1",
       "mcp",
       "permissions:2",
+      "doctor",
       "config-hash",
       "config-hash-final",
       "host-forward",
@@ -256,7 +256,7 @@ describe("rebuild post-restore phase", () => {
       "alpha",
       runtimeSelection,
     );
-    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledWith(
+    expect(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).toHaveBeenCalledWith(
       "alpha",
       null,
       args.log,
@@ -314,7 +314,7 @@ describe("rebuild post-restore phase", () => {
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).not.toHaveBeenCalled();
     expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
-    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).toHaveBeenCalledOnce();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
@@ -341,7 +341,7 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("stops before later writes when the doctor restart fails (#9946)", async () => {
+  it("finishes offline writes but stops online finalization when doctor restart fails (#9946)", async () => {
     vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
       stage: "restart",
@@ -351,12 +351,12 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
-    expect(mutableConfigPerms.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).toHaveBeenCalledOnce();
+    expect(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).toHaveBeenCalledOnce();
+    expect(mutableConfigPerms.repairMutableConfigPerms).toHaveBeenCalledTimes(2);
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
-    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).toHaveBeenCalledOnce();
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).not.toHaveBeenCalled();
@@ -372,7 +372,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
-    vi.mocked(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).mockRejectedValue(
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).mockRejectedValue(
       new Error("config write failed"),
     );
     const args = input();
@@ -387,7 +387,7 @@ describe("rebuild post-restore phase", () => {
     );
     expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("Messaging manifest config reapply failed after doctor");
+    expect(output).toContain("Messaging manifest config reapply failed before gateway start");
   });
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {

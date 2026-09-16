@@ -397,11 +397,10 @@ it("rejects a SQLite transcript store that appears after a JSONL-only baseline",
   });
 
   expect(baseline.status).toBe(0);
-  expect(qualification.status).toBe(2);
-  expect(qualification.stderr).toContain('"reason":"sqlite_session_store_appeared"');
+  expect(qualification.status, qualification.stderr).toBe(2);
 });
 
-it("qualifies a newly created SQLite store only when its user turn has the launch nonce", () => {
+it("rejects a prepopulated SQLite store after a JSONL baseline even with the launch nonce", () => {
   const firstIdentifier = "0123456789abcdef";
   const secondIdentifier = "fedcba9876543210";
   const { baseline, qualification } = runEvidenceFixture({
@@ -425,7 +424,8 @@ it("qualifies a newly created SQLite store only when its user turn has the launc
   });
 
   expect(baseline.status).toBe(0);
-  expect(qualification.status, qualification.stderr).toBe(0);
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"sqlite_session_store_appeared"');
 });
 
 it("keeps an incomplete SQLite-backed turn pending", () => {

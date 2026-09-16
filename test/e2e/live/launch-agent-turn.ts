@@ -1244,18 +1244,8 @@ function appendedSqliteSessions(baseline) {
   const snapshot = readSqliteTranscriptSnapshot(
     baseline ? "sqlite_session_store_removed" : undefined,
   );
-  requireEvidence(
-    baseline || !snapshot || expectedUserIdentifiersConfigured,
-    "sqlite_session_store_appeared",
-  );
-  return snapshot
-    ? baseline
-      ? appendedExistingSqliteSessions(snapshot, baseline)
-      : Array.from(snapshot.sessions, ([sessionId, events]) => ({
-          sessionId,
-          messages: structuredMessages(events, sessionId),
-        })).filter((session) => session.messages.length > 0)
-    : null;
+  requireEvidence(baseline || !snapshot, "sqlite_session_store_appeared");
+  return snapshot ? appendedExistingSqliteSessions(snapshot, baseline) : null;
 }
 
 function appendedExistingSqliteSessions(snapshot, baseline) {

@@ -268,7 +268,6 @@ const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-u
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 5 * 60_000;
 const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
-const OPENCLAW_DOCTOR_RESTART_ATTEMPTS = 2;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true }
@@ -292,6 +291,7 @@ export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const content = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
   return [
+    "set -e",
     'dir="/sandbox/.openclaw"',
     '[ -d "$dir" ] && [ ! -L "$dir" ] || exit 10',
     'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 11',
@@ -352,42 +352,39 @@ export async function runOpenClawPostRestoreDoctor(
     runtimeSelection,
   );
   const completionProbe = buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName);
-  for (let attempt = 1; attempt <= OPENCLAW_DOCTOR_RESTART_ATTEMPTS; attempt += 1) {
-    // A lifecycle command can return nonzero after its mutation committed.
-    // Reconcile both results through the marker-plus-health postcondition. If
-    // OpenShell leaves the replacement sandbox unready, one bounded stop/start
-    // retry replays the still-present one-shot request instead of stranding the
-    // rebuild on a transient lifecycle transition.
-    deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
-    deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
+  // The caller completes every offline restore before entering this lifecycle
+  // boundary. Issue one stop/start transition so the startup-owned doctor can
+  // consume the marker, then verify that exact replacement without replaying
+  // post-restore work against a second process identity.
+  deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
+  deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
 
-    const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
-    const completed = await waitUntilAsync(
-      async () => {
-        const remainingMs = reconciliationDeadlineMs - deps.now();
-        if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
-        const result = await deps.executeSandboxExecCommand(
-          sandboxName,
-          completionProbe,
-          Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
-          {
-            localDockerFallbackPolicy: "never",
-            ...(runtimeSelection ? { runtimeSelection } : {}),
-          },
-        );
-        return result?.status === 0;
-      },
-      {
-        deadlineMs: reconciliationDeadlineMs,
-        initialIntervalMs: 3_000,
-        maxIntervalMs: 3_000,
-        backoffFactor: 1,
-        now: deps.now,
-        sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
-      },
-    );
-    if (completed) return { ok: true };
-  }
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const completed = await waitUntilAsync(
+    async () => {
+      const remainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      const result = await deps.executeSandboxExecCommand(
+        sandboxName,
+        completionProbe,
+        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        {
+          localDockerFallbackPolicy: "never",
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      );
+      return result?.status === 0;
+    },
+    {
+      deadlineMs: reconciliationDeadlineMs,
+      initialIntervalMs: 3_000,
+      maxIntervalMs: 3_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
+    },
+  );
+  if (completed) return { ok: true };
   return {
     ok: false,
     stage: "restart",

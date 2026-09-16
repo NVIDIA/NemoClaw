@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +30,28 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each(["chmod", "printf", "mv"])(
+    "fails closed when the atomic marker %s operation fails",
+    (operation) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-failure-"));
+      try {
+        const command = buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll(
+          "/sandbox/.openclaw",
+          root,
+        );
+        const result = spawnSync("bash", ["-c", `${operation}() { return 19; }; ${command}`], {
+          encoding: "utf8",
+        });
+
+        expect(result.status).not.toBe(0);
+        expect(fs.existsSync(path.join(root, ".nemoclaw-post-upgrade-doctor"))).toBe(false);
+        expect(fs.readdirSync(root)).toEqual([]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("restarts through the pinned runtime and verifies marker consumption plus health", async () => {
     const execute = vi
@@ -121,10 +143,10 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       stage: "restart",
       detail: "the sandbox did not consume its doctor request and return a healthy gateway",
     });
-    expect(currentMs).toBe(2 * 3 * 60_000);
+    expect(currentMs).toBe(3 * 60_000);
   });
 
-  it("retries one stop/start cycle after a transient unready replacement", async () => {
+  it("does not replay the lifecycle transition after an unready replacement", async () => {
     let currentMs = 0;
     const execute = vi
       .fn()
@@ -148,10 +170,12 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
           currentMs += seconds * 1_000;
         }),
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({
+      ok: false,
+      stage: "restart",
+      detail: "the sandbox did not consume its doctor request and return a healthy gateway",
+    });
     expect(capture.mock.calls.map((call) => call[0])).toEqual([
-      ["sandbox", "stop", "alpha"],
-      ["sandbox", "start", "alpha"],
       ["sandbox", "stop", "alpha"],
       ["sandbox", "start", "alpha"],
     ]);

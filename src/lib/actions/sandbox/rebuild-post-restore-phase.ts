@@ -37,7 +37,7 @@ import {
 } from "./rebuild-mcp-phase";
 import {
   finalizePendingMessagingRemovalsAfterRestore,
-  reapplyMessagingManifestAfterOpenClawDoctor,
+  reapplyMessagingManifestBeforeOpenClawStart,
 } from "./rebuild-messaging-phase";
 import { runOpenClawPostRestoreDoctor } from "./process-recovery";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
@@ -222,22 +222,13 @@ export async function runRebuildPostRestorePhase(
   };
 
   if (targetAgentName === "openclaw") {
-    log("Restarting OpenClaw once for exclusive post-upgrade structure repair");
-    const doctorResult = await runOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
-    log(`Post-upgrade doctor restart: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
-    if (!doctorResult.ok) {
-      console.log(`  ${D}Post-upgrade structure repair failed during sandbox restart${R}`);
-      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
-      return;
-    }
-    console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
-
     // #7102: clear stale per-session pinned models left over from an
-    // `inference set` before this rebuild, while the gateway is still down.
+    // `inference set` before this rebuild. Keep every restored state/config
+    // mutation ahead of the one final doctor-owned gateway start below.
     await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(
+      await reapplyMessagingManifestBeforeOpenClawStart(
         sandboxName,
         messagingPlan,
         log,
@@ -247,7 +238,9 @@ export async function runRebuildPostRestorePhase(
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-      console.error(`  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`);
+      console.error(
+        `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
+      );
       bail("OpenClaw messaging manifest config reapply failed during rebuild.");
       return;
     }
@@ -299,12 +292,21 @@ export async function runRebuildPostRestorePhase(
     mcpRuntimeSelection,
   ));
   if (targetAgentName === "openclaw") {
-    // MCP restoration may write OpenClaw configuration after the earlier
-    // doctor/messaging repair. Re-establish the final mutable-config posture
-    // after that async writer has settled and before sealing the config hash.
+    // MCP restoration is the last offline OpenClaw config writer. Re-establish
+    // the mutable-config posture before starting the gateway exactly once.
     repairMutableOpenClawConfigPermissions(
       "Restoring mutable OpenClaw config permissions after MCP restoration",
     );
+
+    log("Starting OpenClaw once after all offline post-restore writes");
+    const doctorResult = await runOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
+    log(`Post-upgrade doctor restart: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
+    if (!doctorResult.ok) {
+      console.log(`  ${D}Post-upgrade structure repair failed during sandbox restart${R}`);
+      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+      return;
+    }
+    console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
   }
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
