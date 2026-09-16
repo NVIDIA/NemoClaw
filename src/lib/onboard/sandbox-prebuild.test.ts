@@ -10,11 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
 
-/** Separate the runtime endpoint from the image tag to detect a stale probe address. */
+/** Use a nondefault authority to detect hard-coded probe and publication addresses. */
 vi.mock("./experimental/portable-profile", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./experimental/portable-profile")>()),
-  // A nondefault port proves the probe follows the runtime owner, not the image tag.
-  PORTABLE_LOCAL_REGISTRY: "localhost:54321",
+  PORTABLE_LOCAL_REGISTRY: "127.0.0.1:54321",
 }));
 
 vi.mock("../adapters/docker/exec", async (importOriginal) => ({
@@ -703,7 +702,7 @@ describe("sandbox BuildKit prebuild", () => {
     });
 
     expect(publishImage).toHaveBeenCalledWith(
-      ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
+      ["push", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"],
       expect.objectContaining({ stdio: "inherit" }),
     );
     expect(fetchRegistry.mock.invocationCallOrder[0]).toBeLessThan(
@@ -714,10 +713,10 @@ describe("sandbox BuildKit prebuild", () => {
       signal: expect.any(AbortSignal),
     });
     expect(buildImage).toHaveBeenCalledWith(
-      expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.arrayContaining(["build", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"]),
       expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
     );
-    expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(result.imageRef).toBe("127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890");
     expect(fs.existsSync(credentialConfig)).toBe(false);
   });
 

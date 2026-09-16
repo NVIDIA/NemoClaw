@@ -16,19 +16,12 @@ import {
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
-import {
-  LOCAL_SANDBOX_IMAGE_REPO,
-  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
-} from "../domain/sandbox/image-tag";
+import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
-import {
-  isPortableExperimentalProfile,
-  PORTABLE_LOCAL_REGISTRY,
-  PORTABLE_REGISTRY_HOST,
-} from "./docker-driver-platform";
+import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -144,6 +137,7 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
+/** Bind Portable build and push tags to the same registry authority used by readiness checks. */
 export function sandboxLocalImageRef(
   sandboxName: string,
   buildId: string,
@@ -157,7 +151,7 @@ export function sandboxLocalImageRef(
   const buildPart = sanitize(buildId).slice(-32) || "build";
   const namePart = sanitize(sandboxName).slice(0, 127 - buildPart.length) || "sandbox";
   const repository = isPortableExperimentalProfile(env)
-    ? PORTABLE_LOCAL_SANDBOX_IMAGE_REPO
+    ? `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`
     : LOCAL_SANDBOX_IMAGE_REPO;
   return `${repository}:${namePart}-${buildPart}`;
 }
@@ -241,8 +235,6 @@ export async function prebuildSandboxImageIfEligible(
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
   if (portable) {
     const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_REGISTRY}`);
-    // The managed publication binds IPv4; localhost can resolve only to IPv6.
-    registryUrl.hostname = PORTABLE_REGISTRY_HOST;
     try {
       const response = await fetch(registryUrl, {
         redirect: "error",
