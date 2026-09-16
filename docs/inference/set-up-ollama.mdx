@@ -28,6 +28,11 @@ Fresh Hermes Portable onboarding does not use the host Ollama setup described in
 It creates a receipt-owned Ollama runner through the current user's rootless Podman authority.
 Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
 
+This experimental profile requires exactly Podman `5.7.0` for both the client and the local rootless engine.
+It rejects every other version, including newer releases.
+NemoClaw does not install Podman, and a remote-client-only package is insufficient.
+Before onboarding, run `podman version` and confirm that both reported versions are `5.7.0`.
+
 Before the provider-selection step completes, NemoClaw verifies the Portable network, registry, GPU, and Podman authority.
 NemoClaw launches the runner with `OLLAMA_CONTEXT_LENGTH=64000`.
 That value is part of the runner's launch and runtime identity.
