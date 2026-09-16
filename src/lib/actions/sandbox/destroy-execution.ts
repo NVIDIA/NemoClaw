@@ -291,9 +291,11 @@ export async function executeSandboxDestroy({
           };
         }
         try {
-          const actual = sandbox
-            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
-            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          const captureBySandbox = identityProvider.cleanup.captureDestroyIdentity;
+          const actual =
+            sandbox?.openshellDriver?.trim() && captureBySandbox
+              ? captureBySandbox({ sandbox, sandboxName })
+              : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
           if (!actual) {
             return {
               status: "probe-failed",
