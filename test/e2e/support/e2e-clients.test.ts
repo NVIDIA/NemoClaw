@@ -770,7 +770,11 @@ describe("E2E fixture clients", () => {
 
     try {
       const [command, ...args] = await recordedPairingWait();
-      const result = spawnSync(command, [...args, "1000", stateDir], { encoding: "utf8" });
+      const result = spawnSync(command, [...args, "1000", stateDir], {
+        encoding: "utf8",
+        timeout: 2_000,
+        killSignal: "SIGKILL",
+      });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe("");
     } finally {
@@ -813,7 +817,11 @@ describe("E2E fixture clients", () => {
       const [command, ...args] = await recordedPairingWait();
       const attempt = (paired: Record<string, unknown>) => {
         writePairingFile(stateDir, "devices/paired.json", paired);
-        return spawnSync(command, [...args, "200", stateDir], { encoding: "utf8" });
+        return spawnSync(command, [...args, "200", stateDir], {
+          encoding: "utf8",
+          timeout: 2_000,
+          killSignal: "SIGKILL",
+        });
       };
       writePairingFile(stateDir, "identity/device.json", { deviceId: LOCAL_CLI_DEVICE.deviceId });
       const authMissing = attempt({ [LOCAL_CLI_DEVICE.deviceId]: LOCAL_CLI_DEVICE });

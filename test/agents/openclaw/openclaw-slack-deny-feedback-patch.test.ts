@@ -37,11 +37,14 @@ function prepareModuleSource(
   options: {
     moduleType?: "commonjs" | "esm";
     withMentionState?: boolean;
+    withNativeContextBindings?: boolean;
+    withNativeSenderBinding?: boolean;
     denyLine?: string;
     nativeDeniedMentionFeedback?: boolean;
   } = {},
 ): string {
   const moduleType = options.moduleType ?? "commonjs";
+  const withMentionState = options.withMentionState ?? true;
   const nativeDeniedMentionFeedback = [
     'const SLACK_CHANNEL_ACCESS_DOCS_URL = "https://docs.openclaw.ai/channels/slack";',
     "async function authorizeSlackInboundMessage(params) {",
@@ -53,17 +56,31 @@ function prepareModuleSource(
     "\t}",
     "\treturn { senderId: params.message.user };",
     "}",
+    ...(withMentionState
+      ? []
+      : [
+          "function mentionStateOutsidePrepareSlackMessage() {",
+          "\tconst explicitlyMentionedBotUser = false;",
+          "\tconst explicitlyMentionedBotSubteam = false;",
+          "\treturn explicitlyMentionedBotUser || explicitlyMentionedBotSubteam;",
+          "}",
+        ]),
     `${moduleType === "esm" ? "export " : ""}async function prepareSlackMessage(params) {`,
-    "\tconst { ctx, message, opts } = params;",
+    options.withNativeContextBindings === false
+      ? "\tconst { ctx: slackCtx, message: slackMessage, opts: slackOpts } = params;"
+      : "\tconst { ctx, message, opts } = params;",
     "\tconst drop = () => null;",
     "\tconst authorization = await authorizeSlackInboundMessage({",
     "\t\tctx, message, drop, channelDenied: false,",
     '\t\texplicitBotMention: opts.source === "app_mention",',
     "\t});",
     "\tif (!authorization) return null;",
-    "\tconst { senderId } = authorization;",
-    "\tconst explicitlyMentionedBotUser = Boolean(params.explicitlyMentionedBotUser);",
-    "\tconst explicitlyMentionedBotSubteam = Boolean(params.explicitlyMentionedBotSubteam);",
+    options.withNativeSenderBinding === false
+      ? "\tconst { senderId: authorizedSenderId } = authorization;"
+      : "\tconst { senderId } = authorization;",
+    withMentionState
+      ? "\tconst { explicitlyMentionedBotUser, explicitlyMentionedBotSubteam, explicitlyMentioned } = params;"
+      : "\tconst { mentionedBotUser, mentionedBotSubteam, explicitlyMentioned } = params;",
     "\tconst isRoomish = true;",
     "\tconst messageIngress = { senderAccess: { gate: { allowed: false } } };",
     "\tconst senderGate = messageIngress.senderAccess.gate;",
@@ -73,7 +90,6 @@ function prepareModuleSource(
     moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
     "",
   ].join("\n");
-  const withMentionState = options.withMentionState ?? true;
   const denyLine =
     options.denyLine ??
     "logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);";
@@ -110,6 +126,8 @@ function writeSlackPackage(
   options: {
     moduleType?: "commonjs" | "esm";
     withMentionState?: boolean;
+    withNativeContextBindings?: boolean;
+    withNativeSenderBinding?: boolean;
     denyLine?: string;
     nativeDeniedMentionFeedback?: boolean;
   } = {},
@@ -387,6 +405,41 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       const silent = output?.silent as { result: unknown; calls: FeedbackCall[] };
       expect(silent.result).toBeNull();
       expect(silent.calls).toHaveLength(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "mention identifiers",
+      options: { withMentionState: false },
+      expectedMissing: "explicitlyMentionedBotUser",
+    },
+    {
+      label: "context identifiers",
+      options: { withNativeContextBindings: false },
+      expectedMissing: "ctx",
+    },
+    {
+      label: "sender identifier",
+      options: { withNativeSenderBinding: false },
+      expectedMissing: "senderId",
+    },
+  ])("rejects native $label outside the injection scope", ({ options, expectedMissing }) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-scope-"));
+    const prepareFile = writeSlackPackage(tmp, {
+      nativeDeniedMentionFeedback: true,
+      ...options,
+    });
+    try {
+      const result = runGuardRequire(prepareFile);
+      expect(
+        result.status,
+        `stdout:\n${result.stdout}\nstderr:\n${result.stderr}\nsource:\n${fs.readFileSync(prepareFile, "utf-8")}`,
+      ).toBe(1);
+      expect(result.stderr).toContain("missing in-scope bindings");
+      expect(result.stderr).toContain(expectedMissing);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

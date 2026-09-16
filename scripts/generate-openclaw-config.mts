@@ -840,18 +840,25 @@ export function buildConfig(env: Env = process.env): JsonObject {
     searchDefaultLimit: 8,
     maxSearchLimit: 20,
   };
+  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
     alsoAllow: ["bundle-mcp"],
     // An explicit direct request is authoritative. Compatibility manifests may
     // downgrade progressive mode to false, but may never re-enable search over
-    // a user's direct selection.
+    // a user's direct selection. OpenClaw 2026.9.1 otherwise expands that false
+    // fallback into the full direct catalog. llama.cpp rejects the resulting
+    // request schema, so keep its progressive route on the compact structured
+    // search/describe/call surface even for models whose hosted route still
+    // needs the legacy direct-tool compatibility override.
     toolSearch:
       toolDisclosure === "direct"
         ? false
-        : "toolSearch" in openclawToolOverrides
-          ? openclawToolOverrides.toolSearch
-          : structuredToolSearch,
+        : upstreamProvider === "llama-cpp-local"
+          ? structuredToolSearch
+          : "toolSearch" in openclawToolOverrides
+            ? openclawToolOverrides.toolSearch
+            : structuredToolSearch,
   };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
@@ -861,7 +868,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   // provider ID, so OpenClaw cannot infer its built-in llama.cpp schema
   // projection from the provider name. Select the upstream compatibility
   // profile explicitly before tool schemas reach llama-server's GBNF parser.
-  if ((env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim() === "llama-cpp-local") {
+  if (upstreamProvider === "llama-cpp-local") {
     inferenceCompat.toolSchemaProfile ??= "llamacpp";
   }
 

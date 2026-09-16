@@ -177,22 +177,9 @@ async function importProofModules(slackDir) {
 }
 `;
 
-export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import http from "node:http";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-
-${SLACK_RUNTIME_DISCOVERY_SOURCE}
-
-function invariant(condition, message) {
-  if (!condition) throw new Error(message);
-}
-
-function prepareSqliteTmpdir() {
-  const sqliteTmpdir = "/sandbox/.openclaw/tmp";
+export const SLACK_SQLITE_TMPDIR_SETUP_SOURCE = String.raw`
+function prepareSqliteTmpdir(openclawStateDir = "/sandbox/.openclaw") {
+  const sqliteTmpdir = path.join(openclawStateDir, "tmp");
   let metadata;
   try {
     metadata = fs.lstatSync(sqliteTmpdir);
@@ -209,7 +196,25 @@ function prepareSqliteTmpdir() {
   );
   fs.chmodSync(sqliteTmpdir, 0o700);
   process.env.SQLITE_TMPDIR = sqliteTmpdir;
+  return sqliteTmpdir;
 }
+`;
+
+export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+${SLACK_RUNTIME_DISCOVERY_SOURCE}
+
+function invariant(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+${SLACK_SQLITE_TMPDIR_SETUP_SOURCE}
 
 prepareSqliteTmpdir();
 

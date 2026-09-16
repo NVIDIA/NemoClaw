@@ -201,7 +201,7 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
 
 export function managedActivationPostRestartAgentTurnScript(
   agent: ShippedManagedImageAgent,
-  phase: "before" | "after",
+  phase: "before" | "boundary" | "after",
   command: readonly string[],
 ): TrustedSandboxShellScript | null {
   if (agent !== "openclaw" || phase !== "after") return null;

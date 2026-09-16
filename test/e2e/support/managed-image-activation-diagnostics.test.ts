@@ -168,6 +168,7 @@ describe("managed image activation failure diagnostics", () => {
     expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
     expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
     expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();
+    expect(managedActivationPostRestartAgentTurnScript("openclaw", "boundary", command)).toBeNull();
     expect(managedActivationPostRestartAgentTurnScript("hermes", "after", command)).toBeNull();
   });
 

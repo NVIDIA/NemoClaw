@@ -183,19 +183,45 @@
     );
   }
 
+  function collectDestructuredBindings(source, initializer) {
+    var bindings = Object.create(null);
+    var declaration = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*([A-Za-z_$][\w$]*)\s*;/g;
+    var match;
+    while ((match = declaration.exec(source)) !== null) {
+      if (match[2] !== initializer) continue;
+      var entries = match[1].split(",");
+      for (var i = 0; i < entries.length; i++) {
+        var binding = entries[i].trim().replace(/^\.\.\./, "");
+        var aliasSeparator = binding.indexOf(":");
+        if (aliasSeparator !== -1) binding = binding.slice(aliasSeparator + 1);
+        binding = binding.split("=", 1)[0].trim();
+        if (binding) bindings[binding] = true;
+      }
+    }
+    return bindings;
+  }
+
+  function missingNativeDeniedSenderBindings(source) {
+    var paramsBindings = collectDestructuredBindings(source, "params");
+    var authorizationBindings = collectDestructuredBindings(source, "authorization");
+    var missing = [];
+    var requiredParamsBindings = [
+      "ctx",
+      "message",
+      "opts",
+      "explicitlyMentionedBotUser",
+      "explicitlyMentionedBotSubteam",
+    ];
+    for (var i = 0; i < requiredParamsBindings.length; i++) {
+      var binding = requiredParamsBindings[i];
+      if (!paramsBindings[binding]) missing.push(binding);
+    }
+    if (!authorizationBindings.senderId) missing.push("senderId");
+    return missing;
+  }
+
   function patchNativeDeniedSenderGate(source, filename) {
     if (!hasNativeChannelDeniedMentionFeedback(source)) return null;
-    if (
-      source.indexOf("explicitlyMentionedBotUser") === -1 ||
-      source.indexOf("explicitlyMentionedBotSubteam") === -1
-    ) {
-      throw new Error(
-        "OpenClaw Slack mention-state shape not recognized in " +
-          filename +
-          "; expected explicitlyMentionedBotUser/explicitlyMentionedBotSubteam before the sender gate",
-      );
-    }
-
     var senderGate =
       'if (isRoomish && senderGate?.allowed === false) return drop("unauthorized-sender");';
     var senderGateCount = source.split(senderGate).length - 1;
@@ -205,6 +231,22 @@
           filename +
           "; expected exactly one gate, found " +
           senderGateCount,
+      );
+    }
+    var prepareAnchor = /((?:export\s+)?async function prepareSlackMessage\(params\) \{)/;
+    var prepareMatch = prepareAnchor.exec(source);
+    var senderGateIndex = source.indexOf(senderGate);
+    if (!prepareMatch || senderGateIndex < prepareMatch.index) {
+      throw new Error("OpenClaw Slack prepareSlackMessage definition not found in " + filename);
+    }
+    var prepareBeforeSenderGate = source.slice(prepareMatch.index, senderGateIndex);
+    var missingBindings = missingNativeDeniedSenderBindings(prepareBeforeSenderGate);
+    if (missingBindings.length > 0) {
+      throw new Error(
+        "OpenClaw Slack denied-sender binding shape not recognized in " +
+          filename +
+          "; missing in-scope bindings before the sender gate: " +
+          missingBindings.join(", "),
       );
     }
 
@@ -221,10 +263,6 @@
         "}",
       ].join("\n"),
     );
-    var prepareAnchor = /((?:export\s+)?async function prepareSlackMessage\(params\) \{)/;
-    if (!prepareAnchor.test(next)) {
-      throw new Error("OpenClaw Slack prepareSlackMessage definition not found in " + filename);
-    }
     return next.replace(prepareAnchor, buildDeniedMentionFeedbackHelperSource() + "$1");
   }
 
