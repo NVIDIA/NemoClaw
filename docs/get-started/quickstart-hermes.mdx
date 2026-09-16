@@ -185,7 +185,8 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use Portable Ollama">
     On Linux x86_64, fresh Hermes Portable onboarding can run the selected Ollama model in a current-user rootless Podman container.
-    This path requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
+    Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
+    This path also requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
     Start fresh onboarding with an explicit Ollama model:
 
     ```bash
