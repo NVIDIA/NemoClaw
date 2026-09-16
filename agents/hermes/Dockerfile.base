@@ -372,7 +372,10 @@ RUN mkdir -p /sandbox/.hermes/memories \
 
 # Hermes installs opt-in dependencies here instead of the sealed root venv.
 # Hermes appends this directory after its trusted site-packages at runtime.
-ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+# The bundled path tells upstream packaged-install discovery where image-owned
+# built-ins live without disabling native user or opted-in project plugins.
+ENV HERMES_BUNDLED_PLUGINS=/opt/hermes/plugins \
+    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and

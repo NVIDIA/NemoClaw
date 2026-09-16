@@ -209,9 +209,11 @@ FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS h
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-# Keep the stock-image lazy dependency target when a published base image lags
-# Dockerfile.base. The final stage also creates and verifies the directory.
-ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+# Tell upstream Hermes where this packaged install places its built-in plugins;
+# native user and opted-in project plugin discovery remain enabled. Keep the
+# stock-image lazy target when a published base image lags Dockerfile.base.
+ENV HERMES_BUNDLED_PLUGINS=/opt/hermes/plugins \
+    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 ENV HERMES_SKIP_CHMOD=1
 
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
