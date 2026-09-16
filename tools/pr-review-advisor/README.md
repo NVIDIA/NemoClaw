@@ -12,6 +12,10 @@ After a required `CI / Pull Request` run whose name ends in `gate true` succeeds
 
 Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The Advisor does not select or summarize their findings. A trusted aggregate gate reports only whether their blocker evidence is clear.
 
+The first run on an unreviewed pull request is a complete assessment. After a trusted human maintainer submits `CHANGES_REQUESTED` or `APPROVED` and the author pushes another commit, the next run becomes a bounded follow-up: it treats that review as the frozen contract, reads the exact reviewed-commit-to-current-commit delta first, rechecks the contract, and inspects only affected seams. A follow-up may add a blocker only when the new delta introduces it or newly available repository evidence proves a material failure that could not reasonably have been established in the frozen review. Resolved findings disappear; when the contract is resolved and no material delta regression exists, the aggregate gate becomes green so the separate maintainer workflow can perform its normal readiness check and approval.
+
+This split is intentional. The Advisor supplies current-commit code evidence; it never approves or writes reviews. The maintainer review-request workflow owns FIFO scheduling, repository gates, idempotent GitHub writes, and the final approval.
+
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
 ## Workflow
@@ -20,12 +24,14 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 1. Runs after `CI / Pull Request` completes, plus trusted manual dispatch.
 2. Runs automatically only when the source workflow succeeds for a required PR revision.
-3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
+3. Prepares the target PR as inert analysis data, including the latest trusted human review contract and an exact follow-up delta when applicable, and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
-5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
+5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist performs either the initial complete assessment or the bounded frozen-contract follow-up, reads repository evidence, and records a native session trace.
 6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
-8. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
+8. For a PR-bound run, a read-only coordinator shadow consumes the same exact-head context and
+   specialist evidence. It publishes only a job summary and decision artifact.
+9. For automatic `workflow_run` PR runs, one publisher attempts to post a sticky comment that links to the workflow run, including after the aggregate job fails. A failed specialist suppresses publication. Manual dispatch does not run the publisher.
 
 For a PR-bound run, `Require no Advisor blockers` is the review-request signal. Request human review only when that job is green for the latest PR commit. It is not merge authorization, and contributors must still inspect the specialist reports.
 
@@ -37,7 +43,7 @@ primitives and exposes only sandbox runtime initialization as a CLI command. Bot
 lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
 used by the merge-conflict fixer.
 
-Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. Workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. GitHub context collection has one 120-second deadline across all required API reads. A timeout or partial result prevents context artifact publication. Workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its comment
 links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
@@ -148,6 +154,10 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
+For a complete PR-bound run, `pr-review-coordinator-shadow-<attempt>` contains the read-only
+coordinator decision in `decision.json`. The coordinator job also writes that decision to its job
+summary. The artifact does not authorize a review write or approval.
+
 The publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
@@ -159,16 +169,37 @@ From a prepared contributor checkout, run:
 npm run review:local
 ```
 
-The command snapshots the committed branch delta from `origin/main`, staged and unstaged final
-content, and nonignored untracked files. It runs every checked-in specialist separately through
-OpenShell. It writes each specialist's Markdown review and native JSONL session under
-`artifacts/pr-review-advisor-local/`. The command does not run tests, inspect CI state, use GitHub
-context, or combine findings. Test recommendations are advisory targets verified against the
-repository inventory, not executed test results.
+To run the same local specialists against a directly selected exact open, non-draft GitHub pull
+request:
+
+```bash
+npm run review:local -- --pr 12345
+```
+
+The repository defaults to `NVIDIA/NemoClaw`. Use `--repo OWNER/REPO` after the PR number only
+when reviewing another repository.
+
+The PR form is read-only. It does not authenticate or admit a maintainer review-request queue. It
+resolves and rechecks the selected PR's live head and base, checks out the exact head in a disposable
+clone, collects bounded GitHub review context, and publishes specialist artifacts back to
+`artifacts/pr-review-advisor-local/`. It does not combine findings, post a review, or approve the PR.
+The repository workflow's coordinator shadow consumes the same exact-head evidence and reports a
+read-only decision; a human maintainer still owns any consolidated review or approval. On a later
+commit, the latest trusted human review becomes the frozen contract and the specialists inspect its
+exact commit delta instead of starting over.
+
+Without `--pr`, the command snapshots the committed branch delta from `origin/main`, staged and
+unstaged final content, and nonignored untracked files. It does not use GitHub context, so this
+checkout form always uses the initial complete-assessment path. Both forms run every checked-in
+specialist separately through OpenShell, write each specialist's Markdown review and native JSONL
+session under `artifacts/pr-review-advisor-local/`, and do not run tests, inspect CI state, or combine
+findings. Test recommendations are advisory targets verified against the repository inventory, not
+executed test results.
 
 Prerequisites:
 
 - Node.js 22.19.0 or newer and npm registry access for the dependencies locked on `origin/main`;
+- for `--pr`, an authenticated GitHub CLI (`gh`) identity with read access to the target repository;
 - an `origin/main` remote-tracking commit that contains the trusted local review implementation;
 - a running Docker-compatible container runtime. Run `npm run dev:doctor` to verify Docker availability and resources;
 - `git`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
