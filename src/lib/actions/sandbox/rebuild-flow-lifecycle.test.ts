@@ -164,6 +164,41 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("keeps the source sandbox when captured GPU authority conflicts with opt-out (#10758)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "0",
+        sandboxGpuEnabled: false,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: {
+        schemaVersion: 1,
+        providerId: "docker",
+        providerHandle: "provider-handle",
+        lifecycleState: "running",
+        lifecycleGeneration: "generation-1",
+        runtime: {
+          schemaVersion: 1,
+          providerId: "docker",
+          runtime: { kind: "docker-container", handle: "c".repeat(64) },
+          acceleration: {
+            kind: "gpu",
+            vendor: "nvidia",
+            devices: ["nvidia.com/gpu=0"],
+          },
+        },
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/captured sandbox GPU authority cannot be replayed safely/iu);
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
   it("observes current MCP sources, recreates with the captured policy, and restores OpenClaw", async ({
     onTestFinished,
   }) => {
