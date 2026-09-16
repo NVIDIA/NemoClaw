@@ -148,6 +148,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
@@ -553,6 +554,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
