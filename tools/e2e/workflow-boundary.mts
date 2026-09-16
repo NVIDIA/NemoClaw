@@ -3201,6 +3201,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireUploadPathContains(
     errors,
     uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
   );
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
