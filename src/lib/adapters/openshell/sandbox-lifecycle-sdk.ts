@@ -47,7 +47,7 @@ function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxErro
     return { kind: "timeout", message: "OpenShell timed out." };
   }
   if (error instanceof Error && error.name === "OpenShellSdkPreflightUnavailableError") {
-    return { kind: "transport", reason: "unreachable", message: "OpenShell is unavailable." };
+    return { kind: "transport", reason: "unreachable", message: error.message };
   }
   const code =
     error && typeof error === "object" && "code" in error
@@ -66,7 +66,19 @@ function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxErro
   if (code === "4" || code === "canceled" || code === "deadline_exceeded") {
     return { kind: "timeout", message: "OpenShell timed out." };
   }
-  return { kind: "transport", reason: "unreachable", message: "OpenShell is unavailable." };
+  const errorName = error instanceof Error && error.name ? error.name : "unknown error";
+  const diagnostic = [
+    errorName,
+    code ? `code ${code}` : "",
+    connectCode ? `connect ${connectCode}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return {
+    kind: "transport",
+    reason: "unreachable",
+    message: `OpenShell is unavailable (${diagnostic}).`,
+  };
 }
 
 async function mutate(

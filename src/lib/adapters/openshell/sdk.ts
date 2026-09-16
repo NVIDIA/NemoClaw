@@ -13,7 +13,12 @@ import type { OpenShellGatewayTarget } from "./sandbox-observer";
 import { importOpenShellSdk } from "./sdk-import.mjs";
 
 const MAX_PEM_BYTES = 1024 * 1024;
-export class OpenShellSdkPreflightUnavailableError extends Error {}
+export class OpenShellSdkPreflightUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenShellSdkPreflightUnavailableError";
+  }
+}
 
 type OpenShellSdkModule = Readonly<{
   OpenShellClient: Readonly<{
