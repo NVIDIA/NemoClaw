@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isMcpLifecycleLockHeld,
   withMcpLifecycleLock,
@@ -34,6 +34,111 @@ describe("sandbox mutation lock acquisition", () => {
     timeoutMs: 1_000,
     corruptLockGraceMs: 5,
     ...overrides,
+  });
+
+  describe.each([
+    {
+      mode: "asynchronous",
+      acquire: (operation: () => string, overrides: Record<string, number> = {}) =>
+        withMcpLifecycleLock("alpha", operation, options(overrides)),
+      loseLinkReply: () => {
+        const link = fs.promises.link;
+        vi.spyOn(fs.promises, "link").mockImplementationOnce(async (...args) => {
+          await link(...args);
+          throw Object.assign(new Error("lost publication reply"), { code: "EIO" });
+        });
+      },
+    },
+    {
+      mode: "synchronous",
+      acquire: async (operation: () => string, overrides: Record<string, number> = {}) =>
+        withMcpLifecycleLockSync("alpha", operation, options(overrides)),
+      loseLinkReply: () => {
+        const link = fs.linkSync;
+        vi.spyOn(fs, "linkSync").mockImplementationOnce((...args) => {
+          link(...args);
+          throw Object.assign(new Error("lost publication reply"), { code: "EIO" });
+        });
+      },
+    },
+  ])("$mode publication and release", ({ acquire, loseLinkReply }) => {
+    it("enters after a lost link reply and removes its owner after operation failure", async () => {
+      const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+      const operation = vi.fn(() => {
+        expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+          version: 1,
+          sandboxName: "alpha",
+          pid: process.pid,
+          token: expect.any(String),
+        });
+        expect(fs.statSync(lockPath).mode & 0o777).toBe(0o600);
+        expect(fs.readdirSync(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
+        throw new Error("protected operation failed");
+      });
+      loseLinkReply();
+
+      await expect(acquire(operation)).rejects.toThrow("protected operation failed");
+
+      expect(operation).toHaveBeenCalledOnce();
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([]);
+      await expect(acquire(() => "reacquired")).resolves.toBe("reacquired");
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([]);
+    });
+
+    it("preserves a replacement owner when the protected operation finishes", async () => {
+      const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+      const replacement = createMcpLifecycleLockOwner("alpha", "replacement-owner");
+
+      await expect(
+        acquire(() => {
+          fs.unlinkSync(lockPath);
+          fs.writeFileSync(lockPath, JSON.stringify(replacement), { flag: "wx", mode: 0o600 });
+          return "complete";
+        }),
+      ).resolves.toBe("complete");
+
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
+    });
+
+    it("reclaims a lock symlink without reading or removing its target", async () => {
+      const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+      const targetPath = path.join(stateDir, "protected-owner.json");
+      const targetOwner = JSON.stringify(createMcpLifecycleLockOwner("alpha", "target-owner"));
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(targetPath, targetOwner, { mode: 0o600 });
+      fs.symlinkSync(targetPath, lockPath);
+
+      await expect(acquire(() => "acquired")).resolves.toBe("acquired");
+
+      expect(fs.readFileSync(targetPath, "utf8")).toBe(targetOwner);
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([]);
+    });
+
+    it("refuses a lock directory without removing its contents", async () => {
+      const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+      fs.mkdirSync(lockPath, { recursive: true });
+      fs.writeFileSync(path.join(lockPath, "preserved"), "original");
+      const operation = vi.fn(() => "must not run");
+
+      await expect(acquire(operation, { timeoutMs: 20 })).rejects.toThrow(
+        "Timed out waiting for the sandbox mutation lock",
+      );
+
+      expect(operation).not.toHaveBeenCalled();
+      expect(fs.readFileSync(path.join(lockPath, "preserved"), "utf8")).toBe("original");
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
+    });
+
+    it("reclaims an invalid owner record after observing the same corrupt generation", async () => {
+      const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, JSON.stringify({ token: "invalid-owner" }));
+
+      await expect(acquire(() => "acquired")).resolves.toBe("acquired");
+
+      expect(fs.readdirSync(path.dirname(lockPath))).toEqual([]);
+    });
   });
 
   it("serializes separate asynchronous operations", async () => {
