@@ -68,10 +68,7 @@ import {
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
-import {
-  establishRestoredSandboxGatewayPairing,
-  waitForRestoredSandboxGatewaySupervisor,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -339,7 +336,11 @@ async function prepareSnapshotClonePolicy(
   }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
-    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(policyPath, policy, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
       policyPath,
       cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
@@ -577,12 +578,6 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
-  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
   // The pending registry row now owns any host-local inference reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
@@ -679,7 +674,9 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    await deleteSandboxProviderRegistrations(name, "messaging", { runOpenshell });
+    await deleteSandboxProviderRegistrations(name, "messaging", {
+      runOpenshell,
+    });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
@@ -776,13 +773,6 @@ async function reconcilePendingSnapshotClone(
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
-  }
-  if (
-    (pending.agent || "openclaw") === "openclaw" &&
-    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
-  ) {
-    await deleteSandboxForRestore(targetSandbox);
-    return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(

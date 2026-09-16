@@ -20,14 +20,7 @@ const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const FIXTURE = "test/e2e/support/fixtures/e2e-progress.fixture.test.ts";
 const ARTIFACT_SLUG = "automatic-progress-fixture-writes-completed-target-and-shard-evidence";
 
-it.each(["rebuild-hermes", "rebuild-hermes-stale-base"])(
-  "samples runner pressure every 15 seconds for %s (#7144)",
-  (targetId) => {
-    expect(runnerComparisonSampleIntervalMs(targetId)).toBe(15_000);
-  },
-);
-
-it.each(["hermes-e2e", "hermes-discord", "hermes-root-entrypoint-smoke", null])(
+it.each(["rebuild-hermes", "hermes-e2e", "hermes-discord", "hermes-root-entrypoint-smoke", null])(
   "keeps the 60-second runner-pressure cadence for %s (#7144)",
   (targetId) => {
     expect(runnerComparisonSampleIntervalMs(targetId)).toBe(60_000);
@@ -35,8 +28,7 @@ it.each(["hermes-e2e", "hermes-discord", "hermes-root-entrypoint-smoke", null])(
 );
 
 it.each([
-  ["rebuild-hermes", 15_000],
-  ["rebuild-hermes-stale-base", 15_000],
+  ["rebuild-hermes", 60_000],
   ["hermes-e2e", 60_000],
 ] as const)(
   "wires the live %s comparison cadence into progress options (#7144)",

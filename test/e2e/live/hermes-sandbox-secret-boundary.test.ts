@@ -14,7 +14,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const RUN_TIMEOUT_MS = 60_000;
-const CONTROL_NONCE = "0".repeat(64);
 const RAW_SECRET_SENTINEL = "SENTINEL_RAW_SECRET_VALUE";
 const RAW_REFRESH_TOKEN = "raw-refresh-token";
 
@@ -490,60 +489,6 @@ async function inspectImageBoundary(probe: DockerProbe, image: string): Promise<
   ).toBe(0);
 }
 
-async function inspectGatewayControlBoundary(probe: DockerProbe, image: string): Promise<void> {
-  const rootProbe = await probe.run(
-    [
-      "run",
-      "--rm",
-      "--user",
-      "root",
-      "--entrypoint",
-      "/bin/sh",
-      image,
-      "-lc",
-      String.raw`
-set -eu
-[ "$(stat -c '%U:%G %a' /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
-[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
-[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
-id -nG gateway | tr ' ' '\n' | grep -qx sandbox
-id -nG root | tr ' ' '\n' | grep -qx sandbox
-rc=0
-/usr/local/bin/nemoclaw-gateway-control probe '${CONTROL_NONCE}' >/tmp/gateway-control-probe.out 2>&1 || rc=$?
-cat /tmp/gateway-control-probe.out
-[ "$rc" -ne 0 ]
-grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control-probe.out
-`,
-    ],
-    { artifactName: "inspect-hermes-gateway-control-root-boundary", timeoutMs: RUN_TIMEOUT_MS },
-  );
-  expect(
-    rootProbe.exitCode,
-    `Hermes image should preserve root-only helper modes, group access, and root probe execution\n${resultText(rootProbe)}`,
-  ).toBe(0);
-
-  const sandboxProbe = await probe.run(
-    [
-      "run",
-      "--rm",
-      "--user",
-      "sandbox",
-      "--entrypoint",
-      "/usr/local/bin/nemoclaw-gateway-control",
-      image,
-      "probe",
-      CONTROL_NONCE,
-    ],
-    { artifactName: "inspect-hermes-gateway-control-sandbox-refusal", timeoutMs: RUN_TIMEOUT_MS },
-  );
-  expect(
-    sandboxProbe.exitCode,
-    "Hermes sandbox user must not execute the root-only gateway control helper",
-  ).not.toBe(0);
-  expect(resultText(sandboxProbe)).toMatch(/permission denied/iu);
-  expect(resultText(sandboxProbe)).not.toContain("PRIVILEGED_CONTROL_UNAVAILABLE");
-}
-
 async function inspectManagedToolBoundary(probe: DockerProbe, image: string): Promise<void> {
   const result = await probe.run(
     ["run", "--rm", "--entrypoint", "python3", image, "-c", MANAGED_TOOL_INSPECTION_SCRIPT],
@@ -821,7 +766,6 @@ test(
 
     progress.phase("inspect image secret and runtime boundaries");
     await inspectImageBoundary(probe, image);
-    await inspectGatewayControlBoundary(probe, image);
     await inspectManagedToolBoundary(probe, managedImage);
     progress.phase("verify unique per-sandbox API keys");
     await expectRuntimeApiServerKeyPerSandbox(probe, image);

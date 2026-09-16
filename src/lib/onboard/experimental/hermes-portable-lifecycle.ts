@@ -1076,8 +1076,8 @@ async function qualify(
   const container = currentnessTiming.measure("containerInspect", () =>
     assertCurrentHermesPortableContainer(receipt, containerDeps),
   );
-  if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
-    fail("container state or restart policy disagrees with active authority");
+  if (container.paused) {
+    fail("exact container is paused");
   }
   if (hasTransactionAuthority) operatingAuthority.assertTransactionCurrent();
   else operatingAuthority.assertCurrent();
@@ -1359,7 +1359,6 @@ function assertLifecycleTransactionCurrent(
   if (
     current.authority.running !== expectedRunning ||
     current.paused ||
-    current.authority.restartPolicy !== "unless-stopped" ||
     (expectedRunning ? current.status !== "running" : current.status !== "exited")
   ) {
     fail("container state changed during retained lifecycle authority");
@@ -2276,7 +2275,12 @@ export async function prepareHermesPortableSandboxRemoval(
       "Error",
     ]);
     operatingAuthority.assertCurrent();
-    return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
+    return {
+      present: true,
+      qualified,
+      capture,
+      containerDeps: qualified.containerDeps,
+    };
   };
 
   const initial = await inspect();

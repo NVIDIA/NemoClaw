@@ -7,7 +7,6 @@ import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privilege
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
-  executeGatewaySupervisorAction,
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
@@ -105,7 +104,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: {
       quiet: boolean;
-      requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
       runtimeSelection?: OpenShellRuntimeSelection;
     },
   ) => Promise<GatewayRecoveryObservation>;
@@ -113,7 +111,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     options: {
       quiet: boolean;
-      deps?: { requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction };
       runtimeSelection?: OpenShellRuntimeSelection;
     },
   ) => Promise<GatewayRestartResult>;
@@ -121,7 +118,6 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
-  frozenTargetGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -156,10 +152,8 @@ export async function restartHermesGatewayAfterStateRestore(
 ): Promise<HermesPostRestoreGatewayRestartState> {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
-  const requestGatewaySupervisorAction = deps.frozenTargetGatewaySupervisorAction;
   const result = await restart(sandboxName, {
     quiet: true,
-    ...(requestGatewaySupervisorAction ? { deps: { requestGatewaySupervisorAction } } : {}),
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
@@ -227,9 +221,6 @@ async function verifyHermesGatewayAfterStateRestoreImpl(
     }
     const observation: GatewayRecoveryObservation = await checkAndRecover(sandboxName, {
       quiet: true,
-      ...(deps.frozenTargetGatewaySupervisorAction
-        ? { requestGatewaySupervisorAction: deps.frozenTargetGatewaySupervisorAction }
-        : {}),
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
     if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {
