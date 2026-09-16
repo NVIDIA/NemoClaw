@@ -32,7 +32,7 @@ class GeneratedFinderPaths(unittest.TestCase):
     def setUp(self):
         fixture = tempfile.TemporaryDirectory()
         self.addCleanup(fixture.cleanup)
-        self.root = Path(fixture.name)
+        self.root = Path(fixture.name).resolve()
         self.source = self.root / "original/hermes-agent"
         self.target = self.root / "installed/hermes-agent"
         self.finder = (
@@ -100,7 +100,7 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        self.directory = Path(temporary.name).resolve()
         self.root = self.directory / "runtime"
         self.root.mkdir()
         self.old_hook = b"# previous reviewed hook fixture\n"
