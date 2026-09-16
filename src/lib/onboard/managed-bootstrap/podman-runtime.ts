@@ -25,7 +25,10 @@ import {
 } from "../docker-driver-gateway-service";
 import { shouldOmitOpenShellOciImageUser } from "../docker-gpu-patch-clone";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
-import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  replaceOpenShellMainProcessSpecCommand,
+} from "../docker-startup-command-env";
 import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding/identity";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type { ManagedStartupWorkspaceRoot } from "../managed-startup/state-roots";
@@ -561,8 +564,21 @@ export function renderPodmanReplacementEnvironment(
   handle: ManagedBootstrapHeldWorkloadHandle,
 ): readonly string[] {
   const config = record(inspect.Config, "Config");
-  const intended = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
-  if (!intended) throw new Error("Managed bootstrap Podman intended workload argv is invalid.");
+  const sourceEnvironment = stringArray(config.Env ?? [], "Config.Env");
+  const mainProcessSpecPrefix = `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=`;
+  const mainProcessSpecs = sourceEnvironment.filter((entry) =>
+    entry.startsWith(mainProcessSpecPrefix),
+  );
+  const [mainProcessSpec] = mainProcessSpecs;
+  if (!mainProcessSpec || mainProcessSpecs.length !== 1) {
+    throw new Error(
+      `Managed bootstrap Podman environment must contain one exact ${OPENSHELL_MAIN_PROCESS_SPEC_ENV} binding.`,
+    );
+  }
+  const intendedMainProcessSpec = replaceOpenShellMainProcessSpecCommand(
+    mainProcessSpec.slice(mainProcessSpecPrefix.length),
+    handle.intendedWorkloadArgv,
+  );
   const inspectedUser = String(config.User ?? "").trim();
   const labels = record(config.Labels ?? {}, "Config.Labels");
   const exactPodmanBoundary = labels[PODMAN_MANAGED_LABEL] === "true";
@@ -581,16 +597,17 @@ export function renderPodmanReplacementEnvironment(
     workspaceInspect as unknown as DockerContainerInspect,
     handle.intendedWorkloadArgv,
   );
-  const values = stringArray(config.Env ?? [], "Config.Env").filter(
+  const values = sourceEnvironment.filter(
     (entry) =>
       !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=") &&
+      !entry.startsWith(mainProcessSpecPrefix) &&
       !entry.startsWith("NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=") &&
       (!omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=")),
   );
   if (values.some((entry) => !SAFE_ENV.test(entry))) {
     throw new Error("Managed bootstrap Podman environment contains an invalid assignment.");
   }
-  values.push(`OPENSHELL_SANDBOX_COMMAND=${intended}`);
+  values.push(`${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${intendedMainProcessSpec}`);
   values.push(PODMAN_BOOTSTRAP_CAPABILITY_DROP_ENV);
   return Object.freeze(values);
 }
@@ -1984,7 +2001,6 @@ export function createPodmanManagedBootstrapAdapter(
             }
           : {}),
       });
-      current.watcherLease.resumeForObservationAndProve();
       current.imageTransaction = startPodmanBootstrapImageTransaction({
         engine: options.engine,
         journalStore,
@@ -2032,6 +2048,7 @@ export function createPodmanManagedBootstrapAdapter(
         transaction: current.imageTransaction,
         timeoutSecs,
       });
+      current.watcherLease.resumeForObservationAndProve();
       const runCaptureOpenshell = options.runCaptureOpenshell;
       if (!runCaptureOpenshell) {
         throw new Error("Managed bootstrap Podman requires OpenShell observation authority.");
@@ -2072,14 +2089,15 @@ export function createPodmanManagedBootstrapAdapter(
         });
         current.watcherLease.resumeAndProve();
         transactions.delete(input.handle.bootstrapIdentity);
+        const heldWorkloadRemoved = !runtimeExists(options.engine, receipt.originalRuntimeId);
         return Object.freeze({
           schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
           sandbox: input.handle.sandbox,
           bootstrapIdentity: input.handle.bootstrapIdentity,
           outcome: "rolled-back",
-          restoredRuntimeId: receipt.originalRuntimeId,
+          restoredRuntimeId: heldWorkloadRemoved ? null : receipt.originalRuntimeId,
           restoredSpecHash: input.snapshot?.specHash ?? null,
-          heldWorkloadRemoved: false,
+          heldWorkloadRemoved,
           alreadyRolledBack: false,
           finalizedAt: new Date().toISOString(),
         });
