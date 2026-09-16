@@ -4,10 +4,10 @@
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { G, R } from "../../cli/terminal-style";
 import { waitUntil } from "../../core/wait";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isExplicitMissingSandboxGatewayOutput } from "../../onboard/sandbox-recreate-probe";
@@ -479,20 +479,33 @@ export async function runRebuildDestroyPhase(
   const deleteResult =
     sourcePresence === "missing"
       ? null
-      : runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          ...(rebuildMcpRuntimeSelection
-            ? {
-                env: buildSelectedOpenShellSubprocessEnv(rebuildMcpRuntimeSelection),
-                replaceEnv: true,
-              }
-            : {}),
+      : await createCliOpenShellSandboxLifecycleFromRunner(runOpenshell).deleteSandbox({
+          sandboxName,
+          target: { kind: "named", gatewayName },
+          ...(rebuildMcpRuntimeSelection ? { runtimeSelection: rebuildMcpRuntimeSelection } : {}),
         });
-  const alreadyGone = deleteResult === null || getSandboxDeleteOutcome(deleteResult).alreadyGone;
-  if (deleteResult) log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
+  const alreadyGone = deleteResult === null || deleteResult.kind === "absent";
+  if (deleteResult) {
+    log(
+      `Delete result: state=${deleteResult.kind}, exit=${deleteResult.kind === "failed" ? deleteResult.exitCode : 0}, alreadyGone=${alreadyGone}`,
+    );
+  }
   let deletionConfirmed = alreadyGone;
-  if (deleteResult && deleteResult.status !== 0) {
+  if (deleteResult?.kind === "failed") {
+    if (deleteResult.error.kind === "command" && deleteResult.error.reason === "invalid_request") {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
+      );
+      bail(
+        mcpRecoveryFailure
+          ? `${deleteResult.error.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : deleteResult.error.message,
+      );
+      return null;
+    }
     const reconciledDelete = reconcileFailedSandboxDelete(
       sandboxName,
       input.sandboxEntry,
@@ -527,7 +540,7 @@ export async function runRebuildDestroyPhase(
               .filter(Boolean)
               .join("; ")}`
           : "Failed to delete sandbox.",
-        deleteResult.status || 1,
+        deleteResult.exitCode || 1,
       );
       return null;
     } else {
@@ -543,7 +556,7 @@ export async function runRebuildDestroyPhase(
       input.onDeleteStateAmbiguous?.();
       bail(
         "Sandbox delete failed and exact post-delete state is ambiguous; recovery state was preserved.",
-        deleteResult.status || 1,
+        deleteResult.exitCode || 1,
       );
       return null;
     }

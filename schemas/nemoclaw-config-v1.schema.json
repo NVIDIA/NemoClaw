@@ -283,7 +283,9 @@
                         "properties": {
                           "servedName": {
                             "type": "string",
-                            "const": "qwen3.5:9b"
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
                           },
                           "digest": {
                             "type": "string",
