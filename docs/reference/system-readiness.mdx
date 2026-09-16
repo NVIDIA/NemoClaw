@@ -333,14 +333,11 @@ Bounded evidence for a rejected set appears under `host.probe.stale` or `gateway
 The policy permits only these narrow exceptions:
 
 - An explicit CPU-only sandbox mode makes NVIDIA GPU passthrough findings irrelevant to that run.
-- The experimental portable profile can prepare its rootless runtime after an initial admission check.
 - A NemoClaw-managed gateway can apply the documented Docker storage remediation when the report says it is available.
 - A NemoClaw-managed gateway can reconcile version drift after its ownership and port checks pass.
 - An explicit runtime path that does not use the standard Docker driver can admit its documented runtime exception.
 
-The portable profile discards its earlier host and gateway observations after preparation.
-It collects both again before the runtime probes or later lifecycle effects.
-No other blocking finding or unknown required capability is waived.
+No blocking finding or unknown required capability is waived.
 
 Resume does not trust a cached preflight result for live host or gateway facts.
 It collects both again before a container-backed WSL GPU proof, GPU validation, or bridge and DNS probes.

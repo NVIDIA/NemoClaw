@@ -126,7 +126,6 @@
     "test/e2e/support/shared-e2e-workflow-boundary.test.ts": 5690,
     "test/e2e/support/workflow-plan.test.ts": 39886,
     "test/generation/generate-managed-startup-profile-fixture.test.ts": 5664,
-    "test/generation/portable-cpu-delegation-docs.test.ts": 39159,
     "test/inference/managed/managed-bootstrap-trampoline.test.ts": 14561,
     "test/inference/ollama/ollama-auth-proxy-handler.test.ts": 6722,
     "test/inference/ollama/ollama-proxy-recovery.test.ts": 34833,
