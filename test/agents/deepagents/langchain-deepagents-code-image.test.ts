@@ -262,7 +262,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(runtimeModeReplay),
     );
     expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
     );
     expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");

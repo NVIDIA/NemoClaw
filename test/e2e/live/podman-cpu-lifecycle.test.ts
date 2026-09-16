@@ -401,9 +401,17 @@ exit 1
         const agentEngines = engines();
         const agentBundle = createPodmanRuntimeProviderBundle({ engines: agentEngines });
         const lifecycle = supportedLifecycle(agentBundle);
-        const sandbox: SandboxEntry = { agent, name: sandboxName, openshellDriver: "podman" };
+        const sandbox: SandboxEntry = {
+          agent,
+          gatewayName: GATEWAY_NAME,
+          name: sandboxName,
+          openshellDriver: "podman",
+        };
         const input: RuntimeProviderLifecycleInput = {
-          environment: process.env,
+          environment: {
+            ...process.env,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          },
           log: vi.fn(),
           sandbox,
           sandboxName,

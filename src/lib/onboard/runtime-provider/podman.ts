@@ -188,10 +188,10 @@ export function createPodmanRuntimeProviderBundle(
     workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
-  const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle();
   const captureSandboxLifecycle =
     options.captureSandboxLifecycle ??
-    (async (args: string[]) => {
+    (async (args: string[], environment: NodeJS.ProcessEnv) => {
+      const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle({ env: environment });
       const request = {
         sandboxName: String(args[4]),
         target: { kind: "named" as const, gatewayName: String(args[3]) },
