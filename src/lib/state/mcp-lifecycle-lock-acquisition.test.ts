@@ -15,7 +15,13 @@ import {
   readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
 } from "./mcp-lifecycle-lock-identity";
-import { getMcpLifecycleLockPath } from "./mcp-lifecycle-lock-storage";
+import {
+  getMcpLifecycleLockPath,
+  mcpLifecycleLockPathExists,
+  mcpLifecycleLockPathExistsSync,
+  readMcpLifecycleLockObservation,
+  readMcpLifecycleLockObservationSync,
+} from "./mcp-lifecycle-lock-storage";
 
 describe("sandbox mutation lock acquisition", () => {
   let stateDir: string;
@@ -188,5 +194,64 @@ describe("sandbox mutation lock acquisition", () => {
       ),
     ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(fs.existsSync(`${lockPath}.reaper`)).toBe(false);
+  });
+
+  it("observes absent and present lock generations through async and sync storage", async () => {
+    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    expect(await mcpLifecycleLockPathExists(lockPath)).toBe(false);
+    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(false);
+    expect(await readMcpLifecycleLockObservation(lockPath)).toBeNull();
+    expect(readMcpLifecycleLockObservationSync(lockPath)).toBeNull();
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const owner = createMcpLifecycleLockOwner("alpha", "storage-owner");
+    fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
+
+    expect(await mcpLifecycleLockPathExists(lockPath)).toBe(true);
+    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(true);
+    expect(await readMcpLifecycleLockObservation(lockPath)).toMatchObject({
+      owner,
+      reclaimable: true,
+    });
+    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
+      owner,
+      reclaimable: true,
+    });
+  });
+
+  it("classifies malformed files, directories, and symlinks without following them", async () => {
+    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, "not-json");
+    expect(await readMcpLifecycleLockObservation(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: true,
+    });
+    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: true,
+    });
+
+    fs.rmSync(lockPath);
+    fs.mkdirSync(lockPath);
+    expect(await readMcpLifecycleLockObservation(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: false,
+    });
+    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: false,
+    });
+
+    fs.rmdirSync(lockPath);
+    fs.symlinkSync("missing-target", lockPath);
+    expect(await readMcpLifecycleLockObservation(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: true,
+    });
+    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
+      owner: null,
+      reclaimable: true,
+    });
   });
 });
