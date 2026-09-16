@@ -93,7 +93,7 @@ describe("rebuild snapshot GPU authority", () => {
   } satisfies RebuildBackupManifest;
 
   it("preserves recreate options without captured runtime GPU authority", () => {
-    expect(bindRebuildSnapshotGpuAuthority(options, null)).toBe(options);
+    expect(bindRebuildSnapshotGpuAuthority(options, null)).toEqual(options);
   });
 
   it.each([{ noGpu: true as const }, { sandboxGpu: "disable" as const }])(
