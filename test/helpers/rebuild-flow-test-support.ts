@@ -49,7 +49,12 @@ export type RebuildFlowOverrides = {
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   runOpenClawPostRestoreDoctor?: () => Promise<
-    { ok: true } | { ok: false; stage: "mark" | "restart"; detail: string }
+    | { ok: true }
+    | {
+        ok: false;
+        stage: "mark" | "stop" | "doctor" | "release" | "restart";
+        detail: string;
+      }
   >;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;

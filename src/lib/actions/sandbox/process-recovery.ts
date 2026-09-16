@@ -265,13 +265,22 @@ export async function executeSandboxExecCommand(
 }
 
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor";
-const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v1";
-const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 5 * 60_000;
+const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v2";
+const OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT =
+  "nemoclaw-openclaw-post-upgrade-doctor-release-v1";
+const OPENCLAW_POST_UPGRADE_DOCTOR_READY = "/tmp/nemoclaw-post-upgrade-doctor-ready";
+const OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-ready-v1";
+const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 12 * 60_000;
 const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
-  | { ok: true }
-  | { ok: false; stage: "mark" | "restart"; detail: string };
+  | { ok: true; window: OpenClawPostRestoreDoctorWindow }
+  | { ok: false; stage: "mark" | "stop" | "doctor" | "release" | "restart"; detail: string };
+
+export interface OpenClawPostRestoreDoctorWindow {
+  readonly sandboxName: string;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+}
 
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
@@ -303,23 +312,73 @@ export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
   ].join("; ");
 }
 
-function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
+function buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName: string): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
   const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
   return [
-    `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 20`,
+    "set -e",
+    `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 20`,
+    `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)}' ] || exit 21`,
+    `[ "$(cat ${marker})" = ${markerContent} ] || exit 22`,
+    `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 23`,
+    `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 24`,
+    `[ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 24`,
+    `[ "$(cat ${ready})" = ${readyContent} ] || exit 25`,
     `code="$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${healthUrl} 2>/dev/null || true)"`,
-    'case "$code" in 200|401) exit 0 ;; *) exit 21 ;; esac',
+    'case "$code" in 200|401) exit 26 ;; *) exit 0 ;; esac',
+  ].join("; ");
+}
+
+export function buildOpenClawPostUpgradeDoctorReleaseCommand(): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const releaseContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
+  return [
+    "set -e",
+    `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 30`,
+    `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)}' ] || exit 31`,
+    `[ "$(cat ${marker})" = ${markerContent} ] || exit 32`,
+    `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 33`,
+    `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 34`,
+    `[ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 34`,
+    `[ "$(cat ${ready})" = ${readyContent} ] || exit 35`,
+    'dir="/sandbox/.openclaw"',
+    'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 36',
+    "trap 'rm -f -- \"$tmp\"' EXIT",
+    'chmod 600 "$tmp"',
+    `printf '%s\\n' ${releaseContent} >"$tmp"`,
+    `mv -f -- "$tmp" ${marker}`,
+    "trap - EXIT",
+  ].join("; ");
+}
+
+function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
+  return [
+    `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 40`,
+    `[ ! -e ${ready} ] && [ ! -L ${ready} ] || exit 41`,
+    `code="$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${healthUrl} 2>/dev/null || true)"`,
+    'case "$code" in 200|401) exit 0 ;; *) exit 42 ;; esac',
   ].join("; ");
 }
 
 /**
  * OpenClaw 2026.9.1 requires exclusive gateway/state lifecycle coordinators
- * for doctor repairs. Persist a narrow one-shot request, restart the sandbox
- * through its pinned OpenShell owner, and accept success only after startup
- * consumed the request and the replacement gateway serves health again.
+ * for doctor repairs. Persist a narrow one-shot request and restart the
+ * sandbox through its pinned OpenShell owner. Startup runs doctor, publishes
+ * an owner-only maintenance-ready receipt before launching the gateway, and
+ * waits for the host rebuild to complete all offline state writes.
  */
-export async function runOpenClawPostRestoreDoctor(
+export async function beginOpenClawPostRestoreDoctor(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
@@ -351,13 +410,90 @@ export async function runOpenClawPostRestoreDoctor(
     },
     runtimeSelection,
   );
-  const completionProbe = buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName);
-  // The caller completes every offline restore before entering this lifecycle
-  // boundary. Issue one stop/start transition so the startup-owned doctor can
-  // consume the marker, then verify that exact replacement without replaying
-  // post-restore work against a second process identity.
-  deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
-  deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
+  const stop = deps.captureOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions);
+  if (stop.status !== 0) {
+    return {
+      ok: false,
+      stage: "stop",
+      detail: "OpenShell did not confirm the recreated sandbox stopped before doctor",
+    };
+  }
+
+  // The in-container gateway marker is intentionally absent until actual
+  // launch, so OpenShell can return this sandbox start after its supervisor is
+  // executable while the trusted entrypoint remains inside the doctor gate.
+  const start = deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
+  if (start.status !== 0) {
+    return {
+      ok: false,
+      stage: "restart",
+      detail: "OpenShell did not start the recreated sandbox for post-upgrade doctor",
+    };
+  }
+
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const ready = await waitUntilAsync(
+    async () => {
+      const remainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      const result = await deps.executeSandboxExecCommand(
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
+        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        {
+          localDockerFallbackPolicy: "never",
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      );
+      return result?.status === 0;
+    },
+    {
+      deadlineMs: reconciliationDeadlineMs,
+      initialIntervalMs: 3_000,
+      maxIntervalMs: 3_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
+    },
+  );
+  if (ready) {
+    return {
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    };
+  }
+  return {
+    ok: false,
+    stage: "doctor",
+    detail: "startup did not prove doctor completion with the gateway held down",
+  };
+}
+
+/** Release the doctor-owned maintenance gate, then prove final gateway health. */
+export async function finishOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  const { sandboxName, runtimeSelection } = window;
+  const release = await deps.executeSandboxExecCommand(
+    sandboxName,
+    buildOpenClawPostUpgradeDoctorReleaseCommand(),
+    30_000,
+    {
+      localDockerFallbackPolicy: "never",
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
+  );
+  if (!release || release.status !== 0) {
+    return {
+      ok: false,
+      stage: "release",
+      detail: "could not release the verified post-upgrade maintenance window",
+    };
+  }
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(
@@ -366,7 +502,7 @@ export async function runOpenClawPostRestoreDoctor(
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
       const result = await deps.executeSandboxExecCommand(
         sandboxName,
-        completionProbe,
+        buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName),
         Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
         {
           localDockerFallbackPolicy: "never",
@@ -388,7 +524,7 @@ export async function runOpenClawPostRestoreDoctor(
   return {
     ok: false,
     stage: "restart",
-    detail: "the sandbox did not consume its doctor request and return a healthy gateway",
+    detail: "the released sandbox did not return a healthy gateway",
   };
 }
 

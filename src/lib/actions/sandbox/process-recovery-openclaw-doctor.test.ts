@@ -9,9 +9,22 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  beginOpenClawPostRestoreDoctor,
   buildOpenClawPostUpgradeDoctorMarkerCommand,
-  runOpenClawPostRestoreDoctor,
+  buildOpenClawPostUpgradeDoctorReleaseCommand,
+  finishOpenClawPostRestoreDoctor,
 } from "./process-recovery";
+
+function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, "stat"),
+    `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%a %h %s": f"{stat.S_IMODE(s.st_mode):o} {s.st_nlink} {s.st_size}"}\nprint(values[sys.argv[1]])\nPY\n`,
+    { mode: 0o755 },
+  );
+  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+}
 
 describe("OpenClaw post-upgrade recovery doctor", () => {
   it("publishes an owner-only one-shot marker atomically", () => {
@@ -24,7 +37,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       execFileSync("bash", ["-c", command]);
 
       const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
-      expect(fs.readFileSync(marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v1\n");
+      expect(fs.readFileSync(marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
       expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -53,11 +66,79 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     },
   );
 
-  it("restarts through the pinned runtime and verifies marker consumption plus health", async () => {
+  it("publishes the maintenance release atomically without deleting the gate", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-release-"));
+    const ready = path.join(root, "doctor-ready");
+    try {
+      execFileSync("bash", [
+        "-c",
+        buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll("/sandbox/.openclaw", root),
+      ]);
+      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
+        mode: 0o600,
+      });
+      const command = buildOpenClawPostUpgradeDoctorReleaseCommand()
+        .replaceAll("/sandbox/.openclaw", root)
+        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
+
+      execFileSync("bash", ["-c", command], { env: fakeGnuStatEnv(root) });
+
+      const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
+      expect(fs.readFileSync(marker, "utf8")).toBe(
+        "nemoclaw-openclaw-post-upgrade-doctor-release-v1\n",
+      );
+      expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(ready, "utf8")).toBe(
+        "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["chmod", "printf", "mv"])(
+    "retains the maintenance request when atomic release %s fails",
+    (operation) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-release-failure-"));
+      const ready = path.join(root, "doctor-ready");
+      try {
+        execFileSync("bash", [
+          "-c",
+          buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll("/sandbox/.openclaw", root),
+        ]);
+        fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
+          mode: 0o600,
+        });
+        const command = buildOpenClawPostUpgradeDoctorReleaseCommand()
+          .replaceAll("/sandbox/.openclaw", root)
+          .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
+        const result = spawnSync("bash", ["-c", `${operation}() { return 19; }; ${command}`], {
+          encoding: "utf8",
+          env: fakeGnuStatEnv(root),
+        });
+
+        expect(result.status).not.toBe(0);
+        expect(fs.readFileSync(path.join(root, ".nemoclaw-post-upgrade-doctor"), "utf8")).toBe(
+          "nemoclaw-openclaw-post-upgrade-doctor-v2\n",
+        );
+        expect(
+          fs
+            .readdirSync(root)
+            .filter((entry) => entry.startsWith(".nemoclaw-post-upgrade-doctor.")),
+        ).toEqual([]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("holds a pinned restart after doctor, then releases one final healthy start", async () => {
     const execute = vi
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 21, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 26, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
     const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
       status: 0,
@@ -70,14 +151,24 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       localTlsDir: "/authority/tls",
     };
 
-    await expect(
-      runOpenClawPostRestoreDoctor("alpha", runtimeSelection, {
-        captureOpenshell: capture as never,
-        executeSandboxExecCommand: execute,
-        now: () => 0,
-        sleep,
-      }),
-    ).resolves.toEqual({ ok: true });
+    const deps = {
+      captureOpenshell: capture as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep,
+    };
+    const begun = await beginOpenClawPostRestoreDoctor("alpha", runtimeSelection, deps);
+    expect(begun).toEqual({
+      ok: true,
+      window: { sandboxName: "alpha", runtimeSelection },
+    });
+    const verifiedWindow = begun as {
+      ok: true;
+      window: Parameters<typeof finishOpenClawPostRestoreDoctor>[0];
+    };
+    await expect(finishOpenClawPostRestoreDoctor(verifiedWindow.window, deps)).resolves.toEqual({
+      ok: true,
+    });
 
     expect(capture.mock.calls.map((call) => call[0])).toEqual([
       ["sandbox", "stop", "alpha"],
@@ -96,11 +187,13 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute).toHaveBeenNthCalledWith(
       1,
       "alpha",
-      expect.stringContaining("nemoclaw-openclaw-post-upgrade-doctor-v1"),
+      expect.stringContaining("nemoclaw-openclaw-post-upgrade-doctor-v2"),
       30_000,
       { localDockerFallbackPolicy: "never", runtimeSelection },
     );
-    expect(execute.mock.calls.slice(1).every((call) => call[1].includes("curl"))).toBe(true);
+    expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-ready-v1");
+    expect(execute.mock.calls[3]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
+    expect(execute.mock.calls[4]?.[1]).toContain("curl");
     expect(sleep).toHaveBeenCalledOnce();
   });
 
@@ -108,7 +201,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     const capture = vi.fn();
 
     await expect(
-      runOpenClawPostRestoreDoctor("alpha", undefined, {
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: vi.fn(async () => null),
         now: () => 0,
@@ -122,7 +215,36 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
-  it("fails closed when restart never consumes the marker", async () => {
+  it.each([
+    {
+      detail: "OpenShell did not confirm the recreated sandbox stopped before doctor",
+      start: { status: 0, output: "" },
+      stage: "stop" as const,
+      stop: { status: 9, output: "stop failed" },
+    },
+    {
+      detail: "OpenShell did not start the recreated sandbox for post-upgrade doctor",
+      start: { status: 9, output: "start failed" },
+      stage: "restart" as const,
+      stop: { status: 0, output: "" },
+    },
+  ])(
+    "fails closed when the $stage lifecycle edge fails",
+    async ({ detail, stage, start, stop }) => {
+      const capture = vi.fn().mockReturnValueOnce(stop).mockReturnValueOnce(start);
+
+      await expect(
+        beginOpenClawPostRestoreDoctor("alpha", undefined, {
+          captureOpenshell: capture as never,
+          executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout: "", stderr: "" })),
+          now: () => 0,
+          sleep: vi.fn(async () => undefined),
+        }),
+      ).resolves.toEqual({ ok: false, stage, detail });
+    },
+  );
+
+  it("fails closed when startup never proves the doctor maintenance window", async () => {
     let currentMs = 0;
     const execute = vi
       .fn()
@@ -130,7 +252,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .mockResolvedValue({ status: 20, stdout: "", stderr: "" });
 
     await expect(
-      runOpenClawPostRestoreDoctor("alpha", undefined, {
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: vi.fn(() => ({ status: 0, output: "" })) as never,
         executeSandboxExecCommand: execute,
         now: () => currentMs,
@@ -140,8 +262,8 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       }),
     ).resolves.toEqual({
       ok: false,
-      stage: "restart",
-      detail: "the sandbox did not consume its doctor request and return a healthy gateway",
+      stage: "doctor",
+      detail: "startup did not prove doctor completion with the gateway held down",
     });
     expect(currentMs).toBe(3 * 60_000);
   });
@@ -162,7 +284,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     }));
 
     await expect(
-      runOpenClawPostRestoreDoctor("alpha", undefined, {
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: execute,
         now: () => currentMs,
@@ -172,8 +294,8 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       }),
     ).resolves.toEqual({
       ok: false,
-      stage: "restart",
-      detail: "the sandbox did not consume its doctor request and return a healthy gateway",
+      stage: "doctor",
+      detail: "startup did not prove doctor completion with the gateway held down",
     });
     expect(capture.mock.calls.map((call) => call[0])).toEqual([
       ["sandbox", "stop", "alpha"],
@@ -181,7 +303,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     ]);
   });
 
-  it("caps the final completion probe to the remaining reconciliation budget", async () => {
+  it("caps the maintenance probe to the remaining reconciliation budget", async () => {
     const execute = vi
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
@@ -189,14 +311,35 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(179_000);
 
     await expect(
-      runOpenClawPostRestoreDoctor("alpha", undefined, {
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: vi.fn(() => ({ status: 0, output: "" })) as never,
         executeSandboxExecCommand: execute,
         now,
         sleep: vi.fn(async () => undefined),
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual(expect.objectContaining({ ok: true }));
 
     expect(execute.mock.calls[1]?.[2]).toBe(1_000);
+  });
+
+  it("keeps the gateway gated when the verified release cannot be published", async () => {
+    const execute = vi.fn(async () => ({ status: 35, stdout: "", stderr: "" }));
+
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        { sandboxName: "alpha" },
+        {
+          captureOpenshell: vi.fn() as never,
+          executeSandboxExecCommand: execute,
+          now: () => 0,
+          sleep: vi.fn(async () => undefined),
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      stage: "release",
+      detail: "could not release the verified post-upgrade maintenance window",
+    });
+    expect(execute).toHaveBeenCalledOnce();
   });
 });

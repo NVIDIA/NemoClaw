@@ -5201,8 +5201,13 @@ PY_SQLITE_TMPDIR
 
 run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
-  local expected="nemoclaw-openclaw-post-upgrade-doctor-v1"
+  local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
+  local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
+  local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
+  local ready_expected="nemoclaw-openclaw-post-upgrade-doctor-ready-v1"
   local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
+  local ready_owner=""
+  local gate_attempt
 
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     return 0
@@ -5231,6 +5236,10 @@ EOF
     echo "[SECURITY] Refusing invalid post-upgrade doctor marker" >&2
     return 1
   }
+  # A prior interrupted attempt must not satisfy this start's maintenance
+  # handshake. Remove the ephemeral receipt before running doctor and publish
+  # a fresh one only after doctor and permission normalization both succeed.
+  rm -f -- "$ready" || return 1
 
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
   if [ "$(id -u)" -eq 0 ]; then
@@ -5243,8 +5252,58 @@ EOF
   # mutable modes before the native sandbox-user gateway starts, and keep the
   # request retryable if that fails.
   normalize_mutable_config_perms || return 1
-  rm -f -- "$marker" || return 1
-  echo "[setup] OpenClaw post-upgrade doctor completed" >&2
+  if [ "$(id -u)" -eq 0 ]; then
+    ready_owner="$marker_owner"
+  fi
+  printf '%s\n' "$ready_expected" \
+    | _nemoclaw_safe_replace_tmp_file "$ready" 600 "$ready_owner" required || return 1
+  echo "[setup] OpenClaw post-upgrade doctor completed; gateway held for offline restore" >&2
+
+  # The host rebuild removes the validated request marker only after session,
+  # messaging, MCP, and permission writes finish. Keep the gateway absent until
+  # that release, and fail closed on marker replacement or an abandoned gate.
+  gate_attempt=0
+  while [ "$gate_attempt" -lt 600 ]; do
+    gate_attempt=$((gate_attempt + 1))
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+      echo "[SECURITY] Post-upgrade doctor marker disappeared during offline restore" >&2
+      return 1
+    fi
+    if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+      echo "[SECURITY] Post-upgrade doctor marker changed during offline restore" >&2
+      return 1
+    fi
+    marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 1
+    read -r marker_owner marker_mode marker_links <<EOF
+$marker_metadata
+EOF
+    if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+      || [ "$marker_mode" != "600" ] \
+      || [ "$marker_links" != "1" ]; then
+      echo "[SECURITY] Post-upgrade doctor marker became untrusted during offline restore" >&2
+      return 1
+    fi
+    marker_value=""
+    extra=""
+    {
+      IFS= read -r marker_value || return 1
+      if IFS= read -r extra || [ -n "$extra" ]; then
+        return 1
+      fi
+    } <"$marker" || return 1
+    if [ "$marker_value" = "$release_expected" ]; then
+      rm -f -- "$marker" "$ready" || return 1
+      echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
+      return 0
+    fi
+    if [ "$marker_value" != "$expected" ]; then
+      echo "[SECURITY] Post-upgrade doctor marker changed during offline restore" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  echo "[SECURITY] Timed out waiting for post-upgrade offline restore release" >&2
+  return 1
 }
 
 # ── Main ─────────────────────────────────────────────────────────

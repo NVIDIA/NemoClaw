@@ -949,8 +949,21 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
   const runOpenClawPostRestoreDoctorSpy = vi
-    .spyOn(processRecovery, "runOpenClawPostRestoreDoctor")
-    .mockImplementation(overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true })));
+    .spyOn(processRecovery, "beginOpenClawPostRestoreDoctor")
+    .mockImplementation(async (sandboxName, runtimeSelection) => {
+      const result = await (
+        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
+      )();
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    });
+  vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(

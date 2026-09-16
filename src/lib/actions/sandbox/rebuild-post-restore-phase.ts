@@ -39,7 +39,11 @@ import {
   finalizePendingMessagingRemovalsAfterRestore,
   reapplyMessagingManifestBeforeOpenClawStart,
 } from "./rebuild-messaging-phase";
-import { runOpenClawPostRestoreDoctor } from "./process-recovery";
+import {
+  beginOpenClawPostRestoreDoctor,
+  finishOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./process-recovery";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {
@@ -183,6 +187,7 @@ export async function runRebuildPostRestorePhase(
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
+  let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | null = null;
   // Rebuild freezes the OpenShell target before deletion and revalidates the
   // recreated registry binding above. Native restart and health checks remain
   // pinned to that selected runtime.
@@ -222,9 +227,26 @@ export async function runRebuildPostRestorePhase(
   };
 
   if (targetAgentName === "openclaw") {
+    // Recreate onboarding returns only after the replacement gateway is live.
+    // Enter a startup-owned maintenance gate first: startup stops the old
+    // process, runs doctor, and proves the gateway has not launched again.
+    // Every state/config writer below therefore runs inside one verified
+    // gateway-down window, and messaging is reapplied after doctor.
+    log("Entering verified OpenClaw post-upgrade maintenance window");
+    const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
+    log(
+      `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+    );
+    if (!doctorWindow.ok) {
+      console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
+      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+      return;
+    }
+    openClawDoctorWindow = doctorWindow.window;
+
     // #7102: clear stale per-session pinned models left over from an
-    // `inference set` before this rebuild. Keep every restored state/config
-    // mutation ahead of the one final doctor-owned gateway start below.
+    // `inference set` before this rebuild. The maintenance receipt above proves
+    // that OpenClaw cannot race this sessions.json mutation.
     await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
@@ -293,16 +315,21 @@ export async function runRebuildPostRestorePhase(
   ));
   if (targetAgentName === "openclaw") {
     // MCP restoration is the last offline OpenClaw config writer. Re-establish
-    // the mutable-config posture before starting the gateway exactly once.
+    // the mutable-config posture, then release the already-running startup
+    // transaction into its one final gateway launch and health verification.
     repairMutableOpenClawConfigPermissions(
       "Restoring mutable OpenClaw config permissions after MCP restoration",
     );
 
-    log("Starting OpenClaw once after all offline post-restore writes");
-    const doctorResult = await runOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
-    log(`Post-upgrade doctor restart: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
+    if (!openClawDoctorWindow) {
+      bail("OpenClaw post-upgrade maintenance authority was lost during rebuild.");
+      return;
+    }
+    log("Releasing OpenClaw for one final start after all offline post-restore writes");
+    const doctorResult = await finishOpenClawPostRestoreDoctor(openClawDoctorWindow);
+    log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
     if (!doctorResult.ok) {
-      console.log(`  ${D}Post-upgrade structure repair failed during sandbox restart${R}`);
+      console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);
       bail("OpenClaw post-upgrade structure repair failed during rebuild.");
       return;
     }

@@ -46,8 +46,20 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(processRecovery, "runOpenClawPostRestoreDoctor").mockImplementation(async () => {
-      order.push("doctor");
+    vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+      async (sandboxName, runtimeSelection) => {
+        order.push("doctor-begin");
+        return {
+          ok: true,
+          window: {
+            sandboxName,
+            ...(runtimeSelection ? { runtimeSelection } : {}),
+          },
+        };
+      },
+    );
+    vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockImplementation(async () => {
+      order.push("doctor-finish");
       return { ok: true };
     });
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
@@ -160,21 +172,23 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual([
+      "doctor-begin",
       "reconcile",
       "messaging",
       "permissions",
       "mcp",
       "permissions",
-      "doctor",
+      "doctor-finish",
       "config-hash",
       "config-hash-final",
       "host-forward",
       "config-hash-final",
     ]);
-    expect(processRecovery.runOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
+    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       undefined,
     );
+    expect(processRecovery.finishOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
   });
 
   it("re-establishes mutable config permissions after MCP writers settle", async () => {
@@ -195,12 +209,13 @@ describe("rebuild post-restore phase", () => {
     const verification = await runRebuildPostRestorePhase(args);
 
     expect(order).toEqual([
+      "doctor-begin",
       "reconcile",
       "messaging",
       "permissions:1",
       "mcp",
       "permissions:2",
-      "doctor",
+      "doctor-finish",
       "config-hash",
       "config-hash-final",
       "host-forward",
@@ -252,7 +267,7 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(processRecovery.runOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
+    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       "alpha",
       runtimeSelection,
     );
@@ -301,9 +316,9 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
-    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockResolvedValue({
+    vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
-      stage: "restart",
+      stage: "doctor",
       detail: "completion unverified",
     });
     const args = input();
@@ -314,13 +329,13 @@ describe("rebuild post-restore phase", () => {
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).not.toHaveBeenCalled();
     expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
-    expect(rebuildMcp.restoreMcpAfterRebuild).toHaveBeenCalledOnce();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Post-upgrade structure repair failed during sandbox restart");
+    expect(output).toContain("Post-upgrade structure repair failed before offline restoration");
     expect(output).not.toContain("rebuilt successfully");
   });
 
@@ -342,7 +357,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("finishes offline writes but stops online finalization when doctor restart fails (#9946)", async () => {
-    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockResolvedValue({
+    vi.mocked(processRecovery.finishOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
       stage: "restart",
       detail: "sensitive doctor output",
@@ -366,7 +381,7 @@ describe("rebuild post-restore phase", () => {
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Post-upgrade structure repair failed during sandbox restart");
+    expect(output).toContain("Post-upgrade structure repair failed during final sandbox start");
     expect(output).not.toContain("sensitive doctor output");
     expect(output).not.toContain("rebuilt successfully");
   });
@@ -392,7 +407,7 @@ describe("rebuild post-restore phase", () => {
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
-    vi.mocked(processRecovery.runOpenClawPostRestoreDoctor).mockImplementation(async () => {
+    vi.mocked(processRecovery.finishOpenClawPostRestoreDoctor).mockImplementation(async () => {
       configHashValid = false;
       return { ok: true };
     });
@@ -440,7 +455,8 @@ describe("rebuild post-restore phase", () => {
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(processRecovery.runOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.beginOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
   });
