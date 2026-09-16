@@ -21,9 +21,10 @@ content:
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
 
 <Note>
-  The diagnostic commands on this page assume `$$nemoclaw` is on your `PATH` (re-source your shell
-  profile after an nvm- or fnm-managed install) and that your user can reach the Docker socket —
-  either as a member of the `docker` group or by running the Docker commands with `sudo`.
+  The diagnostic commands on this page assume `$$nemoclaw` is on your `PATH`
+  (re-source your shell profile after an nvm- or fnm-managed install) and that
+  your user can reach the Docker socket — either as a member of the `docker`
+  group or by running the Docker commands with `sudo`.
 </Note>
 
 <Warning title="Get Help">
@@ -135,11 +136,12 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group. The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically. Add your user and activate the group in the current shell:
 
 <Warning title="Docker group access">
-  The default Docker path needs Docker access. On personal Linux development machines, adding your user to the
-  `docker` group is the standard way to run Docker without sudo. Members of the `docker` group can
-  control the daemon with root-level impact, so grant this access only to trusted local accounts; on
-  shared or managed systems, use your organization's approved Docker access path. For background,
-  review Docker's [daemon attack surface
+  The default Docker path needs Docker access. On personal Linux development
+  machines, adding your user to the `docker` group is the standard way to run
+  Docker without sudo. Members of the `docker` group can control the daemon with
+  root-level impact, so grant this access only to trusted local accounts; on
+  shared or managed systems, use your organization's approved Docker access
+  path. For background, review Docker's [daemon attack surface
   guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 </Warning>
 
@@ -547,9 +549,10 @@ For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh
 On Linux, an existing OpenShell package can provide a systemd user service that starts a different gateway version from the user-local version that NemoClaw installs. The installer stops before onboarding instead of using the two versions together. The error reports both gateway versions and binary paths.
 
 <Warning>
-  Do not remove the existing OpenShell package if its gateway manages resources outside NemoClaw.
-  Package removal can stop that gateway. Align the package with the version in the installer error,
-  or plan the migration of those resources first.
+  Do not remove the existing OpenShell package if its gateway manages resources
+  outside NemoClaw. Package removal can stop that gateway. Align the package
+  with the version in the installer error, or plan the migration of those
+  resources first.
 </Warning>
 
 If you no longer need the APT-installed OpenShell package, remove it and rerun the installer:
@@ -585,10 +588,11 @@ The default installer stops before replacing a newer installed NemoClaw release 
 The diagnosis always prints the database path. When an unused archive path is available, it also prints that archive path beside the selected state directory and the profile-specific onboarding command. When no unused archive path is available, it asks you to keep the gateway stopped and inspect the state directory instead.
 
 <Warning>
-  The selected state directory contains the gateway database, mutual TLS private keys, JSON Web
-  Token signing material, and every sandbox and provider registration on the selected gateway.
-  Moving it makes those registrations and credentials unavailable to the fresh gateway. Other
-  sandboxes on the selected gateway can require re-onboarding and credential entry.
+  The selected state directory contains the gateway database, mutual TLS private
+  keys, JSON Web Token signing material, and every sandbox and provider
+  registration on the selected gateway. Moving it makes those registrations and
+  credentials unavailable to the fresh gateway. Other sandboxes on the selected
+  gateway can require re-onboarding and credential entry.
 </Warning>
 
 When NemoClaw proves that one managed service owns the selected port and state, the recovery stops that service and retries onboarding.
@@ -1300,8 +1304,9 @@ NemoClaw uses two gateway layers for OpenClaw sandboxes:
 Start and recover them in this order: container runtime, OpenShell gateway, sandbox container, then the in-sandbox OpenClaw gateway.
 
 <Warning>
-  Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy. NemoClaw cannot
-  select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+  Do not start the OpenClaw gateway by hand before the OpenShell gateway is
+  healthy. NemoClaw cannot select, inspect, or reconnect the sandbox until
+  OpenShell can see the owning gateway.
 </Warning>
 
 If the host rebooted or the OpenShell gateway is down, first run:
@@ -1474,9 +1479,9 @@ NemoClaw verifies the listener before it reaps host gateway processes. If it rep
 
 ### `gateway restart` or `recover` reports `privileged control unavailable`
 
-Built-in OpenClaw and Hermes lifecycle commands require a running direct sandbox container that belongs to the named NemoClaw registry entry. The host uses registry-scoped privileged direct-container control to send an authenticated request to the controller for the live topology. It does not fall back to ordinary `openshell sandbox exec`, SSH, or a manual in-sandbox relaunch.
+Built-in OpenClaw and Hermes lifecycle commands require a running sandbox that belongs to the named NemoClaw registry entry. NemoClaw invokes the agent's native lifecycle command through the exact selected OpenShell sandbox and then observes native health and host forwards.
 
-Current built-in images support two direct-container shapes. A direct root-entrypoint container uses the root PID 1 supervisor. An OpenShell-managed container uses `/opt/openshell/bin/openshell-sandbox` as PID 1, exactly one nonroot `nemoclaw-start` supervisor, and the installed root-owned mode `0500` managed controller. An arbitrary nonroot entrypoint that does not match that managed process shape fails with `privileged control unavailable`. Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`. Run the lifecycle command from a supported direct-container deployment rather than trying to launch the gateway by hand.
+Current built-in images preserve the agent startup wiring and OpenShell credential projection while leaving gateway restart, background work, cron, and child-agent lifecycle with the native agent. Custom images must preserve those attachment and credential contracts without adding a second NemoClaw lifecycle controller.
 
 On a direct-container deployment, first confirm that the sandbox is running:
 
@@ -1484,38 +1489,20 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these transient results:
+For a built-in OpenClaw or Hermes sandbox, `gateway restart` invokes the native
+agent lifecycle command inside the exact selected OpenShell sandbox. NemoClaw
+then reports native command output and observes gateway health; it does not
+authorize, respawn, or quarantine the process.
 
-- Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, or `GATEWAY_HEALTH_TIMEOUT`. A typed host-side container-not-found result is sanitized to the exact `PRIVILEGED_CONTROL_UNAVAILABLE` line and is also retryable. The same line without that typed result is terminal.
-- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
-- Status `137` with blank stdout and stderr.
-- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
-
-For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
-Recovery counts typed container-not-found results separately from other retryable results.
-It stops when either count reaches its limit: 21 container-not-found results or 11 other retryable results.
-A mixed sequence permits at most 31 attempts.
-At the default interval, the polling delay is at most 60 seconds for container discovery, 30 seconds for other startup results, or 90 seconds for a mixed sequence.
-The recovery loop also has a 210-second deadline that includes controller execution and polling.
-Recovery stops after 3 attempts return `SUPERVISOR_BUSY`.
-The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence. That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again. Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window. Status `137` and the Docker restart result remain terminal during that confirmation. The managed supervisor startup waiter accepts the three exact controller startup results, the typed container-not-found result, `SUPERVISOR_BUSY`, and the two container-transition results.
-Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
-NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
-`SUPERVISOR_NOT_RUNNING` enters the bounded startup retry first.
-If it remains after the retry bound, NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
-If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
-If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.
-If the error mentions `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image can predate the current lifecycle contract.
-An exact `SUPERVISOR_UNAVAILABLE` result means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
-The current recovery action and any managed settle confirmation stop immediately.
-If `recover` reports this result, follow its host-side `gateway restart` guidance.
-If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
+If the native gateway is stopped, restart it through the agent or restart the
+sandbox through OpenShell. If the image itself is incompatible, rebuild it:
 
 ```bash
 $$nemoclaw <name> rebuild --yes
 ```
 
-For a custom image, update its Dockerfile to preserve the current NemoClaw entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library before rebuilding.
+Custom images must preserve the current agent startup wiring and OpenShell
+credential projection, but must not add the retired NemoClaw gateway controller.
 
 </AgentOnly>
 
@@ -1526,15 +1513,15 @@ For a custom image, update its Dockerfile to preserve the current NemoClaw entry
 If Hermes Portable host-forward recovery fails, use the reported cause before retrying.
 Every failure prevents launch-readiness publication.
 
-| Reported Cause | Meaning and Action |
-| --- | --- |
-| `Recorded host port <port> is occupied` | Another sandbox or listener owns the port. NemoClaw changes no forwards. Inspect `openshell forward list` and the host listener. Stop it only after you confirm ownership. |
-| OpenShell `forward list` failed | NemoClaw could not prove the recorded forward state. Restore OpenShell access before you retry. |
-| OpenShell `forward list` returned malformed or ambiguous state | Inspect the complete forward list before you retry. |
-| NemoClaw could not resolve the required recorded host ports | Inspect the sandbox registry and launch-forward configuration before you retry. NemoClaw changes no forwards. |
-| NemoClaw could not verify whether recorded host port `<port>` is reachable | Inspect the listener and recorded forward state before you retry. |
-| The required recorded host forwards did not become healthy before the recovery deadline | Inspect the recorded forward state before another probe or launch. |
-| NemoClaw could not confirm that OpenShell forward `start` or `stop` completed | Inspect the named port and recorded forward state before you retry. |
+| Reported Cause                                                                          | Meaning and Action                                                                                                                                                         |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Recorded host port <port> is occupied`                                                 | Another sandbox or listener owns the port. NemoClaw changes no forwards. Inspect `openshell forward list` and the host listener. Stop it only after you confirm ownership. |
+| OpenShell `forward list` failed                                                         | NemoClaw could not prove the recorded forward state. Restore OpenShell access before you retry.                                                                            |
+| OpenShell `forward list` returned malformed or ambiguous state                          | Inspect the complete forward list before you retry.                                                                                                                        |
+| NemoClaw could not resolve the required recorded host ports                             | Inspect the sandbox registry and launch-forward configuration before you retry. NemoClaw changes no forwards.                                                              |
+| NemoClaw could not verify whether recorded host port `<port>` is reachable              | Inspect the listener and recorded forward state before you retry.                                                                                                          |
+| The required recorded host forwards did not become healthy before the recovery deadline | Inspect the recorded forward state before another probe or launch.                                                                                                         |
+| NemoClaw could not confirm that OpenShell forward `start` or `stop` completed           | Inspect the named port and recorded forward state before you retry.                                                                                                        |
 
 If recovery cannot prove rollback or reports authority drift, do not run another probe or launch.
 Inspect the recorded forward state or current Portable authority first.
@@ -1632,10 +1619,11 @@ If NemoClaw reports that it removed the incomplete snapshot, install or repair `
 If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
 
 <Warning title="Retained Incomplete Snapshot">
-  A retained incomplete snapshot can contain unsanitized credentials. The directory must remain
-  owner-only. You must not restore, copy, or share the directory. You must remove the directory only
-  by the exact path that NemoClaw reports. You must confirm that the exact path no longer exists
-  before you rerun the complete command.
+  A retained incomplete snapshot can contain unsanitized credentials. The
+  directory must remain owner-only. You must not restore, copy, or share the
+  directory. You must remove the directory only by the exact path that NemoClaw
+  reports. You must confirm that the exact path no longer exists before you
+  rerun the complete command.
 </Warning>
 
 ### Sandbox shows as stopped
@@ -1888,8 +1876,10 @@ $$nemoclaw <name> logs --tail 50
   preset](../network-policy/customize-network-policy#custom-preset-files):
 </AgentOnly>
 <AgentOnly variant="deepagents">
-  If the host should be reachable, allow it with a built-in preset or apply a [reviewed custom
-  preset file](../network-policy/configure-policies/create-custom-policy-presets) from the host:
+  If the host should be reachable, allow it with a built-in preset or apply a
+  [reviewed custom preset
+  file](../network-policy/configure-policies/create-custom-policy-presets) from
+  the host:
 </AgentOnly>
 
 ```bash
@@ -2143,13 +2133,13 @@ This symptom is different from a network or policy block. `$$nemoclaw <name> sta
 
 Ollama can serve local chat and some simple tool surfaces, but agent loops with several tools, long instructions, or multi-turn dispatch need a server that returns structured tool calls consistently.
 
-| Workload | Ollama is usually sufficient | Prefer vLLM with a parser |
-| --- | --- | --- |
-| Plain chat | Yes | Optional |
-| One simple tool with short prompts | Often | Optional |
-| Agent loops with several tools | Risky | Yes |
-| Long system prompts or sender metadata | Risky | Yes |
-| Multi-turn tool dispatch | Risky | Yes |
+| Workload                               | Ollama is usually sufficient | Prefer vLLM with a parser |
+| -------------------------------------- | ---------------------------- | ------------------------- |
+| Plain chat                             | Yes                          | Optional                  |
+| One simple tool with short prompts     | Often                        | Optional                  |
+| Agent loops with several tools         | Risky                        | Yes                       |
+| Long system prompts or sender metadata | Risky                        | Yes                       |
+| Multi-turn tool dispatch               | Risky                        | Yes                       |
 
 [Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
@@ -2464,9 +2454,10 @@ Sandboxes created with OpenShell versions older than 0.0.24 can become unreachab
 NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation. This can appear during a direct blueprint run, custom-endpoint onboarding, or a host-side `config set` write.
 
 <AgentOnly variant="openclaw,hermes">
-  It does not appear during a runtime `$$nemoclaw inference set` switch on an already-onboarded
-  sandbox; that command routes a DNS-backed HTTPS endpoint through a local HTTPS Pin Runtime adapter
-  instead of rejecting it. Refer to [Commands](commands) for details.
+  It does not appear during a runtime `$$nemoclaw inference set` switch on an
+  already-onboarded sandbox; that command routes a DNS-backed HTTPS endpoint
+  through a local HTTPS Pin Runtime adapter instead of rejecting it. Refer to
+  [Commands](commands) for details.
 </AgentOnly>
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address. If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address. Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly. For the full endpoint rules, refer to [Meet Custom Endpoint Security Requirements](../inference/custom-endpoints/custom-endpoint-security).
@@ -2560,12 +2551,13 @@ openshell term
 To permanently allow an endpoint, add it to the network policy.
 
 <AgentOnly variant="openclaw,hermes">
-  Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
+  Refer to [Customize the Network
+  Policy](../network-policy/customize-network-policy) for details.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-  For Deep Agents, follow [Customize the Network Policy](../network-policy/customize-network-policy)
-  to choose between built-in presets, reviewed custom presets, baseline edits, and live-policy
-  replacement.
+  For Deep Agents, follow [Customize the Network
+  Policy](../network-policy/customize-network-policy) to choose between built-in
+  presets, reviewed custom presets, baseline edits, and live-policy replacement.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -2820,12 +2812,12 @@ The route depends on the host environment and the operator control. Identify the
 
 Do not apply this compatibility guidance to portable onboarding. Portable onboarding requires native OpenShell GPU injection for every agent and does not use `NEMOCLAW_DOCKER_GPU_PATCH`. Do not set `fallback`, `1`, or another legacy nonzero value for a portable run.
 
-| Symptom | Route or stage | Recovery |
-| --- | --- | --- |
-| Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation. |
-| `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
-| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only a container-specific cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
-| A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
+| Symptom                                                                                                                                                                 | Route or stage                  | Recovery                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt   | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation.                                                                                                                                                                         |
+| `Cleanup could not be proven safe`                                                                                                                                      | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding.                                                                                                                                                                                                        |
+| The patched container exits or the compatibility attempt fails                                                                                                          | Compatibility recreation        | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only a container-specific cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
+| A recreated container inherits only a loopback DNS stub and no usable upstream                                                                                          | Compatibility DNS fallback      | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding.                                                                                                                                                                                                                                                                                              |
 
 For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container. If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place. An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead. Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
 
@@ -3001,10 +2993,12 @@ OLLAMA_CONTEXT_LENGTH=64000 ollama serve
 For additional troubleshooting, refer to the [Windows Setup](../get-started/additional-setup/windows-preparation) page.
 
 <AgentOnly variant="openclaw">
-  For first-time OpenClaw setup, refer to the [Quickstart](../get-started/quickstart).
+  For first-time OpenClaw setup, refer to the
+  [Quickstart](../get-started/quickstart).
 </AgentOnly>
 <AgentOnly variant="hermes">
-  For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/quickstart).
+  For first-time Hermes setup, refer to [Quickstart with
+  Hermes](../get-started/quickstart).
 </AgentOnly>
 
 ## Podman
@@ -3161,29 +3155,31 @@ The administrator must correct the cgroups v2 mount or kernel-provided evidence 
 
 The error and file state identify the required recovery:
 
-| Reported condition and file state | Meaning | Recovery |
-| --- | --- | --- |
-| cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
-| Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
-| Any controller file is malformed | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that file. Run the classification command again only after the file contains kernel-provided controller names. |
-| The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
-| systemd did not expose `cpu`; the per-user-slice file is missing or does not contain `cpu` | The current user's `user-UID.slice` ancestor does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
-| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
-| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Apply all three named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
-| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The user manager does not have a CPU resource setting that activates the delegated controller for `app.slice`. | Apply all three named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
+| Reported condition and file state                                                          | Meaning                                                                                                                                  | Recovery                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cgroups v2 is unavailable; the root file is missing                                        | The host does not expose the cgroups v2 controller file at the expected mount.                                                           | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount.                                                                                                                                                                   |
+| Any controller file exists but is unreadable, or its read fails                            | The current user cannot read the existing hierarchy boundary.                                                                            | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
+| Any controller file is malformed                                                           | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that file. Run the classification command again only after the file contains kernel-provided controller names.               |
+| The kernel hierarchy does not expose `cpu`; the root file is readable                      | The root `cgroup.controllers` file does not contain the `cpu` controller.                                                                | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy.                                                                                                                                                          |
+| systemd did not expose `cpu`; the per-user-slice file is missing or does not contain `cpu` | The current user's `user-UID.slice` ancestor does not receive the `cpu` controller.                                                      | Apply all three named systemd drop-ins below.                                                                                                                                                                                                       |
+| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller.                                                                        | Apply all three named systemd drop-ins below.                                                                                                                                                                                                       |
+| `cpu` is unavailable to `app.slice`; its file is missing                                   | The current user's `app.slice` hierarchy does not exist for this boot.                                                                   | Apply all three named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host.                                                                                                                                     |
+| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu`       | The user manager does not have a CPU resource setting that activates the delegated controller for `app.slice`.                           | Apply all three named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host.                                                                                                                                     |
 
 Do not use a boot, delegation, or service lifecycle action to correct an unreadable or malformed file. Those actions do not restore read access or valid kernel evidence.
 
 The systemd changes require administrator access. NemoClaw does not edit `/etc/systemd`, invoke `sudo`, remove the sandbox CPU limit, or continue with weaker resource isolation.
 
 <Warning>
-  The `user@.service` template applies to every user manager on the host. The per-UID slice drop-in
-  applies to the affected user's ancestor, and the `app.slice` drop-in applies to every user manager
-  on the host. Applying or removing any of the three drop-ins requires the administrator to stop the
-  affected user's manager, reload systemd, and start the manager. The administrator can reboot the
-  host instead of running that sequence. Stopping the manager stops that user's systemd services,
-  including rootless Podman and other user services. Plan each interruption with the affected user
-  and host administrator.
+  The `user@.service` template applies to every user manager on the host. The
+  per-UID slice drop-in applies to the affected user's ancestor, and the
+  `app.slice` drop-in applies to every user manager on the host. Applying or
+  removing any of the three drop-ins requires the administrator to stop the
+  affected user's manager, reload systemd, and start the manager. The
+  administrator can reboot the host instead of running that sequence. Stopping
+  the manager stops that user's systemd services, including rootless Podman and
+  other user services. Plan each interruption with the affected user and host
+  administrator.
 </Warning>
 
 Record the affected user's numeric ID:
@@ -3855,10 +3851,10 @@ Record all rollback lines from the creation command in the administrator's chang
 The administrator's `sudo` policy can request authentication. NemoClaw never receives that credential.
 
 <Warning>
-  Save the affected user's work before running the next command. Stopping and starting the user
-  manager interrupts that user's systemd services, including rootless Podman and other user
-  services. Run the command from an administrator session that does not depend on the affected
-  user's manager.
+  Save the affected user's work before running the next command. Stopping and
+  starting the user manager interrupts that user's systemd services, including
+  rootless Podman and other user services. Run the command from an administrator
+  session that does not depend on the affected user's manager.
 </Warning>
 
 Run the stop, reload, and start sequence:
@@ -3898,8 +3894,8 @@ On Ubuntu 22.04, the immediate `systemctl start user@${uid}.service` can still f
 The administrator can reboot the host instead of running the stop, reload, and start sequence.
 
 <Warning>
-  Save work for every host user before rebooting. A reboot interrupts all user services and host
-  workloads, not only the affected user's services.
+  Save work for every host user before rebooting. A reboot interrupts all user
+  services and host workloads, not only the affected user's services.
 </Warning>
 
 Reboot only after the drop-in verification succeeds:
@@ -4056,10 +4052,10 @@ fi
 For each path marked as created, continue only when its content and current `device:inode` value match the creation-time record. Use an empty identity value for a file or directory whose final `created` value is `0`. The removal command validates the complete record before it stops the manager or removes a path. An already absent recorded path is accepted on retry, an identity mismatch preserves every remaining recorded path, and a path marked as not created is never removed.
 
 <Warning>
-  Save the affected user's work before running the removal command. Stopping and starting the user
-  manager interrupts that user's systemd services, including rootless Podman and other user
-  services. Run the command from an administrator session that does not depend on the affected
-  user's manager.
+  Save the affected user's work before running the removal command. Stopping and
+  starting the user manager interrupts that user's systemd services, including
+  rootless Podman and other user services. Run the command from an administrator
+  session that does not depend on the affected user's manager.
 </Warning>
 
 ```bash
@@ -4322,12 +4318,12 @@ During cold activation, the first API probe can cause systemd to replace the soc
 
 A portable readiness failure identifies the stage that did not complete:
 
-| Stage | Meaning | Recovery |
-| --- | --- | --- |
-| Socket authority | The portable lifecycle receipt is unsafe or invalid, its schema is `1` through `3` and predates recorded portable Podman authority, the recorded authority does not match the current Linux user, the recorded socket is unsafe, another authority field changed, or its inode was replaced more than once during cold activation. | If the error says that the receipt is unsafe or invalid, or that it predates recorded authority, run `$$nemoclaw onboard --experimental-profile portable`. If the recorded authority does not match the current Linux user, run NemoClaw as the user who created the portable state or rerun portable onboarding as the current user. Otherwise, stop and inspect the reported path. Restore the recorded current-user runtime instead of selecting another endpoint. |
-| Service activation | The current user's systemd manager could not activate the Podman socket-backed service, or activation did not create the recorded socket within the startup period. | Inspect `podman.socket` and `podman.service` with the commands below. Correct the reported user-unit failure, then rerun the NemoClaw command. |
-| Startup API health | The service was activated, but the recorded endpoint did not return a real Podman API response within the startup period. | Inspect the user-unit logs and run the explicit API request below against the reported socket path. Raise `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` only when valid cold activation needs more than 60,000 ms. |
-| Steady-state API health | An endpoint that completed activation did not answer the later shorter health check. | Inspect host load and the user-unit logs, then rerun the NemoClaw command. |
+| Stage                   | Meaning                                                                                                                                                                                                                                                                                                                            | Recovery                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Socket authority        | The portable lifecycle receipt is unsafe or invalid, its schema is `1` through `3` and predates recorded portable Podman authority, the recorded authority does not match the current Linux user, the recorded socket is unsafe, another authority field changed, or its inode was replaced more than once during cold activation. | If the error says that the receipt is unsafe or invalid, or that it predates recorded authority, run `$$nemoclaw onboard --experimental-profile portable`. If the recorded authority does not match the current Linux user, run NemoClaw as the user who created the portable state or rerun portable onboarding as the current user. Otherwise, stop and inspect the reported path. Restore the recorded current-user runtime instead of selecting another endpoint. |
+| Service activation      | The current user's systemd manager could not activate the Podman socket-backed service, or activation did not create the recorded socket within the startup period.                                                                                                                                                                | Inspect `podman.socket` and `podman.service` with the commands below. Correct the reported user-unit failure, then rerun the NemoClaw command.                                                                                                                                                                                                                                                                                                                        |
+| Startup API health      | The service was activated, but the recorded endpoint did not return a real Podman API response within the startup period.                                                                                                                                                                                                          | Inspect the user-unit logs and run the explicit API request below against the reported socket path. Raise `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` only when valid cold activation needs more than 60,000 ms.                                                                                                                                                                                                                                                    |
+| Steady-state API health | An endpoint that completed activation did not answer the later shorter health check.                                                                                                                                                                                                                                               | Inspect host load and the user-unit logs, then rerun the NemoClaw command.                                                                                                                                                                                                                                                                                                                                                                                            |
 
 The remaining service and API inspection applies only when the failure reports a recorded socket path. If the failure does not report one, follow the recovery in the table and do not try another endpoint.
 

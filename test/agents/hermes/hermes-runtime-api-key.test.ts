@@ -452,6 +452,15 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
   });
 
+  it("mints an API key in compatibility mode without refreshing the strict hash", () => {
+    const run = runHermesRuntimeApiServerKeyMint({ mode: "compat" });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.apiServerKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(run.compatHashValid).toBe(true);
+    expect(run.strictHashValid).toBe(false);
+  });
+
   it("refuses to mint an API key into a read-only env file", () => {
     const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true, locked: true });
 

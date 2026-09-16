@@ -15,10 +15,10 @@ const active = {
   listener: { address: "0.0.0.0", port: 11440 },
   backendOrigin: "http://127.0.0.1:11439",
 };
-const models = JSON.stringify({ models: [{ name: "qwen3.5:9b", digest, size: 6000000000 }] });
-function observation(): OllamaProxyObservationInput {
+function observation(model = "qwen3.5:9b"): OllamaProxyObservationInput {
+  const models = JSON.stringify({ models: [{ name: model, digest, size: 6000000000 }] });
   return {
-    model: "qwen3.5:9b",
+    model,
     backend: { kind: "ollama", url: active.backendOrigin },
     proxyPort: "11440",
     pid: "1234",
@@ -65,6 +65,32 @@ describe("read-only Ollama export observation", () => {
     expect(input.readDaemonModels).toHaveBeenCalledWith(11439);
   });
 
+  it("exports the selected installed model and normalizes its digest (#11857)", () => {
+    const model = "qwen2.5:0.5b";
+    const input = {
+      ...observation(),
+      model,
+      readProxyModels: () =>
+        JSON.stringify({
+          models: [
+            { name: "qwen3.5:9b", digest: "b".repeat(64) },
+            { name: model, digest: `sha256:${digest}` },
+          ],
+        }),
+      readDaemonModels: () =>
+        JSON.stringify({
+          models: [
+            { name: model, digest },
+            { name: "unrelated:latest", digest: "c".repeat(64) },
+          ],
+        }),
+    };
+    expect(observeOllamaProxy(input).serving.model).toEqual({
+      servedName: model,
+      digest: `sha256:${digest}`,
+    });
+  });
+
   it.each([
     { backend: { kind: "compatible", url: active.backendOrigin } },
     { backend: { kind: "ollama", url: "http://127.0.0.1:11439/private?secret" } },
@@ -75,7 +101,10 @@ describe("read-only Ollama export observation", () => {
     { pid: null },
     { pid: "-1" },
     { pid: "1234junk" },
-    { model: "different:tag" },
+    { model: "" },
+    { model: "qwen2.5:0.5b\n" },
+    { model: "qwen\u200b2.5:0.5b" },
+    { model: "m".repeat(513) },
     { processMatches: () => false },
   ])(
     "refuses unsupported or incomplete retained intent before network reads %# (#11435)",
@@ -104,20 +133,44 @@ describe("read-only Ollama export observation", () => {
     expect(input.readProxyModels).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { models: [] },
-    { models: [{ name: "qwen3.5:9b", digest: "invalid" }] },
-    { models: [{ name: "other:tag", digest }] },
-    {
-      models: [
-        { name: "qwen3.5:9b", digest },
-        { name: "qwen3.5:9b", digest },
-      ],
+  describe.each(["readProxyModels", "readDaemonModels"] as const)(
+    "selected-model evidence from %s",
+    (reader) => {
+      const model = "qwen2.5:0.5b";
+      it.each([
+        "not-json",
+        "a".repeat(65537),
+        JSON.stringify({ models: [] }),
+        JSON.stringify({ models: [{ name: "other:tag", digest }] }),
+        JSON.stringify({ models: [{ name: model }] }),
+        ...[
+          "invalid",
+          "b".repeat(64),
+          `${digest}\n`,
+          `sha256:sha256:${digest}`,
+          "A".repeat(64),
+        ].map((invalidDigest) =>
+          JSON.stringify({ models: [{ name: model, digest: invalidDigest }] }),
+        ),
+        ...[digest, "b".repeat(64)].map((duplicateDigest) =>
+          JSON.stringify({
+            models: [
+              { name: model, digest },
+              { name: model, digest: duplicateDigest },
+            ],
+          }),
+        ),
+        JSON.stringify({
+          models: Array.from({ length: 513 }, (_, index) => ({ name: `model-${index}`, digest })),
+        }),
+      ])(
+        "refuses missing, ambiguous, invalid or conflicting model evidence %# (#11857)",
+        (body) => {
+          expect(() => observeOllamaProxy({ ...observation(model), [reader]: () => body })).toThrow(
+            "could not be verified",
+          );
+        },
+      );
     },
-    { models: [{ name: "qwen3.5:9b", digest: "b".repeat(64) }] },
-  ])("refuses a missing, ambiguous, or changed daemon model %# (#11435)", (value) => {
-    expect(() =>
-      observeOllamaProxy({ ...observation(), readDaemonModels: () => JSON.stringify(value) }),
-    ).toThrow("could not be verified");
-  });
+  );
 });

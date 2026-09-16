@@ -28,7 +28,7 @@ const BOUNDED_TEXT_MAX_LENGTH = 512;
 const BOUNDED_TEXT_PATTERN = "^[^\\s\\p{Cc}\\p{Cf}]+$";
 const IMMUTABLE_IMAGE_REFERENCE_MAX_LENGTH = 512;
 export const NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH = MAX_CANONICAL_ENDPOINT_LENGTH;
-export const NEMOCLAW_INFERENCE_ENDPOINT_PATTERN = "^https://[^\\s]+$";
+export const NEMOCLAW_INFERENCE_ENDPOINT_PATTERN = "^https?://[^\\s]+$";
 const CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN = "^[A-Z][A-Z0-9_]{0,127}$";
 const FORBIDDEN_CREDENTIAL_NAMES = new Set([
   "CI",
@@ -312,7 +312,6 @@ const NemoClawManagedInferenceProviderConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const EXPORTED_OLLAMA_MODEL = "qwen3.5:9b" as const;
 export const NemoClawOllamaServingSchema = Type.Object(
   {
     backend: Type.Literal("ollama"),
@@ -325,7 +324,7 @@ export const NemoClawOllamaServingSchema = Type.Object(
       { additionalProperties: false },
     ),
     model: Type.Object(
-      { servedName: Type.Literal(EXPORTED_OLLAMA_MODEL), digest: ServingDigestSchema },
+      { servedName: BoundedTextSchema, digest: ServingDigestSchema },
       { additionalProperties: false },
     ),
   },
