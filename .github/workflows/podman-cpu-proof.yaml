@@ -13,7 +13,6 @@ on:
       - "src/lib/adapters/container-engine.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/docker-driver-gateway-*.ts"
-      - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-runtime-*.ts"

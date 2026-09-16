@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type {
-  ManagedBootstrapRuntimeCreateLifecycle,
-  ManagedBootstrapRuntimeCreateLifecycleInput,
-  ManagedBootstrapRuntimeOnboardRouting,
-  ManagedBootstrapRuntimeOnboardRoutingInput,
-} from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
@@ -651,19 +645,6 @@ export type RuntimeProviderMutationAuthoritySurface =
     }>
   | RuntimeProviderUnsupportedSurface;
 
-export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupportedSurface<{
-  readonly bootstrapKind: "managed-image";
-  createAuthorityStore(input: {
-    readonly stateRoot: string;
-  }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
-  createLifecycle(
-    input: ManagedBootstrapRuntimeCreateLifecycleInput,
-  ): ManagedBootstrapRuntimeCreateLifecycle;
-  createOnboardRouting(
-    input: ManagedBootstrapRuntimeOnboardRoutingInput,
-  ): ManagedBootstrapRuntimeOnboardRouting;
-}>;
-
 export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
   readonly bootstrapKind: "native-artifact";
   readonly contractVersion: typeof RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION;
@@ -677,7 +658,6 @@ export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSuppo
 }>;
 
 export type RuntimeProviderBootstrapSurface =
-  | RuntimeProviderManagedImageBootstrapSurface
   | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 

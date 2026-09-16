@@ -19,15 +19,9 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
-  assertExactSandboxImage,
   assertOpenClawHeartbeatStart,
   managedOpenClawHeartbeatLogProbe,
-  assertFailedBootstrapOwnerCleanupRetention,
   assertFailedSandboxOwnerCleanupRetention,
-  createProtectedManagedImageBootstrapInput,
-  failureInjectingAdapter,
-  MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
-  type ManagedImageCommandResult,
   type ManagedImageCommandRunner,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
@@ -40,7 +34,6 @@ import {
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
 import { validateManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
-import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/managed-workload/onboard-orchestration.js";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
@@ -48,54 +41,6 @@ const VALID_SANDBOX = "managed-openclaw";
 const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),
 );
-
-const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
-  status: 0,
-  stdout: "",
-  stderr: "",
-};
-
-function managedContainerInspectResult(
-  contentId: string,
-  running: boolean,
-): ManagedImageCommandResult {
-  return {
-    status: 0,
-    stdout: `${JSON.stringify([
-      {
-        Config: {
-          Labels: {
-            "openshell.ai/managed-by": "openshell",
-            "openshell.ai/sandbox-name": VALID_SANDBOX,
-          },
-        },
-        Image: contentId,
-        NetworkSettings: { Networks: { "managed-network": {} } },
-        State: { Paused: false, Restarting: false, Running: running },
-      },
-    ])}\n`,
-    stderr: "",
-  };
-}
-
-function createManagedImageCommandRunner(
-  contentId: string,
-  containerId: string,
-  listScope: "-q" | "-aq",
-  listOutput: string,
-  calls: string[][],
-  running = listScope === "-q",
-): ManagedImageCommandRunner {
-  const responses = new Map<string, ManagedImageCommandResult>([
-    ["docker image inspect", { status: 0, stdout: `${contentId}\n`, stderr: "" }],
-    [`docker ps ${listScope}`, { status: 0, stdout: listOutput, stderr: "" }],
-    [`docker inspect ${containerId}`, managedContainerInspectResult(contentId, running)],
-  ]);
-  return (argv) => {
-    calls.push([...argv]);
-    return responses.get(argv.slice(0, 3).join(" ")) ?? SUCCESS_WITHOUT_OUTPUT;
-  };
-}
 
 function runManagedOpenClawHeartbeatProbe(
   heartbeat: { every: string; isolatedSession: boolean },
@@ -307,85 +252,6 @@ describe("protected managed-image runtime contract", () => {
     expect(diagnostic).toHaveLength(8_000);
   });
 
-  it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
-    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
-    const journalRoot = path.join(stateRoot, "managed-bootstrap");
-    try {
-      const adapter = failureInjectingAdapter(
-        {
-          runCaptureOpenshell: () => "",
-          runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
-          sleepSeconds: () => undefined,
-        } as never,
-        stateRoot,
-      );
-
-      expect(adapter.awaitBootstrap).toEqual(expect.any(Function));
-      expect(fs.statSync(stateRoot).isDirectory()).toBe(true);
-      expect(fs.existsSync(journalRoot)).toBe(false);
-      await expect(adapter.recoverUnfinishedTransactions()).resolves.toEqual({
-        receipts: [],
-        failures: [],
-      });
-      expect(fs.statSync(journalRoot).isDirectory()).toBe(true);
-    } finally {
-      fs.rmSync(stateRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("binds the public and protected managed-image plans to one supervisor argv (#7744)", () => {
-    const authorityStore = {};
-    const publicLaunch = resolveOnboardManagedBootstrapLaunch({
-      runtime: {
-        runtimeProvider: {
-          bootstrap: {
-            supported: true,
-            bootstrapKind: "managed-image",
-            createAuthorityStore: () => authorityStore,
-          },
-        },
-      } as never,
-      workload: {
-        source: {
-          kind: "managed-image",
-          contract: {
-            agent: "openclaw",
-            image: "registry.example/nemoclaw/openclaw",
-            digest: `sha256:${"a".repeat(64)}`,
-          },
-        },
-      } as never,
-      sandboxName: "alpha",
-      stateRoot: "/tmp/nemoclaw-state",
-      bootstrapIdentity: "bootstrap-identity",
-      request: {} as never,
-      intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
-    })!;
-    const protectedLaunch = createProtectedManagedImageBootstrapInput(publicLaunch);
-
-    expect(protectedLaunch.expectedSupervisorArgv).toBe(publicLaunch.expectedSupervisorArgv);
-    expect(protectedLaunch.expectedSupervisorArgv).toBe(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV);
-    expect(protectedLaunch.expectedSupervisorArgv).toEqual([
-      "/opt/openshell/bin/openshell-sandbox",
-      "--workdir",
-      "/sandbox",
-    ]);
-    expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
-  });
-
-  it.each([
-    "openshellArgv",
-    "runOpenshell",
-    "runCaptureOpenshell",
-    "sleepSeconds",
-    "startGatewayForRecovery",
-  ] as const)(
-    "loads every OpenShell operation required before protected image launch [%s] (#7744)",
-    (operation) => {
-      expect(MANAGED_IMAGE_ONBOARD[operation], operation).toBeTypeOf("function");
-    },
-  );
-
   it("loads managed state-volume operations through the existing onboard boundary", () => {
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
       "function",
@@ -436,82 +302,6 @@ describe("protected managed-image runtime contract", () => {
     ).toBe(true);
     expect(fs.existsSync(stateDir)).toBe(false);
   });
-
-  it("distinguishes the running image from exact quiescent rollback retention (#7744)", () => {
-    const calls: string[][] = [];
-    const contentId = `sha256:${"b".repeat(64)}`;
-    const containerId = "c".repeat(64);
-    const input = parseManagedImageOpenShellE2eInputs([
-      "--agent",
-      "openclaw",
-      "--image",
-      IMAGE,
-      "--sandbox",
-      VALID_SANDBOX,
-    ]);
-    const runningCommand = createManagedImageCommandRunner(
-      contentId,
-      containerId,
-      "-q",
-      `${containerId}\n`,
-      calls,
-    );
-    const retainedCommand = createManagedImageCommandRunner(
-      contentId,
-      containerId,
-      "-aq",
-      `${containerId}\n`,
-      calls,
-    );
-
-    expect(assertExactSandboxImage(input, "managed-network", {}, runningCommand)).toBe(containerId);
-    assertFailedBootstrapOwnerCleanupRetention(
-      input,
-      "managed-network",
-      containerId,
-      {},
-      retainedCommand,
-    );
-
-    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
-  });
-
-  it.each([
-    ["missing", "", false, "one exact owner-cleanup runtime"],
-    ["running", `${"c".repeat(64)}\n`, true, "quiescent owner-cleanup runtime"],
-  ] as const)(
-    "rejects a %s owner-cleanup runtime after failed bootstrap",
-    (_case, list, running, message) => {
-      const contentId = `sha256:${"b".repeat(64)}`;
-      const containerId = "c".repeat(64);
-      const input = parseManagedImageOpenShellE2eInputs([
-        "--agent",
-        "openclaw",
-        "--image",
-        IMAGE,
-        "--sandbox",
-        VALID_SANDBOX,
-      ]);
-      const runCommand = createManagedImageCommandRunner(
-        contentId,
-        containerId,
-        "-aq",
-        list,
-        [],
-        running,
-      );
-
-      expect(() =>
-        assertFailedBootstrapOwnerCleanupRetention(
-          input,
-          "managed-network",
-          containerId,
-          {},
-          runCommand,
-        ),
-      ).toThrow(message);
-    },
-  );
 
   it("accepts an exact retained OpenShell sandbox name", () => {
     const expectedSandboxId = "sandbox-id-123";

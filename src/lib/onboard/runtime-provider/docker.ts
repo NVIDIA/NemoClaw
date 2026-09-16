@@ -10,7 +10,6 @@ import {
   parseGatewayBindAddress,
 } from "../../core/gateway-address";
 import { parseDockerDaemonObservation } from "../../domain/docker-host";
-import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
@@ -693,7 +692,7 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    bootstrap: createDockerManagedBootstrapSurface(providerId),
+    bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
       queryRuntimeSnapshot: deps.queryRuntimeSnapshot,

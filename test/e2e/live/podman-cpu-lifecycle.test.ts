@@ -411,13 +411,16 @@ exit 1
         const beforeStop = vi.fn();
         const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
 
-        expect(lifecycle.stop(input, { beforeStop })).toEqual({ exitCode: 0, state: "stopped" });
+        await expect(lifecycle.stop(input, { beforeStop })).resolves.toEqual({
+          exitCode: 0,
+          state: "stopped",
+        });
         expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
         const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(stopped.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
 
         expect(agentBundle.preflightDoctor.preflightLifecycle("start", input)).toBeNull();
-        expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
+        await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
         await lifecycle.verifyStarted(
           input,
           vi.fn(async () => undefined),
@@ -425,14 +428,14 @@ exit 1
         const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
-        expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
+        await expect(lifecycle.stop(input, { beforeStop: vi.fn() })).resolves.toEqual({
           exitCode: 0,
           state: "stopped",
         });
-        expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
+        await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
         const restarted = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(restarted.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
-        expect(lifecycle.stop(input, { beforeStop: vi.fn() })).toEqual({
+        await expect(lifecycle.stop(input, { beforeStop: vi.fn() })).resolves.toEqual({
           exitCode: 0,
           state: "stopped",
         });

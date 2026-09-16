@@ -48,11 +48,7 @@ import {
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
-import {
-  cleanupSandboxCreateSource,
-  runSandboxGpuCreateFlow,
-  type SandboxGpuCreateFlowInput,
-} from "./sandbox-gpu-create-flow";
+import { cleanupSandboxCreateSource, runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 
 const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
@@ -196,7 +192,7 @@ describe("Hermes portable sandbox create flow", () => {
     expect(output).not.toContain("openshell sandbox delete");
   });
 
-  it("rejects compatibility and managed bootstrap before Hermes portable create effects (#9203)", async () => {
+  it("rejects compatibility before Hermes portable create effects (#9203)", async () => {
     const compatibility = createInput();
     compatibility.hermesPortableLifecycle = true;
     compatibility.lifecycleGeneration = "generation-1";
@@ -206,22 +202,6 @@ describe("Hermes portable sandbox create flow", () => {
       "Docker GPU compatibility is unavailable",
     );
 
-    const managed = createInput();
-    managed.gpuRoutePlan = "native-only";
-    managed.hermesPortableLifecycle = true;
-    managed.lifecycleGeneration = "generation-1";
-    managed.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
-    const createOnboardRouting = vi.fn();
-    const createLifecycle = vi.fn();
-    managed.managedBootstrap = {
-      runtimeProvider: { bootstrap: { createOnboardRouting, createLifecycle } },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-    await expect(runSandboxGpuCreateFlow(managed, createDeps())).rejects.toThrow(
-      "Hermes portable onboarding cannot use managed-image bootstrap",
-    );
-
-    expect(createOnboardRouting).not.toHaveBeenCalled();
-    expect(createLifecycle).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
   });

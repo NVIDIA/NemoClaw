@@ -11,9 +11,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
-import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./managed-bootstrap/adapter";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import { MANAGED_STARTUP_PROFILE_ENV } from "./managed-startup/transport";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -283,7 +283,7 @@ describe("prepareSandboxCreateLaunch", () => {
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "renders one identity-bound held launch for %s without exposing the startup profile",
+    "launches %s directly with its bounded startup profile",
     (agentName) => {
       const request = createManagedStartupRootApplyRequest({
         agent: agentName,
@@ -310,49 +310,11 @@ describe("prepareSandboxCreateLaunch", () => {
         ...result.envArgs,
         "/usr/local/bin/nemoclaw-start",
       ]);
-      expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
-      expect(result.sandboxStartupCommand).toEqual([
-        ...result.intendedSandboxStartupCommand.slice(0, -1),
-        "/usr/local/bin/nemoclaw-managed-startup-hold",
-        "--agent",
-        agentName,
-        "--profile-fingerprint",
-        request.profileFingerprint,
-        "--bootstrap-identity",
-        result.managedBootstrapIdentity,
-        "--",
-      ]);
-      expect(result.createArgv).toEqual(
-        expect.arrayContaining([
-          "--env",
-          `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${result.managedBootstrapIdentity}`,
-        ]),
-      );
-      expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+      expect(result.sandboxStartupCommand).toEqual(result.intendedSandboxStartupCommand);
+      expect(result.envArgs).toContain(`${MANAGED_STARTUP_PROFILE_ENV}=${request.encodedProfile}`);
+      expect(result.createArgv.join("\n")).not.toContain("nemoclaw-managed-startup-hold");
     },
   );
-
-  it("rejects a caller-supplied managed bootstrap identity environment", () => {
-    const request = createManagedStartupRootApplyRequest({
-      agent: "openclaw",
-      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
-    });
-
-    expect(() =>
-      prepareSandboxCreateLaunch({
-        agent: loadAgent("openclaw"),
-        chatUiUrl: "",
-        createArgs: ["--env", `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"a".repeat(64)}`],
-        env: {},
-        extraPlaceholderKeys: [],
-        getDashboardForwardPort: () => "0",
-        hermesDashboardState: disabledHermesDashboardState,
-        manageDashboard: false,
-        openshellShellCommand: (args) => args.join(" "),
-        managedStartupRootApplyRequest: request,
-      }),
-    ).toThrow(`must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}`);
-  });
 
   it("builds the sandbox create command and runtime env envelope", () => {
     const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);

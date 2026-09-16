@@ -59,7 +59,6 @@ import {
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
 } from "../managed-startup/state-roots";
-import type { ManagedBootstrapRuntimePatch } from "../managed-bootstrap/runtime-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -101,6 +100,10 @@ function cancelRecoveryIdentity(
 }
 
 /** Finalize provider arguments from the exact policy that creation consumes. */
+type ManagedBootstrapRuntimePatch = Readonly<{
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+}>;
+
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
@@ -1531,7 +1534,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readDcodeSelectionDrift,
       sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
-      getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
       getRequestedSandboxAgentName,
       getSandboxAgentDrift,
@@ -2513,8 +2515,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       launch: {
         createArgv: materializedCreateArgv,
         intendedSandboxStartupCommand,
-        managedBootstrapIdentity,
-        managedStartupRootApplyRequest,
         prebuild,
         sandboxEnv,
         sandboxStartupCommand,
@@ -2579,15 +2579,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runForNewSandboxCreate(agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate, () =>
       recreateRuntime.advance("creating"),
     );
-    const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
-      runtime: managedWorkloadRuntime,
-      workload: preparedSandboxWorkload,
-      sandboxName,
-      stateRoot: getDockerDriverGatewayStateDir(),
-      bootstrapIdentity: managedBootstrapIdentity,
-      request: managedStartupRootApplyRequest,
-      intendedWorkloadArgv: intendedSandboxStartupCommand,
-    });
+    const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch();
     const recoveredHermesLifecycleGeneration = readHermesPortableLifecycleGeneration({
       enabled: agentCreateInput.hermesPortableLifecycle,
       sandboxName,
@@ -2986,9 +2978,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               prebuild,
               restoreBackupPath,
               terminalAgent: agentDefs.isTerminalAgent(agent),
-              managedBootstrap,
+              managedImage: preparedSandboxWorkload.source.kind === "managed-image",
               verifyCreatedSandboxBeforeEffects: async (identity) => {
-                managedBootstrapCreateFinished = managedBootstrap !== null;
+                managedBootstrapCreateFinished = false;
                 managedBootstrapCreateRoute = identity.route;
                 await verifyCreatedSandbox(identity);
               },

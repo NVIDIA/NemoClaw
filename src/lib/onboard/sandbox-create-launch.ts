@@ -8,13 +8,9 @@ import {
   type SandboxRuntimeEnvArgsInput,
 } from "./docker-startup-command-env";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
-import {
-  createManagedBootstrapIdentity,
-  MANAGED_BOOTSTRAP_IDENTITY_ENV,
-  renderManagedBootstrapHeldCommand,
-} from "./managed-bootstrap/adapter";
 import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./managed-startup/transport";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
@@ -46,13 +42,6 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
-  /**
-   * Intentional partial migration: remains unset until production selects a
-   * complete runtime bundle with supported bootstrap after epic #7744's durable
-   * lifecycle, recovery, and rollback gates plus exact-head/base protected
-   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
-   * https://github.com/NVIDIA/NemoClaw/issues/7744
-   */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
@@ -64,8 +53,6 @@ export interface SandboxCreateLaunch {
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
   intendedSandboxStartupCommand: string[];
-  managedBootstrapIdentity: string | null;
-  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -91,29 +78,6 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-export function managedBootstrapCreateArgs(
-  createArgs: readonly string[],
-  bootstrapIdentity: string | null,
-): string[] {
-  if (!bootstrapIdentity) return [...createArgs];
-  // OpenShell runs the command after `--` as an exec session while its OCI
-  // supervisor retains `sleep infinity`. Persist the transaction identity on
-  // the sandbox spec so each runtime provider can bind the idle workload to
-  // the exact authorized bootstrap without depending on driver internals.
-  const assignmentPrefix = `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=`;
-  if (
-    createArgs.some(
-      (argument) =>
-        argument.startsWith(assignmentPrefix) || argument.startsWith(`--env=${assignmentPrefix}`),
-    )
-  ) {
-    throw new Error(
-      `OpenShell create arguments must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}.`,
-    );
-  }
-  return [...createArgs, "--env", `${assignmentPrefix}${bootstrapIdentity}`];
-}
-
 export { buildSandboxRuntimeEnvArgs, type SandboxRuntimeEnvArgsInput };
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -132,6 +96,13 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     allowHermesApiPortOverride: true,
     env,
   });
+  const managedStartup = input.managedStartupRootApplyRequest;
+  if (managedStartup) {
+    envArgs.push(`${MANAGED_STARTUP_PROFILE_ENV}=${managedStartup.encodedProfile}`);
+    if (managedStartup.corporateCaB64) {
+      envArgs.push(`${MANAGED_STARTUP_CA_ENV}=${managedStartup.corporateCaB64}`);
+    }
+  }
 
   const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
   // Remove host-infrastructure credentials that the generic allowlist
@@ -147,21 +118,8 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
   const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
-  const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
-  const managedBootstrapIdentity = managedStartupRootApplyRequest
-    ? createManagedBootstrapIdentity()
-    : null;
-  const sandboxStartupCommand =
-    managedStartupRootApplyRequest && managedBootstrapIdentity
-      ? [
-          ...renderManagedBootstrapHeldCommand(
-            managedStartupRootApplyRequest,
-            managedBootstrapIdentity,
-            intendedSandboxStartupCommand,
-          ),
-        ]
-      : intendedSandboxStartupCommand;
-  const createArgs = managedBootstrapCreateArgs(input.createArgs, managedBootstrapIdentity);
+  const sandboxStartupCommand = intendedSandboxStartupCommand;
+  const createArgs = [...input.createArgs];
   const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     createArgs,
@@ -180,8 +138,6 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     sandboxEnv,
     sandboxStartupCommand,
     intendedSandboxStartupCommand,
-    managedBootstrapIdentity,
-    managedStartupRootApplyRequest,
   };
 }
 

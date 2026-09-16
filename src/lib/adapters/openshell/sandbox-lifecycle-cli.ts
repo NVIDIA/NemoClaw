@@ -19,10 +19,10 @@ import {
   type CapturedOpenShellCommandResult,
 } from "./sandbox-observer-cli";
 import type { OpenShellSandboxError } from "./sandbox-observer";
-import { OPENSHELL_HEAVY_TIMEOUT_MS } from "./timeouts";
 
 const DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const CAPTURE_LIMIT_BYTES = 1024 * 1024;
+const SANDBOX_DELETE_TIMEOUT_MS = 60_000;
 
 export { createCliOpenShellSandboxLookupFromRunner, createCliOpenShellSandboxObserverFromRunner };
 
@@ -160,7 +160,7 @@ export function createCliOpenShellSandboxLifecycle(input: {
       }
 
       let captured: CapturedOpenShellCommandResult;
-      const timeoutMs = request.timeoutMs ?? input.defaultTimeoutMs ?? OPENSHELL_HEAVY_TIMEOUT_MS;
+      const timeoutMs = request.timeoutMs ?? input.defaultTimeoutMs ?? SANDBOX_DELETE_TIMEOUT_MS;
       try {
         captured = await input.capture(
           ["sandbox", "delete", "-g", request.target.gatewayName, request.sandboxName],

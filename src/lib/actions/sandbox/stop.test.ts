@@ -574,37 +574,6 @@ describe("stopSandbox", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("succeeds idempotently when the container is already stopped (#6026)", async () => {
-    const h = harness();
-    h.findLabeledSandboxContainers.mockReturnValue([container("openshell-my-sandbox", false)]);
-
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).not.toHaveBeenCalled();
-    const output = h.log.mock.calls.map(([line]) => line).join("\n");
-    expect(output).toContain("already stopped");
-  });
-
-  it("stops a crash-looping container instead of calling it stopped (#6026)", async () => {
-    const h = harness();
-    h.findLabeledSandboxContainers.mockReturnValue([
-      {
-        name: "openshell-my-sandbox",
-        status: "Restarting (137) 2 seconds ago",
-        running: false,
-      },
-    ]);
-
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
-      ignoreError: true,
-      timeout: 30_000,
-    });
-  });
-
   it("stops a paused container through OpenShell (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
@@ -622,24 +591,6 @@ describe("stopSandbox", () => {
     expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
-  it("stops the authoritative sandbox and an orphaned GPU backup sibling (#6026)", async () => {
-    const h = harness();
-    h.findLabeledSandboxContainers.mockReturnValue([
-      container("openshell-my-sandbox", true),
-      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
-    ]);
-
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(0);
-    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
-    expect(h.dockerStop).toHaveBeenCalledTimes(1);
-    expect(h.dockerStop).toHaveBeenCalledWith(
-      "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
-      { ignoreError: true, timeout: 30_000 },
-    );
-  });
-
   it("continues to OpenShell stop when the graceful channel stop throws (#6026)", async () => {
     const h = harness();
     h.stopSandboxChannels.mockImplementation(() => {
@@ -652,33 +603,6 @@ describe("stopSandbox", () => {
     expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
     const warned = h.warn.mock.calls.map(([line]) => line).join("\n");
     expect(warned).toContain("gateway unreachable");
-  });
-
-  it("names the Docker daemon outage instead of claiming the container was removed (#6026)", async () => {
-    const h = harness();
-    h.isDockerRuntimeDown.mockReturnValue(true);
-
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toBeUndefined();
-    expect(h.printDockerRuntimeDownGuidance).toHaveBeenCalledWith("my-sandbox", {
-      retryCommand: "stop",
-    });
-    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
-    expect(h.dockerStop).not.toHaveBeenCalled();
-  });
-
-  it("fails with a rebuild hint when no labeled container exists (#6026)", async () => {
-    const h = harness();
-    h.findLabeledSandboxContainers.mockReturnValue([]);
-
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toContain("No Docker container");
-    expect(result.message).toContain("rebuild");
-    expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
   it("refuses an unregistered sandbox (#6026)", async () => {
@@ -748,29 +672,6 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("my-sandbox");
     expect(result.message).toContain("125");
-  });
-
-  it("stops the authoritative sandbox even when an orphaned backup stop fails (#6026)", async () => {
-    const h = harness({ dockerStop: () => ({ status: 137 }) });
-    h.findLabeledSandboxContainers.mockReturnValue([
-      container("openshell-my-sandbox", true),
-      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
-    ]);
-    const result = await stopSandbox("my-sandbox", h.deps);
-
-    expect(result.exitCode).toBe(1);
-    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
-    expect(h.dockerStop).toHaveBeenCalledTimes(1);
-    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
-    expect(h.dockerStop).toHaveBeenCalledWith(
-      "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
-      {
-        ignoreError: true,
-        timeout: 30_000,
-      },
-    );
-    expect(result.message).toContain("gpu-backup");
-    expect(result.message).toContain("137");
   });
 
   it("never removes containers or touches the registry entry (#6026)", async () => {

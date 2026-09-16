@@ -10,7 +10,6 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
-  type RuntimeProviderManagedImageBootstrapSurface,
   type RuntimeProviderCleanupInput,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -60,7 +59,6 @@ export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
   readonly gatewayInspection?: PodmanBoundContainerEngine;
   readonly hostLocalInference?: PodmanContainerEngine;
-  readonly managedBootstrap?: PodmanBoundContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
   readonly workloadCleanup?: PodmanBoundContainerEngine;
 }
@@ -128,37 +126,12 @@ function unsupported(providerId: string, reason: string) {
   return { providerId, supported: false as const, reason };
 }
 
-function createLazyPodmanManagedBootstrapSurface(
-  engine: PodmanBoundContainerEngine,
-): RuntimeProviderManagedImageBootstrapSurface {
-  const surface = (): RuntimeProviderManagedImageBootstrapSurface => {
-    const { createPodmanManagedBootstrapSurface } =
-      require("../managed-bootstrap/podman-runtime") as typeof import("../managed-bootstrap/podman-runtime");
-    return createPodmanManagedBootstrapSurface(engine);
-  };
-  return Object.freeze({
-    providerId: "podman",
-    supported: true,
-    bootstrapKind: "managed-image",
-    createAuthorityStore: (
-      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createAuthorityStore"]>[0],
-    ) => surface().createAuthorityStore(input),
-    createLifecycle: (
-      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createLifecycle"]>[0],
-    ) => surface().createLifecycle(input),
-    createOnboardRouting: (
-      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createOnboardRouting"]>[0],
-    ) => surface().createOnboardRouting(input),
-  });
-}
-
 function requireEngine(
   engine: PodmanContainerEngine,
   operation:
     | "host-doctor"
     | "gateway-inspection"
     | "host-local-inference"
-    | "managed-bootstrap"
     | "sandbox-lifecycle"
     | "workload-cleanup",
 ): void {
@@ -211,7 +184,6 @@ export function createPodmanRuntimeProviderBundle(
     hostDoctor,
     gatewayInspection,
     hostLocalInference: inferenceEngine,
-    managedBootstrap,
     sandboxLifecycle,
     workloadCleanup,
   } = options.engines;
@@ -272,7 +244,6 @@ export function createPodmanRuntimeProviderBundle(
   }
   for (const [engine, operation] of [
     [gatewayInspection, "gateway-inspection"],
-    [managedBootstrap, "managed-bootstrap"],
     [workloadCleanup, "workload-cleanup"],
   ] as const) {
     if (!engine) continue;
@@ -420,10 +391,7 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       operations: ["start", "stop"],
     },
-    bootstrap:
-      managedBootstrap === undefined
-        ? unsupported(providerId, deferred)
-        : createLazyPodmanManagedBootstrapSurface(managedBootstrap),
+    bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
     snapshot:
       gatewayInspection === undefined
         ? unsupported(providerId, deferred)
@@ -576,7 +544,6 @@ export function createCurrentPodmanRuntimeProviderBundle(
     hostDoctor: createCurrentPodmanOperationEngine("host-doctor", environment),
     gatewayInspection: createCurrentPodmanOperationEngine("gateway-inspection", environment),
     hostLocalInference: createCurrentPodmanOperationEngine("host-local-inference", environment),
-    managedBootstrap: createCurrentPodmanOperationEngine("managed-bootstrap", environment),
     sandboxLifecycle: createCurrentPodmanOperationEngine("sandbox-lifecycle", environment),
     workloadCleanup: createCurrentPodmanOperationEngine("workload-cleanup", environment),
   } as const;

@@ -141,11 +141,6 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
     fs.copyFileSync(source, target);
   }
   fs.cpSync(
-    path.join(rootDir, "src", "lib", "onboard", "managed-bootstrap"),
-    path.join(buildCtx, "src", "lib", "onboard", "managed-bootstrap"),
-    { recursive: true },
-  );
-  fs.cpSync(
     path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
     path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
     { recursive: true },

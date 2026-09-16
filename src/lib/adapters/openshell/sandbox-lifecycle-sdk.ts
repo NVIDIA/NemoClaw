@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isValidName } from "../../name-validation";
-import type {
-  MutateOpenShellSandboxRequest,
-  OpenShellSandboxMutationSubmission,
-  OpenShellSandboxStateLifecycle,
-} from "./sandbox-lifecycle";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
+
+type MutateOpenShellSandboxRequest = Readonly<{
+  sandboxName: string;
+  target: Extract<OpenShellGatewayTarget, { kind: "named" }>;
+  timeoutMs?: number;
+}>;
+
+type OpenShellSandboxMutationSubmission =
+  | Readonly<{ kind: "accepted" }>
+  | Readonly<{ kind: "failed"; error: OpenShellSandboxError }>;
+
+interface OpenShellSandboxStateLifecycle {
+  startSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
+  stopSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
+}
 
 type CallOptions = Readonly<{ signal: AbortSignal }>;
 type SdkClient = Readonly<{
