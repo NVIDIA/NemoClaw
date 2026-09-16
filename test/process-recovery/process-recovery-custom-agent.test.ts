@@ -179,6 +179,8 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
     });
     expect(sshCommands).toHaveLength(1);
     expect(sshCommands[0]).toContain("HTTP_CODE=$(curl");
+    expect(sshCommands[0]).toContain("0:*) echo STOPPED");
+    expect(sshCommands[0]).toContain("*) echo UNAVAILABLE");
     expect(sshCommands[0]).not.toContain("gateway run");
   });
 

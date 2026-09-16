@@ -791,20 +791,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/shields-retirement-upgrade.test.ts",
-      "liveSources": [
-        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
-      ],
-      "fast": [
-        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
-        "src/lib/state/migrations/removed-immutability.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
-        "test/e2e/support/shields-retirement-workflow-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",

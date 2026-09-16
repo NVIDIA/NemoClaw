@@ -40,6 +40,51 @@ describe("launch-readiness gateway health scope", () => {
     );
   });
 
+  it("treats HTTP and transport probe failures as unavailable evidence", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nUNAVAILABLE\n",
+      stderr: "",
+    }));
+
+    await expect(
+      isSandboxGatewayRunningForStatus("alpha", "nemoclaw-8091", {
+        getSessionAgent: () => null,
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
+      }),
+    ).resolves.toBeNull();
+
+    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+  });
+
+  it.each([
+    ["managed completion", { status: 0, stdout: "GATEWAY_PID=42", stderr: "" }, true],
+    ["SUPERVISOR_NOT_RUNNING", { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" }, false],
+    ["GATEWAY_HEALTH_TIMEOUT", { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" }, null],
+    [
+      "PRIVILEGED_CONTROL_UNAVAILABLE",
+      { status: 1, stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
+      null,
+    ],
+  ] as const)("classifies the Hermes managed probe result %s", async (_label, result, expected) => {
+    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
+
+    await expect(
+      isSandboxGatewayRunningForStatus("alpha", "nemoclaw-19080", {
+        getSessionAgent: () => loadAgent("hermes"),
+        requestGatewaySupervisorActionImpl,
+      }),
+    ).resolves.toBe(expected);
+
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledWith(
+      "alpha",
+      "probe",
+      expect.any(Number),
+    );
+  });
+
   it("pins Hermes readiness checks to its recorded OpenShell gateway (#10302)", async () => {
     const gatewayHealth = vi.fn(async () => true);
     const forwardsHealthy = vi.fn(() => true);
