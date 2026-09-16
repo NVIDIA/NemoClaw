@@ -9,6 +9,36 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Dependency Upgrade Gate
+
+Before qualifying an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.
+It requires one OpenClaw agent and one already-running external inference provider; it rejects managed inference services, Ollama, and proxies.
+Run from the checkout that built the candidate bundle: the initial apply uses the bundled CLI, and subsequent checks use the checkout's SDK.
+Provide a dedicated deployment UID, an unused state directory whose parent exists, and an immutable candidate bundle.
+Use either an external gateway at the candidate SDK's pinned OpenShell version or a managed gateway with a free port and subnet.
+The compute daemon must have the selected agent image, and the inference endpoint must already serve the selected model.
+Supply any referenced credentials to the test process.
+The test makes real inference requests, which may incur charges for hosted providers.
+
+From the repository root, with absolute paths:
+
+```sh
+NEMOCLAW_UPGRADE_CONFIG=/absolute/path/to/owned-deployment.yaml \
+NEMOCLAW_UPGRADE_STATE=/absolute/path/to/new-state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
+  cargo test --workspace --test fabric_live \
+    dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
+```
+
+The test waits for the real apply CLI to exit, then requires a reply from the hosted agent through OpenShell.
+It checks export/reapply and stable resource/runtime identities before destroying its owned workloads and registrations.
+It retains the workspace, persistent storage, apply output, and `upgrade-proof.json`; failures retain state and resources for diagnosis and explicit cleanup.
+It never starts inference or substitutes another agent process through exec.
+
+The current OpenShell pin has a [known main-process startup blocker](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker); this gate is not yet live-qualified with that pin.
+A failed gate must not be recorded as compatibility success because lower-level fixtures passed.
+Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
+
 ## Retained Storage Observations
 
 Read-only live storage qualification requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
