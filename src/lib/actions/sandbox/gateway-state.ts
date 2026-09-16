@@ -1170,15 +1170,9 @@ export async function ensureLiveSandboxOrExit(
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
         );
-        if (dockerRuntime.containerName) {
-          console.error(
-            `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
-          );
-        } else {
-          console.error(
-            `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, so use start first.)`,
-          );
-        }
+        console.error(
+          `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
+        );
       } else {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,

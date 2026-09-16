@@ -277,6 +277,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const output = lines.join("\n");
     expect(output).toContain("nemoclaw instance-a start");
     expect(output).toContain("workspace state preserved");
+    expect(output).toContain("use it only if start does not recover the sandbox");
+    expect(output).not.toContain("stopped container");
     expect(output).not.toContain("docker unpause");
     expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
     expect(exitSpy).toHaveBeenCalledWith(1);

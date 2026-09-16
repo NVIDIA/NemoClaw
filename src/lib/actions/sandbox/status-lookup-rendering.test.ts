@@ -61,13 +61,12 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     // The recovery hint now leads with `start`, which recovers without data loss.
     expect(text).toContain("nemoclaw beta start");
     expect(text).toContain("workspace state preserved");
-    // `rebuild --yes` is only mentioned as the recreate alternative, and must no
-    // longer be the promised recovery command (its pre-rebuild backup aborts on a
-    // stopped container — the reported bug).
+    // `rebuild --yes` is only mentioned as the fallback recreate alternative,
+    // not as the promised recovery command.
     expect(text).not.toContain("Run `nemoclaw beta rebuild --yes` to recreate");
     expect(text).not.toContain("workspace state will be preserved");
-    // The `rebuild --yes` mention explains why `start` must come first.
-    expect(text).toContain("cannot snapshot a stopped container");
+    expect(text).toContain("use it only if start does not recover the sandbox");
+    expect(text).not.toContain("stopped container");
   });
 
   it("reports an owned stopped container without crash guidance (#8695)", async () => {
