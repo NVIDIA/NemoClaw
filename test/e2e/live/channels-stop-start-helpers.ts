@@ -175,7 +175,10 @@ export function installGooglechatCredentialFixture(
           ? {
               ...definition,
               credentials: [
-                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+                {
+                  name: "GOOGLE_CHAT_ACCESS_TOKEN",
+                  value: GOOGLECHAT_E2E_ACCESS_TOKEN,
+                },
               ],
             }
           : definition,
@@ -225,7 +228,9 @@ async function addGooglechatWithInstalledFixture(
     { channel: "googlechat" },
     input.agent === "openclaw"
       ? {
-          googlechatNonInteractiveAudienceCapability: Object.freeze({ audience }),
+          googlechatNonInteractiveAudienceCapability: Object.freeze({
+            audience,
+          }),
           ...providerDependency,
         }
       : providerDependency,
@@ -828,12 +833,20 @@ export async function runChannelsStopStartTarget({
 }): Promise<void> {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const tokens = phase6Tokens(AGENT);
-  const env = phase6Env({
+  const baseEnv = phase6Env({
     sandboxName: SANDBOX_NAME,
     agent: AGENT,
     apiKey,
-    extra: phase6TokenEnv(tokens),
   });
+  const env =
+    AGENT === "hermes"
+      ? baseEnv
+      : phase6Env({
+          sandboxName: SANDBOX_NAME,
+          agent: AGENT,
+          apiKey,
+          extra: phase6TokenEnv(tokens),
+        });
   const redactions = redactionValues(apiKey, tokens);
 
   await artifacts.target.declare({
@@ -847,6 +860,143 @@ export async function runChannelsStopStartTarget({
 
   const heartbeat = startChannelsStopStartProgress(AGENT);
   cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
+
+  if (AGENT === "hermes") {
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-openshell-gateway-destroy-hermes",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-channels-stop-start-hermes-openshell-delete",
+        env,
+        redactionValues: redactions,
+        timeoutMs: 120_000,
+      }),
+    );
+    await precleanSandbox(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "preclean-channels-stop-start-hermes",
+    );
+    await precleanNemoclawGateway(
+      host,
+      env,
+      redactions,
+      "preclean-openshell-gateway-destroy-hermes",
+    );
+    await requirePhase6RuntimeProvider(runtimeProvider, "hermes channels stop/start");
+
+    progress.phase("onboard channel lifecycle sandbox");
+    const install = await installSandboxOrSkipOnRateLimit(
+      host,
+      env,
+      redactions,
+      "install-channels-stop-start-hermes",
+      skip,
+      "NVIDIA endpoint validation was rate-limited before channel lifecycle assertions ran",
+    );
+    expectExitZero(install, "hermes install.sh");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-channels-stop-start-hermes",
+    );
+
+    progress.phase("validate configured channel state");
+    const inertConfig = [
+      "# NEMOCLAW_E2E_CHANNEL_CONFIG_BEGIN",
+      "TELEGRAM_ALLOWED_USERS=123456789,987654321",
+      "DISCORD_ALLOWED_USERS=1005536447329222676",
+      "SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH",
+      "WEIXIN_ALLOWED_USERS=wxid_e2e_operator",
+      "WHATSAPP_ENABLED=false",
+      "WHATSAPP_MODE=bot",
+      "WHATSAPP_ALLOWED_USERS=15551234567,15557654321",
+      "TEAMS_ALLOWED_USERS=22222222-2222-2222-2222-222222222222",
+      "GOOGLE_CHAT_PROJECT_ID=nemoclaw-e2e",
+      "GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/nemoclaw-e2e/subscriptions/hermes-chat",
+      "GOOGLE_CHAT_ALLOWED_USERS=e2e-operator@example.com",
+      "# NEMOCLAW_E2E_CHANNEL_CONFIG_END",
+    ].join("\n");
+    const write = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      `printf '%s\n' ${shellQuote(inertConfig)} >> /sandbox/.hermes/.env`,
+      {
+        artifactName: "hermes-write-inert-channel-config",
+        redactionValues: redactions,
+      },
+    );
+    const readConfig = (context: string) =>
+      sandboxSh(
+        sandbox,
+        SANDBOX_NAME,
+        "sed -n '/^# NEMOCLAW_E2E_CHANNEL_CONFIG_BEGIN$/,/^# NEMOCLAW_E2E_CHANNEL_CONFIG_END$/p' /sandbox/.hermes/.env",
+        {
+          artifactName: `hermes-read-inert-channel-config-${context}`,
+          redactionValues: redactions,
+        },
+      );
+    const before = await readConfig("before-stop");
+    expect(
+      write.exitCode === 0 && before.exitCode === 0 && before.stdout.trim() === inertConfig,
+      `${resultText(write)}\n${resultText(before)}`,
+    ).toBe(true);
+
+    progress.phase("stop and start the sandbox through OpenShell");
+    const stop = await sandbox.openshell(
+      ["sandbox", "stop", "-g", process.env.OPENSHELL_GATEWAY ?? "nemoclaw", SANDBOX_NAME],
+      {
+        artifactName: "openshell-sandbox-stop-hermes",
+        env,
+        timeoutMs: 120_000,
+      },
+    );
+    const start = await sandbox.openshell(
+      ["sandbox", "start", "-g", process.env.OPENSHELL_GATEWAY ?? "nemoclaw", SANDBOX_NAME],
+      {
+        artifactName: "openshell-sandbox-start-hermes",
+        env,
+        timeoutMs: 120_000,
+      },
+    );
+    expect(
+      stop.exitCode === 0 && start.exitCode === 0,
+      `${resultText(stop)}\n${resultText(start)}`,
+    ).toBe(true);
+
+    progress.phase("validate channel state after native readiness");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-after-openshell-start-hermes",
+    );
+    await waitForNativeChannelGateway(sandbox, redactions);
+    const after = await readConfig("after-start");
+    expect(after.exitCode === 0 && after.stdout.trim() === inertConfig, resultText(after)).toBe(
+      true,
+    );
+
+    await artifacts.target.complete({
+      id: "channels-stop-start",
+      status: "passed",
+      agent: AGENT,
+      openshellStopStartCompleted: true,
+      nativeAgentReadyAfterStart: true,
+      channelConfigurationSurvived: true,
+      liveCredentialConnectivityRequired: false,
+    });
+    return;
+  }
 
   registerChannelsStopStartCleanup(cleanup, host, sandbox, {
     agent: AGENT,
@@ -870,7 +1020,7 @@ export async function runChannelsStopStartTarget({
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
   await requirePhase6RuntimeProvider(runtimeProvider, `${AGENT} channels stop/start`);
-  progress.phase("onboard sandbox with all messaging channels");
+  progress.phase("onboard channel lifecycle sandbox");
   const onboardingEnv = withoutGooglechatOnboardInputs(env);
   const install = await installSandboxOrSkipOnRateLimit(
     host,

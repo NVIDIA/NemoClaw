@@ -15,7 +15,7 @@ import {
   sandboxSh,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sandbox-operations";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sb-ops";
 const DASHBOARD_PORT = 18_791;
 
 test(
@@ -93,7 +93,10 @@ test(
       sandbox,
       SANDBOX_NAME,
       `umask 077; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.sandbox-operations-marker; sync`,
-      { artifactName: "sandbox-operations-write-marker", redactionValues: redactions },
+      {
+        artifactName: "sandbox-operations-write-marker",
+        redactionValues: redactions,
+      },
     );
     assertExitZero(write, "write sandbox operations marker");
 
@@ -125,7 +128,10 @@ test(
       sandbox,
       SANDBOX_NAME,
       "cat /sandbox/.openclaw/workspace/.sandbox-operations-marker",
-      { artifactName: "sandbox-operations-read-marker", redactionValues: redactions },
+      {
+        artifactName: "sandbox-operations-read-marker",
+        redactionValues: redactions,
+      },
     );
     assertExitZero(read, "read sandbox operations marker");
     expect(read.stdout.trim(), resultText(read)).toBe(marker);

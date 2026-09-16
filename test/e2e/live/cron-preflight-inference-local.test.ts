@@ -29,7 +29,9 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-    const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
+    const hosted = requireHostedInferenceConfig(secrets, process.env, {
+      model: MODEL,
+    });
     const env = {
       ...buildAvailabilityProbeEnv(),
       ...hosted.env,
@@ -56,16 +58,15 @@ test(
       artifactName: "cron-preflight-runtime-provider",
       scenarioLabel: "native OpenClaw cron",
     });
-    await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cron-preflight-preclean-nemoclaw",
-      env,
-      timeoutMs: 120_000,
-    });
-    await sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cron-preflight-preclean-openshell-delete",
-      env,
-      timeoutMs: 120_000,
-    });
+    try {
+      await sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cron-preflight-preclean-openshell-delete",
+        env,
+        timeoutMs: 120_000,
+      });
+    } catch {
+      // The named gateway does not exist before first onboarding.
+    }
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cron-preflight-cleanup-openshell-delete",

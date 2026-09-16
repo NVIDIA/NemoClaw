@@ -1261,7 +1261,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-survival", {
-    displayName: "Lifecycle: repairs stopped phase and preserves native agent state",
+    displayName: "Lifecycle: OpenShell stop and start preserves native agent state",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; OpenShell sandbox lifecycle",
     profile: "nvidia-inference",

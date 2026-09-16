@@ -9,7 +9,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-openclaw";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
 const DASHBOARD_PORT = 18_792;
 
 test(
@@ -57,16 +57,15 @@ test(
       artifactName: "rebuild-openclaw-runtime-provider",
       scenarioLabel: "OpenClaw rebuild",
     });
-    await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-      artifactName: "rebuild-openclaw-preclean-nemoclaw",
-      env,
-      timeoutMs: 120_000,
-    });
-    await sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "rebuild-openclaw-preclean-openshell-delete",
-      env,
-      timeoutMs: 120_000,
-    });
+    try {
+      await sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "rebuild-openclaw-preclean-openshell-delete",
+        env,
+        timeoutMs: 120_000,
+      });
+    } catch {
+      // The named gateway does not exist before first onboarding.
+    }
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "rebuild-openclaw-cleanup-openshell-delete",
@@ -93,7 +92,11 @@ test(
       trustedSandboxShellScript(
         `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
       ),
-      { artifactName: "rebuild-openclaw-write-marker", env, redactionValues: redactions },
+      {
+        artifactName: "rebuild-openclaw-write-marker",
+        env,
+        redactionValues: redactions,
+      },
     );
     assertExitZero(write, "write OpenClaw rebuild marker");
 
@@ -112,7 +115,11 @@ test(
     const read = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript("cat /sandbox/.openclaw/workspace/.rebuild-state-marker"),
-      { artifactName: "rebuild-openclaw-read-marker", env, redactionValues: redactions },
+      {
+        artifactName: "rebuild-openclaw-read-marker",
+        env,
+        redactionValues: redactions,
+      },
     );
     assertExitZero(read, "read restored OpenClaw marker");
     expect(read.stdout.trim(), resultText(read)).toBe(marker);
