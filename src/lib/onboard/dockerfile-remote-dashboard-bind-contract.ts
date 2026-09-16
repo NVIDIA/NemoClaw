@@ -79,7 +79,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
-  "d658e3a999d640f5d1935d2870cfe58a00a7be7708a459df9ac84fa41e735c46",
+  "0634acc02be0de381a0f706baff09233a1c069d55f6419fea0f385909656e88b",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
   "4e9657fbcb5125375526565714926638d0e7d40d56f2726e3a4c7b02aa42bcd9",
   // Reviewed 2026.9.1 optional-plugin archive verification and neutral union install.
@@ -100,6 +100,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // cleanup, and canonical SQLite ownership repair. This exact instruction
   // preserves the generated openclaw.json dashboard binding.
   "5a05a0165f86404dfab14fcd4b0cc94b97eca42c1ebf264b385b245f323d07d0",
+  "76961dfa868381e4fb3756eb8eae0c6645074132bc0e9d96bda7f3058ac12706",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

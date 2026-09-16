@@ -332,9 +332,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.shard === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
     (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
-    (value.host_preparation === "none" ||
-      value.host_preparation === "hermes-swap" ||
-      value.host_preparation === "rebuild-swap") &&
+    (value.host_preparation === "none" || value.host_preparation === "hermes-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&

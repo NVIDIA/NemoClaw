@@ -13,6 +13,8 @@ import {
   openShellForwardIdentity,
   type OpenShellForwardRuntimeAuthority,
 } from "../adapters/openshell/forward-runtime";
+import { createCliOpenShellSandboxTransferExecutor } from "../adapters/openshell/sandbox-transfer-cli";
+import type { OpenShellSandboxTransferExecutor } from "../adapters/openshell/sandbox-transfer";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -52,14 +54,10 @@ function looksLikeForwardPortConflict(diagnostic: string): boolean {
   return /eaddrinuse|address already in use|port .* in use|bind: .*in use/iu.test(diagnostic);
 }
 
-type CommandResult = { status: number | null };
-
 type DashboardForwardRuntimeAuthority = OpenShellForwardRuntimeAuthority;
 
 export interface OnboardDashboardDeps {
-  runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
-  openshellArgv(args: string[]): string[];
   runCapture?: typeof defaultRunCapture;
   cliName(): string;
   agentProductName(): string;
@@ -71,6 +69,7 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  sandboxTransferExecutor?: OpenShellSandboxTransferExecutor;
   productionForwardService?: boolean;
   /** Endpoint and optional client TLS bundle selected by the bound gateway authority. */
   getGatewayForwardRuntimeAuthority?(): {
@@ -168,7 +167,7 @@ export interface OnboardDashboardHelpers {
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<boolean>;
-  fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchGatewayAuthTokenFromSandbox(sandboxName: string): Promise<string | null>;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
@@ -189,7 +188,7 @@ export interface OnboardDashboardHelpers {
     nimContainer?: string | null,
     agent?: AgentDefinition | null,
     ready?: boolean,
-  ): void;
+  ): Promise<void>;
   stopAllDashboardForwards(): void;
 }
 
@@ -700,29 +699,41 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return fetchAgentWebAuthToken(deps.runCaptureOpenshell, sandboxName, agent);
   }
 
-  function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
+  async function fetchGatewayAuthTokenFromSandbox(sandboxName: string): Promise<string | null> {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
+    let completion: Awaited<ReturnType<OpenShellSandboxTransferExecutor["run"]>> | undefined;
+    let token: string | null = null;
     try {
       const destDir = `${tmpDir}${path.sep}`;
-      const result = deps.runOpenshell(
-        ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
-        { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-      );
-      if (result.status !== 0) return null;
+      completion = await (
+        deps.sandboxTransferExecutor ?? createCliOpenShellSandboxTransferExecutor()
+      ).run({
+        direction: "download",
+        sandboxName,
+        target: { kind: "selected" },
+        source: "/sandbox/.openclaw/openclaw.json",
+        destination: destDir,
+        output: "suppress",
+      });
+      if (completion.outcome.kind !== "completed" || completion.outcome.exitCode !== 0) return null;
+      if (completion.wasInterrupted()) return null;
       const jsonPath = findOpenclawJsonPath(tmpDir);
       if (!jsonPath) return null;
       const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-      const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
-      return typeof token === "string" && token.length > 0 ? token : null;
+      const parsedToken = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
+      token = typeof parsedToken === "string" && parsedToken.length > 0 ? parsedToken : null;
     } catch {
-      return null;
+      token = null;
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       } catch {
         // ignore cleanup errors
       }
+      if (completion?.wasInterrupted()) token = null;
+      completion?.release();
     }
+    return token;
   }
 
   /**
@@ -746,14 +757,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log(`${indent}    then run the configured interactive agent command`);
   }
 
-  function printDashboard(
+  async function printDashboard(
     sandboxName: string,
     model: string,
     provider: string,
     nimContainer: string | null = null,
     agent: AgentDefinition | null = null,
     ready = true,
-  ): void {
+  ): Promise<void> {
     const nimStatus = deps.nimStatus ?? nim.nimStatus;
     const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
     const shouldShowNimLine = deps.shouldShowNimLine ?? nim.shouldShowNimLine;
@@ -763,7 +774,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const providerLabel = deps.getProviderLabel(provider);
     const token =
       !agent || agent.dashboard.auth === "url_token"
-        ? fetchGatewayAuthTokenFromSandbox(sandboxName)
+        ? await fetchGatewayAuthTokenFromSandbox(sandboxName)
         : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({

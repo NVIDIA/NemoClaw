@@ -2476,9 +2476,7 @@ const {
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
-  runOpenshell,
   runCaptureOpenshell,
-  openshellArgv,
   runCapture,
   cliName,
   agentProductName,

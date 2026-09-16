@@ -25,7 +25,7 @@ function runBash(lines: string[]): SpawnSyncReturns<string> {
   });
 }
 
-describe("nemoclaw-start shared-state topology (#7280)", () => {
+describe("nemoclaw-start native SQLite topology (#7280)", () => {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("pins SQLite temporary files inside owner-only OpenClaw state for OpenShell", () => {
@@ -36,6 +36,7 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
       "prepare_openshell_sqlite_tmpdir() {",
       "# ── Main ─────────────────────────────────────────────────────────",
     ).replaceAll("/sandbox/.openclaw/tmp", sqliteTmp);
+    fs.mkdirSync(path.dirname(sqliteTmp));
     try {
       const result = runBash([
         'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%u" ]; then id -u; else command stat "$@"; fi; }',
@@ -94,10 +95,10 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
     expect(result.stdout.trim()).toBe("unset");
   });
 
-  it("keeps gateway-only state variables out of connect shells", () => {
+  it("keeps retired split-state variables out of connect shells", () => {
     const block = sourceBlock(
       source,
-      "    # Only the gateway launch receives the split-state compatibility marker.",
+      "    # The native lifecycle uses the sandbox identity for both the gateway and",
       '    if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then',
     );
     const result = runBash([block]);
