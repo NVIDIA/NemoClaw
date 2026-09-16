@@ -715,21 +715,22 @@ function classifyManagedStartupProfile(
     ...classifyReasoningAgreement(entry, profile),
     ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
-  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
-    const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
-    if (!supported) {
-      return [
-        ...findings,
-        finding(
-          "source.workload.startupProfile",
-          "unsupported",
-          "The managed agent settings cannot be represented by v1 export.",
-        ),
-      ];
-    }
-    expected = supported;
+  const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
+  if (
+    !supported ||
+    (entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
+      profile.tuning.contextWindow !== EXPORTED_VLLM_CONTEXT_WINDOW)
+  ) {
+    return [
+      ...findings,
+      finding(
+        "source.workload.startupProfile",
+        "unsupported",
+        "The managed agent settings cannot be represented by v1 export.",
+      ),
+    ];
   }
-  return [...findings, ...classifyProfileEquality(profile, expected)];
+  return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
@@ -1270,10 +1271,9 @@ function completeVerifiedSource(
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const settings =
-    authority && snapshot.inference.topology !== "managed"
-      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-      : {};
+  const settings = authority
+    ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
+    : {};
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
