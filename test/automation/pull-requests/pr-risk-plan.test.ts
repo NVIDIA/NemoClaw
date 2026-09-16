@@ -456,12 +456,29 @@ describe("deterministic PR risk plan", () => {
   it.each([
     "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-  ])("maps %s changes to the EXDEV job (#10517)", (changedFile) => {
+  ])("maps %s changes to the EXDEV job (#10517, #11547)", (changedFile) => {
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
       {
         id: "openclaw-plugin-runtime-exdev",
         matchedFiles: [changedFile],
       },
+    ]);
+  });
+
+  it("maps shared canonical OpenShell components to every live consumer (#11547)", () => {
+    const changedFile = "test/helpers/openshell-components.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
+      { id: "openclaw-plugin-runtime-exdev", matchedFiles: [changedFile] },
+    ]);
+  });
+
+  it("maps the exact-main driver wrapper to its stable live consumer (#11547)", () => {
+    const changedFile = "test/e2e/live/openshell-driver-config-test-wrapper.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
     ]);
   });
 
@@ -1001,7 +1018,7 @@ describe("deterministic PR risk plan", () => {
     "tools/e2e/workflow-plan.mts",
     "tools/e2e/workflow-boundary.mts",
     "tools/e2e/job-map.txt",
-    "test/e2e/registry/runtime-support.ts",
+    "test/e2e/registry/execution.ts",
     "test/e2e/risk-signal-reporter.ts",
     "test/e2e/fixtures/security-posture.ts",
     "test/e2e/lib/redact-text.py",
@@ -1116,8 +1133,9 @@ describe("Brev Launchable recommendations", () => {
     ["scenario workload evidence", "test/e2e/live/full-e2e-workload-evidence.ts"],
     ["new scenario helper", "test/e2e/live/full-e2e/recovery/observe.ts"],
     ["new scenario fixture", "test/e2e/fixtures/full-e2e-image-receipt.ts"],
-    ["listener identity", "src/lib/adapters/openshell/forward-service.ts"],
-    ["listener reachability", "src/lib/adapters/openshell/local-forward-listener.ts"],
+    ["listener identity", "src/lib/adapters/openshell/forward-cli.ts"],
+    ["forward command boundary", "src/lib/adapters/openshell/command-execution.ts"],
+    ["forward authority", "src/lib/adapters/openshell/forward-runtime.ts"],
     ["forward recovery", "src/lib/actions/sandbox/forward-recovery.ts"],
     ["process recovery", "src/lib/actions/sandbox/process-recovery.ts"],
     ["probe and connect", "src/lib/actions/sandbox/connect.ts"],
@@ -1141,7 +1159,7 @@ describe("Brev Launchable recommendations", () => {
     "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
     "test/e2e/support/full-e2e-gateway.test.ts",
     "test/e2e-runtime/brev-launchable-e2e.test.ts",
-    "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+    "src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.ts",
     "src/lib/onboard/hermes-dashboard.ts",
     "src/lib/onboard/ssh-forward-hint.ts",
     "src/lib/onboard/gateway-binding/identity.test.ts",

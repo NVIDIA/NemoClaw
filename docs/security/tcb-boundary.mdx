@@ -112,7 +112,7 @@ A mismatched or orphaned authorization counts as an unexpected exit.
 ## Topology Limits
 
 The direct topology separates the root supervisor, `gateway` user ID, and `sandbox` user ID.
-The root process belongs to the `sandbox` supplementary group because capability-dropped PID 1 needs descriptor-safe access to the mutable tree before validation and config transactions.
+The direct-container root process belongs to the `sandbox` supplementary group so its current config transactions have descriptor-safe access to the mutable tree.
 
 The OpenShell-managed topology runs the supervisor, gateway, and agent under the same `sandbox` user ID.
 The managed controller prevents accidental cross-process signalling and process-ID reuse, but it cannot prove provenance against a malicious same-user agent or create user-ID isolation.
@@ -126,7 +126,7 @@ Reviewers must re-check this page when a lifecycle helper, config guard, install
 The following conditions govern current compatibility code:
 
 - Remove the final OpenClaw stale-base group repair when the minimum supported image guarantees both required memberships.
-- Keep root membership in the base image while capability-dropped root PID 1 owns lifecycle validation for sandbox-group mutable state.
+- Remove root membership in the base image when the remaining direct-container config transactions no longer consume sandbox-group mutable state.
 - Remove the managed shared-user controller when the supported OpenShell topology provides a root-owned supervisor or a distinct gateway user ID.
 - Remove JSON5 restart validation only when every supported OpenClaw config is strict JSON.
 - Keep source-path and fake-root overrides disabled unless an explicit source test flag is present.

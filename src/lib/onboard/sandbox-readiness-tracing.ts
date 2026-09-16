@@ -17,12 +17,12 @@ import {
   createCliOpenShellSandboxObserver,
   type CliOpenShellSandboxObserverDeps,
 } from "../adapters/openshell/sandbox-observer-cli";
-import { waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
+  waitUntilAsync,
 } from "./readiness-wait";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 

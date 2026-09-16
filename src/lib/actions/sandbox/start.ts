@@ -184,6 +184,7 @@ async function startSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
+    readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
     log,
     sandbox: resolved.sandbox,
@@ -191,7 +192,7 @@ async function startSandboxWithinLifecycleFence(
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
   if (preflight) return preflight;
-  const result = resolved.lifecycle.start(input);
+  const result = await resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   if (
     resolved.sandbox.stopped === true &&

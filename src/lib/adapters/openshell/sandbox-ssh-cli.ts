@@ -4,6 +4,7 @@
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 import { resolveOpenshell } from "./resolve";
 import {
   runCliOpenShellBufferedCommand,
@@ -12,7 +13,6 @@ import {
 } from "./sandbox-command-cli";
 import { resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 import type { OpenShellSandboxSshExecutor, OpenShellSandboxSshResult } from "./sandbox-ssh";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 function failure(result: OpenShellBufferedCommandRunResult): OpenShellSandboxSshResult | null {
   if (result.timedOut) return { kind: "failed", reason: "timeout" };

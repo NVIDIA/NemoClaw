@@ -577,7 +577,7 @@ export async function runRebuildDestroyPhase(
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
     return null;
   }
-  if (!teardownSandboxDashboardForward(sandboxName)) {
+  if (!(await teardownSandboxDashboardForward(sandboxName))) {
     console.error(
       "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
     );

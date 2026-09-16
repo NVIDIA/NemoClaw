@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setPolicyDocument } from "../../policy";
+import { createHermesPortableAsyncPolicyCapture } from "../../onboard/experimental/hermes-portable-policy-state";
 import * as registry from "../../state/registry";
 import { inspectOpenShellSandboxIdentityFingerprint } from "./sandbox-identity-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
@@ -130,6 +131,31 @@ describe("captureResolvedOpenshellAsync", () => {
 });
 
 describe("sanitized OpenShell capture", () => {
+  it("pins portable policy capture to its executable and exact environment", async () => {
+    const pinned = nodeExecutable(
+      "pinned-policy",
+      `process.stdout.write(JSON.stringify({
+      args: process.argv.slice(2), owned: process.env.OWNED, ambient: process.env.AMBIENT_ONLY ?? null,
+    }));`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", nodeExecutable("ambient-policy", "process.exit(7);"));
+    vi.stubEnv("AMBIENT_ONLY", "not-in-child");
+    const capture = createHermesPortableAsyncPolicyCapture(
+      () => ({
+        executablePath: pinned,
+        env: { OWNED: "receipt" },
+      }),
+      1_000,
+    );
+    const result = await capture(["policy", "get", "-g", "owned-gateway", "alpha", "--base"]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      args: ["policy", "get", "-g", "owned-gateway", "alpha", "--base"],
+      owned: "receipt",
+      ambient: null,
+    });
+  });
+
   it("gives policy and identity reads the same gateway-pinned sanitized environment", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-env-test-"));
     directories.push(directory);

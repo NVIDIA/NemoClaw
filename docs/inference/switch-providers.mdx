@@ -26,6 +26,9 @@ $$nemoclaw credentials list
 `inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, `custom`, and `llama-cpp`.
 NemoClaw normalizes an accepted alias to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
+If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
+If it cannot read the gateway list, it lists every supported provider ID instead.
+
 If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
 For a compatible custom endpoint, pass the complete route metadata described below so NemoClaw can register the provider.

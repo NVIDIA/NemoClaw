@@ -125,7 +125,11 @@ describe("Pi candidate operational surfaces", () => {
   it("keeps a recorded Pi sandbox off the gateway log source (#7927)", async () => {
     const env = qualify();
     const agent = loadAgent("pi", env);
-    const runOpenshell = vi.fn((args: string[]) => ({ status: 0, stdout: args.join(" ") }));
+    const readLogs = vi.fn(async (request: { source: "gateway" | "openshell" }) => ({
+      content: request.source,
+      diagnostic: "",
+      outcome: { kind: "completed" as const, exitCode: 0 },
+    }));
     const exitCodes: number[] = [];
 
     await showSandboxLogsWithDeps(
@@ -136,20 +140,19 @@ describe("Pi candidate operational surfaces", () => {
           exitCodes.push(code);
         }) as never,
         isDockerRuntimeDown: () => false,
-        getOpenshellBinary: () => "openshell",
         getSessionAgent: () => agent,
-        runOpenshell: runOpenshell as never,
+        enableAuditLogs: async () => ({ ok: true, value: undefined }),
+        logs: { checkAvailability: () => null, read: readLogs, follow: vi.fn() as never },
         writeStdout: () => {},
       },
     );
 
     // A terminal agent advertises no gateway, so logs must read the sandbox
     // source alone and never probe the OpenClaw gateway.
-    expect(runOpenshell).toHaveBeenCalled();
-    expect(exitCodes).toEqual([0]);
-    expect(runOpenshell.mock.calls.every(([args]) => !args.join(" ").includes("openclaw"))).toBe(
-      true,
+    expect(readLogs).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ source: "openshell", sandboxName: SANDBOX }),
     );
+    expect(exitCodes).toEqual([0]);
     expect(agent.forwardPort).toBe(0);
     expect(agent.healthProbe).toBeNull();
   });

@@ -13,16 +13,23 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 export { getNamedGatewayLifecycleState };
+export { getKnownSandboxTargetGatewayName } from "./gateway-target";
 import {
   formatOpenShellPolicyRecoveryAction,
   gatewayStartGuidance,
 } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
+import {
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  sandboxPhaseNeedsLifecycleStart,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import { selectSandboxOwningGateway } from "./gateway-select";
+import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -61,9 +68,7 @@ import {
   captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-  runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { D, G, R } from "../../cli/terminal-style";
 import {
@@ -220,7 +225,7 @@ export function captureSandboxOwnershipPhases(
   return { output: result.output, status: result.status };
 }
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
-export function recoverPortableDemoSandboxLifecycleForConnect(
+export async function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry | null,
   gatewayName: string,
@@ -228,7 +233,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
   currentnessTiming?: HermesPortableCurrentnessTiming,
   inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
-): PortableDemoLifecycleRecoveryResult {
+): Promise<PortableDemoLifecycleRecoveryResult> {
   const capture = (args: readonly string[], timeoutMs: number) => {
     commandAuthority?.assertTransactionCurrent();
     try {
@@ -258,7 +263,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   };
   commandAuthority?.assertCurrent();
   try {
-    return recoverPortableAgentSandboxLifecycle(
+    return await recoverPortableAgentSandboxLifecycle(
       sandboxName,
       {
         agent: sandbox?.agent,
@@ -285,7 +290,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
             }
           : {}),
         captureOpenshell: capture,
-        readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+        readRegistry: getKnownSandboxTarget,
         ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
         ...(currentnessTiming ? { currentnessTiming } : {}),
         ...(inspectionTiming ? { inspectionTiming } : {}),
@@ -297,12 +302,12 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
 }
 
 /** Requalify Hermes receipt authority without starting or mutating its sandbox. */
-export function assertHermesPortableLifecycleForConnect(
+export async function assertHermesPortableLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry,
   gatewayName: string,
-): void {
-  assertHermesPortableAgentLifecycleAuthority(
+): Promise<void> {
+  await assertHermesPortableAgentLifecycleAuthority(
     sandboxName,
     {
       agent: sandbox.agent,
@@ -311,7 +316,7 @@ export function assertHermesPortableLifecycleForConnect(
       openshellDriver: sandbox.openshellDriver,
       provider: sandbox.provider,
     },
-    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
+    { readRegistry: getKnownSandboxTarget },
   );
 }
 
@@ -512,7 +517,7 @@ export async function getSandboxGatewayState(
 ): Promise<SandboxGatewayState> {
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",
@@ -581,7 +586,7 @@ export async function getSandboxGatewayStateForStatus(
   const timeoutMs = getStatusProbeTimeoutMs();
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue({ gatewayName, timeoutMs });
   if (preflightIssue) {
     return {
       state: "gateway_schema_mismatch",
@@ -666,10 +671,8 @@ export async function reconcileMissingAgainstNamedGateway(
     return missingLookup;
   }
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", targetGatewayName], {
-      ignoreError: true,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
+    const selection = await selectNamedGateway(targetGatewayName);
+    if (!selection.ok) return missingLookup;
     const retry = await getSandboxGatewayState(sandboxName, targetGatewayName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
@@ -787,6 +790,10 @@ export function printGatewayLifecycleHint(
   const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
   if (observation?.error) {
     writer(observation.error.message);
+    return;
+  }
+  if (observation?.state === "observation_failed") {
+    writer(observation.diagnostic || "OpenShell gateway observation failed.");
     return;
   }
   // The gateway-side gRPC reply `sandbox has no spec` is returned when the
@@ -919,7 +926,7 @@ export async function getReconciledSandboxGatewayState(
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
     // below is the per-subprocess authority for the status RPC.
-    const selection = selectSandboxOwningGateway(sandboxName);
+    const selection = await selectSandboxOwningGateway(sandboxName);
     if (selection.outcome !== "selected") {
       const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
       return {
@@ -1000,23 +1007,87 @@ export async function getReconciledSandboxGatewayState(
 
 const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
 
+function startSandboxThroughOpenShell(sandboxName: string, gatewayName: string) {
+  return captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+}
+
 /**
- * Start a sandbox's Docker container when it exists but is stopped, before the
- * probe-only readiness wait begins polling. `recover` and `connect --probe-only`
- * both advertise that they restart a stopped sandbox, but the wait loop only
- * observes readiness. A container in `exited` cannot reach Ready. A plain
- * `docker start` can restore the same container with its workspace state and
- * managed configuration preserved (#8967). A nonzero or missing `docker start`
- * status continues to the readiness wait, which surfaces the existing
- * stopped-container guidance. The function returns true only when Docker
- * starts the stopped container. It leaves an unresolved, running, or paused
- * container unchanged. A paused container keeps its `docker unpause` guidance.
- * A caller that reaches this function after container startup makes no change.
+ * Start a sandbox whose container already runs while OpenShell still reports it
+ * `Stopped`. Only that phase is started: any other phase means the sandbox is
+ * running or settling, and the readiness wait owns the outcome (#11790).
+ */
+function startStoppedSandboxPhaseForProbeRecovery(
+  sandboxName: string,
+  gatewayName: string,
+): boolean {
+  const probe = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  const phase = probe.status === 0 ? parseSandboxPhase(probe.output ?? "") : null;
+  if (!sandboxPhaseNeedsLifecycleStart(phase)) return false;
+  console.error(
+    `  Sandbox '${sandboxName}' is still stopped while its container runs — starting it...`,
+  );
+  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
+  if (lifecycle.status === 0) {
+    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
+    return true;
+  }
+  console.error(
+    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); continuing with readiness checks.`,
+  );
+  return false;
+}
+
+/**
+ * Start a stopped sandbox before the probe-only readiness wait begins polling.
+ * `recover` and `connect --probe-only` both advertise that they restart a
+ * stopped sandbox, but the wait loop only observes the sandbox phase.
+ *
+ * OpenShell — not Docker — owns that phase. A bare `docker start` puts the
+ * container back in `Up` without advancing the sandbox out of `Stopped`, so the
+ * readiness wait can never succeed, and the resulting running-container /
+ * stopped-phase pair is exactly the state that makes a later `start` report
+ * "already running" and skip the lifecycle start too (#11790). Issuing
+ * `openshell sandbox start` restarts the same container — workspace state and
+ * managed configuration preserved, as #8967 requires — and advances the phase.
+ *
+ * A container that already runs is not proof that the sandbox is running: the
+ * same stopped-phase / running-container pair reaches this function whenever
+ * something started the container outside OpenShell, and returning early there
+ * left the readiness wait to expire on a sandbox that one lifecycle start would
+ * have recovered. So a running container is started through OpenShell too when
+ * OpenShell still reports the sandbox `Stopped`, and left alone for any other
+ * phase.
+ *
+ * `docker start` remains the fallback for the case #8967 was filed for: an
+ * exited container whose OpenShell start did not succeed still gets running
+ * again, and the Docker-driver start path repairs the phase on the next
+ * `start`. It is not a fallback for an already-running container, which needs
+ * no Docker start at all. A nonzero or missing status continues to the
+ * readiness wait, which surfaces the existing stopped-container guidance. The
+ * function returns true only when it started the sandbox. It leaves an
+ * unresolved or paused container unchanged, and a paused container keeps its
+ * `docker unpause` guidance.
  */
 export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.running || runtime.paused) return false;
+  if (!runtime.containerName || runtime.paused) return false;
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  if (runtime.running) return startStoppedSandboxPhaseForProbeRecovery(sandboxName, gatewayName);
   console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
+  if (lifecycle.status === 0) {
+    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
+    return true;
+  }
+  console.error(
+    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); starting its container directly.`,
+  );
   const result = dockerStart(runtime.containerName, {
     ignoreError: true,
     timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
