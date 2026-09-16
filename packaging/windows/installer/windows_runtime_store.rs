@@ -93,6 +93,7 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CloseHandle(handle: RawHandle) -> i32;
+    #[allow(clashing_extern_declarations)]
     #[link_name = "CreateFileW"]
     fn StoreCreateFileW(
         path: *const u16,
@@ -138,8 +139,8 @@ unsafe extern "system" {
         dacl: *mut *mut c_void,
         defaulted: *mut i32,
     ) -> i32;
-    fn SetSecurityInfo(
-        handle: RawHandle,
+    fn SetNamedSecurityInfoW(
+        path: *mut u16,
         kind: u32,
         information: u32,
         owner: *const c_void,
@@ -180,7 +181,7 @@ fn open_mount_point(path: &Path, access: u32) -> Result<Handle, Error> {
         StoreCreateFileW(
             path.as_ptr(),
             access | 0x0080,
-            7,
+            3,
             null(),
             3,
             0x0200_0000 | 0x0020_0000,
@@ -225,7 +226,14 @@ fn authorize_mount_point(path: &Path) -> Result<(), Error> {
         "(A;OICI;0x1200a9;;;AC)",
         "(A;OICI;0x1200a9;;;S-1-15-2-2)"
     );
-    let handle = open_mount_point(path, 0x0004_0000)?;
+    // Hold the verified directory without delete sharing so the name cannot be
+    // replaced between the reparse check and the named security update.
+    let _handle = open_mount_point(path, 0x0002_0000)?;
+    let mut path = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
     let value = SDDL
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -258,8 +266,8 @@ fn authorize_mount_point(path: &Path) -> Result<(), Error> {
         return Err(Error::Native("runtime-image-mount-descriptor-dacl"));
     }
     let status = unsafe {
-        SetSecurityInfo(
-            handle.0,
+        SetNamedSecurityInfoW(
+            path.as_mut_ptr(),
             1,
             0x8000_0004,
             null(),
