@@ -30,7 +30,7 @@ on:
         required: true
         type: string
       run_security_scans:
-        description: "Scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
+        description: "On main, scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
         required: false
         type: boolean
         default: false
@@ -2353,7 +2353,7 @@ jobs:
         inputs.run_security_scans &&
         github.repository == 'NVIDIA/NemoClaw' &&
         github.event_name == 'workflow_dispatch' &&
-        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        github.ref == 'refs/heads/main'
       }}
     needs: build-and-validate
     runs-on: linux-amd64-cpu4

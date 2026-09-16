@@ -101,7 +101,7 @@ on:
         required: false
         default: ""
       run_security_scans:
-        description: "Scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
+        description: "On main, scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
         required: false
         type: boolean
         default: false
@@ -448,6 +448,6 @@ jobs:
       openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}
       run_security_scans: ${{ inputs.run_security_scans || false }}
     secrets:
-      NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
-      PULSE_SSA_CLIENT_ID: ${{ secrets.PULSE_SSA_CLIENT_ID }}
-      PULSE_SSA_CLIENT_SECRET: ${{ secrets.PULSE_SSA_CLIENT_SECRET }}
+      NGC_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.NGC_API_KEY || '' }}
+      PULSE_SSA_CLIENT_ID: ${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_ID || '' }}
+      PULSE_SSA_CLIENT_SECRET: ${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_SECRET || '' }}

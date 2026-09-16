@@ -50,9 +50,11 @@ describe("optional managed image security scans", () => {
     const caller = baseWorkflow.jobs["publish-managed-images"]!;
     expect(caller.with?.run_security_scans).toBe("${{ inputs.run_security_scans || false }}");
     expect(caller.secrets).toEqual({
-      NGC_API_KEY: "${{ secrets.NGC_API_KEY }}",
-      PULSE_SSA_CLIENT_ID: "${{ secrets.PULSE_SSA_CLIENT_ID }}",
-      PULSE_SSA_CLIENT_SECRET: "${{ secrets.PULSE_SSA_CLIENT_SECRET }}",
+      NGC_API_KEY: "${{ github.ref == 'refs/heads/main' && secrets.NGC_API_KEY || '' }}",
+      PULSE_SSA_CLIENT_ID:
+        "${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_ID || '' }}",
+      PULSE_SSA_CLIENT_SECRET:
+        "${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_SECRET || '' }}",
     });
   });
 
@@ -62,7 +64,7 @@ describe("optional managed image security scans", () => {
     expect(scanJob.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
     expect(scanJob.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(scanJob.if).toContain("github.ref == 'refs/heads/main'");
-    expect(scanJob.if).toContain("startsWith(github.ref, 'refs/tags/v')");
+    expect(scanJob.if).not.toContain("refs/tags");
     expect(scanJob.permissions).toEqual({ contents: "read" });
     expect(scanJob["runs-on"]).toBe("linux-amd64-cpu4");
     expect(managedWorkflow.on.workflow_call?.secrets).toEqual({
