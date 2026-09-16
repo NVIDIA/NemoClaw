@@ -22,6 +22,7 @@ import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 type ProviderPreparationInput = {
   readonly openshellDriver: SandboxEntry["openshellDriver"];
   readonly inferenceProvider: string | null;
+  readonly transactionBoundInferenceProvider?: string | null;
   readonly messagingProviders: readonly string[];
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
@@ -167,17 +168,23 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
     return;
 
   const expectedBindings = expectedMessagingBindings(input);
+  const inferenceProvider =
+    input.inferenceProvider === input.transactionBoundInferenceProvider
+      ? null
+      : input.inferenceProvider;
   const providersRequiringExistenceProbe = new Set(
     [
-      input.inferenceProvider,
+      inferenceProvider,
       ...input.messagingProviders.filter((name) => !expectedBindings.has(name)),
     ].filter((provider): provider is string => Boolean(provider)),
   );
-  const attachedProviders = new Set([
-    ...providersRequiringExistenceProbe,
-    ...input.messagingProviders,
-    ...input.extraProviders,
-  ]);
+  const attachedProviders = new Set(
+    [
+      ...providersRequiringExistenceProbe,
+      ...input.messagingProviders,
+      ...input.extraProviders,
+    ].filter((provider) => provider !== input.transactionBoundInferenceProvider),
+  );
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
   for (const attachedProvider of attachedProviders) {

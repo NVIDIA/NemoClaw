@@ -72,7 +72,6 @@ function generateConnectEnv(tmpDir: string, injectedName: string | undefined): s
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       "_TOOL_REDIRECTS=()",
       "set +u",

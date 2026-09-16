@@ -13,13 +13,7 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
-import {
-  createForwardServiceTarget,
-  isForwardServiceListenerOwner,
-} from "../adapters/openshell/forward-service";
-import { resolveOpenshellBinaryOrNull } from "../adapters/openshell/resolve-shared";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
-import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
 import { checkPortAvailable, type PortProbeResult } from "./preflight";
 
 type GatewayBinding =
@@ -48,7 +42,6 @@ export function productionForwardServiceRegistryContext() {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     resolveGatewayName: resolveProductionForwardServiceGatewayName,
-    retireLegacy: retireProductionLegacySandboxForwards,
   };
 }
 
@@ -61,8 +54,7 @@ export interface MessagingHostForwardRollbackOptions {
 
 export interface MessagingHostForwardPortConflictOptionsDeps {
   readonly checkPortAvailable?: (port: number) => Promise<PortProbeResult>;
-  readonly resolveExecutable?: () => string | null;
-  readonly isListenerOwner?: typeof isForwardServiceListenerOwner;
+  readonly describeForwardListener?: typeof import("../actions/sandbox/forward-recovery").describeSandboxPortForwardListener;
   readonly runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -71,7 +63,7 @@ export function createMessagingHostForwardPortConflictHookOptions(
 ): TeamsHostForwardPortConflictHookOptions {
   return {
     checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
-    isCurrentSandboxForward: (sandboxName, gatewayName, port, listenerPid) => {
+    isCurrentSandboxForward: async (sandboxName, gatewayName, port) => {
       if (
         !gatewayName ||
         (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName)
@@ -79,21 +71,16 @@ export function createMessagingHostForwardPortConflictHookOptions(
         return false;
       }
       try {
-        const executable = (deps.resolveExecutable ?? resolveOpenshellBinaryOrNull)();
-        if (!executable) return false;
-        return (deps.isListenerOwner ?? isForwardServiceListenerOwner)(
-          createForwardServiceTarget(
-            {
-              executable,
-              gatewayName,
-              workspace: deps.runtimeSelection?.workspace ?? "default",
-              sandboxName,
-              localHost: "127.0.0.1",
-            },
-            port,
-          ),
-          { expectedPid: listenerPid },
+        const describeForwardListener =
+          deps.describeForwardListener ??
+          (await import("../actions/sandbox/forward-recovery")).describeSandboxPortForwardListener;
+        const state = await describeForwardListener(
+          sandboxName,
+          port,
+          "127.0.0.1",
+          deps.runtimeSelection ?? { gatewayName, workspace: "default" },
         );
+        return state === "owned";
       } catch {
         return false;
       }
@@ -132,7 +119,7 @@ export function resolveMessagingHostForwardForSandbox(
   return resolveMessagingHostForward(resolveMessagingPlanForSandbox(sandboxName));
 }
 
-export function ensureMessagingHostForwardIfConfigured({
+export async function ensureMessagingHostForwardIfConfigured({
   sandboxName,
   plan,
   ensureForward,
@@ -141,14 +128,18 @@ export function ensureMessagingHostForwardIfConfigured({
 }: {
   readonly sandboxName: string;
   readonly plan: SandboxMessagingPlan | null | undefined;
-  readonly ensureForward: (sandboxName: string, port: number, label: string) => boolean;
+  readonly ensureForward: (
+    sandboxName: string,
+    port: number,
+    label: string,
+  ) => boolean | Promise<boolean>;
   readonly note: (message: string) => void;
   readonly rollbackOnFailure?: MessagingHostForwardRollbackOptions;
-}): boolean {
+}): Promise<boolean> {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
 
-  const ok = ensureForward(sandboxName, forward.port, forward.label);
+  const ok = await ensureForward(sandboxName, forward.port, forward.label);
   if (ok) {
     note(`  ✓ ${forward.label} forwarded at http://127.0.0.1:${forward.port}/`);
   } else if (rollbackOnFailure) {
@@ -157,17 +148,21 @@ export function ensureMessagingHostForwardIfConfigured({
   return ok;
 }
 
-export function ensureMessagingHostForwardForSandbox({
+export async function ensureMessagingHostForwardForSandbox({
   sandboxName,
   ensureForward,
   note,
   rollbackOnFailure,
 }: {
   readonly sandboxName: string;
-  readonly ensureForward: (sandboxName: string, port: number, label: string) => boolean;
+  readonly ensureForward: (
+    sandboxName: string,
+    port: number,
+    label: string,
+  ) => boolean | Promise<boolean>;
   readonly note: (message: string) => void;
   readonly rollbackOnFailure?: MessagingHostForwardRollbackOptions;
-}): boolean {
+}): Promise<boolean> {
   return ensureMessagingHostForwardIfConfigured({
     sandboxName,
     plan: resolveMessagingPlanForSandbox(sandboxName),

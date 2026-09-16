@@ -28,6 +28,7 @@ import {
 } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
+  MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import type { ProtectedManagedImagePlatform } from "./protected-managed-image-contract.ts";
@@ -316,6 +317,88 @@ function waitForAgentCommand(containerId: string): void {
   throw new Error("managed image did not reach the forwarded sandbox command");
 }
 
+function verifyOpenClawExplicitGatewayConnectEnvironment(
+  input: ManagedImageDirectE2eInputs,
+  request: ManagedStartupRootApplyRequest,
+  heldWorkloadArgv: readonly string[],
+  bootstrapIdentity: string,
+  sandboxUid: string,
+  sandboxGid: string,
+): void {
+  if (input.agent !== "openclaw") return;
+  const gatewayUrl = "wss://gateway.example.test:443";
+  let containerId = "";
+  try {
+    containerId = docker([
+      "run",
+      "-d",
+      "--platform",
+      input.platform,
+      "--network",
+      "none",
+      "--user",
+      "sandbox",
+      "--env",
+      `OPENCLAW_GATEWAY_URL=${gatewayUrl}`,
+      "--entrypoint",
+      "/usr/bin/env",
+      input.image,
+      ...heldWorkloadArgv.slice(1),
+    ]).stdout.trim();
+    if (!CONTAINER_ID_RE.test(containerId)) {
+      throw new Error("explicit gateway startup did not return one exact container identity");
+    }
+    stageManagedBootstrapEnvelope(containerId, bootstrapIdentity, request);
+    docker(
+      [
+        "exec",
+        "--user",
+        "0:0",
+        "--workdir",
+        "/",
+        containerId,
+        MANAGED_BOOTSTRAP,
+        "--agent",
+        input.agent,
+        "--profile-fingerprint",
+        request.profileFingerprint,
+        "--bootstrap-identity",
+        bootstrapIdentity,
+        "--agent-uid",
+        sandboxUid,
+        "--agent-gid",
+        sandboxGid,
+        "--agent-workdir",
+        "/sandbox",
+        "--request-file",
+        MANAGED_BOOTSTRAP_REQUEST_FILE,
+        "--",
+        "/bin/true",
+      ],
+      { timeout: 300_000 },
+    );
+    waitForAgentCommand(containerId);
+    const connected = docker([
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      '. /tmp/nemoclaw-proxy-env.sh; printf "URL=%s TOKEN=%s INSECURE=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_TOKEN-unset}" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"',
+    ]).stdout.trim();
+    if (connected !== `URL=${gatewayUrl} TOKEN=unset INSECURE=unset`) {
+      throw new Error(`explicit gateway connect environment was unsafe: ${connected}`);
+    }
+  } finally {
+    if (CONTAINER_ID_RE.test(containerId)) {
+      docker(["rm", "-f", containerId], { ignoreError: true, timeout: 30_000 });
+    }
+  }
+}
+
 function exactProxyEnvironment(): string {
   return [
     "HTTP_PROXY=http://10.200.0.1:3128",
@@ -588,6 +671,31 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
         "managed hold or legacy entrypoint did not preserve the sandbox command identity",
       );
     }
+    if (input.agent === "openclaw") {
+      docker([
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-c",
+        [
+          ". /tmp/nemoclaw-proxy-env.sh",
+          'test -z "${OPENCLAW_GATEWAY_URL+x}"',
+          'test -z "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS+x}"',
+        ].join("\n"),
+      ]);
+    }
+    verifyOpenClawExplicitGatewayConnectEnvironment(
+      input,
+      request,
+      heldWorkloadArgv,
+      bootstrapIdentity,
+      sandboxUid,
+      sandboxGid,
+    );
     const proxyEnvironment = docker([
       "exec",
       "--user",
@@ -610,6 +718,31 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ]).stdout;
     if (!config.includes("nvidia/nemotron-3-ultra-550b-a55b")) {
       throw new Error("managed agent configuration does not contain the requested model");
+    }
+    if (input.agent === "openclaw") {
+      const parsed = JSON.parse(config) as {
+        agents?: {
+          defaults?: { heartbeat?: { every?: unknown; isolatedSession?: unknown } };
+        };
+      };
+      if (
+        parsed.agents?.defaults?.heartbeat?.every !==
+          MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY ||
+        parsed.agents?.defaults?.heartbeat?.isolatedSession !== true
+      ) {
+        throw new Error("managed OpenClaw configuration lost the isolated heartbeat settings");
+      }
+      docker([
+        "exec",
+        "--user",
+        "sandbox",
+        "--workdir",
+        "/sandbox/.openclaw",
+        containerId,
+        "sha256sum",
+        "--check",
+        ".config-hash",
+      ]);
     }
     const runtimeEnvironment = docker([
       "exec",

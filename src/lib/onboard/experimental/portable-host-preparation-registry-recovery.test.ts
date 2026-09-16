@@ -35,6 +35,7 @@ function prepare(home: string, docker: NonNullable<PreparationDeps["docker"]>): 
     { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
     {
       platform: "linux",
+      architecture: "x64",
       home,
       uid: 1001,
       systemctl: () => result(),

@@ -9,6 +9,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -85,17 +89,6 @@ const PROFILE_JOBS = {
   },
 } as const;
 
-const SDK_INSTALL_SCRIPT = [
-  "set -euo pipefail",
-  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print)",
-  'test "${#archives[@]}" -eq 1',
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  npm install --no-save --package-lock=false --ignore-scripts "${archives[0]}"',
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
-  "",
-].join("\n");
-
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
@@ -132,6 +125,15 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
   if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
     errors.push(
       "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+    );
+  }
+  const sdkPackageStep = namedStep(
+    steps(sdkPackage.steps),
+    "Download and verify reviewed OpenShell SDK packages",
+  );
+  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+    errors.push(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
     );
   }
   for (const profile of E2E_EXECUTION_PROFILES) {
@@ -504,18 +506,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
-  const sdkInstall = requireStep(
-    errors,
-    workflowSteps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
-  if (
-    !isDeepStrictEqual(sdkInstall, {
-      name: "Install reviewed OpenShell SDK archive without package credentials",
-      shell: "bash",
-      run: SDK_INSTALL_SCRIPT,
-    })
-  ) {
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
@@ -554,7 +546,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(stoppedStateHelper.env), {
       CLEANUP_IMAGE:
-        "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
       RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
     }) ||
     !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||

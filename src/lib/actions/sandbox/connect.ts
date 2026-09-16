@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
@@ -17,7 +16,6 @@ import {
 import {
   captureOpenshell,
   captureResolvedOpenshell,
-  getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import {
@@ -31,7 +29,6 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { retryUntilAsync } from "../../core/retry";
 
-import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
@@ -65,7 +62,12 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runSandboxExecChild } from "./exec";
+import { createCliOpenShellSandboxSessionExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type {
+  OpenShellSandboxSessionExecutor,
+  OpenShellSandboxSessionRequest,
+  OpenShellSandboxSessionOutcome,
+} from "../../adapters/openshell/sandbox-session";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnSecretBoundaryRefusal,
@@ -86,10 +88,11 @@ import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
   ensureLiveSandboxOrExit,
-  assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
+  hermesPortableLifecycleLockOptions,
   printGatewayLifecycleHint,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -140,10 +143,14 @@ import {
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
   inspectHermesPortableInferenceReadinessRuntimeForConnectProbe,
-  recoverHermesPortableInferenceForConnectProbe,
+  recoverHermesPortableInferenceForConnect,
   type HermesPortableInferenceConnectRecoveryFailure,
+  type HermesPortableInferenceConnectRecoveryInput,
 } from "./probe/hermes-portable-inference-recovery";
-import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
+import {
+  runTerminalAgentConnectProbe,
+  verifyDcodeConnectInference,
+} from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
@@ -181,11 +188,6 @@ export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
     .trim()
     .slice(0, 240);
 }
-
-type SpawnLikeResult = {
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-};
 
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
@@ -381,7 +383,7 @@ async function runSandboxConnectProbe(
   if (hermesPortable) {
     if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
     const route = await measureAsync("inference", () =>
-      verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent, undefined, {
+      verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(sandboxName, agent, undefined, {
         commandAuthority: hermesPortableCommandAuthority,
         probeTiming,
       }),
@@ -399,7 +401,7 @@ async function runSandboxConnectProbe(
         probeTiming?.markFailureStage("forward");
         failHermesPortableForwardRecovery(sandboxName, "authority-drift");
       }
-      recoverHermesPortableForwardsForConnectProbeOrExit(
+      await recoverHermesPortableForwardsForConnectProbeOrExit(
         sandboxName,
         authority,
         probeTiming,
@@ -560,7 +562,7 @@ function failHermesPortableInferenceRecovery(
       break;
   }
   console.error(
-    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail}`,
+    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail} Run \`${CLI_NAME} ${sandboxName} doctor\` to inspect the recorded state.`,
   );
   process.exit(1);
 }
@@ -570,6 +572,9 @@ function describeHermesPortableForwardRecoveryFailure(
   failure: HermesPortableForwardRecoveryFailure,
   context?: HermesPortableForwardRecoveryContext,
 ): string {
+  if (failure === "restoration-unproved" && context) {
+    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+  }
   switch (context?.cause) {
     case "port-occupied":
       return `Recorded host port ${String(context.port)} is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.`;
@@ -584,7 +589,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-settlement-timed-out":
       return "The required recorded host forwards did not become healthy before the recovery deadline. Inspect the recorded forward state before retrying.";
     case "forward-mutation-failed":
-      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}. Inspect the recorded forward state before retrying.`;
+      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}.${context.startupFailure ? ` Startup failure: ${context.startupFailure}.` : ""} Inspect the recorded forward state before retrying.`;
   }
   switch (failure) {
     case "forward-occupied":
@@ -701,7 +706,10 @@ function hermesPortableLaunchReadinessDeps(
 }
 
 function portableAgentLifecycleAuthorityDeps() {
-  return { readRegistry: registry.getSandbox };
+  return {
+    readRegistry: registry.getSandbox,
+    stateDir: defaultPortableDemoStateDir(process.env),
+  };
 }
 
 type HermesPortableForwardConnectRecoveryInput = {
@@ -822,14 +830,14 @@ function verifyHermesPortableForwardsForConnectProbe(
   return verifyHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
 }
 
-function recoverHermesPortableForwardsForConnectProbeOrExit(
+async function recoverHermesPortableForwardsForConnectProbeOrExit(
   sandboxName: string,
   authority: HermesPortableActiveLifecycleAuthority,
   probeTiming?: ProbeTimingRecorder,
   commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
-): void {
+): Promise<void> {
   try {
-    const prepared = prepareHermesPortableForwardsForConnectProbeMeasured(
+    const prepared = await prepareHermesPortableForwardsForConnectProbeMeasured(
       sandboxName,
       authority,
       probeTiming,
@@ -846,7 +854,7 @@ function recoverHermesPortableForwardsForConnectProbeOrExit(
   }
 }
 
-function prepareHermesPortableForwardsForConnectProbeMeasured(
+async function prepareHermesPortableForwardsForConnectProbeMeasured(
   sandboxName: string,
   authority: HermesPortableActiveLifecycleAuthority,
   probeTiming?: ProbeTimingRecorder,
@@ -861,7 +869,7 @@ function prepareHermesPortableForwardsForConnectProbeMeasured(
         readRegistry: registry.getSandbox,
         ...(commandAuthority ? { commandAuthority } : {}),
       });
-    return probeTiming ? probeTiming.measure("forward", prepare) : prepare();
+    return await (probeTiming ? probeTiming.measureAsync("forward", prepare) : prepare());
   } catch (error) {
     probeTiming?.setForwardAction("failed");
     probeTiming?.markFailureStage("forward");
@@ -1004,17 +1012,19 @@ async function verifyHermesPortableInferenceRouteOrExit(
 }
 
 type HermesPortableProbeRouteResult = {
+  readonly entry: SandboxEntry;
   readonly forwardsRecovered: boolean;
 };
 
 type HermesPortableProbeRouteOptions = {
+  readonly intent?: HermesPortableInferenceConnectRecoveryInput["intent"];
   readonly commandAuthority?: HermesPortableReadinessCommandAuthority;
   readonly probeTiming?: ProbeTimingRecorder;
   readonly validateVerified?: (entry: SandboxEntry) => void;
 };
 
-/** Verify the recorded route and resume published Ollama only for probe-only recovery. */
-async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+/** Verify the recorded route and resume published Ollama under the requested connect intent. */
+async function verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
@@ -1042,12 +1052,13 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     } catch {
       failHermesPortableInferenceRoute(sandboxName, "changed during verification");
     }
-    return { forwardsRecovered: false };
+    return { entry, forwardsRecovered: false };
   }
   let verified: SandboxEntry | null = null;
   let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
   try {
-    await recoverHermesPortableInferenceForConnectProbe({
+    await recoverHermesPortableInferenceForConnect({
+      intent: options.intent ?? "connect-probe-only",
       sandboxName,
       authority,
       readRegistry: registry.getSandbox,
@@ -1087,8 +1098,8 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
         }
         return verified;
       },
-      prepareProbeDependency: () => {
-        preparedForwards = prepareHermesPortableForwardsForConnectProbeMeasured(
+      prepareProbeDependency: async () => {
+        preparedForwards = await prepareHermesPortableForwardsForConnectProbeMeasured(
           sandboxName,
           authority,
           options.probeTiming,
@@ -1116,29 +1127,67 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   options.probeTiming?.setForwardAction(
     retainedForwards.result.kind === "restored" ? "restored" : "verified",
   );
-  return { forwardsRecovered: true };
+  return { entry: verified, forwardsRecovered: true };
 }
 
-const GATEWAY_UNAVAILABLE_RE =
-  /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
+/** Keep healthy interactive routes read-only; recover only unavailable managed inference. */
+async function prepareHermesPortableInteractiveInference(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+): Promise<HermesPortableProbeRouteResult> {
+  let authority: HermesPortableActiveLifecycleAuthority;
+  try {
+    authority = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      undefined,
+      portableAgentLifecycleAuthorityDeps(),
+    );
+  } catch {
+    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+  }
+  try {
+    const entry = await verifyHermesPortableInferenceRoute(sandboxName, agent, authority);
+    return { entry, forwardsRecovered: false };
+  } catch (error) {
+    if (
+      authority.entry.provider !== "ollama-local" ||
+      !(error instanceof HermesPortableInferenceRouteVerificationError) ||
+      error.reason !== "unreachable"
+    ) {
+      failHermesPortableInferenceRoute(
+        sandboxName,
+        error instanceof HermesPortableInferenceRouteVerificationError
+          ? error.reason
+          : "unreachable",
+      );
+    }
+  }
+  return await verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
+    sandboxName,
+    agent,
+    authority,
+    { intent: "connect-interactive" },
+  );
+}
 
 function isBlockingGatewayLifecycle(
-  lifecycle: ReturnType<typeof getNamedGatewayLifecycleState>,
+  lifecycle: Awaited<ReturnType<typeof getNamedGatewayLifecycleState>>,
 ): boolean {
-  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
-    return true;
-  }
-  return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
+  return lifecycle.unavailable;
 }
 
-function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutput = ""): never {
+function failConnectReadinessGatewayUnavailable(
+  sandboxName: string,
+  detailOutput = "",
+  lifecycle?: Awaited<ReturnType<typeof getNamedGatewayLifecycleState>>,
+): never {
   console.error("");
   console.error(
     `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
   );
   if (detailOutput.trim()) {
     console.error(detailOutput.trimEnd());
-    printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
+    printGatewayLifecycleHint(lifecycle ?? detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
   console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
@@ -1189,14 +1238,12 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
-function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
+async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
-  const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
+  const lifecycle = await getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
+  if (lifecycle.error) failConnectReadinessObservation(sandboxName, lifecycle.error);
   if (isBlockingGatewayLifecycle(lifecycle)) {
-    failConnectReadinessGatewayUnavailable(
-      sandboxName,
-      lifecycle.status || lifecycle.gatewayInfo || "",
-    );
+    failConnectReadinessGatewayUnavailable(sandboxName, lifecycle.diagnostic, lifecycle);
   }
 }
 
@@ -1660,6 +1707,20 @@ async function ensureSandboxInferenceRouteUnlocked(
         return { sandbox: sb, routeHealthy: false };
       }
     }
+    // Model discovery can answer while the selected model's inference route fails.
+    if (agent?.name === "langchain-deepagents-code" && routeReady) {
+      routeReady = await verifyDcodeConnectInference(
+        {
+          sandboxName,
+          gatewayName,
+          provider,
+          model,
+          preferredInferenceApi: sb.preferredInferenceApi ?? null,
+        },
+        sandboxCommandExecutor,
+      );
+      if (!routeReady) console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
+    }
     return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
@@ -1717,6 +1778,12 @@ async function ensureSandboxInferenceRouteOrExit(
   { quiet = false }: { quiet?: boolean } = {},
 ): Promise<SandboxEntry | null> {
   const result = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
+  if (agent?.name === "langchain-deepagents-code" && result.routeHealthy === null) {
+    console.error(
+      `  Connect failed: Deep Agents Code inference route could not be verified in '${sandboxName}'; the recorded provider or model is missing.`,
+    );
+    process.exit(1);
+  }
   if (result.routeHealthy === false) {
     process.exit(1);
   }
@@ -1759,40 +1826,17 @@ export async function restoreSandboxStartupState(
   return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
-function restoreInteractiveTerminal(): void {
-  if (!process.stdin.isTTY) return;
-
-  try {
-    const stdin = process.stdin as typeof process.stdin & {
-      setRawMode?: (mode: boolean) => unknown;
-    };
-    stdin.setRawMode?.(false);
-  } catch {
-    // Best-effort: still try `stty sane` below.
-  }
-
-  try {
-    spawnSync("stty", ["sane"], {
-      stdio: ["inherit", "ignore", "ignore"],
-      cwd: ROOT,
-      env: process.env,
-    });
-  } catch {
-    // Terminal cleanup must never mask the original connect failure.
-  }
-}
-
-function isLikelySshDisconnect(result: SpawnLikeResult): boolean {
-  return result.status === 255 || result.signal === "SIGHUP" || result.signal === "SIGPIPE";
-}
-
-function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult): void {
-  if (isLikelySshDisconnect(result)) {
-    restoreInteractiveTerminal();
+function exitWithConnectSessionOutcome(
+  sandboxName: string,
+  outcome: OpenShellSandboxSessionOutcome,
+): void {
+  if (outcome.kind === "failed" && outcome.reason === "transport") {
     console.error("");
     console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
+  } else if (outcome.kind === "failed") {
+    console.error(`  ${outcome.message}`);
   }
-  process.exit(spawnExitCode(result));
+  process.exit(outcome.exitCode);
 }
 
 type WaitForSandboxReadyOptions = {
@@ -1873,7 +1917,7 @@ export async function waitForSandboxReadyOrExit(
 
   const status = initial?.phase ?? null;
   if (status && /^unknown$/i.test(status)) {
-    failIfGatewayBlocksConnectReadiness(sandboxName);
+    await failIfGatewayBlocksConnectReadiness(sandboxName);
   }
   let remainingInitialErrorGracePolls =
     allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
@@ -1906,7 +1950,7 @@ export async function waitForSandboxReadyOrExit(
     const parsedCur = poll?.phase ?? null;
     const cur = parsedCur || "unknown";
     if (parsedCur && /^unknown$/i.test(parsedCur)) {
-      failIfGatewayBlocksConnectReadiness(sandboxName);
+      await failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
     const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
@@ -1953,6 +1997,17 @@ export async function waitForSandboxReadyOrExit(
  * the express-vLLM model preflight, the owning-gateway pin, and the Docker
  * outage fast-fail. Runs before any probe or interactive work.
  */
+function withPortableConnectSandboxLifecycleLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return withConnectSandboxLifecycleLock(
+    sandboxName,
+    operation,
+    hermesPortableLifecycleLockOptions(sandboxName, process.env),
+  );
+}
+
 async function runConnectEntryPreflight(
   sandboxName: string,
   {
@@ -1972,17 +2027,19 @@ async function runConnectEntryPreflight(
     withinLifecycleFence?: (route: {
       readonly hermesPortable: boolean;
       readonly hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
-      readonly requalify: () => void;
+      readonly requalify: () => Promise<void>;
     }) => Promise<void>;
   },
 ): Promise<void> {
   const measure = <T>(stage: "authority" | "lifecycle" | "gateway", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
-  const measureAsync = <T>(stage: "gateway", operation: () => Promise<T>): Promise<T> =>
-    probeTiming ? probeTiming.measureAsync(stage, operation) : operation();
-  await withConnectSandboxLifecycleLock(sandboxName, async () => {
+  const measureAsync = <T>(
+    stage: "gateway" | "lifecycle",
+    operation: () => Promise<T>,
+  ): Promise<T> => (probeTiming ? probeTiming.measureAsync(stage, operation) : operation());
+  await withPortableConnectSandboxLifecycleLock(sandboxName, async () => {
     let hermesPortable = false;
-    let requalify = () => undefined;
+    let requalify = async (): Promise<void> => undefined;
     try {
       measure("authority", assertNoOpenShellGatewayEndpointOverride);
       const authority = measure("authority", () =>
@@ -2024,9 +2081,9 @@ async function runConnectEntryPreflight(
             retainedHermesLifecycleRecovery.assertCurrent();
             return { kind: retainedHermesLifecycleRecovery.kind } as const;
           })
-        : measure("lifecycle", () =>
+        : await measureAsync("lifecycle", async () =>
             hermesPortableCommandAuthority
-              ? recoverPortableDemoSandboxLifecycleForConnect(
+              ? await recoverPortableDemoSandboxLifecycleForConnect(
                   sandboxName,
                   registered,
                   gatewayName,
@@ -2042,7 +2099,7 @@ async function runConnectEntryPreflight(
                     : undefined,
                 )
               : hermesPortable && probeTiming
-                ? recoverPortableDemoSandboxLifecycleForConnect(
+                ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,
                     gatewayName,
@@ -2051,7 +2108,7 @@ async function runConnectEntryPreflight(
                     { onComplete: writeHermesPortableCurrentnessTiming },
                     { onComplete: writeHermesPortableInspectionTiming },
                   )
-                : recoverPortableDemoSandboxLifecycleForConnect(
+                : await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     registered,
                     gatewayName,
@@ -2080,7 +2137,7 @@ async function runConnectEntryPreflight(
           ),
         );
       }
-      requalify = () => {
+      requalify = async () => {
         if (!hermesAuthority) {
           if (
             measure(
@@ -2108,9 +2165,9 @@ async function runConnectEntryPreflight(
         if (!probeOnly) {
           const activeAuthority = hermesAuthority;
           const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
-          const recovery = measure("lifecycle", () =>
+          const recovery = await measureAsync("lifecycle", async () =>
             hermesPortableCommandAuthority
-              ? recoverPortableDemoSandboxLifecycleForConnect(
+              ? await recoverPortableDemoSandboxLifecycleForConnect(
                   sandboxName,
                   activeAuthority.entry,
                   currentGateway,
@@ -2122,7 +2179,7 @@ async function runConnectEntryPreflight(
                   probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
               : hermesPortable && probeTiming
-                ? recoverPortableDemoSandboxLifecycleForConnect(
+                ? await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     activeAuthority.entry,
                     currentGateway,
@@ -2131,7 +2188,7 @@ async function runConnectEntryPreflight(
                     { onComplete: writeHermesPortableCurrentnessTiming },
                     { onComplete: writeHermesPortableInspectionTiming },
                   )
-                : recoverPortableDemoSandboxLifecycleForConnect(
+                : await recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
                     activeAuthority.entry,
                     currentGateway,
@@ -2187,15 +2244,18 @@ async function runConnectEntryPreflight(
       ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
       requalify,
     });
-    requalify();
+    await requalify();
   });
 }
 
 /** Print version and active-session hints on both interactive launch paths. */
-export function printInteractiveSessionHints(sandboxName: string): void {
+export async function printInteractiveSessionHints(sandboxName: string): Promise<void> {
   // Version staleness check — warn but don't block
   try {
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+    // A live DCode version command can source personal profiles before route verification.
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
+      skipProbe: agentRuntime.getSessionAgent(sandboxName)?.name === "langchain-deepagents-code",
+    });
     if (versionCheck.isStale) {
       for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
         console.error(line);
@@ -2265,7 +2325,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
     probeOnly: false,
     withinLifecycleFence: async ({ hermesPortable, requalify }) => {
       if (!hermesPortable) {
-        printInteractiveSessionHints(sandboxName);
+        await printInteractiveSessionHints(sandboxName);
         const processCheck = await checkAndRecoverSandboxProcesses(sandboxName);
         if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
           const agentName = agentRuntime.getAgentDisplayName(
@@ -2306,13 +2366,24 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
           : undefined,
         successLogs: ["  Sandbox is ready. Connecting..."],
       });
-      requalify();
+      await requalify();
       // ── Inference route swap (#1248, #3390) ───────────────────────
       const agent = agentRuntime.getSessionAgent(sandboxName);
-      const sb = hermesPortable
-        ? await verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
+      const portableInference = hermesPortable
+        ? await prepareHermesPortableInteractiveInference(sandboxName, agent)
+        : null;
+      const sb = portableInference
+        ? portableInference.entry
         : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-      requalify();
+      await requalify();
+      if (hermesPortable && !portableInference?.forwardsRecovered) {
+        const authority = requireHermesPortableActiveLifecycleAuthority(
+          sandboxName,
+          undefined,
+          portableAgentLifecycleAuthorityDeps(),
+        );
+        await recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority);
+      }
       if (!hermesPortable && !(await settlePortablePairingOrExit(sandboxName))) {
         completeInteractiveSessionSetup(sandboxName, sb);
       }
@@ -2336,20 +2407,14 @@ export async function connectSandbox(
   };
   if (probeTiming) process.once("exit", finishOnExit);
   try {
-    const started = await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    const started = await withPortableConnectSandboxLifecycleLock(sandboxName, async () => {
       const prepared = await prepareConnectSandboxWithinLifecycleFence(
         sandboxName,
         options,
         probeTiming,
       );
       if (!prepared) return null;
-      return {
-        completion: runSandboxExecChild(prepared.binary, prepared.args, {
-          hostCwd: ROOT,
-          stdin: true,
-          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-        }),
-      };
+      return prepared.executor.start(prepared.request);
     });
     if (!started) {
       probeTiming?.finish("ready");
@@ -2359,8 +2424,8 @@ export async function connectSandbox(
     // Start the selected child under the lifecycle lock, then release the lock
     // before waiting for an interactive shell that can remain open indefinitely.
     const result = await started.completion;
-    result.releaseSignals?.();
-    exitWithConnectSpawnResult(sandboxName, result);
+    result.release();
+    exitWithConnectSessionOutcome(sandboxName, result.outcome);
   } catch (error) {
     probeTiming?.finish("failed", probeTiming.activeStage() ?? undefined);
     throw error;
@@ -2369,17 +2434,16 @@ export async function connectSandbox(
   }
 }
 
-type PreparedConnectChild = {
-  binary: string;
-  args: string[];
-  hostEnv?: NodeJS.ProcessEnv;
+type PreparedConnectSession = {
+  executor: OpenShellSandboxSessionExecutor;
+  request: OpenShellSandboxSessionRequest;
 };
 
 async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
   { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
-): Promise<PreparedConnectChild | null> {
+): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
@@ -2427,7 +2491,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           // proof-backed requalification and lifecycle recovery exactly once;
           // executable, socket, receipt, container, or policy drift still
           // fails inside those authorities before another readiness read.
-          const requalified = probeTiming!.measure("authority", () =>
+          const requalified = await probeTiming!.measureAsync("authority", () =>
             requalifyPortableAgentSandboxAuthority(
               sandboxName,
               portableAgentLifecycleAuthorityDeps(),
@@ -2446,7 +2510,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           );
           const registered = active.entry;
           requalified.assertCurrent();
-          const recovery = probeTiming!.measure("lifecycle", () =>
+          const recovery = await probeTiming!.measureAsync("lifecycle", () =>
             recoverPortableDemoSandboxLifecycleForConnect(
               sandboxName,
               registered,
@@ -2482,7 +2546,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             requalified.kind === "already-current" && qualified.kind === "current";
         }
         if (qualified.kind === "requalification-required") {
-          const requalified = probeTiming!.measure("authority", () =>
+          const requalified = await probeTiming!.measureAsync("authority", () =>
             requalifyPortableAgentSandboxAuthority(
               sandboxName,
               portableAgentLifecycleAuthorityDeps(),
@@ -2602,7 +2666,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             probeTiming!.markFailureStage("authority");
             failHermesPortableReadinessAuthority(sandboxName);
           }
-          recoverHermesPortableForwardsForConnectProbeOrExit(
+          await recoverHermesPortableForwardsForConnectProbeOrExit(
             sandboxName,
             activeAuthority,
             probeTiming,
@@ -2616,7 +2680,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
         return null;
       }
       if (!portableAuthorityReady) {
-        probeTiming!.measure("authority", () =>
+        await probeTiming!.measureAsync("authority", () =>
           requalifyPortableAgentSandboxAuthority(
             sandboxName,
             portableAgentLifecycleAuthorityDeps(),
@@ -2685,10 +2749,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
             failHermesPortableReadinessAuthority(sandboxName);
           }
           if (runtime.kind === "running-current") {
-            let forward: ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>;
+            let forward: Awaited<ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>>;
             try {
               runtime.assertCurrent();
-              forward = probeTiming!.measure("forward", () =>
+              forward = await probeTiming!.measureAsync("forward", () =>
                 verifyHermesPortableForwardsForConnectProbe({
                   intent: "connect-probe-only",
                   sandboxName,
@@ -2754,6 +2818,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
               : probeTiming!.measure("lifecycle", () =>
                   startStoppedSandboxContainerForProbeRecovery(sandboxName),
                 );
+            if (
+              startedStoppedContainer &&
+              !registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' recovered, but NemoClaw could not clear its intentional-stop record. Run '${CLI_NAME} ${sandboxName} status' before another lifecycle command.`,
+              );
+            }
             await probeTiming!.measureAsync("gateway", () =>
               waitForSandboxReadyOrExit(sandboxName, {
                 allowInitialErrorAfterStart: startedStoppedContainer,
@@ -2784,7 +2856,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" }),
               );
             }
-            requalify();
+            await requalify();
             await runSandboxConnectProbe(sandboxName, {
               hermesPortable,
               ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
@@ -2801,7 +2873,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 }),
               );
             }
-            requalify();
+            await requalify();
           },
         });
         const retainedCommand = hermesReadinessAuthority?.command;
@@ -2956,18 +3028,18 @@ async function prepareConnectSandboxWithinLifecycleFence(
       throw new Error("Hermes portable lifecycle authority appeared during interactive connect");
     }
   };
-  const requalifyHermesPortableForConnect = (): {
+  const requalifyHermesPortableForConnect = async (): Promise<{
     readonly env: NodeJS.ProcessEnv;
     readonly executablePath: string;
     readonly gatewayName: string;
-  } => {
+  }> => {
     requalifyPortableDisposition();
     const qualified = hermesAuthority;
     if (!qualified) {
       throw new Error("Hermes portable registry authority changed before interactive connect");
     }
     const gatewayName = resolveSandboxGatewayName(qualified.entry);
-    const recovery = recoverPortableDemoSandboxLifecycleForConnect(
+    const recovery = await recoverPortableDemoSandboxLifecycleForConnect(
       sandboxName,
       qualified.entry,
       gatewayName,
@@ -2985,13 +3057,23 @@ async function prepareConnectSandboxWithinLifecycleFence(
   requalifyPortableDisposition();
   if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
   requalifyPortableDisposition();
-  const portableAuthority = hermesPortable ? requalifyHermesPortableForConnect() : null;
-  const connectArgs = portableAuthority
-    ? ["sandbox", "connect", "-g", portableAuthority.gatewayName, sandboxName]
-    : ["sandbox", "connect", sandboxName];
+  const portableAuthority = hermesPortable ? await requalifyHermesPortableForConnect() : null;
   return {
-    binary: portableAuthority?.executablePath ?? getOpenshellBinary(),
-    args: connectArgs,
-    ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
+    executor: createCliOpenShellSandboxSessionExecutor({
+      hostCwd: ROOT,
+      ...(portableAuthority
+        ? {
+            resolveBinary: () => portableAuthority.executablePath,
+            environment: portableAuthority.env,
+          }
+        : {}),
+    }),
+    request: {
+      kind: "connect",
+      sandboxName,
+      target: portableAuthority
+        ? { kind: "named", gatewayName: portableAuthority.gatewayName }
+        : { kind: "selected" },
+    },
   };
 }

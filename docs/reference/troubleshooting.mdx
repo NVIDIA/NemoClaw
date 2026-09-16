@@ -382,7 +382,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.106 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -424,7 +424,7 @@ $$nemoclaw list
 
 A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
 
-Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects. A command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Gateway-lifecycle commands such as `$$nemoclaw onboard`, `$$nemoclaw uninstall`, and the deprecated `$$nemoclaw stop` act on the state root that their own `NEMOCLAW_GATEWAY_PORT` selects, while sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, resolve the named sandbox across every per-port registry root and address its recorded gateway binding. A gateway-lifecycle command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
 
 List the gateways the host still has:
 
@@ -591,16 +591,21 @@ The diagnosis always prints the database path. When an unused archive path is av
   sandboxes on the selected gateway can require re-onboarding and credential entry.
 </Warning>
 
-When a service manager owns the gateway, the printed recovery stops it in the same command chain that moves the state directory. NemoClaw cannot establish in advance that the directory stays free, because the managed service restarts the gateway on failure and a replacement can start at any point before the move. Running the stop inside the chain removes that gap.
+When NemoClaw proves that one managed service owns the selected port and state, the recovery stops that service and retries onboarding.
+The stop command names the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula selected for this host.
+If the listener, state namespace, or service identity does not match, NemoClaw prints no stop command and uses the standalone ownership checks.
+The onboarding retry resolves ownership again before it can offer a state move.
 
-NemoClaw resolves the owning service before it prints, so the stop names the unit that runs on this host: the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula. When no service manager owns the gateway, NemoClaw runs it standalone. Before it offers the state move in that case, the gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory. It withholds the move unless that scan establishes that the standalone gateway state is unused.
+When no managed service owns the selected port and state, the gateway runtime checks the recorded process and scans current gateway process identities for the selected state directory.
+It withholds the move unless that scan establishes that no gateway process uses the state.
+
+When NemoClaw prints a stop-and-retry command, run that command first. Do not move the state unless the retry prints a state-move command.
 
 When NemoClaw prints the state move, run the commands it prints:
 
-1. Stop the owning gateway service, when the printed chain includes that step.
-2. Create the printed `.incompatible` archive with owner-only access. If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
-3. Move the selected state directory into the archive as `gateway-state`.
-4. Run the printed onboarding command only after the stop, the archive, and the move succeed. Standard onboarding prints `$$nemoclaw onboard --resume`. The portable experimental profile prints its required fresh-onboarding command for this gateway-state recovery.
+1. Create the printed `.incompatible` archive with owner-only access. If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
+2. Move the selected state directory into the archive as `gateway-state`.
+3. Run the printed onboarding command only after the archive and move succeed. Standard onboarding prints `$$nemoclaw onboard --resume`. The portable experimental profile prints its required fresh-onboarding command for this gateway-state recovery.
 
 The archive remains beside the selected state directory and retains the previous gateway records and credentials. Keep it owner-only until onboarding completes and every required sandbox and provider registration is restored. Delete the archive only after you no longer need its gateway records or credentials for recovery.
 
@@ -1305,7 +1310,7 @@ If the host rebooted or the OpenShell gateway is down, first run:
 $$nemoclaw <name> status
 ```
 
-The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host without a matching intentional-stop record, status can recover the labeled container and then re-query OpenShell. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
 
 </AgentOnly>
 
@@ -1428,7 +1433,7 @@ If the sandbox remains missing after restarting the gateway, its authoritative O
 
 ### Gateway Port Stays Bound After Destroying the Last Sandbox
 
-Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released. The service is stopped, not disabled or removed, and the next onboarding run starts it again. If the service cannot be stopped, `destroy` exits non-zero and prints the status command for the service.
+When the default-port gateway runs under the packaged OpenShell gateway service, destroying the final sandbox with `--cleanup-gateway` stops that service before it reaps host gateway processes whose ownership NemoClaw verifies. This does not prove that the port is free: a foreign, ambiguous, or other-user listener may remain. Verify the gateway port after cleanup. The service is stopped, not disabled or removed, and the next onboarding run starts it again. If the systemd user manager is unavailable and the service cannot activate automatically, `destroy` can instead stop the recorded standalone gateway after verifying its exact process identity and port. For other service-stop failures, `destroy` exits non-zero and prints the status command for the service.
 
 On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
@@ -1449,6 +1454,21 @@ For tarball installs:
 ```bash
 systemctl --user stop nemoclaw-openshell-gateway
 ```
+
+A successful stop is not proof that the port is free. When a managed service fails inspection, startup, or its health check, NemoClaw starts the gateway standalone instead, and the service stays installed but inactive. Stopping an inactive service exits `0` without stopping that standalone gateway. Set `gateway_port` below to the affected gateway port, then confirm the port after the stop:
+
+```bash
+gateway_port=PORT
+ss -lntp | grep ":${gateway_port}"
+```
+
+If a process still holds the port, do not infer ownership from the `openshell-gateway` process name. Rerun the identity-aware cleanup path:
+
+```bash
+$$nemoclaw <name> destroy --cleanup-gateway
+```
+
+NemoClaw verifies the listener before it reaps host gateway processes. If it reports a foreign or ambiguous owner, use the fresh listener details to identify the owning installation or service and stop it through that owner's lifecycle command. Do not uninstall a selected NemoClaw environment based only on the process name; uninstall removes that environment's gateway state, credentials, and registrations.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1479,8 +1499,17 @@ At the default interval, the polling delay is at most 60 seconds for container d
 The recovery loop also has a 210-second deadline that includes controller execution and polling.
 Recovery stops after 3 attempts return `SUPERVISOR_BUSY`.
 The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence. That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again. Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window. Status `137` and the Docker restart result remain terminal during that confirmation. The managed supervisor startup waiter accepts the three exact controller startup results, the typed container-not-found result, `SUPERVISOR_BUSY`, and the two container-transition results.
-The final supervisor startup loop uses the same separate attempt allowances and its own 210-second deadline.
-Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately. NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change. `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1. It enters the bounded startup retry first; only an exact missing-supervisor result that remains after the bound can authorize a container-identity-pinned recreation on a supported local Docker-driver sandbox with the legacy keepalive startup. That recreation commits only after managed health and settle checks pass. At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container. After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path. This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`. If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable. To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance. If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command. If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command. If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract. An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway. The current recovery action and any managed settle confirmation stop immediately. If `recover` reports this result, follow its host-side `gateway restart` guidance. If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
+NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
+`SUPERVISOR_NOT_RUNNING` enters the bounded startup retry first.
+If it remains after the retry bound, NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
+If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
+If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.
+If the error mentions `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image can predate the current lifecycle contract.
+An exact `SUPERVISOR_UNAVAILABLE` result means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
+The current recovery action and any managed settle confirmation stop immediately.
+If `recover` reports this result, follow its host-side `gateway restart` guidance.
+If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
 
 ```bash
 $$nemoclaw <name> rebuild --yes
@@ -1627,7 +1656,7 @@ When status reports `sandbox_container_stopped`, Docker still has a container fo
 $$nemoclaw <name> recover
 ```
 
-For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness. It leaves a running or paused container unchanged. If Docker cannot start the container, the command continues to the readiness check and reports the resulting failure.
+For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
 
 </AgentOnly>
 
@@ -1751,7 +1780,7 @@ If it is missing, apply the preset, register the host-side credential, and rebui
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
-nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
 nemo-deepagents <name> rebuild
 ```
@@ -2989,11 +3018,13 @@ NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard
 ```
 
 Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, exact managed-image contract, and `lsof` listener enumeration are all qualified.
+It accepts Podman's standard rootless layout: a `0660` current-user socket in a `0755` `podman` directory below a private current-user runtime directory, such as `/run/user/<UID>` at `0700`.
+It rejects a world-writable socket, a group-writable socket without a private current-user directory in its path, and a path component writable by another user or group.
 If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
 Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 
-The portable experimental profile is separate and unchanged.
+The portable experimental profile is separate and requires Linux x86_64 (amd64). Unsupported architectures stop before NemoClaw inspects or changes Portable host state.
 
 The portable experimental profile uses the `docker` command to drive rootless Podman. Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`. On a Podman-only host, install the `podman-docker` shim for your distribution:
 
@@ -4432,18 +4463,11 @@ Then run `nemohermes inference get` and verify Dashboard Chat uses the selected 
 Hermes configuration is mutable.
 A current Hermes supervisor does not refuse startup, restart, recovery, or automatic respawn only because `config.yaml` or `.env` changed.
 It validates the secret boundary and records one stable snapshot before a replacement gateway consumes the config.
-A direct MCP change becomes pending and is marked as applied only after gateway health passes.
+The native `mcp_servers` map in that snapshot is authoritative, including direct edits.
 
 An unsafe config or metadata path reports `unsafe config path`.
 A missing, malformed, mismatched, or raced hash or restart metadata file reports `config hash mismatch`.
 Do not edit either hash file manually.
-
-If the error reports an MCP reconciliation refusal, restore the managed MCP projection and retry recovery:
-
-```bash
-nemohermes <name> mcp restart
-nemohermes <name> recover
-```
 
 If the error reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
 Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
@@ -4631,12 +4655,29 @@ TAVILY_API_KEY=<your-tavily-key> \
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes. If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
+### Tavily authentication fails after registration or rebuild
+
+A Hermes Tavily provider needs both the `tavily-hermes-v1` profile and the current credential reference issued by OpenShell.
+Older images can save an unversioned `TAVILY_API_KEY` reference in `/sandbox/.hermes/.env`.
+Hermes loads that file over its process environment, replacing the current revision-scoped reference even after the correct provider is registered.
+A copied reference from an older provider can fail for the same reason.
+
+Current Hermes images omit `TAVILY_API_KEY` from generated gateway and dashboard dotenv files and retain the process-injected reference.
+Follow [Repair a Hermes Tavily Provider](../security/credential-rotation#repair-a-hermes-tavily-provider) to preserve supported state and rebuild with the current image.
+Keep an already-correct provider rather than resetting it solely to repair the old dotenv file.
+Do not save raw keys in the sandbox or broaden the provider's binary allowlist.
+
+The onboarding probe uses Hermes Python and the issued reference in a JSON `api_key` request.
+It refuses stale dotenv overrides and raw credentials, and reports successful egress only for HTTP `200` with search results.
+Configuration or network failures remain advisory; a detected raw credential blocks handoff.
+Confirm a real Hermes search after rebuilding.
+
 ### Langfuse works with raw keys but not OpenShell placeholders
 
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
@@ -4659,7 +4700,7 @@ The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KE
 
 For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
 Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
-Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved credential-handle placeholder can shadow the current process-injected value after rotation or rebuild.
 
 ### Re-onboarding asks every messaging prompt again
 

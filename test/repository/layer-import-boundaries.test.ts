@@ -529,3 +529,10 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 });
+
+it("keeps subprocess compatibility helpers out of the sandbox action exports (#10994)", async () => {
+  const sandboxExec = await import("../../src/lib/actions/sandbox/exec");
+  expect(sandboxExec).not.toHaveProperty("buildOpenshellExecArgs");
+  expect(sandboxExec).not.toHaveProperty("runSandboxExecChild");
+  expect(sandboxExec).not.toHaveProperty("computeExitCode");
+});

@@ -167,7 +167,7 @@ record_portable_openclaw_gateway_startup_timing() {
 }
 
 _START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$EUID" -eq 0 ]; then
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 root:root
 else
   _nemoclaw_safe_create_tmp_file "$_START_LOG" 600 "" best-effort
@@ -195,36 +195,26 @@ fi
 # shellcheck source=scripts/lib/gateway-supervisor.sh
 source "$_GATEWAY_SUPERVISOR"
 
-# Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before the capsh
-# drop and the setpriv step-down, so the caps are inherited and unraisable.
+# Harden RLIMITs (nproc #809 + nofile #4527) before privilege step-down.
+# Hard limits are inherited and unraisable by descendants.
 harden_resource_limits
 
 # PATH was already locked down at the top of this script (before the
 # early stderr capture). This comment marks the original location.
 
-# Redirect tool caches and state to /tmp so transient package-manager and
-# shell state stays outside the agent's durable workspace. Without these, tools
-# would create noisy dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig,
-# ~/.local, ~/.claude) under /sandbox.
-#
-# IMPORTANT: This array is the single source of truth for tool-cache redirects.
-# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
-# that `openshell sandbox connect` sessions also pick up the redirects.
+# Keep disposable caches and existing auth/history locations in /tmp. Ordinary
+# config and user data use native HOME defaults; npm needs a writable user prefix.
+# Connect shells receive the same settings from /tmp/nemoclaw-proxy-env.sh.
 _TOOL_REDIRECTS=(
   'npm_config_cache=/tmp/.npm-cache'
   'XDG_CACHE_HOME=/tmp/.cache'
-  'XDG_CONFIG_HOME=/tmp/.config'
-  'XDG_DATA_HOME=/tmp/.local/share'
-  'XDG_STATE_HOME=/tmp/.local/state'
   'XDG_RUNTIME_DIR=/tmp/.runtime'
   'NODE_REPL_HISTORY=/tmp/.node_repl_history'
   'HISTFILE=/tmp/.bash_history'
-  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
-  'PYTHONUSERBASE=/tmp/.local'
   'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
-  'npm_config_prefix=/tmp/npm-global'
+  'npm_config_prefix=/sandbox/.local'
   # Pin npm online at runtime so a stale base image or future build-time
   # offline-lock regression cannot force `only-if-cached` mode on PID 1 or
   # `openshell sandbox connect` sessions.
@@ -244,20 +234,19 @@ done
 # directories are owned by us automatically. Using install -o would fail with
 # EPERM because only root can chown. Ref: #804
 if [ "$(id -u)" -eq 0 ]; then
-  install -d -o sandbox -g sandbox -m 755 \
-    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 755 /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
 else
-  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -m 700 /tmp/.gnupg
 fi
 
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+# OpenShell 0.0.116 starts managed workloads as the non-root image user and
+# owns their capability enforcement. Retain the compatibility drop only for a
+# direct container runtime that explicitly overrides the image user to root.
+if [ "$(id -u)" -eq 0 ]; then
+  drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+fi
 
 NEMOCLAW_CMD=("$@")
 
@@ -493,38 +482,9 @@ else
 fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
-# Gateway WebSocket URL host. Default to the sandbox's own primary interface
-# address rather than loopback: spawned sub-agent runtimes (sessions_spawn)
-# dial OPENCLAW_GATEWAY_URL from inside the enforced process tree, where the
-# OpenShell L7 proxy transparently intercepts connect() and hard-denies
-# loopback destinations regardless of policy. With a loopback URL every child
-# WebSocket upgrade dies with `1006 abnormal closure (no close frame)` and
-# nothing reaches the gateway log. The gateway listens on 0.0.0.0 and the
-# eth0 address is allowlisted in the base sandbox policy
-# (openclaw_gateway_dialback in openclaw-sandbox.yaml), so the same dial
-# works from both enforced and unenforced contexts. Falls back to loopback
-# when no interface address is detectable (the pre-fix behavior). Override
-# with NEMOCLAW_GATEWAY_WS_HOST.
-_GATEWAY_WS_HOST="${NEMOCLAW_GATEWAY_WS_HOST:-}"
-# Only auto-derive inside a real sandbox (the Dockerfile.base image always
-# has /sandbox); on dev machines and CI runners the loopback default is
-# kept. NEMOCLAW_SANDBOX_ROOT is overridable for tests. `|| true` keeps
-# the assignment safe under `set -o pipefail` when hostname lacks -I.
-if [ -z "$_GATEWAY_WS_HOST" ] && [ -d "${NEMOCLAW_SANDBOX_ROOT:-/sandbox}" ]; then
-  _GATEWAY_WS_HOST="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-fi
-if [ -z "$_GATEWAY_WS_HOST" ]; then
-  _GATEWAY_WS_HOST="127.0.0.1"
-fi
-export OPENCLAW_GATEWAY_URL="ws://${_GATEWAY_WS_HOST}:${_DASHBOARD_PORT}"
-if [ "$_GATEWAY_WS_HOST" != "127.0.0.1" ]; then
-  # The OpenClaw client refuses plaintext ws:// to non-loopback private
-  # addresses unless this break-glass is set. The sandbox bridge is a
-  # host-local veth pair — frames never leave the machine — and the
-  # alternative (loopback) is unconditionally blocked by the L7 proxy,
-  # which breaks sessions_spawn entirely.
-  export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1
-fi
+# Leave the native gateway URL unset by default. OpenClaw resolves the local
+# gateway from its configuration as sandbox-local loopback, including custom
+# ports. Explicit operator endpoint choices remain in the inherited environment.
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
@@ -1388,13 +1348,13 @@ config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
 alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
-revision_re = re.compile(r"^v[0-9]+_")
+generation_re = re.compile(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_")
 keys = set()
 MESSAGING_RUNTIME_PLAN_DEFAULT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
 
 
 def add_key(value):
-    key = revision_re.sub("", value)
+    key = generation_re.sub("", value)
     if env_key_re.match(key):
         keys.add(key)
 
@@ -1560,8 +1520,8 @@ for key in keys:
         states[key] = {"kind": "present"}
         continue
     suffix = value[len(prefix) :]
-    revision = re.match(r"^v[0-9]+_", suffix)
-    unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    unversioned = suffix[len(generation.group(0)) :] if generation else suffix
     if unversioned != key:
         states[key] = {"kind": "placeholder-mismatch"}
         continue
@@ -1610,8 +1570,8 @@ def runtime_state(key):
         return {"kind": "missing", "value": ""}
     if value.startswith(prefix):
         suffix = value[len(prefix) :]
-        revision = re.match(r"^v[0-9]+_", suffix)
-        unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+        generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+        unversioned = suffix[len(generation.group(0)) :] if generation else suffix
         kind = "placeholder" if unversioned == key else "placeholder-mismatch"
         return {"kind": kind, "value": value}
     return {"kind": "present", "value": value}
@@ -1653,7 +1613,8 @@ def rewrite(value):
             alias_suffix = value[alias_index + len(alias_marker) :]
             for env_key in keys:
                 if alias_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", alias_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    alias_suffix,
                 ):
                     continue
                 runtime_value = os.environ.get(env_key, "")
@@ -1661,7 +1622,8 @@ def rewrite(value):
                     continue
                 runtime_suffix = runtime_value[len(prefix) :]
                 if runtime_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    runtime_suffix,
                 ):
                     continue
                 updated = value[: alias_index + len(alias_marker)] + runtime_suffix
@@ -1681,8 +1643,8 @@ updated = rewrite(config)
 def placeholder_suffix_matches_env_key(suffix, env_key):
     if suffix == env_key:
         return True
-    revision = re.match(r"^v[0-9]+_", suffix)
-    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    return bool(generation and suffix[len(generation.group(0)) :] == env_key)
 
 
 def path_label(path):
@@ -1729,7 +1691,7 @@ def walk_for_warnings(value, path):
                 state = runtime_state(env_key)
                 env_value = state.get("value", "")
                 placeholder_re = re.compile(
-                    rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
+                    rf"^{re.escape(prefix)}(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(env_key)}$"
                 )
                 if state.get("kind") == "missing":
                     warnings.append(
@@ -1885,8 +1847,12 @@ def clean_env_alias(entry, index):
         fail(f"envAliases[{index}].match is not a valid regex: {exc}")
     value = clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True)
     if target_env_key != env_key:
-        if pattern != f"^openshell:resolve:env:v[0-9]+_{env_key}$":
-            fail(f"envAliases[{index}] cross-key match is not revision-scoped")
+        expected_pattern = (
+            "^openshell:resolve:env:"
+            f"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}$"
+        )
+        if pattern != expected_pattern:
+            fail(f"envAliases[{index}] cross-key match is not generation-scoped")
         if value != f"openshell:resolve:env:{env_key}":
             fail(f"envAliases[{index}] cross-key value is not the canonical source placeholder")
     return {
@@ -2033,7 +1999,10 @@ for alias in plan.get("envAliases", []):
     placeholder_prefix = "openshell:resolve:env:"
     if marker in value and runtime_value.startswith(placeholder_prefix):
         runtime_suffix = runtime_value[len(placeholder_prefix) :]
-        if re.fullmatch(rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix):
+        if re.fullmatch(
+            rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+            runtime_suffix,
+        ):
             alias_suffix = value.split(marker, 1)[1]
             if alias_suffix == env_key:
                 value = value.split(marker, 1)[0] + marker + runtime_suffix
@@ -2171,7 +2140,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -2539,13 +2508,9 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  # The gateway must retain NemoClaw's private-interface URL, but the watcher
-  # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
-  # in this child only so an injected private URL is removed before the first
-  # `devices list`. The first list call keeps shared gateway auth but uses the
-  # reviewed child-only marker to retain CLI identity, allowing OpenClaw's
-  # canonical local-loopback pairing bootstrap. Later calls use device auth.
-  # An explicit URL override is preserved by write_runtime_shell_env().
+  # Source the trusted runtime environment in this child so the first
+  # `devices list` uses OpenClaw's native loopback and shared gateway auth.
+  # Later calls use device auth.
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
       # shellcheck source=/dev/null
@@ -3398,7 +3363,7 @@ fi
 # patterns are documented inline in the script; unknown patterns are
 # logged with full stack so they can be diagnosed and either fixed
 # upstream or added to the allow-list with explicit justification.
-# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# Channel-specific guards pre-empt their own error patterns;
 # this is the backstop for everything else.
 #
 # Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
@@ -3437,17 +3402,6 @@ _PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 
-# mDNS / ciao network interface guard.
-# The @homebridge/ciao mDNS library calls os.networkInterfaces() which
-# throws a SystemError (uv_interface_addresses) inside sandboxes with
-# restricted network namespaces (seccomp/Landlock). This crashes the
-# gateway even though mDNS is not needed. The guard monkey-patches
-# os.networkInterfaces to return an empty object on failure instead
-# of throwing, and catches the uncaughtException as a fallback.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
-_CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
-_CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
-
 # Stage the immutable, image-packaged preload set into /tmp. Startup and
 # authenticated PID 1 recovery share this exact path so a pod-recreate-style
 # /tmp wipe cannot drift from the initial security boundary. The shared emit
@@ -3463,9 +3417,6 @@ install_core_runtime_preloads() {
 
   emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
   append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
-
-  emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
-  append_node_require_once "$_CIAO_GUARD_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
@@ -3526,7 +3477,7 @@ export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
-    local _escaped_gateway_port _escaped_gateway_url _escaped_gateway_token
+    local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
@@ -3546,28 +3497,13 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      # Preserve NemoClaw's sandbox-interface dial-back URL for the few
-      # NemoClaw-owned commands that require it without forcing ordinary
-      # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
-      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
-      # Bake the trusted value into case syntax instead of consulting the
-      # caller-mutable NEMOCLAW_* alias. Imported shell functions can shadow
-      # `[` but cannot shadow `case`; a failed/shadowed unset only withholds
-      # the token below rather than pairing it with another destination.
-      printf "case \"\${OPENCLAW_GATEWAY_URL:-}\" in\n"
-      printf "  '' | '%s')\n" "$_escaped_gateway_url"
-      cat <<'GATEWAYURLENVEOF'
-    unset OPENCLAW_GATEWAY_URL
-    unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
-    ;;
-esac
-GATEWAYURLENVEOF
+      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+    else
+      printf 'unset OPENCLAW_GATEWAY_URL\n'
     fi
-    if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Retain the matching break-glass under the same private namespace.
-      # WhatsApp reinjects it only for its gateway-backed login command.
-      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
-    fi
+    # This legacy bypass was only needed by the removed private-interface
+    # route. Never let an inherited value re-enable insecure remote WebSockets.
+    printf 'unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS\n'
     # #7795: bake the sandbox name for the connect-shell hints below.
     # OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to every process it
     # spawns inside the sandbox — this entrypoint included — and only its own
@@ -3745,34 +3681,8 @@ openclaw() {
           # code fits on the screen.
           case "$_login_help:$_login_channel" in
             0:whatsapp)
-              # NemoClaw#6413: do NOT re-inject the stashed private veth URL
-              # (NEMOCLAW_OPENCLAW_GATEWAY_URL): a private-IP origin makes the
-              # gateway's locality check strip operator scopes regardless of
-              # token auth, so the login's own post-pair channels.start restart
-              # is denied with "missing scope: operator.admin". With no URL in
-              # the environment OpenClaw resolves ws://127.0.0.1:<port> from
-              # its own config — the same loopback resolution the `devices
-              # approve` wrapper (NemoClaw#4462) relies on — and the post-pair
-              # restart succeeds without any token-bearing reconcile. That
-              # single change dictates this block's shape: an unset URL is the
-              # healthy default rather than an error, the ws:// scheme and
-              # loopback-host checks plus the pairing banner apply only to an
-              # explicitly exported OPENCLAW_GATEWAY_URL (kept as a
-              # loopback-only operator escape hatch), and
-              # the login runs in a subshell that exports the override env
-              # only when present — an empty-but-set OPENCLAW_GATEWAY_URL is
-              # not equivalent to an unset one for OpenClaw's config
-              # resolution.
-              #
-              # Root cause + removal condition: the scope-strip is OpenClaw
-              # gateway locality behavior. "Fixing" it here would mean
-              # patching gateway auth to trust private-veth origins — erasing
-              # the same-device signal the #4462 bounded-approval patch
-              # deliberately preserves — so this wrapper sides with the
-              # locality model instead. Remove once the pinned OpenClaw keeps
-              # operator scopes for a token-authed post-pair channels.start
-              # over the stashed private URL (re-run the #6413 fresh-install
-              # repro to confirm before deleting).
+              # An unset URL uses OpenClaw's configured sandbox-local loopback.
+              # Explicit operator overrides remain limited to loopback below.
               _nemoclaw_whatsapp_gateway_url="${OPENCLAW_GATEWAY_URL:-}"
               _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
               _nemoclaw_whatsapp_gateway_allowed=1
@@ -3978,7 +3888,13 @@ openclaw() {
       # later cannot inherit the token, and use an absolute executable so an
       # imported `command` function cannot intercept the decision.
       case "${OPENCLAW_GATEWAY_URL:-}" in
-        "") /usr/bin/env openclaw "$@" ;;
+        *@*) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
+        "" | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
+          wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
+          ws://localhost | ws://localhost:* | ws://localhost/* | \
+          wss://localhost | wss://localhost:* | wss://localhost/* | \
+          "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
+          "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*) /usr/bin/env openclaw "$@" ;;
         *) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
       esac
       local _nemoclaw_oc_status=$?
@@ -4145,17 +4061,19 @@ GUARDENVEOF
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-    # ciao network guard for connect sessions.
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
     fi
-    # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-    echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
       echo "export ${_redir?}"
     done
+    # Only the sandbox account searches its writable user bin directory.
+    cat <<'USERPATHENVEOF'
+if [ "$(/usr/bin/id -un)" = sandbox ]; then
+  export PATH="$PATH:/sandbox/.local/bin"
+fi
+USERPATHENVEOF
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       # Emit the token last, after every other generated export. Mark the name
@@ -5123,8 +5041,10 @@ launch_openclaw_gateway_process() {
   case "$launch_identity" in
     current) ;;
     gateway)
+      # The gateway cannot create native Git config in the sandbox-owned HOME.
+      # Keep its fallback private so user commands retain native Git settings.
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;
@@ -5505,7 +5425,6 @@ openclaw_runtime_guard_chain_complete() {
   local targets=(
     "$_SANDBOX_SAFETY_NET"
     "$_NEMOTRON_FIX_SCRIPT"
-    "$_CIAO_GUARD_SCRIPT"
     "$_RUNTIME_SHELL_ENV_FILE"
   )
   local target
@@ -5774,6 +5693,7 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
+  export PATH="$PATH:/sandbox/.local/bin"
   # Restore a #3118 truncation before later config reads.
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH
   recover_openclaw_config_if_empty
@@ -5964,7 +5884,7 @@ setup_auth_profile_as_sandbox
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   _nemoclaw_cmd_rc=0
-  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi
 

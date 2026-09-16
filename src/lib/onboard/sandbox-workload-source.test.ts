@@ -15,7 +15,6 @@ import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import {
   resolveSandboxWorkloadSource,

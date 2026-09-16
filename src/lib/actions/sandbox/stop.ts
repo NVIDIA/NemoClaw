@@ -19,28 +19,32 @@ import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
   captureSandboxOwnershipPhases,
+  hermesPortableLifecycleLockOptions,
   resolvePersistedSandboxOwnershipGateway,
-  withSandboxLifecycleLockSync,
+  withSandboxLifecycleLock,
 } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
 
-function teardownDashboardForwardBestEffort(
+async function teardownDashboardForwardBestEffort(
   sandboxName: string,
   teardown: typeof teardownSandboxDashboardForward,
   warn: (message: string) => void,
-): void {
+): Promise<boolean> {
   try {
-    if (teardown(sandboxName) === false) {
+    if ((await teardown(sandboxName)) === false) {
       warn(
         `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
       );
+      return false;
     }
+    return true;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
+    return false;
   }
 }
 
@@ -121,7 +125,13 @@ export function discoverActiveOllamaSandboxNames(
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
-      if (phase === undefined || phase === "Error" || phase === "Failed" || phase === "Evicted") {
+      if (
+        phase === undefined ||
+        phase === "Stopped" ||
+        phase === "Error" ||
+        phase === "Failed" ||
+        phase === "Evicted"
+      ) {
         continue;
       }
       if (phase === null || phase === "Unknown") {
@@ -237,6 +247,7 @@ export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -249,7 +260,7 @@ export interface SandboxStopDeps {
   decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
   loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
-  withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
+  withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -258,19 +269,21 @@ export interface SandboxStopDeps {
  * Stop the selected provider workload while preserving registry, workspace,
  * credentials, and shared gateway state.
  */
-export function stopSandbox(
+export async function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
-): SandboxLifecycleResult {
-  return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
-    stopSandboxWithinLifecycleFence(sandboxName, deps),
+): Promise<SandboxLifecycleResult> {
+  return await (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+    sandboxName,
+    () => stopSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, deps.environment ?? process.env),
   );
 }
 
-function stopSandboxWithinLifecycleFence(
+async function stopSandboxWithinLifecycleFence(
   sandboxName: string,
   deps: SandboxStopDeps,
-): SandboxLifecycleResult {
+): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
@@ -283,6 +296,7 @@ function stopSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
+    readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
     log,
     sandbox: resolved.sandbox,
@@ -292,7 +306,7 @@ function stopSandboxWithinLifecycleFence(
   if (preflight) return preflight;
 
   let channelsStopped = false;
-  const outcome = resolved.lifecycle.stop(input, {
+  const outcome = await resolved.lifecycle.stop(input, {
     beforeStop() {
       if (channelsStopped) return;
       channelsStopped = true;
@@ -311,15 +325,36 @@ function stopSandboxWithinLifecycleFence(
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
-  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
-  if (!hermesPortableVerified) {
-    teardownDashboardForwardBestEffort(
+  const stopIntentRecorded =
+    hermesPortableVerified ||
+    registry.recordSandboxStopIntent(
       sandboxName,
-      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-      warn,
+      true,
+      deps.updateSandbox ?? registry.updateSandbox,
     );
+  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
+  const dashboardForwardReleased = await teardownDashboardForwardBestEffort(
+    sandboxName,
+    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+    warn,
+  );
+  if (!stopIntentRecorded) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but NemoClaw could not record the intentional stop. ` +
+        `Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (!dashboardForwardReleased) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but release of its host forward ports could not be ` +
+        `proved. Recoverable registry state was preserved. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
+  }
   if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"

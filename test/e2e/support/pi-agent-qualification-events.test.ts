@@ -11,10 +11,14 @@ import {
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 import {
+  classifyPiReadTaskAttempt,
+  isTransientPiInferenceFailure,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
+  PiInferenceFailure,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -50,6 +54,18 @@ function eventStream(overrides: Record<string, unknown> = {}): string {
 
 function events(...values: Record<string, unknown>[]): string {
   return values.map((event) => JSON.stringify(event)).join("\n");
+}
+
+function failedProbe(): ShellProbeResult {
+  return {
+    command: ["pi"],
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
 }
 
 describe("Pi qualification event oracle", () => {
@@ -111,6 +127,148 @@ describe("Pi qualification event oracle", () => {
     expect(() => qualifyPiReadTask(parsePiJsonEvents(eventStream()), PATH, `${TOKEN}X`)).toThrow(
       "instead of exact file contents",
     );
+  });
+
+  it.each(["HTTP 503: Service Unavailable", "Service temporarily overloaded"])(
+    "classifies a Pi provider error as transient: %s",
+    (errorMessage) => {
+      const providerError = {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage,
+        },
+      };
+      const valid = parsePiJsonEvents(eventStream());
+      const exhaustedRetries = valid.flatMap((event) =>
+        event.type === "message_end" ? Array.from({ length: 4 }, () => providerError) : [event],
+      );
+      let failure: unknown;
+      try {
+        qualifyPiReadTask(exhaustedRetries, PATH, TOKEN);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(PiInferenceFailure);
+      expect((failure as Error).message).toBe(`Pi inference failed: ${errorMessage}`);
+      expect(isTransientPiInferenceFailure(failure)).toBe(true);
+    },
+  );
+
+  it("retries a transient provider error before the read tool starts (#11761)", () => {
+    const eventValues = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "HTTP 503: Service Unavailable",
+          },
+        },
+        { type: "agent_end", messages: [], willRetry: false },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(eventValues, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
+
+  it("accepts a valid Pi response after an earlier provider error", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "Service temporarily overloaded",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const recoveredRetry = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError, event] : [event],
+    );
+    expect(qualifyPiReadTask(recoveredRetry, PATH, TOKEN).assistantText).toBe(TOKEN);
+  });
+
+  it("retries a transient provider error after an assistant response (#11761)", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503: Service Unavailable",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failedAfterReply = valid.flatMap((event) =>
+      event.type === "message_end" ? [event, providerError] : [event],
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failedAfterReply, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
+
+  it.each(["authentication failed", "HTTP 400: invalid request", "HTTP 501: unsupported"])(
+    "does not classify a deterministic Pi provider error as transient: %s",
+    (errorMessage) => {
+      expect(
+        isTransientPiInferenceFailure(
+          new PiInferenceFailure(`Pi inference failed: ${errorMessage}`),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("redacts and bounds a provider error diagnostic (#11761)", () => {
+    const diagnosticPrefix = "Pi inference failed: ";
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: `HTTP 503 for nvapi-secret-value-0123456789 ${"x".repeat(500)}`,
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failed = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError] : [event],
+    );
+
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failed, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    const message = (failure as Error).message;
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(message).toContain("HTTP 503");
+    expect(message).not.toMatch(/nvapi-secret/iu);
+    expect(message.length).toBeLessThanOrEqual(diagnosticPrefix.length + 200);
   });
 
   it("rejects missing, extra, or mismatched read events", () => {

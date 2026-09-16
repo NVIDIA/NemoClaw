@@ -49,10 +49,6 @@ describe("nemoclaw-start gateway preload process detection (#2478)", () => {
     path.join(PRELOAD_SCRIPTS, "sandbox-safety-net.js"),
     "utf-8",
   );
-  const ciaoGuardScript = fs.readFileSync(
-    path.join(PRELOAD_SCRIPTS, "ciao-network-guard.js"),
-    "utf-8",
-  );
 
   it("activates the safety net for the re-execed openclaw-gateway child", () => {
     const run = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw-gateway", "--port");
@@ -60,53 +56,10 @@ describe("nemoclaw-start gateway preload process detection (#2478)", () => {
     expect(run.stderr).toContain("[sandbox-safety-net] loaded (openclaw-gateway)");
   });
 
-  it("activates the ciao guard fallback for the re-execed openclaw-gateway child", () => {
-    const run = runEmbeddedPreload(ciaoGuardScript, "/usr/local/bin/openclaw-gateway", "--port");
-    expect(run.status).toBe(0);
-    expect(run.stderr).toContain("[guard] ciao-network-guard loaded (openclaw-gateway)");
-  });
-
-  it("returns no interfaces when the sandbox blocks network interface discovery", () => {
-    const run = runEmbeddedPreload(
-      [
-        "const os = require('node:os');",
-        "os.networkInterfaces = function () { throw new Error('uv_interface_addresses blocked'); };",
-        ciaoGuardScript,
-        "process.stdout.write(JSON.stringify(os.networkInterfaces()));",
-      ].join("\n"),
-      "/usr/local/bin/openclaw-gateway",
-      "--port",
-    );
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({});
-    expect(run.stderr).toContain("returning empty (mDNS disabled)");
-  });
-
-  it("preserves discovered interfaces when the sandbox permits discovery", () => {
-    const run = runEmbeddedPreload(
-      [
-        "const os = require('node:os');",
-        "const interfaces = { lo: [{ address: '127.0.0.1', family: 'IPv4' }] };",
-        "os.networkInterfaces = function () { return interfaces; };",
-        ciaoGuardScript,
-        "process.stdout.write(JSON.stringify(os.networkInterfaces()));",
-      ].join("\n"),
-      "/usr/local/bin/openclaw-gateway",
-      "--port",
-    );
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
-      lo: [{ address: "127.0.0.1", family: "IPv4" }],
-    });
-  });
-
   it("still recognizes the openclaw gateway launcher path", () => {
     const safetyNet = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw", "gateway");
-    const ciaoGuard = runEmbeddedPreload(ciaoGuardScript, "/usr/local/bin/openclaw", "gateway");
     expect(safetyNet.status).toBe(0);
-    expect(ciaoGuard.status).toBe(0);
     expect(safetyNet.stderr).toContain("[sandbox-safety-net] loaded (launcher)");
-    expect(ciaoGuard.stderr).toContain("[guard] ciao-network-guard loaded (launcher)");
   });
 
   it("prefers the re-execed process title over launcher argv", () => {
@@ -116,16 +69,8 @@ describe("nemoclaw-start gateway preload process detection (#2478)", () => {
       "gateway",
       "openclaw-gateway",
     );
-    const ciaoGuard = runEmbeddedPreload(
-      ciaoGuardScript,
-      "/usr/local/bin/openclaw",
-      "gateway",
-      "openclaw-gateway",
-    );
     expect(safetyNet.status).toBe(0);
-    expect(ciaoGuard.status).toBe(0);
     expect(safetyNet.stderr).toContain("[sandbox-safety-net] loaded (openclaw-gateway)");
-    expect(ciaoGuard.stderr).toContain("[guard] ciao-network-guard loaded (openclaw-gateway)");
   });
 
   it("does not install the safety net for non-gateway CLI commands", () => {

@@ -25,6 +25,8 @@ import {
 } from "../../onboard/sandbox-recreate-probe";
 import {
   advanceSandboxRecreateTransaction,
+  assertSandboxRecreateSourceProof,
+  sandboxRecreateSourceProof,
   beginSandboxRecreateDelete,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -37,10 +39,12 @@ import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import type {
   CheckpointGatewayAuthority,
   CheckpointSandboxRecreatePhase,
+  CheckpointSandboxRecreateTransaction,
 } from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
@@ -94,6 +98,7 @@ interface RebuildRecoveryBackupDeps {
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
   readonly observePresence?: typeof observeSandboxPresenceOnGateway;
   readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
+  readonly clearMcpHandoff?: typeof clearRebuildMcpHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
@@ -495,6 +500,11 @@ export function retireRebuildRecoveryBackup(
       `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
     );
   }
+  if (!(deps.clearMcpHandoff ?? clearRebuildMcpHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild MCP recovery handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
   try {
     clearRebuildRecoveryBackup(
       {
@@ -595,6 +605,18 @@ export function fingerprintRebuildRecreateTargetIntent(
 }
 
 export const observeRebuildSandbox = observeSandboxOnGateway;
+
+export function assertRebuildRecoverySource(
+  transaction: CheckpointSandboxRecreateTransaction,
+  target: SandboxRecreateTarget,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction), {
+    ...target,
+    registryEntry: registry.getSandbox(target.sandboxName),
+    observation: observeRebuildSandbox(target, undefined, runtimeSelection),
+  });
+}
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;

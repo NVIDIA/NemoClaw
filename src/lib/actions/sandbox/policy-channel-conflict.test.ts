@@ -12,12 +12,13 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
-import { createBuiltInMessagingHookRegistry } from "../../messaging";
+import { createBuiltInMessagingHookRegistry, MessagingSetupApplier } from "../../messaging";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
@@ -345,6 +346,14 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry
+        ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+        : null;
+    },
+  );
   getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
@@ -362,16 +371,17 @@ beforeEach(() => {
     }),
   );
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -396,12 +406,12 @@ beforeEach(() => {
   vi.spyOn(policy, "loadPreset").mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
-  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("absent");
   scopeDisclosureMock = vi
     .spyOn(policy, "logPresetScopeForState")
     .mockImplementation(() => undefined);
-  applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
+  applyPresetMock = vi.spyOn(policy, "applyPreset").mockResolvedValue(true);
+  vi.spyOn(policy, "getAppliedPresets").mockResolvedValue([]);
 
   // Downstream rebuild is not under test.
   rebuildSandboxMock = vi
@@ -409,7 +419,7 @@ beforeEach(() => {
     .mockResolvedValue(undefined);
   ensureMessagingHostForwardAfterRebuildMock = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
-    .mockReturnValue(true);
+    .mockResolvedValue(true);
 
   // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
@@ -418,7 +428,7 @@ beforeEach(() => {
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
   vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -594,8 +604,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     vi.mocked(policy.listPresets).mockReturnValue([
       { file: "telegram.yaml", name: "telegram", description: "Telegram" },
     ]);
-    vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
-    const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
+    vi.mocked(policy.getAppliedPresets).mockResolvedValue(["telegram"]);
+    const removePresetMock = vi.spyOn(policy, "removePreset").mockResolvedValue(true);
     runOpenshellMock.mockReturnValue(successfulOpenshellResult());
 
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
@@ -1327,6 +1337,28 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     expect(updateSandboxMock).not.toHaveBeenCalled();
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
   });
+
+  it.each(["add", "start", "add QR"])(
+    "reports incomplete channel %s when the host forward fails (#11648)",
+    async (operation) => {
+      setTeamsEnv();
+      arrangeRegistry({
+        current:
+          operation === "start"
+            ? makeTeamsEntry("alpha", { disabled: true, port: "3978" })
+            : makeEmptyEntry("alpha"),
+      });
+      getDisabledChannelsMock.mockReturnValue(operation === "start" ? ["teams"] : []);
+      ensureMessagingHostForwardAfterRebuildMock.mockResolvedValue(false);
+      const healthChecks = vi.spyOn(MessagingSetupApplier, "applyHealthChecks");
+      const action = operation === "start" ? startSandboxChannel : addSandboxChannel;
+      await expect(
+        action("alpha", { channel: operation === "add QR" ? "whatsapp" : "teams" }),
+      ).rejects.toThrow(/host forward.*incomplete/i);
+      expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledOnce();
+      expect(healthChecks).not.toHaveBeenCalled();
+    },
+  );
 
   it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     setTeamsEnv();

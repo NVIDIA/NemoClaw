@@ -21,13 +21,17 @@ import {
   retireRemovedImmutabilityStateRecord,
 } from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
-import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
+import * as registry from "../../state/registry";
 import {
   captureRebuildPolicyDocument,
+  clearRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
+  writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
@@ -43,7 +47,7 @@ import {
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
-import { mcpRebuildRequiresRuntimeSelection } from "./rebuild-mcp-phase";
+import { observeMcpStateForRebuild } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -72,7 +76,10 @@ import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
-import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  inspectRebuildGatewayProviderRegistration,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import {
   clearRebuildRecoveryBackup,
   findRebuildRecoveryBackup,
@@ -80,6 +87,7 @@ import {
   isRebuildRecoveryCleanupOnly,
   markRebuildRecoveryCleanupOnly,
   openRebuildRecreateJournal,
+  assertRebuildRecoverySource,
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
@@ -116,7 +124,7 @@ export async function rebuildSandbox(
   return withPortableOnboardRetirementBoundary(
     {
       homeDir,
-      registryFile: REGISTRY_FILE,
+      registryFile: registry.REGISTRY_FILE,
       sessionFile: onboardSession.SESSION_FILE,
       stateDir: path.dirname(onboardSession.SESSION_FILE),
     },
@@ -157,7 +165,7 @@ export async function rebuildSandbox(
           );
         }
       }),
-    { loadRegistry, withLifecycleLock: withMcpLifecycleLock },
+    { loadRegistry: registry.load, withLifecycleLock: withMcpLifecycleLock },
   );
 }
 
@@ -170,7 +178,7 @@ async function rebuildSandboxUnlocked(
   let executionOptions = opts;
   if (!executionOptions.recoveryManifest) {
     const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-    const registryEntry = loadRegistry().sandboxes[sandboxName];
+    const registryEntry = registry.load().sandboxes[sandboxName];
     if (transaction?.sandboxName === sandboxName && registryEntry) {
       const retainedRecovery = findRebuildRecoveryBackup({
         sandboxName,
@@ -226,15 +234,21 @@ async function rebuildSandboxUnlocked(
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
     let recoveryRegistrySnapshot = preparedBackupRecovery
-      ? JSON.parse(JSON.stringify(loadRegistry()))
+      ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
-    const registryRollback = createRebuildRegistryRollback({
-      sandboxName,
-      preparedBackupRecovery,
-      staleRecovery,
-      getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
-      log,
-    });
+    const registryRollback = createRebuildRegistryRollback(
+      {
+        sandboxName,
+        preparedBackupRecovery,
+        staleRecovery,
+        getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
+        log,
+      },
+      {
+        restoreSandboxEntry: registry.restoreSandboxEntry,
+        restoreSandboxEntryIfMissing: registry.restoreSandboxEntryIfMissing,
+      },
+    );
     let retainPolicyHandoffForRecovery = false;
 
     try {
@@ -248,11 +262,70 @@ async function rebuildSandboxUnlocked(
       );
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+      const recoveryCleanupRequired = recoveryManifest
+        ? isRebuildRecoveryCleanupOnly({
+            sandboxName,
+            agentName: rebuildAgent,
+            backupManifest: recoveryManifest,
+          }) ||
+          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
+          recoveryManifest.rebuildMcpHandoff?.retired === true ||
+          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+        : false;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-      const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
-      const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
+      // Older manifests and a crash immediately after marker creation can lack
+      // the MCP handoff. Re-observe only while the journal remains pre-delete
+      // and the journaled source identity is verified before MCP inspection.
+      const canRecapturePreparedRecoveryMcp = Boolean(
+        recoveryManifest &&
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !staleRecovery &&
+        activeRecoveryTransaction?.sandboxName === sandboxName &&
+        (activeRecoveryTransaction.phase === "planned" ||
+          activeRecoveryTransaction.phase === "deleting"),
+      );
+      if (
+        recoveryManifest &&
+        !recoveryCleanupRequired &&
+        recoveryManifest.rebuildMcpHandoff === undefined &&
+        !canRecapturePreparedRecoveryMcp
+      ) {
+        return bail(
+          "The retained rebuild MCP recovery observation is unavailable, so rebuild cannot safely resume. No sandbox deletion was attempted.",
+        );
+      }
+      const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
+      if (
+        recoveryManifest?.rebuildMcpHandoff &&
+        recoveryManifest.rebuildMcpHandoff.retired !== true &&
+        !retainedMcpHandoff
+      ) {
+        return bail("The retained rebuild MCP recovery handoff is invalid.");
+      }
+      if (canRecapturePreparedRecoveryMcp && activeRecoveryTransaction) {
+        const target = {
+          sandboxName,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
+        };
+        assertRebuildRecoverySource(
+          activeRecoveryTransaction,
+          target,
+          recreateOptions.runtimeSelection,
+        );
+      }
+      const observedMcp =
+        retainedMcpHandoff ??
+        (await observeMcpStateForRebuild(
+          sandboxEntry,
+          recreateOptions.runtimeSelection,
+          (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+            canRecapturePreparedRecoveryMcp,
+        ));
+      const mcpEntries = observedMcp.entries;
+      const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
-        ? recreateOptions.runtimeSelection
+        ? (observedMcp.runtimeSelection ?? recreateOptions.runtimeSelection)
         : undefined;
       if (mcpRuntimeSelectionRequired && !mcpRuntimeSelection) {
         bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");
@@ -333,6 +406,15 @@ async function rebuildSandboxUnlocked(
             "The rebuild policy handoff could not enter cleanup-only state.",
           );
         }
+        if (
+          backupManifest.rebuildMcpHandoff &&
+          !clearRebuildMcpHandoff(backupManifest, { retainRetirement: true })
+        ) {
+          return reportIncompletePolicyHandoffCleanup(
+            backupManifest,
+            "The rebuild MCP recovery handoff could not enter cleanup-only state.",
+          );
+        }
         try {
           markRebuildRecoveryCleanupOnly({
             sandboxName,
@@ -346,10 +428,11 @@ async function rebuildSandboxUnlocked(
             `The rebuild policy cleanup record could not be updated: ${rebuildFailureDetail(error)}`,
           );
         }
-        if (clearRebuildPolicyHandoff(backupManifest)) return true;
+        if (clearRebuildPolicyHandoff(backupManifest) && clearRebuildMcpHandoff(backupManifest))
+          return true;
         return reportIncompletePolicyHandoffCleanup(
           backupManifest,
-          "The retired rebuild policy handoff artifact or metadata could not be removed.",
+          "The retired rebuild recovery handoff artifact or metadata could not be removed.",
         );
       };
 
@@ -357,19 +440,7 @@ async function rebuildSandboxUnlocked(
       // marker is removed. A missing handoff with a retained marker means the
       // handoff cleanup completed but marker cleanup did not. Resume only that
       // cleanup against the already accepted replacement.
-      const recoveryCleanupOnly = recoveryManifest
-        ? isRebuildRecoveryCleanupOnly({
-            sandboxName,
-            agentName: rebuildAgent,
-            backupManifest: recoveryManifest,
-          })
-        : false;
-      if (
-        recoveryManifest &&
-        (recoveryCleanupOnly ||
-          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true)
-      ) {
+      if (recoveryManifest && recoveryCleanupRequired) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
         if (!cleanupJournal) return;
@@ -447,9 +518,11 @@ async function rebuildSandboxUnlocked(
           return false;
         }
       };
-      const capturePolicyHandoff = (runtimeSelection?: OpenShellRuntimeSelection): boolean => {
+      const capturePolicyHandoff = async (
+        runtimeSelection?: OpenShellRuntimeSelection,
+      ): Promise<boolean> => {
         return publishPolicyHandoff(
-          captureRebuildPolicyDocument(
+          await captureRebuildPolicyDocument(
             sandboxName,
             recreateOptions.targetGatewayName,
             runtimeSelection,
@@ -601,9 +674,11 @@ async function rebuildSandboxUnlocked(
           );
         }
         if (
-          backup.backupManifest?.rebuildPolicyHandoff &&
+          (backup.backupManifest?.rebuildPolicyHandoff ||
+            backup.backupManifest?.rebuildMcpHandoff) &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
-          !clearRebuildPolicyHandoff(backup.backupManifest)
+          (!clearRebuildPolicyHandoff(backup.backupManifest) ||
+            !clearRebuildMcpHandoff(backup.backupManifest))
         ) {
           return bail(
             "The unused current-run rebuild policy handoff could not be retired during recovery.",
@@ -611,7 +686,12 @@ async function rebuildSandboxUnlocked(
         }
         rebuildPolicyHandoffManifest = recoveryBackup;
         retainPolicyHandoffForRecovery = true;
-        const restored = runRebuildRestorePhase({
+        if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+          return bail(
+            `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
+          );
+        }
+        const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
           targetImageIsCustom: Boolean(fromDockerfile),
@@ -708,6 +788,7 @@ async function rebuildSandboxUnlocked(
         staleRecovery,
         recreateJournal,
         backupManifest: backup.backupManifest,
+        mcpEntries,
         force: normalized.force,
         ...(recreateJournal.runtimeSelection
           ? { runtimeSelection: recreateJournal.runtimeSelection }
@@ -715,6 +796,23 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         validateAfterMcpPreparation: async (preparation) => {
+          if (backup.backupManifest) {
+            try {
+              writeRebuildMcpHandoff(
+                backup.backupManifest,
+                preparation.entries,
+                preparation.runtimeSelection ?? {
+                  gatewayName: recreateOptions.targetGatewayName,
+                  workspace: "default",
+                },
+              );
+            } catch (error) {
+              return {
+                ok: false,
+                message: `The source-derived MCP recovery handoff could not be retained: ${rebuildFailureDetail(error)}`,
+              };
+            }
+          }
           if (preparation.policyHandoff !== undefined) {
             try {
               if (!publishPolicyHandoff(preparation.policyHandoff)) {
@@ -762,7 +860,29 @@ async function rebuildSandboxUnlocked(
             preparation.runtimeSelection,
           );
         },
-        validateAtDeleteEdge: (runtimeSelection) => {
+        validateAtDeleteEdge: async (runtimeSelection) => {
+          if (
+            !recreateOptions.rebuildProviderReconfigure &&
+            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+          ) {
+            const registration = await inspectRebuildGatewayProviderRegistration(
+              resumeConfig.provider,
+              log,
+              "Before deletion",
+              runtimeSelection,
+              undefined,
+              resumeConfig.credentialEnv,
+            );
+            if (registration !== "registered") {
+              return {
+                ok: false,
+                message:
+                  registration === "credential_missing"
+                    ? `Gateway provider '${resumeConfig.provider}' no longer exposes credential ${resumeConfig.credentialEnv} before sandbox deletion. Re-register the provider, then retry rebuild.`
+                    : `Gateway provider '${resumeConfig.provider}' is ${registration} before sandbox deletion. Refresh its credential or restore gateway access, then retry rebuild.`,
+              };
+            }
+          }
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,
@@ -779,8 +899,18 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
+          // Prepared legacy recovery freezes source policy before the gateway upgrade.
+          // Revalidate that handoff instead of recapturing unreadable live state.
+          if (preparedBackupRecovery) {
+            return backup.backupManifest && readRebuildPolicyHandoff(backup.backupManifest)
+              ? validation
+              : {
+                  ok: false,
+                  message: "The prepared recovery policy handoff changed before sandbox deletion.",
+                };
+          }
           try {
-            return capturePolicyHandoff(runtimeSelection)
+            return (await capturePolicyHandoff(runtimeSelection))
               ? validation
               : {
                   ok: false,
@@ -839,6 +969,11 @@ async function rebuildSandboxUnlocked(
         restoreDcodeGpuPatchNetwork();
       }
       if (!recreated) return;
+      if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+        return bail(
+          `Sandbox '${sandboxName}' was rebuilt, but NemoClaw could not clear its intentional-stop record. Run 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
+        );
+      }
 
       const restore = () =>
         runRebuildRestorePhase({
@@ -853,9 +988,9 @@ async function rebuildSandboxUnlocked(
         });
       let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
       const restored = hermesCronRestorePlan?.requiresDispatchGate
-        ? (() => {
+        ? await (async () => {
             try {
-              const transaction = runHermesCronRestoreTransaction(
+              const transaction = await runHermesCronRestoreTransaction(
                 sandboxName,
                 restore,
                 (state, identity) => {
@@ -878,7 +1013,7 @@ async function rebuildSandboxUnlocked(
               return bail("Hermes cron restore validation failed; dispatch was not re-enabled.");
             }
           })()
-        : restore();
+        : await restore();
       const postRestoreVerification = await runRebuildPostRestorePhase({
         sandboxName,
         targetAgentName: rebuildAgent || "openclaw",
@@ -916,10 +1051,15 @@ async function rebuildSandboxUnlocked(
       retainPolicyHandoffForRecovery = false;
     } finally {
       const handoffManifest = rebuildPolicyHandoffManifest;
-      if (handoffManifest?.rebuildPolicyHandoff && !retainPolicyHandoffForRecovery) {
+      if (
+        handoffManifest &&
+        (handoffManifest.rebuildPolicyHandoff || handoffManifest.rebuildMcpHandoff) &&
+        !retainPolicyHandoffForRecovery
+      ) {
         runBestEffortRebuildCleanup(
-          () => clearRebuildPolicyHandoff(handoffManifest),
-          "  Warning: bounded rebuild policy handoff could not be removed.",
+          () =>
+            clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
+          "  Warning: bounded rebuild recovery handoff could not be removed.",
         );
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;

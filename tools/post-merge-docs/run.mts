@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   configureOpenShellInference,
+  credentialFreeEnvironment,
   createOpenShellSandbox,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
@@ -223,6 +224,16 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   const work = required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR");
   const config = required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR");
   const review = current === "review";
+  const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
+  const startupCommand = review
+    ? [
+        "/usr/bin/git",
+        "--git-dir=/sandbox/repo/.git",
+        "--work-tree=/sandbox/repo",
+        "status",
+        "--short",
+      ]
+    : ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"];
   const policy =
     current === "author"
       ? "pr-merge-conflict-fixer/policy.yaml"
@@ -230,17 +241,9 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   createOpenShellSandbox(
     env,
     {
-      command: review
-        ? [
-            "/usr/bin/git",
-            "--git-dir=/sandbox/repo/.git",
-            "--work-tree=/sandbox/repo",
-            "status",
-            "--short",
-          ]
-        : ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+      command: [],
       image: required(env.PI_IMAGE, "PI_IMAGE"),
-      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      name: sandboxName,
       policyPath: path.join(required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"), "tools", policy),
       driverConfig: review
         ? {
@@ -270,6 +273,11 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
             { destination: "/sandbox", source: path.join(work, "output") },
           ],
     },
+    tools,
+  );
+  execOpenShellSandbox(
+    credentialFreeEnvironment(env),
+    { command: startupCommand, name: sandboxName },
     tools,
   );
 }

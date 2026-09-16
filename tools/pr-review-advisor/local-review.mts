@@ -10,7 +10,14 @@ const IMPLEMENTATION = "tools/pr-review-advisor/local-review-implementation.mts"
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 function hostEnv(source: string): NodeJS.ProcessEnv {
   const homeBin = process.env.HOME && path.join(process.env.HOME, ".local", "bin");
-  const entries = [homeBin, path.dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"]
+  const entries = [
+    homeBin,
+    path.dirname(process.execPath),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ]
     .filter((value): value is string => typeof value === "string" && fs.existsSync(value))
     .map((value) => fs.realpathSync(value))
     .filter((value) => path.relative(source, value).startsWith(".."));
@@ -176,7 +183,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
       throw new Error("npm failed while preparing the trusted local review checkout");
     result = await run(
       process.execPath,
-      ["--no-warnings", path.join(checkout, IMPLEMENTATION), source],
+      ["--no-warnings", fs.realpathSync(path.join(checkout, IMPLEMENTATION)), source],
       { cwd: checkout, env, inherit: true },
     );
     return { code: result.code, signal: received ?? result.signal };

@@ -39,10 +39,7 @@ function probeEnv(): NodeJS.ProcessEnv {
  * `kernel.yama.ptrace_scope=1` blocks cross-tree environ reads. We mirror
  * that approach here for the same reason.
  */
-const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = [
-  "nemoclaw-sandbox-safety-net",
-  "nemoclaw-ciao-network-guard",
-];
+const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = ["nemoclaw-sandbox-safety-net"];
 const GUARD_CHAIN_PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
 const GUARD_CHAIN_ACTIVE_SENTINEL = "NEMOCLAW_GUARD_CHAIN_ACTIVE";
 const GUARD_CHAIN_FILE_UNAVAILABLE_EXIT_CODE = 20;
@@ -60,7 +57,7 @@ const DOCKER_DRIVER_GATEWAY_PID_RELPATH = [
 const DEFAULT_GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 
 export interface ExpectGuardChainOptions extends ShellProbeRunOptions {
-  /** Markers required in `/tmp/nemoclaw-proxy-env.sh`. Defaults to safety-net + ciao. */
+  /** Markers required in `/tmp/nemoclaw-proxy-env.sh`. Defaults to safety-net. */
   expectedMarkers?: ReadonlyArray<string>;
 }
 

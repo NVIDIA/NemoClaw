@@ -142,7 +142,7 @@ describe("runSandboxCreateStep", () => {
     { label: "OpenClaw", agent: null },
     { label: "Hermes", agent: { name: "hermes" } as SandboxCreateStepContext["agent"] },
   ])(
-    "persists the $label startup command for Docker-driver container restarts",
+    "leaves $label startup persistence with OpenShell on a Docker-driver gateway",
     async ({ agent }) => {
       const launch = makeLaunch({
         sandboxStartupCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
@@ -166,7 +166,7 @@ describe("runSandboxCreateStep", () => {
       expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
         expect.objectContaining({
           route: "native",
-          persistStartupCommand: true,
+          persistStartupCommand: false,
           openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
         }),
       );

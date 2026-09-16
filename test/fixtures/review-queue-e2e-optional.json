@@ -1,0 +1,23 @@
+{
+  "kind": "nemoclaw-advisor-e2e-v1",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "interest": "verification-mistake-proofing",
+  "expectedSpecialists": ["verification-mistake-proofing"],
+  "deterministic": {
+    "version": 25,
+    "planHash": "57865a2057ff92bee3a96a02d96f9e555fce6e1d5171c9c49dd7695121f9f61c"
+  },
+  "advisor": {
+    "recommendations": [
+      {
+        "selectorType": "all",
+        "id": "e2e-all",
+        "required": false,
+        "reason": "Verify the default suite."
+      }
+    ],
+    "noAdditionalE2eReason": null,
+    "unresolvedRecommendations": []
+  }
+}

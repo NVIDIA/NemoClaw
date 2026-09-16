@@ -21,16 +21,27 @@ export {
 
 export interface HermesPortableUninstallTransactionDeps {
   readonly journalStore?: HermesPortableUninstallJournalStore;
-  readonly prepare: () => HermesPortableUninstallAuthority;
-  readonly prepareReplacement?: () => HermesPortableUninstallAuthority | null;
+  readonly prepare: () =>
+    | HermesPortableUninstallAuthority
+    | Promise<HermesPortableUninstallAuthority>;
+  readonly prepareReplacement?: () =>
+    | HermesPortableUninstallAuthority
+    | null
+    | Promise<HermesPortableUninstallAuthority | null>;
   readonly revalidateResources: (
     authority: HermesPortableUninstallAuthority,
     phase: HermesPortableUninstallPhase,
-  ) => void;
-  readonly reconcileSandboxes: (authority: HermesPortableUninstallAuthority) => number;
-  readonly reconcileProviders: (authority: HermesPortableUninstallAuthority) => void;
+  ) => void | Promise<void>;
+  readonly reconcileSandboxes: (
+    authority: HermesPortableUninstallAuthority,
+  ) => number | Promise<number>;
+  readonly reconcileProviders: (
+    authority: HermesPortableUninstallAuthority,
+  ) => void | Promise<void>;
   readonly reconcileInference: (authority: HermesPortableUninstallAuthority) => void;
-  readonly verifyResourcesAbsent: (authority: HermesPortableUninstallAuthority) => void;
+  readonly verifyResourcesAbsent: (
+    authority: HermesPortableUninstallAuthority,
+  ) => void | Promise<void>;
   readonly retireRegistry: (authority: HermesPortableUninstallAuthority) => void;
   readonly retireLifecycleReceipts: (authority: HermesPortableUninstallAuthority) => void;
   readonly retirePrivateInferenceState: (authority: HermesPortableUninstallAuthority) => void;
@@ -45,18 +56,18 @@ export interface HermesPortableUninstallTransactionResult {
 }
 
 /** Run or resume the exact schema-5 transaction after its lifecycle and registry locks are held. */
-export function runHermesPortableUninstallTransaction(
+export async function runHermesPortableUninstallTransaction(
   stateDir: string,
   deps: HermesPortableUninstallTransactionDeps,
-): HermesPortableUninstallTransactionResult {
+): Promise<HermesPortableUninstallTransactionResult> {
   const journalStore = deps.journalStore ?? createHermesPortableUninstallJournalStore(stateDir);
   let journal = journalStore.read();
-  if (!journal) journal = journalStore.publishPrepared(deps.prepare());
+  if (!journal) journal = journalStore.publishPrepared(await deps.prepare());
   let sandboxContainersRemoved = 0;
   for (;;) {
     const phase = journal.phase;
     if (phase === "completed") {
-      const replacement = deps.prepareReplacement?.() ?? null;
+      const replacement = (await deps.prepareReplacement?.()) ?? null;
       if (replacement) {
         if (journalStore.authoritySha256(replacement) === journal.authoritySha256) {
           throw new Error("Hermes Portable completed journal matches live replacement authority");
@@ -72,29 +83,29 @@ export function runHermesPortableUninstallTransaction(
       };
     }
     if (phase === "prepared") {
-      deps.revalidateResources(journal.authority, phase);
-      sandboxContainersRemoved += deps.reconcileSandboxes(journal.authority);
+      await deps.revalidateResources(journal.authority, phase);
+      sandboxContainersRemoved += await deps.reconcileSandboxes(journal.authority);
       deps.afterPhaseAction?.(phase);
       journal = journalStore.replacePhase(journal, "sandboxes-retired");
       continue;
     }
     if (phase === "sandboxes-retired") {
-      deps.revalidateResources(journal.authority, phase);
-      deps.reconcileProviders(journal.authority);
+      await deps.revalidateResources(journal.authority, phase);
+      await deps.reconcileProviders(journal.authority);
       deps.afterPhaseAction?.(phase);
       journal = journalStore.replacePhase(journal, "providers-retired");
       continue;
     }
     if (phase === "providers-retired") {
-      deps.revalidateResources(journal.authority, phase);
+      await deps.revalidateResources(journal.authority, phase);
       deps.reconcileInference(journal.authority);
       deps.afterPhaseAction?.(phase);
       journal = journalStore.replacePhase(journal, "inference-retired");
       continue;
     }
     if (phase === "inference-retired") {
-      deps.revalidateResources(journal.authority, phase);
-      deps.verifyResourcesAbsent(journal.authority);
+      await deps.revalidateResources(journal.authority, phase);
+      await deps.verifyResourcesAbsent(journal.authority);
       deps.afterPhaseAction?.(phase);
       journal = journalStore.replacePhase(journal, "resources-absent");
       continue;

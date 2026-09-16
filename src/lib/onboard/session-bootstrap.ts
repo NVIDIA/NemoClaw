@@ -7,7 +7,10 @@ import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
-import { redact, redactFull, redactSensitiveText } from "../security/redact";
+export {
+  redactOnboardDiagnosticText,
+  redactOnboardCommandDiagnosticText,
+} from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -28,6 +31,7 @@ import {
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
+import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
@@ -223,14 +227,6 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     if (resolvedOptions.deferProcessExit === true) throw deferredExit;
     originalProcessExit(deferredExit.code);
   };
-}
-
-export function redactOnboardDiagnosticText(message: string): string {
-  return redactSensitiveText(message) ?? "";
-}
-
-export function redactOnboardCommandDiagnosticText(message: string): string {
-  return redactSensitiveText(redact(redactFull(message))) ?? "";
 }
 
 export function createPortableOnboardEnvironmentScope(
@@ -575,6 +571,7 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  assertNoIncompleteExternalComponentActivation(session);
   if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
     reportUnsupportedApfLifecycle("resume", deps);
   }
@@ -634,6 +631,7 @@ function prepareFreshSession(
   if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
     reportUnsupportedApfLifecycle("portable", deps);
   }
+  assertNoIncompleteExternalComponentActivation(deps.loadSession());
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();

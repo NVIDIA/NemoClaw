@@ -44,6 +44,7 @@ export interface RebuildDestroyPhaseInput {
     runtimeSelection: OpenShellRuntimeSelection | undefined,
     onConflict: RebuildBail,
   ) => Promise<void>;
+  mcpEntries?: readonly McpRebuildPreparation["entries"][number][];
   log: RebuildLog;
   bail: RebuildBail;
   force?: boolean;
@@ -53,7 +54,7 @@ export interface RebuildDestroyPhaseInput {
   ) => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: (
     runtimeSelection?: OpenShellRuntimeSelection,
-  ) => RebuildDeleteValidationResult;
+  ) => RebuildDeleteValidationResult | Promise<RebuildDeleteValidationResult>;
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -253,7 +254,7 @@ function reconcileFailedSandboxDelete(
 /**
  * Detach owned MCP state, delete the old sandbox, and then stop inference.
  * Boundary coverage: rebuild-flow.test.ts exercises success, stale recovery,
- * delete failure, provider reattach failure, and MCP-bearing registry retention.
+ * delete failure, provider reattach failure, and bounded MCP handoff retention.
  */
 export async function runRebuildDestroyPhase(
   input: RebuildDestroyPhaseInput,
@@ -303,9 +304,9 @@ export async function runRebuildDestroyPhase(
       const preparation = await prepareMcpForRebuild(
         sandboxName,
         staleRecovery,
-        input.force === true,
         bail,
         input.runtimeSelection,
+        input.mcpEntries ?? [],
       );
       return preparation;
     },
@@ -408,8 +409,8 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP preparation can await external systems; re-read the registry at the
-  // synchronous delete edge so those checks and deletion use one target.
+  // MCP preparation can await external systems; re-read non-MCP routing state
+  // at the synchronous delete edge so those checks and deletion use one target.
   if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
@@ -428,13 +429,19 @@ export async function runRebuildDestroyPhase(
   if (validateAtDeleteEdge) {
     let validation: RebuildDeleteValidationResult;
     try {
-      validation = validateAtDeleteEdge(rebuildMcpRuntimeSelection);
+      validation = await validateAtDeleteEdge(rebuildMcpRuntimeSelection);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);
       validation = {
         ok: false,
         message: "Replacement validation failed before sandbox deletion.",
+      };
+    }
+    if (validation.ok && !rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
+      validation = {
+        ok: false,
+        message: "Sandbox delete target changed during rebuild preparation.",
       };
     }
     if (!validation.ok) {
@@ -539,7 +546,7 @@ export async function runRebuildDestroyPhase(
         "  Sandbox deletion returned an error, and exact post-delete state is ambiguous.",
       );
       console.error(
-        "  MCP ownership and recovery metadata were preserved; local NIM was not stopped.",
+        "  The bounded MCP handoff and recovery metadata were preserved; local NIM was not stopped.",
       );
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
@@ -581,7 +588,7 @@ export async function runRebuildDestroyPhase(
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
     return null;
   }
-  if (!teardownSandboxDashboardForward(sandboxName)) {
+  if (!(await teardownSandboxDashboardForward(sandboxName))) {
     console.error(
       "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
     );

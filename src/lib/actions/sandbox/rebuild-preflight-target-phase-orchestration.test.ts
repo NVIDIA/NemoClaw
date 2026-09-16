@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
   ensureRebuildTargetGatewaySelected: vi.fn(async () => true),
-  getMcpPreparationRuntimeSelection: vi.fn(),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
   prepareSandboxWorkloadSourceFromRebuildHandoff: vi.fn(),
@@ -20,11 +19,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-flow-helpers")>()),
   ensureRebuildTargetGatewaySelected: mocks.ensureRebuildTargetGatewaySelected,
-}));
-
-vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
-  getMcpPreparationRuntimeSelection: mocks.getMcpPreparationRuntimeSelection,
 }));
 
 vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
@@ -73,19 +67,13 @@ import * as portPreflight from "../../onboard/preflight";
 import * as registry from "../../state/registry";
 import * as messagingPreflight from "./rebuild-messaging-conflict-preflight";
 import * as messagingPhase from "./rebuild-messaging-phase";
-import * as forwardService from "../../adapters/openshell/forward-service";
-import * as openshellResolution from "../../adapters/openshell/resolve";
+import * as forwardRecovery from "./forward-recovery";
 
 describe("prepareRebuildTargetPreflights", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getMcpPreparationRuntimeSelection.mockReturnValue({
-      gatewayName: "nemoclaw",
-      localTlsDir: "/authority/tls",
-      workspace: "default",
-    });
     mocks.prepareManagedWorkloadRebuildHandoff.mockResolvedValue(null);
     mocks.preflightAuthoritativeOnboardRuntime.mockResolvedValue(false);
     mocks.bail.mockReset();
@@ -223,8 +211,7 @@ describe("prepareRebuildTargetPreflights", () => {
     const probe = vi
       .spyOn(portPreflight, "checkPortAvailable")
       .mockResolvedValue({ ok: false, process: "nc", pid: 4321 });
-    vi.spyOn(openshellResolution, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
-    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(false);
+    vi.spyOn(forwardRecovery, "describeSandboxPortForwardListener").mockResolvedValue("foreign");
     mocks.bail.mockImplementationOnce((message: string) => {
       throw new Error(message);
     });
@@ -605,23 +592,15 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
   });
 
-  it("freezes one MCP runtime target before authoritative readiness (#10514)", async () => {
-    const runtimeSelection = {
-      gatewayName: "nemoclaw",
-      localTlsDir: "/authority/tls",
-      workspace: "default",
-    };
-    mocks.getMcpPreparationRuntimeSelection.mockReturnValue(runtimeSelection);
-
+  it("does not derive runtime authority from retired registry MCP fields (#11134)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard", {
       bridges: { github: { server: "github" } },
     });
 
-    expect(mocks.getMcpPreparationRuntimeSelection).toHaveBeenCalledOnce();
-    expect(readinessOptions?.runtimeSelection).toBe(runtimeSelection);
+    expect(readinessOptions).not.toHaveProperty("runtimeSelection");
     expect(messagingPreflight.preflightRebuildMessagingConflicts).toHaveBeenCalledWith(
       null,
-      expect.objectContaining({ runtimeSelection }),
+      expect.objectContaining({ runtimeSelection: undefined }),
     );
   });
 });

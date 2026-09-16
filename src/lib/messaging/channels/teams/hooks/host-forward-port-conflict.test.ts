@@ -141,7 +141,7 @@ describe("teams.hostForwardPortConflict hook", () => {
           pid: 4321,
           reason: "lsof reports nc (PID 4321) listening on port 3978",
         }),
-        isCurrentSandboxForward: () => false,
+        isCurrentSandboxForward: async () => false,
       }),
     ]);
 
@@ -192,7 +192,7 @@ describe("teams.hostForwardPortConflict hook", () => {
   });
 
   it("allows the current sandbox's live host forward during rebuild", async () => {
-    const isCurrentSandboxForward = vi.fn(() => true);
+    const isCurrentSandboxForward = vi.fn(async () => true);
     const registry = new MessagingHookRegistry([
       createTeamsHostForwardPortConflictHookRegistration({
         currentSandbox: "bob",
@@ -211,7 +211,7 @@ describe("teams.hostForwardPortConflict hook", () => {
         },
       }),
     ).resolves.toMatchObject({ outputs: {} });
-    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978, 1234);
+    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978);
   });
 
   it("accepts serialized applier inputs for registry-scoped checks", async () => {

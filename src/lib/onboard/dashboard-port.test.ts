@@ -10,20 +10,59 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type {
+  OpenShellForwardAdapter,
+  OpenShellForwardObservation,
+} from "../adapters/openshell/forward";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
+  createOpenShellForwardPortObserver,
   createDashboardPortScopedSandboxEntryPoints,
   type DashboardPortReservationScope,
-  findAvailableDashboardPort,
-  findDashboardForwardOwner,
+  findAvailableDashboardPortFromObservations,
   getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
-  resolveCreateSandboxDashboardPort,
+  reservePortAfterOwnedForwardDelete,
+  resolveCreateSandboxDashboardPortFromObservations,
   withDashboardPortReservationLock,
   withDashboardPortReservationScope,
 } from "./dashboard-port";
+
+function forwardObservation(
+  sandboxName: string,
+  port: number,
+  state: "absent" | "foreign" | "owned" | "stale" | "indeterminate",
+): OpenShellForwardObservation {
+  const forward = {
+    gatewayEndpoint: "https://127.0.0.1:9090",
+    gatewayName: "nemoclaw-9090",
+    workspace: "default",
+    sandboxName,
+    localHost: "127.0.0.1" as const,
+    port,
+  };
+  return state === "indeterminate"
+    ? {
+        state,
+        forward,
+        error: {
+          kind: "ownership",
+          message: "NemoClaw could not prove OpenShell forward ownership.",
+        },
+      }
+    : { state, forward };
+}
+
+function observePorts(
+  sandboxName: string,
+  states: ReadonlyMap<number, Parameters<typeof forwardObservation>[2]> = new Map(),
+) {
+  return vi.fn(async (ports: readonly number[]) =>
+    ports.map((port) => forwardObservation(sandboxName, port, states.get(port) ?? "absent")),
+  );
+}
 
 async function listenOnLoopback(port: number): Promise<Server> {
   const server = createServer();
@@ -56,101 +95,112 @@ async function unusedLoopbackPort(): Promise<number> {
   return address.port;
 }
 
-describe("findDashboardForwardOwner", () => {
-  it("parses openshell forward list column format (#2169)", () => {
-    const forwardList = [
-      "SANDBOX     BIND             PORT   PID     STATUS",
-      "test21      127.0.0.1        18789  42101   active",
-      "other       127.0.0.1        18790  42102   active",
-      "stopped     127.0.0.1        18792  42103   stopped",
-      "ansi        127.0.0.1        18793  42104   \u001b[32mrunning\u001b[0m",
-    ].join("\n");
+describe("typed OpenShell dashboard-port observation", () => {
+  it("binds an exact identity factory to one read-only adapter request", async () => {
+    const observeForwards = vi.fn<OpenShellForwardAdapter["observeForwards"]>(
+      async ({ forwards }) => forwards.map((forward) => ({ state: "absent" as const, forward })),
+    );
+    const observer = createOpenShellForwardPortObserver({
+      adapter: { observeForwards },
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "0.0.0.0",
+        port,
+      }),
+    });
 
-    assert.equal(findDashboardForwardOwner(forwardList, "18789"), "test21");
-    assert.equal(findDashboardForwardOwner(forwardList, "18790"), "other");
-    assert.equal(findDashboardForwardOwner(forwardList, "18791"), null);
-    assert.equal(findDashboardForwardOwner(forwardList, "18792"), null);
-    assert.equal(findDashboardForwardOwner(forwardList, "18793"), "ansi");
-    assert.equal(findDashboardForwardOwner("", "18789"), null);
-    assert.equal(findDashboardForwardOwner(null, "18789"), null);
-    assert.equal(findDashboardForwardOwner(undefined, "18789"), null);
-    const falsePositive = "sandbox18789 127.0.0.1 42001 9999 active";
-    assert.equal(findDashboardForwardOwner(falsePositive, "18789"), null);
-  });
-});
-
-describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
-  const stubBound = (...bound: number[]) => {
-    const set = new Set(bound);
-    return (port: number) => set.has(port);
-  };
-
-  it("returns the preferred port when no forward owns it and the host says it is free", () => {
-    assert.equal(findAvailableDashboardPort("cursor", 18789, "", stubBound()), 18789);
-  });
-
-  it("skips the preferred port when host reports it bound and falls through to the range scan", () => {
-    assert.equal(findAvailableDashboardPort("cursor", 18789, "", stubBound(18789)), 18790);
-  });
-
-  it("skips ports owned by other sandboxes and host-bound ports together", () => {
-    const forwardList = [
-      "SANDBOX  BIND  PORT  PID  STATUS",
-      "alpha    127.0.0.1  18789  111  running",
-    ].join("\n");
-    assert.equal(findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18790)), 18791);
-  });
-
-  it("returns the preferred port when this sandbox already owns it", () => {
-    const forwardList = [
-      "SANDBOX  BIND  PORT  PID  STATUS",
-      "cursor   127.0.0.1  18789  111  running",
-    ].join("\n");
-    assert.equal(findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18789)), 18789);
+    await expect(observer([18789, 18790])).resolves.toEqual([
+      {
+        state: "absent",
+        forward: {
+          gatewayEndpoint: "https://127.0.0.1:9090",
+          gatewayName: "nemoclaw-9090",
+          workspace: "default",
+          sandboxName: "cursor",
+          localHost: "0.0.0.0",
+          port: 18789,
+        },
+      },
+      {
+        state: "absent",
+        forward: {
+          gatewayEndpoint: "https://127.0.0.1:9090",
+          gatewayName: "nemoclaw-9090",
+          workspace: "default",
+          sandboxName: "cursor",
+          localHost: "0.0.0.0",
+          port: 18790,
+        },
+      },
+    ]);
+    expect(observeForwards).toHaveBeenCalledOnce();
   });
 
-  it("throws when every port in the range is occupied by other sandboxes", () => {
-    const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
-    for (let p = 18789; p <= 18799; p++) {
-      lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
-    }
-    assert.throws(
-      () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
-      /All dashboard ports in range 18789-18799 are occupied/,
+  it.each(["owned", "stale"] as const)("reuses an exact %s forward", (state) => {
+    expect(
+      findAvailableDashboardPortFromObservations("cursor", 18789, [
+        forwardObservation("cursor", 18789, state),
+      ]),
+    ).toBe(18789);
+  });
+
+  it("skips a preferred port with foreign ownership", () => {
+    expect(
+      findAvailableDashboardPortFromObservations("cursor", 18789, [
+        forwardObservation("cursor", 18789, "foreign"),
+        forwardObservation("cursor", 18790, "absent"),
+      ]),
+    ).toBe(18790);
+  });
+
+  it("blocks allocation when ownership is indeterminate", () => {
+    expect(() =>
+      findAvailableDashboardPortFromObservations("cursor", 18789, [
+        forwardObservation("cursor", 18789, "indeterminate"),
+        forwardObservation("cursor", 18790, "absent"),
+      ]),
+    ).toThrow(/could not prove OpenShell forward ownership/i);
+  });
+
+  it("treats missing observations as unverified instead of absent", () => {
+    expect(() => findAvailableDashboardPortFromObservations("cursor", 18789, [])).toThrow(
+      /unverified OpenShell forward ownership/,
     );
   });
 
-  it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
-    const allBound = new Set<number>();
-    for (let p = 18789; p <= 18799; p++) allBound.add(p);
-    assert.throws(
-      () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
-      /18789 → non-OpenShell host listener/,
-    );
-  });
+  it("rejects an adapter response that does not match its requested identities", async () => {
+    const observer = createOpenShellForwardPortObserver({
+      adapter: {
+        observeForwards: async () => [forwardObservation("other", 18789, "absent")],
+      },
+      forwardForPort: (port) => ({
+        gatewayEndpoint: "https://127.0.0.1:9090",
+        gatewayName: "nemoclaw-9090",
+        workspace: "default",
+        sandboxName: "cursor",
+        localHost: "127.0.0.1",
+        port,
+      }),
+    });
 
-  it("probes each port at most once even when the preferred port is in the range", () => {
-    const seen: number[] = [];
-    const stub = (port: number) => {
-      seen.push(port);
-      return port === 18789;
-    };
-    findAvailableDashboardPort("cursor", 18789, "", stub);
-    assert.deepEqual(seen, [18789, 18790]);
+    await expect(observer([18789])).rejects.toThrow(/incomplete forward ownership evidence/);
   });
 });
 
-describe("resolveCreateSandboxDashboardPort", () => {
+describe("resolveCreateSandboxDashboardPortFromObservations", () => {
   it("lets --control-ui-port override CHAT_UI_URL, registry, agent, and default ports", () => {
     let preferredSeen: number | null = null;
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",
       controlUiPort: 19000,
       chatUiUrlEnv: "http://127.0.0.1:18790",
       persistedPort: 18791,
       agentForwardPort: 18792,
       defaultPort: 18793,
-      forwardListOutput: "",
+      forwardObservations: [],
       findAvailablePort: (_sandboxName, preferredPort) => {
         preferredSeen = preferredPort;
         return preferredPort;
@@ -165,18 +215,18 @@ describe("resolveCreateSandboxDashboardPort", () => {
 
   it("uses CHAT_UI_URL port before registry and rewrites the URL to the allocated port", () => {
     const warnings: string[] = [];
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",
       controlUiPort: null,
       chatUiUrlEnv: "https://chat.example.test:18790/ui/",
       persistedPort: 18791,
       agentForwardPort: 18792,
       defaultPort: 18793,
-      forwardListOutput: "FORWARDS",
-      findAvailablePort: (sandboxName, preferredPort, forwardListOutput) => {
+      forwardObservations: [],
+      findAvailablePort: (sandboxName, preferredPort, forwardObservations) => {
         assert.equal(sandboxName, "cursor");
         assert.equal(preferredPort, 18790);
-        assert.equal(forwardListOutput, "FORWARDS");
+        assert.deepEqual(forwardObservations, []);
         return 18794;
       },
       warn: (message) => warnings.push(message),
@@ -191,14 +241,14 @@ describe("resolveCreateSandboxDashboardPort", () => {
   it("falls back through registry, agent, and default ports", () => {
     const preferredPorts: number[] = [];
     const resolve = (persistedPort: number | null, agentForwardPort: number | null | undefined) =>
-      resolveCreateSandboxDashboardPort({
+      resolveCreateSandboxDashboardPortFromObservations({
         sandboxName: "cursor",
         controlUiPort: null,
         chatUiUrlEnv: null,
         persistedPort,
         agentForwardPort,
         defaultPort: 18793,
-        forwardListOutput: "",
+        forwardObservations: [],
         findAvailablePort: (_sandboxName, preferredPort) => {
           preferredPorts.push(preferredPort);
           return preferredPort;
@@ -212,14 +262,14 @@ describe("resolveCreateSandboxDashboardPort", () => {
   });
 
   it("normalizes schemeless CHAT_UI_URL values before preserving their host", () => {
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",
       controlUiPort: null,
       chatUiUrlEnv: "remote.example.test:18790",
       persistedPort: null,
       agentForwardPort: null,
       defaultPort: 18789,
-      forwardListOutput: "",
+      forwardObservations: [],
       findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
     });
 
@@ -228,14 +278,14 @@ describe("resolveCreateSandboxDashboardPort", () => {
   });
 
   it("ignores malformed CHAT_UI_URL when rewriting the dashboard URL", () => {
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",
       controlUiPort: null,
       chatUiUrlEnv: "https://example.test:abc",
       persistedPort: 18791,
       agentForwardPort: null,
       defaultPort: 18789,
-      forwardListOutput: "",
+      forwardObservations: [],
       findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
     });
 
@@ -244,14 +294,14 @@ describe("resolveCreateSandboxDashboardPort", () => {
   });
 
   it("ignores malformed CHAT_UI_URL when --control-ui-port supplies the URL", () => {
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       sandboxName: "cursor",
       controlUiPort: 19000,
       chatUiUrlEnv: "https://example.test:abc",
       persistedPort: 18791,
       agentForwardPort: null,
       defaultPort: 18789,
-      forwardListOutput: "",
+      forwardObservations: [],
       findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
     });
 
@@ -415,9 +465,9 @@ describe("dashboard port reservation", () => {
         persistedPort: null,
         agentForwardPort: null,
         defaultPort: 18789,
-        forwardListOutput: "",
+        observeForwardPorts: observePorts("cursor"),
         registryOccupiedPorts: new Map(),
-        findAvailablePort: (_sandboxName, preferredPort, _forwardList, _bound, occupied) =>
+        findAvailablePort: (_sandboxName, preferredPort, _observations, occupied) =>
           occupied?.has(String(preferredPort)) ? 18790 : preferredPort,
         warn: (message) => warnings.push(message),
       },
@@ -442,19 +492,95 @@ describe("dashboard port reservation", () => {
     await result.reservation?.release();
     assert.deepEqual(released, [18790]);
   });
+
+  it("defers a persisted port reservation only for the exact owned forward", async () => {
+    const reservePort = vi.fn();
+    const observeForwardPorts = observePorts("cursor", new Map([[18789, "owned"]]));
+
+    const result = await reserveCreateSandboxDashboardPort(
+      {
+        sandboxName: "cursor",
+        controlUiPort: null,
+        chatUiUrlEnv: null,
+        persistedPort: 18789,
+        agentForwardPort: null,
+        observeForwardPorts,
+        registryOccupiedPorts: new Map(),
+      },
+      reservePort,
+    );
+
+    expect(result).toMatchObject({
+      effectivePort: 18789,
+      preferredPort: 18789,
+      reservation: null,
+    });
+    expect(observeForwardPorts).toHaveBeenCalledOnce();
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
+  it("retries only EADDRINUSE while an owned forward listener retires", async () => {
+    const release = vi.fn(async () => undefined);
+    const reservePort = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("still bound"), { code: "EADDRINUSE" }))
+      .mockRejectedValueOnce(Object.assign(new Error("still bound"), { code: "EADDRINUSE" }))
+      .mockResolvedValueOnce({ port: 18789, release });
+    const sleep = vi.fn();
+
+    const reservation = await reservePortAfterOwnedForwardDelete(18789, {
+      reservePort,
+      sleep,
+    });
+
+    expect(reservation.port).toBe(18789);
+    expect(reservePort.mock.calls).toEqual([[18789], [18789], [18789]]);
+    expect(sleep.mock.calls).toEqual([[1000], [1000]]);
+    await reservation.release();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a non-collision reservation failure", async () => {
+    const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const reservePort = vi.fn().mockRejectedValue(failure);
+    const sleep = vi.fn();
+
+    await expect(reservePortAfterOwnedForwardDelete(18789, { reservePort, sleep })).rejects.toBe(
+      failure,
+    );
+    expect(reservePort).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("rebinds only a dashboard port deferred for an owned forward", async () => {
+    const release = vi.fn(async () => undefined);
+    const reservePort = vi.fn(async (port: number) => ({ port, release }));
+
+    await withDashboardPortReservationScope(async (scope) => {
+      scope.deferOwnedForwardPort(18789);
+      await scope.rebindAfterOwnedForwardDelete({ reservePort, sleep: vi.fn() });
+      expect(scope.current?.port).toBe(18789);
+    });
+
+    expect(reservePort).toHaveBeenCalledExactlyOnceWith(18789);
+    expect(release).toHaveBeenCalledOnce();
+  });
 });
 
-describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
-  const stubBound = (...bound: number[]) => {
-    const set = new Set(bound);
-    return (port: number) => set.has(port);
-  };
-
-  it("treats ports persisted to sibling sandboxes in the registry as occupied even when the active gateway's forward list does not see them", () => {
+describe("typed dashboard-port multi-gateway registry occupancy", () => {
+  it("treats ports persisted to sibling sandboxes in the registry as occupied", () => {
     const registryOccupied = new Map<string, string>([["18789", "instance-a"]]);
 
     assert.equal(
-      findAvailableDashboardPort("instance-b", 18789, "", stubBound(), registryOccupied),
+      findAvailableDashboardPortFromObservations(
+        "instance-b",
+        18789,
+        [
+          forwardObservation("instance-b", 18789, "absent"),
+          forwardObservation("instance-b", 18790, "absent"),
+        ],
+        registryOccupied,
+      ),
       18790,
     );
   });
@@ -463,7 +589,12 @@ describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
     const registryOccupied = new Map<string, string>([["18789", "instance-a"]]);
 
     assert.equal(
-      findAvailableDashboardPort("instance-a", 18789, "", stubBound(), registryOccupied),
+      findAvailableDashboardPortFromObservations(
+        "instance-a",
+        18789,
+        [forwardObservation("instance-a", 18789, "owned")],
+        registryOccupied,
+      ),
       18789,
     );
   });
@@ -471,39 +602,34 @@ describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
   it("ignores registry entries with null or invalid dashboard ports", () => {
     const noPorts = new Map<string, string>();
 
-    assert.equal(findAvailableDashboardPort("instance-b", 18789, "", stubBound(), noPorts), 18789);
-  });
-
-  it("includes registry-owned ports in the exhaustion error so the operator can see who holds them", () => {
-    const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
-    for (let p = 18789; p <= 18798; p++) {
-      lines.push(`forwarded${p}    127.0.0.1  ${p}  ${p}  running`);
-    }
-    const registryOccupied = new Map<string, string>([["18799", "instance-z"]]);
-
-    assert.throws(
-      () =>
-        findAvailableDashboardPort(
-          "instance-y",
-          18789,
-          lines.join("\n"),
-          stubBound(),
-          registryOccupied,
-        ),
-      /18799 → instance-z/,
+    assert.equal(
+      findAvailableDashboardPortFromObservations(
+        "instance-b",
+        18789,
+        [forwardObservation("instance-b", 18789, "absent")],
+        noPorts,
+      ),
+      18789,
     );
   });
 
-  it("lets the active gateway's forward-list entry win when both views see the same port", () => {
-    const forwardList = [
-      "SANDBOX  BIND  PORT  PID  STATUS",
-      "live     127.0.0.1  18789  111  running",
-    ].join("\n");
-    const registryOccupied = new Map<string, string>([["18789", "stale"]]);
+  it("includes registry-owned ports in the exhaustion error so the operator can see who holds them", () => {
+    const registryOccupied = new Map<string, string>();
+    const observations: OpenShellForwardObservation[] = [];
+    for (let port = 18789; port <= 18799; port += 1) {
+      registryOccupied.set(String(port), port === 18799 ? "instance-z" : `instance-${port}`);
+      observations.push(forwardObservation("instance-y", port, "absent"));
+    }
 
     assert.throws(
-      () => findAvailableDashboardPort("fresh", 18789, forwardList, () => true, registryOccupied),
-      /18789 → live/,
+      () =>
+        findAvailableDashboardPortFromObservations(
+          "instance-y",
+          18789,
+          observations,
+          registryOccupied,
+        ),
+      /18799 → instance-z/,
     );
   });
 });
@@ -548,7 +674,15 @@ describe("getRegistryOccupiedDashboardPorts", () => {
       const occupied = getRegistryOccupiedDashboardPorts("instance-b");
       assert.equal(occupied.get("18789"), "instance-a (gateway 9123)");
       assert.equal(
-        findAvailableDashboardPort("instance-b", 18789, "", () => false, occupied),
+        findAvailableDashboardPortFromObservations(
+          "instance-b",
+          18789,
+          [
+            forwardObservation("instance-b", 18789, "absent"),
+            forwardObservation("instance-b", 18790, "absent"),
+          ],
+          occupied,
+        ),
         18790,
       );
     } finally {
