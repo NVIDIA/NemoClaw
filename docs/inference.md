@@ -12,7 +12,7 @@ The provider's local `name` connects it to an agent route; it does not select a 
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
-| NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint; see [deployment usage](usage.md#configuration-and-credentials) | [Managed Ollama](../examples/managed-ollama.yaml) |
+| NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/vllm.yaml) |
 | The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/remote-vllm.yaml) |
@@ -82,6 +82,46 @@ Ordinary apply rejects these changes rather than replacing the sandbox automatic
 Use a separate deployment when moving from an older image; changing YAML does not migrate native agent state.
 For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
 See [deployment recovery](usage.md) for the operation workflow.
+
+## Run Managed Ollama
+
+Use the [managed Ollama example](../examples/managed-ollama.yaml) with OpenClaw or Hermes and `openai-completions`.
+Before planning, select your own deployment UID, current agent image, immutable `ollama/ollama@sha256:...` image, and route model including its tag.
+This backend uses a local Docker engine and an existing network that supports published container ports.
+It does not create that network.
+Do not select Docker's `host` network: the managed container contract publishes container port 11434 to the address and port in the provider endpoint.
+
+The endpoint must be an explicit private or loopback IP URL ending in `/v1`, reachable from both the applying process and OpenShell.
+The endpoint has no generated bearer credential or TLS in this mode; restrict access through the host's existing network controls.
+Do not add `service`, `ollamaProxy`, or a provider `credential` to this declaration.
+The current container contract requests no GPU devices.
+Use a CPU-sized model for this path; GPU acceleration in this managed contract remains **TBD**.
+For an independently operated GPU-enabled Ollama daemon, evaluate the separate [external proxy path](#use-external-ollama-through-a-managed-proxy).
+
+Apply can pull the image and model, creates an owned model volume and container, and sends inference requests.
+Ensure the engine can fetch the image and the container can fetch the model, with enough storage and host memory for both.
+From the directory containing your adapted `deployment.yaml`:
+
+```sh
+nemoclaw plan --state-dir .local/ollama deployment.yaml
+nemoclaw apply --state-dir .local/ollama deployment.yaml
+nemoclaw export --state-dir .local/ollama --output observed.yaml
+```
+
+Inspect the plan before applying and use the export only after it succeeds.
+The SDK pulls a model through `/api/pull` only after a complete `/api/tags` inventory confirms it is absent.
+Ollama model tags are mutable; NemoClaw records the observed digest in model state, but this does not turn the requested tag into an immutable pin.
+The generic vLLM backend instead requires an immutable repository revision before download.
+Successful apply establishes the API probe described under [verification](#verify-the-result); verify a native reply separately.
+
+If the owned container is stopped, apply can start it and then inspect its model inventory.
+An inaccessible or malformed inventory does not authorize another model pull.
+After an interrupted pull, retain the original YAML and state and explicitly reapply after correcting the reported failure.
+Destroy removes the owned service and OpenShell registration while retaining model storage and the pre-existing network.
+See [state retention](state.md) before removing any retained data.
+
+The [service contract](../crates/nemoclaw-sdk/src/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/ollama/models.rs), and [recovery evidence](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
+The [original live result](validation/rust-ollama-linux-arm64.json) used CPU inference and records the host-network port-publication failure; it does not qualify GPU execution.
 
 ## Authenticate a Managed vLLM Service
 
@@ -233,6 +273,39 @@ flowchart LR
     C[Credential reference resolved during apply] --> B
     B --> D[Upstream endpoint: real provider key]
 ```
+
+## Share a Gateway across Deployments
+
+Each deployment UID derives a distinct OpenShell workspace containing its provider, primary inference route, and sandbox.
+Separate YAML files with fresh UIDs and separate state directories can use the same external gateway without sharing that route.
+Use the gateway operator's authorization for each workspace and [select the matching workspace](interfaces.md#select-the-gateway-and-workspace) for native access.
+Giving two documents the same UID does not create independent deployments.
+
+Use checked `nemoclaw export` to inspect the route against retained intent.
+An ambient OpenShell route edit can produce drift; it is not a NemoClaw reconnect or model-switch procedure.
+Follow [the change path](usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
+The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [route mutation](../crates/nemoclaw-sdk/src/openshell/mutation.rs) define workspace ownership.
+
+## Understand Timeout Budgets
+
+Choose the budget for the phase that failed; extending an agent turn does not extend model loading or readiness.
+
+| Phase | Current budget and setting |
+|---|---|
+| OpenClaw agent turn and native provider request | First agent's `execution.timeoutSeconds`; defaults to 600 seconds; see [execution defaults](agents.md#openclaw-execution-settings) |
+| Managed vLLM backend loading | `service.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
+| Managed vLLM readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container, watchdog, and data in place |
+| Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
+| Managed gateway readiness | Fixed 90-second wait |
+| Sandbox/agent readiness | Fixed 120-second wait |
+| Apply's API probe | Fixed 90-second sandbox execution; non-Pi HTTP probes abort after 80 seconds |
+| Managed vLLM apply's native reply probe | OpenClaw: 300-second native turn; Hermes: 280-second HTTP request within a 300-second Fabric probe; both have a 360-second sandbox-execution bound |
+
+These are phase limits, not a promised total duration for apply.
+Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
+The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
+Use the [field reference](reference/configuration.md), [probe implementation](../crates/nemoclaw-sdk/src/openshell/probes.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/inline_recipe.rs) for the current boundaries.
+For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result
 

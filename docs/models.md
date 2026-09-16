@@ -62,11 +62,61 @@ Unchanged apply and export verify local receipts and file metadata without fetch
 
 Model changes replace the inference process while preserving its storage volume and previous snapshots.
 Failed observation stops planning; failed startup retains the established container and model data.
-A watchdog stop requires explicit apply to recover.
+A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-runtime).
 
 For models requiring preparation or patches, keep `backend: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe’s tools in the pinned runtime image.
 There are no built-in model-specific backends.
+
+## Diagnose and Recover a Stopped Runtime
+
+The managed vLLM supervisor continues checking host memory after the CLI exits.
+It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and does not automatically restart inference.
+A native process exit also ends supervision of that process.
+The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
+Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
+Read `detail` with the timestamp: a `ready` file from an earlier container start does not prove current readiness.
+
+Collect diagnostics on the execution host using Docker access to the same engine selected by the deployment.
+For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
+From any directory, set the engine socket and container name for this deployment:
+
+```sh
+model_engine=unix:///var/run/docker.sock
+model_container=REPLACE_WITH_WORKSPACE-inference
+docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{json .Config.Labels}}'
+```
+
+Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) in the container name.
+Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
+This name/label check helps select diagnostics; it does not replace the SDK's generation and durable-identity checks or authorize manual mutation.
+
+```sh
+diagnostic_dir=$(mktemp -d)
+docker --host "$model_engine" cp "$model_container:/data/status.json" "$diagnostic_dir/status.json"
+docker --host "$model_engine" logs --tail 100 "$model_container" > "$diagnostic_dir/runtime.log" 2>&1
+printf 'Diagnostics: %s\n' "$diagnostic_dir"
+```
+
+These commands read the selected container, including a stopped container, and write local diagnostic files.
+The container log includes supervisor diagnostics and inherited native process output; inspect it privately before sharing.
+If status is missing or the engine is unreachable, retain the original apply error and deployment state; failed observation does not prove resource absence.
+
+| Stop detail | Recovery decision |
+|---|---|
+| Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
+| Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
+| Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
+| Inference process exited | Resolve the native error using the selected model, runtime image, and recipe evidence |
+| Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
+
+After correcting the conditions, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
+An unfinished apply must first reconcile that exact intent; do not change its timeout/model settings to bypass the guard.
+For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
+Successful recovery must pass readiness and return the managed service's native `agentResponse`; a restarted container alone is insufficient.
+No recovery step requires deleting receipts, keys, volumes, or ownership bindings.
+
+The [runtime reporter](../crates/nemoclaw-runtime/src/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK status reader](../crates/nemoclaw-sdk/src/managed/artifacts.rs) define these diagnostics and failure boundaries.
 
 ## Configure Nemotron on an AMD64 GPU Host
 

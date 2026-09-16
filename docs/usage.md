@@ -49,7 +49,7 @@ Images must use immutable SHA-256 references.
 Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`, with a pinned model, backend, serving settings, and memory policy.
 
 The checked-in [DGX Spark example](../examples/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
-Managed Ollama uses `endpoint` plus `ollama`, an existing Docker network, and a local Unix engine socket.
+Follow [managed Ollama](inference.md#run-managed-ollama) for its endpoint, local engine, network, model, and recovery requirements.
 Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
 Fabric harnesses other than OpenClaw and Hermes require external gateway and inference.
 

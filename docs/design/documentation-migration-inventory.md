@@ -76,7 +76,7 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `inference/choose-inference-provider.mdx` | Rewrite | `inference.md`: endpoint/API/credential selection and management modes; distinguish configuration from vendor qualification | D05 | Pending audit |
 | `inference/choose-local-inference-server.mdx` | Rewrite | `inference.md`, `models.md`: managed Ollama/vLLM versus external service ownership | D05 | Pending audit |
 | `inference/choose-model.mdx` | Rewrite | `models.md`: model revision, capacity, API, context, and qualification; remove old catalog assumptions | D05 | Pending audit |
-| `inference/configure-inference-timeouts.mdx` | Rewrite | `agents.md`, `inference.md`: execution timeout versus startup, readiness, and provider budgets | D05, D06 | Pending audit |
+| `inference/configure-inference-timeouts.mdx` | Rewrite | `agents.md`, `inference.md`: execution timeout versus startup, readiness, and provider budgets | D05, D06 | Written: [phase budgets](../inference.md#understand-timeout-budgets); SDK probes/readiness, native adapters and runtime supervisor. No legacy environment-variable mapping. |
 | `inference/configure-model-capabilities.mdx` | Rewrite | `inference.md`: supported OpenClaw reasoning fields and Pi native metadata; no inferred vision qualification | D05 | Pending audit |
 | `inference/configure-model-limits.mdx` | Rewrite | `inference.md`: agent context/output limits versus managed-server capacity; harness-specific constraints | D05 | Pending audit |
 | `inference/custom-endpoint-security.mdx` | Merge | `security.md`, `inference.md`: current HTTPS/private-address rules and credential routing | D05, D08 | Pending audit |
@@ -87,12 +87,12 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `inference/set-up-llama-cpp.mdx` | Hold | `inference.md`, `migration.md`: old managed installation is unavailable; any external endpoint example needs API qualification | D05 | Pending audit |
 | `inference/set-up-model-router.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed router or model-pool lifecycle | D05 | Pending audit |
 | `inference/set-up-nvidia-nim.mdx` | Hold | `inference.md`, `migration.md`: no equivalent managed NIM setup; qualify an external endpoint separately | D05 | Pending audit |
-| `inference/set-up-ollama.mdx` | Rewrite | `inference.md`, `usage.md`: managed container/network/storage/model contract and recovery | D05 | Pending audit |
+| `inference/set-up-ollama.mdx` | Rewrite | `inference.md`, `usage.md`: managed container/network/storage/model contract and recovery | D05 | Written: [managed Ollama](../inference.md#run-managed-ollama); service/model code and retained CPU/recovery records. Managed GPU execution requires a supported container contract and live qualification. |
 | `inference/set-up-openai-compatible-endpoint.mdx` | Merge | `inference.md`: API selection, endpoint and credential references, real verification | D05 | Pending audit |
 | `inference/set-up-sub-agent.mdx` | Rewrite | `agents.md`, `migration.md`: distinguish declared OpenClaw agents sharing one route from old auxiliary-model/direct-credential setup | D06 | Pending audit |
 | `inference/set-up-vllm-on-two-dgx-sparks.mdx` | Hold | `remote-service.md`, `migration.md`: SSH service placement and same-host two-daemon evidence do not qualify distributed inference | D05 | Pending audit |
 | `inference/set-up-vllm-on-two-dgx-stations.mdx` | Hold | `remote-service.md`, `migration.md`: no inherited multi-node profile or hardware qualification | D05 | Pending audit |
-| `inference/set-up-vllm.mdx` | Rewrite | `inference.md`, `models.md`, `recipes.md`: immutable runtime, model revision, service limits, memory supervision | D05 | Pending audit |
+| `inference/set-up-vllm.mdx` | Rewrite | `inference.md`, `models.md`, `recipes.md`: immutable runtime, model revision, service limits, memory supervision | D05 | Written: [pinned models](../models.md#pin-and-serve-the-model) and [stop recovery](../models.md#diagnose-and-recover-a-stopped-runtime); runtime supervisor/status reader and watchdog tests. Platform/model qualification stays scoped to retained records. |
 | `inference/switch-models.mdx` | Rewrite | `usage.md`, `inference.md`: change desired route model; identify runtime restart and conversation effects by harness | D04, D05 | Pending audit |
 | `inference/switch-providers.mdx` | Rewrite | `usage.md`, `inference.md`: plan current endpoint/provider changes; distinguish route update from sandbox replacement | D04, D05 | Pending audit |
 | `inference/understand-provider-validation.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: configuration checks, observations, active probes, failure preservation | D05 | Pending audit |
@@ -102,9 +102,9 @@ Held pages may contain reusable explanations, but their old commands must remain
 | `inference/use-nvidia-endpoints.mdx` | Merge | `inference.md`: candidate endpoint example with explicit model/API evidence | D05 | Pending audit |
 | `inference/use-openai.mdx` | Merge | `inference.md`: candidate completions/Responses examples scoped by harness and evidence | D05 | Pending audit |
 | `inference/use-openrouter.mdx` | Merge | `inference.md`: candidate compatible endpoint example without inherited catalog validation | D05 | Pending audit |
-| `inference/use-shared-gateway-routes.mdx` | Rewrite | `usage.md`, `inference.md`: deployment-owned routes and drift; no ambient reconnect/repoint workflow | D04, D05 | Pending audit |
+| `inference/use-shared-gateway-routes.mdx` | Rewrite | `usage.md`, `inference.md`: deployment-owned routes and drift; no ambient reconnect/repoint workflow | D04, D05 | Written: [workspace route ownership](../inference.md#share-a-gateway-across-deployments); compiler and workspace-scoped route mutation. |
 | `inference/verify-inference-route.mdx` | Rewrite | `inference.md`, `troubleshooting.md`: distinguish declared settings, observed route, and actual agent reply | D05 | Pending audit |
-| `inference/view-active-inference-route.mdx` | Rewrite | `usage.md`, `inference.md`: checked export and documented observations; remove `inference get` commands | D04, D05 | Pending audit |
+| `inference/view-active-inference-route.mdx` | Rewrite | `usage.md`, `inference.md`: checked export and documented observations; remove `inference get` commands | D04, D05 | Written: [checked route export](../inference.md#share-a-gateway-across-deployments); compiler/export drift checks. No current inference-get CLI. |
 
 ## Sandbox Operations — 26 Sources
 

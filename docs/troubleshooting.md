@@ -54,8 +54,8 @@ Retain the original binding while investigating the selected gateway and engine.
 ## Inference and Agent Readiness
 
 Use [inference verification](inference.md#verify-the-result) to distinguish configuration readiness from a successful reply.
-For stopped Ollama, use [the recovery behavior](usage.md#updates-and-recovery); a failed inventory must not be treated as an absent model.
-For a managed model or watchdog stop, use [model lifecycle guidance](models.md).
+For stopped Ollama, use [the managed Ollama procedure](inference.md#run-managed-ollama); a failed inventory must not be treated as an absent model.
+For a managed model or watchdog stop, inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime).
 For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-external-ollama-through-a-managed-proxy).
 
 | Observation | What it establishes | Next check |
@@ -64,7 +64,7 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Apply's API probe succeeds | The configured route answers the probe | Complete a native agent turn through the intended interface |
 | Agent configuration drift | Native settings differ from retained intent | Restore expected settings; checks do not overwrite them |
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
-| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect the [model lifecycle](models.md) and correct capacity/startup conditions before explicit recovery |
+| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 
