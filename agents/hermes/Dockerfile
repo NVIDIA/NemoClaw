@@ -209,11 +209,9 @@ FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS h
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-# Tell upstream Hermes where this packaged install places its built-in plugins;
-# native user and opted-in project plugin discovery remain enabled. Keep the
-# stock-image lazy target when a published base image lags Dockerfile.base.
-ENV HERMES_BUNDLED_PLUGINS=/opt/hermes/plugins \
-    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+# Keep the stock-image lazy dependency target when a published base image lags
+# Dockerfile.base. The final stage also creates and verifies the directory.
+ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 ENV HERMES_SKIP_CHMOD=1
 
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
@@ -1204,7 +1202,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
         /sandbox/.hermes/profiles/dashboard-home \
-    && chmod 2770 /sandbox/.hermes/lazy-packages \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \
@@ -1397,8 +1395,8 @@ RUN chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.hermes; \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
-        find /sandbox/.hermes/lazy-packages -type d -exec chmod 2770 {} +; \
-        find /sandbox/.hermes/lazy-packages -type f -exec chmod 660 {} +; \
+        find /sandbox/.hermes/lazy-packages -type d -exec chmod 750 {} +; \
+        find /sandbox/.hermes/lazy-packages -type f -exec chmod 640 {} +; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod a+rwx "$p"; \
         done; \
