@@ -23,10 +23,14 @@ const PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256 =
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
+  return startupArgvFor(SANDBOX, ...extra);
+}
+
+function startupArgvFor(sandboxName: string, ...extra: string[]): string[] {
   return [
     "env",
     "NEMOCLAW_HERMES_API_PORT=8642",
-    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
+    `NEMOCLAW_SANDBOX_NAME=${sandboxName}`,
     ...extra,
     "/usr/local/bin/nemoclaw-start",
   ];
@@ -246,6 +250,30 @@ describe("Hermes portable startup contract", () => {
       expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
     },
   );
+
+  it("derives reviewed transition descriptors for the actual sandbox name (#11766)", () => {
+    const sandboxName = "hermes-portable-e2e";
+    const installedAgent = copyAgent();
+    removeReviewedSkillsMetadata(installedAgent);
+    removeReviewedNativeOwnershipMetadata(installedAgent);
+    const installed = resolveHermesPortableStartupContract({
+      agent: installedAgent,
+      sandboxName,
+      startupArgv: startupArgvFor(sandboxName),
+    });
+    const input = {
+      agent: loadAgent("hermes"),
+      sandboxName,
+      startupArgv: startupArgvFor(sandboxName),
+    };
+    const current = resolveHermesPortableStartupContract(input);
+
+    expect(installed.startupDescriptorSha256).not.toBe(current.startupDescriptorSha256);
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(installed, sandboxName),
+    ).not.toThrow();
+    expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
+  });
 
   it("rejects unreviewed manifest transitions with an unchanged startup descriptor (#11248)", () => {
     const current = resolveHermesPortableStartupContract({
