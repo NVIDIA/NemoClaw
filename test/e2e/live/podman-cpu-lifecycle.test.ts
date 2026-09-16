@@ -424,6 +424,28 @@ exit 1
         };
         const beforeStop = vi.fn();
         const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
+        const verifyRestartedAgent = vi.fn(async () => {
+          await runCommand(
+            shellProbe,
+            openshellBin,
+            [
+              "sandbox",
+              "exec",
+              "--name",
+              sandboxName,
+              "-g",
+              GATEWAY_NAME,
+              "--",
+              "cat",
+              "/tmp/nemoclaw-agent-proof",
+            ],
+            {
+              artifactName: `podman-lifecycle-restart-proof-${agent}`,
+              env: cliEnv,
+              timeoutMs: 60_000,
+            },
+          );
+        });
 
         await expect(lifecycle.stop(input, { beforeStop })).resolves.toEqual({
           exitCode: 0,
@@ -435,10 +457,7 @@ exit 1
 
         expect(agentBundle.preflightDoctor.preflightLifecycle("start", input)).toBeNull();
         await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
-        await lifecycle.verifyStarted(
-          input,
-          vi.fn(async () => undefined),
-        );
+        await lifecycle.verifyStarted(input, verifyRestartedAgent);
         const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
@@ -447,6 +466,7 @@ exit 1
           state: "stopped",
         });
         await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
+        await lifecycle.verifyStarted(input, verifyRestartedAgent);
         const restarted = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(restarted.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
         await expect(lifecycle.stop(input, { beforeStop: vi.fn() })).resolves.toEqual({
