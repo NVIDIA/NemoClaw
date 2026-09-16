@@ -5,8 +5,10 @@
 mod tests;
 
 mod agent;
+mod native_profile;
 mod network;
 mod profile;
+pub use native_profile::definition as inference_profile;
 pub use network::policy_json;
 mod inference;
 use inference::{INFERENCE_ENV, inference_environment, inference_settings};
