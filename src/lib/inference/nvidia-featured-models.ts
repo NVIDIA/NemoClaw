@@ -53,7 +53,7 @@ export type FeaturedModelOption = {
   label: string;
 };
 
-type RetiredFeaturedModelIds = ReadonlySet<string> | readonly string[];
+export type RetiredFeaturedModelIds = ReadonlySet<string> | readonly string[];
 
 export type FeaturedModelFetchResult =
   | {
@@ -91,10 +91,12 @@ function sanitizeFeaturedCatalogText(value: string, maxLength: number): string {
     .slice(0, maxLength);
 }
 
-function isRetiredFeaturedModelId(
-  idKey: string,
-  retiredModelIds: RetiredFeaturedModelIds,
+/** Returns whether an NVIDIA Endpoints model is blocked by the retirement policy. */
+export function isRetiredNvidiaFeaturedModelId(
+  id: string,
+  retiredModelIds: RetiredFeaturedModelIds = RETIRED_NVIDIA_FEATURED_MODEL_IDS,
 ): boolean {
+  const idKey = id.trim().toLowerCase();
   if ("has" in retiredModelIds) {
     return retiredModelIds.has(idKey);
   }
@@ -130,7 +132,7 @@ export function parseNvidiaFeaturedModels(
       id.length > MAX_NVIDIA_FEATURED_MODEL_ID_LENGTH ||
       !label ||
       !isSafeModelId(id) ||
-      isRetiredFeaturedModelId(idKey, retiredModelIds) ||
+      isRetiredNvidiaFeaturedModelId(idKey, retiredModelIds) ||
       seenIds.has(idKey)
     ) {
       continue;

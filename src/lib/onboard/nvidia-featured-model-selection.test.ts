@@ -16,15 +16,19 @@ vi.mock("../inference/model-prompts", () => ({
   promptCloudModel: vi.fn(),
 }));
 
-vi.mock("../inference/nvidia-featured-models", () => ({
-  createNvidiaFeaturedModelPromptOptionsLoader: () => (defaultModelId?: string | null) => ({
-    defaultModelId:
-      defaultModelId === "nvidia/nemotron-3-ultra-550b-a55b"
-        ? defaultModelId
-        : "nvidia/nemotron-3-super-120b-a12b",
-    cloudModelOptions: [],
-  }),
-}));
+vi.mock("../inference/nvidia-featured-models", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../inference/nvidia-featured-models")>();
+  return {
+    ...actual,
+    createNvidiaFeaturedModelPromptOptionsLoader: () => (defaultModelId?: string | null) => ({
+      defaultModelId:
+        defaultModelId === "nvidia/nemotron-3-ultra-550b-a55b"
+          ? defaultModelId
+          : "nvidia/nemotron-3-super-120b-a12b",
+      cloudModelOptions: [],
+    }),
+  };
+});
 
 describe("NVIDIA featured model selection", () => {
   beforeEach(() => {
@@ -103,6 +107,17 @@ describe("NVIDIA featured model selection", () => {
     await expect(session.select(null, null, true, " environment/model ")).resolves.toBe(
       "environment/model",
     );
+  });
+
+  it("reselects instead of recovering a retired NVIDIA Endpoints model", async () => {
+    const retiredModel = "minimaxai/minimax-m3";
+    const replacement = "nvidia/nemotron-3-super-120b-a12b";
+    vi.mocked(promptCloudModel).mockResolvedValueOnce(replacement);
+    const session = createNvidiaFeaturedModelSession({ writeLine: vi.fn() });
+
+    await expect(session.select(null, retiredModel, true)).resolves.toBe(replacement);
+    await expect(session.select(null, retiredModel, false)).resolves.toBe(replacement);
+    expect(promptCloudModel).toHaveBeenCalledOnce();
   });
 
   it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {

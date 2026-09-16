@@ -6,6 +6,7 @@ import type { ModelPromptOptions, ModelPromptResult } from "../inference/model-p
 import { promptCloudModel } from "../inference/model-prompts";
 import {
   createNvidiaFeaturedModelPromptOptionsLoader,
+  isRetiredNvidiaFeaturedModelId,
   type NvidiaFeaturedModelOptions,
 } from "../inference/nvidia-featured-models";
 import { BACK_TO_SELECTION } from "../navigation";
@@ -43,7 +44,12 @@ export function createNvidiaFeaturedModelSession(
   return {
     async select(requestedModel, recoveredModel, nonInteractive, envModel, promptOptions) {
       if (requestedModel) return requestedModel;
-      if (recoveredModel) return recoveredModel;
+      if (
+        recoveredModel &&
+        !isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)
+      ) {
+        return recoveredModel;
+      }
       const configuredModel = envModel?.trim();
       if (nonInteractive) return configuredModel || defaultModel;
       if (!announcedLoad) {
