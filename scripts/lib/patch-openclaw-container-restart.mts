@@ -50,6 +50,8 @@ export function patchContainerRestart(source: string): string {
 
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
+  // The Dockerfile separately restricts these reviewed pins to legacy E2E fixtures.
+  if (["2026.3.11", "2026.4.24"].includes(metadata.version)) return;
   if (metadata.version !== VERSION)
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   const target = path.join(distDir, "cli", "gateway-lifecycle.runtime.js");

@@ -122,6 +122,19 @@ describe("OpenClaw sandbox restart patch", () => {
     expect(() => patchContainerRestart(nativeRestart + nativeRestart)).toThrow("Expected one");
   });
 
+  it.each(["2026.3.11", "2026.4.24"])("leaves legacy fixture %s unchanged", (version) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-restart-legacy-"));
+    try {
+      fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+      const dist = path.join(root, "dist");
+      expect(() => patchOpenClawContainerRestart(dist)).not.toThrow();
+      expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
+      expect(fs.readdirSync(root)).toEqual(["package.json"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("audits the pinned installed package and rejects version drift before writing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-restart-patch-"));
     try {
