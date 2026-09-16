@@ -548,12 +548,15 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy --yes --cleanup-gateway", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
     expect(r.code).toBe(0);
+    expect(r.out).toContain("Shared NemoClaw gateway left running");
+    expect(r.out).toContain("--cleanup-gateway was not applied");
+    expect(r.out).toContain("'beta'");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");

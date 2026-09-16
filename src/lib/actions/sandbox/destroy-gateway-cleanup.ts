@@ -189,7 +189,7 @@ function resolveFinalDestroyGatewayCleanupOnce(
   };
   const liveSandboxes = deps.liveSandboxProbe
     ? deps.liveSandboxProbe(liveProbeDeps)
-    : provider?.gateway.ownsHostReadiness === true
+    : provider?.gateway.finalSandboxLiveness === "openshell-only"
       ? classifyLiveSandboxesWithoutDocker(liveProbeDeps)
       : classifyLiveSandboxesFromHost(liveProbeDeps);
   if (liveSandboxes.status === "none") return { status: "cleanup" };

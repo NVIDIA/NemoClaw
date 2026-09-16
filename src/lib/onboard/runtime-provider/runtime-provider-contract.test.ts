@@ -694,6 +694,29 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
   });
 
+  it("requires an explicit final sandbox-liveness source", () => {
+    const bundle = mxcBundle();
+    const { finalSandboxLiveness: _finalSandboxLiveness, ...gatewayWithoutLivenessSource } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutLivenessSource)],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            finalSandboxLiveness: "host-readiness",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+  });
+
   it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
     const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
     const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =

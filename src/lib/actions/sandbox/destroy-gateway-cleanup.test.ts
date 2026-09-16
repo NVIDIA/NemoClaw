@@ -106,7 +106,13 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
           captureOpenshell,
           dockerCapture,
           listSandboxes: () => ({ sandboxes: [] }),
-          resolveRuntimeProvider: () => ({ gateway: { ownsHostReadiness: true } }) as never,
+          resolveRuntimeProvider: () =>
+            ({
+              gateway: {
+                finalSandboxLiveness: "openshell-only",
+                ownsHostReadiness: true,
+              },
+            }) as never,
         },
       ),
     ).resolves.toEqual({ status: "cleanup" });
@@ -134,7 +140,10 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
             resolveRuntimeProvider: () =>
               ({
                 identity: { id: "podman" },
-                gateway: { ownsHostReadiness: true },
+                gateway: {
+                  finalSandboxLiveness: "openshell-only",
+                  ownsHostReadiness: true,
+                },
                 cleanup: { supported: true, captureDestroyIdentityByName },
               }) as never,
           },
@@ -144,6 +153,29 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
       expect(dockerCapture).not.toHaveBeenCalled();
     },
   );
+
+  it("uses the provider's final-liveness source independently of host-readiness ownership", async () => {
+    const dockerCapture = vi.fn(() => "");
+
+    await expect(
+      resolveFinalDestroyGatewayCleanup(
+        { ...confirmedFinalDestroy, runtimeProviderId: "split-authority" },
+        {
+          captureOpenshell: () => liveList("alpha             now                  Error\n"),
+          dockerCapture,
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () =>
+            ({
+              gateway: {
+                finalSandboxLiveness: "openshell-and-docker",
+                ownsHostReadiness: true,
+              },
+            }) as never,
+        },
+      ),
+    ).resolves.toEqual({ status: "cleanup" });
+    expect(dockerCapture).toHaveBeenCalledOnce();
+  });
 
   it("preserves the gateway when a live sandbox appears after the empty-registry check", async () => {
     const events: string[] = [];
