@@ -170,9 +170,6 @@ vi.mock("../../credentials/store", () => ({
   prompt: vi.fn(),
   saveCredential: vi.fn(),
 }));
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
-}));
 vi.mock("../../inference/gateway-route-compatibility", () => ({
   checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
   formatGatewayRouteConflict: vi.fn(() => "route conflict"),

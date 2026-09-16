@@ -5,7 +5,10 @@ import {
   type GarbageCollectImagesOptions,
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
-import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
+import {
+  type NamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction,
+} from "../gateway-runtime-action";
 import type { OnboardFlags } from "../onboard/command-support";
 import { completeAutomaticGatewayPortAfterOnboard } from "../onboard/gateway/automatic-port-completion";
 import {
@@ -15,7 +18,12 @@ import {
 import { runOnboardAction as executeOnboardAction, type OnboardActionRuntimeDeps } from "./onboard";
 import { help, version } from "./root-help";
 
-type GatewayRecovery = { recovered: boolean };
+export type GatewayRecovery = {
+  recovered: boolean;
+  attempted?: boolean;
+  before?: NamedGatewayLifecycleState;
+  after?: NamedGatewayLifecycleState;
+};
 
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
