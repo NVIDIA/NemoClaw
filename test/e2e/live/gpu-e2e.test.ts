@@ -453,6 +453,22 @@ test(
     });
     await ensureOllama(host);
     await cleanupOllama(host, "export-stop-default-ollama");
+    const preparedModel = await host.command(
+      "bash",
+      [
+        "-c",
+        `set -e
+sudo -n systemctl start ollama.service
+curl -q --noproxy '*' -fsS --max-time 2 --retry 20 --retry-connrefused --retry-delay 1 --retry-max-time 60 http://127.0.0.1:11434/api/tags
+exec ollama pull qwen2.5:0.5b`,
+      ],
+      {
+        artifactName: "export-prepare-installed-model",
+        env: env({ OLLAMA_HOST: "127.0.0.1:11434" }),
+        timeoutMs: execTimeout(20 * 60000),
+      },
+    );
+    expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "export-cleanup-gateway",
       env: exportEnv,
@@ -473,14 +489,7 @@ test(
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
       "node",
-      [
-        CLI,
-        "onboard",
-        "--fresh",
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-      ],
+      [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
       {
         artifactName: "export-onboard-ollama",
         cwd: REPO_ROOT,
@@ -504,12 +513,11 @@ test(
     expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
     daemonOwner = startAttachedOllama(progress, exportEnv);
     await waitForAttachedOllama(host, exportEnv);
-    const preparedModel = await host.command("ollama", ["pull", "qwen2.5:0.5b"], {
+    await host.command("ollama", ["pull", "qwen2.5:0.5b"], {
       artifactName: "export-prepare-attached-model",
       env: exportEnv,
       timeoutMs: execTimeout(20 * 60000),
     });
-    expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
 
     progress.phase("export and compare the active Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
