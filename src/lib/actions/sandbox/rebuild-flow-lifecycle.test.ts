@@ -159,6 +159,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
     );
+    expect(harness.onboardSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it("observes current MCP sources, recreates with the captured policy, and restores OpenClaw", async ({
