@@ -47,8 +47,8 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
-The generated egress policy is binary-scoped.
-It permits the selected agent's adapter binaries to reach the MCP endpoint, but it does not permit `/usr/bin/curl`.
+The generated egress policy is scoped to the selected agent adapter's runtime executable paths, including shared Node.js or Python runtime paths.
+An interactive process launched through one of those allowed runtime paths can therefore reach the MCP endpoint, while `/usr/bin/curl` remains denied.
 A failed `curl` request from an interactive sandbox shell therefore does not show that the MCP route is broken.
 Use the managed status probe to inspect policy readiness and in-sandbox endpoint reachability:
 
