@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { target } from "../registry/builder.ts";
+import { loadManifest } from "../registry/manifests.ts";
 import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -21,17 +21,18 @@ function runTargetCli(args: string[]) {
 }
 
 describe("deterministic target registry", () => {
+  // source-shape-contract: compatibility -- Duplicate IDs would make workflow selectors and artifact ownership ambiguous
   it("should reject duplicate target IDs", () => {
-    const first = target("duplicate-id")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
-      .build();
-    const second = target("duplicate-id").manifest("test/e2e/manifests/hermes-nvidia.yaml").build();
+    const registered = listTargets()[0]!;
+    const first = { ...registered, id: "duplicate-id" };
+    const second = { ...registered, id: "duplicate-id" };
 
     expect(() => buildTargetRegistry([first, second])).toThrow(/duplicate-id/);
   });
 
+  // source-shape-contract: security -- Target IDs cross workflow regex and artifact-path boundaries and must remain path-safe
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
-    const unsafe = target("bad.id").manifest("test/e2e/manifests/openclaw-nvidia.yaml").build();
+    const unsafe = { ...listTargets()[0]!, id: "bad.id" };
 
     expect(() => buildTargetRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
 
@@ -41,6 +42,31 @@ describe("deterministic target registry", () => {
       /Selected target ID '\.\.\/escape' is not safe/,
     );
   });
+
+  // source-shape-contract: compatibility -- The registry inventory must contain only targets that the live runner can execute
+  it("contains only the four executable typed targets (#11407)", () => {
+    expect(listTargets().map((target) => target.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+      "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
+  });
+
+  // source-shape-contract: compatibility -- A registered target must resolve to an expected-state contract before live execution
+  it("rejects dangling expected-state references (#11407)", () => {
+    const registered = listTargets()[0]!;
+    expect(() =>
+      buildTargetRegistry([{ ...registered, expectedStateId: "missing-expected-state" }]),
+    ).toThrow("Unknown expected_state id 'missing-expected-state'");
+  });
+
+  it.each(listTargets())(
+    "resolves $id to a valid repository manifest (#11407)",
+    ({ manifestPath }) => {
+      loadManifest(path.join(REPO_ROOT, manifestPath));
+    },
+  );
 
   // source-shape-contract: compatibility -- The target CLI must reject unknown selectors with actionable registered choices
   it("should return actionable unknown target error", () => {

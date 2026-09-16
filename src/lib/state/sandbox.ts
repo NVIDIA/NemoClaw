@@ -144,7 +144,7 @@ export interface RebuildManifest {
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
-  /** Source-derived MCP state retained only while a rebuild transaction is recoverable. */
+  /** Source-derived MCP state, including an explicit empty observation, retained during recovery. */
   rebuildMcpHandoff?: {
     entries: RebuildMcpHandoffEntry[];
     runtimeSelection: OpenShellRuntimeSelection;
@@ -508,7 +508,6 @@ function isRebuildMcpHandoff(
       (key) => key === "entries" || key === "runtimeSelection" || key === "retired",
     ) &&
     Array.isArray(value.entries) &&
-    value.entries.length > 0 &&
     value.entries.length <= 256 &&
     value.entries.every(isRebuildMcpHandoffEntry) &&
     new Set(value.entries.map((entry) => entry.server)).size === value.entries.length &&
@@ -2962,7 +2961,7 @@ function writeManifest(
   }
 }
 
-export const __test = { writeManifest };
+export const __test = { writeManifest, readManifest };
 
 function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;
