@@ -274,6 +274,7 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
     stderr_path = Path(evidence) / f"{label}.stderr.log"
     print(f"[Hermes runtime] {label}", flush=True)
     process = None
+    killer = None
     primary = None
     cleanup_errors = []
     started = time.monotonic()

@@ -111,6 +111,7 @@ def windows_taskkill(environment):
 def run(executable, args, cwd, environment, evidence, label, timeout):
     started = time.monotonic()
     process = None
+    killer = None
     primary = None
     cleanup = []
     stdout = evidence / (label + ".stdout.log")
