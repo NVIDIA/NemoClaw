@@ -80,7 +80,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark-inline.yaml) |
 
 Managed Ollama/vLLM and external Ollama with a managed proxy are accepted for OpenClaw and Hermes; the [harness matrix](reference/fabric-harnesses.md) lists restrictions for other agents.
-Examples carry local image digests, deployment identities, and environment-specific endpoints.
+Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
 An accepted example is a configuration contract; [validation records](validation/README.md) identify which combinations completed live inference and at which revision.
 
@@ -302,7 +302,11 @@ Declare an external HTTPS provider with a credential reference, then select it f
   credential:
     env: NOUS_API_KEY
 
-# Under the Hermes agent:
+```
+
+On the Hermes agent:
+
+```yaml
 auth:
   method: api-key
 inference:
