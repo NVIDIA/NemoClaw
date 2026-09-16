@@ -13,6 +13,7 @@ export function writeNodeStub(fakeBin: string): void {
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
+if [[ "$1" == */scripts/lib/install-openshell-sdk.mts ]]; then exit 0; fi
 if [ "$1" = "-" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi

@@ -137,6 +137,8 @@ fi
   echo "v22.19.0"
 elif [ "\${1:-}" = "${repo}/bin/nemoclaw.js" ] && [ "\${2:-}" = "onboard" ]; then
   echo "runtime onboard"
+elif [ "\${1:-}" = "${repo}/scripts/lib/install-openshell-sdk.mts" ]; then
+  exit "\${FAKE_SDK_INSTALL_STATUS:-0}"
 else
   exit 1
 fi`,
@@ -715,6 +717,18 @@ describe("contributor environment doctor", () => {
 });
 
 describe("contributor repository setup", () => {
+  it("stops before building or exposing the CLI when SDK installation fails", () => {
+    const fixture = createFixture();
+    const result = runSetup(fixture, ["--expose-cli"], { FAKE_SDK_INSTALL_STATUS: "1" });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      "Setup stopped while attempting: Install and verify the OpenShell SDK",
+    );
+    const commands = readCommandLog(fixture);
+    expect(commands).not.toContain("npm run build:cli");
+    expect(commands).not.toContain("npm-link-or-shim");
+  });
+
   it("repairs only repository-local state and finishes with the doctor", () => {
     const fixture = createFixture();
 
@@ -724,6 +738,9 @@ describe("contributor repository setup", () => {
     expect(result.output).toContain("Ready to create a feature branch.");
     const commands = readCommandLog(fixture);
     expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      `node ${path.join(fixture.repo, "scripts/lib/install-openshell-sdk.mts")}`,
+    );
     expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
     expect(commands).not.toContain("uv sync");
     expect(commands).toContain("prek install");

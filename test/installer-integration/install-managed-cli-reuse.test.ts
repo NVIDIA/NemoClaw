@@ -31,6 +31,11 @@ exit 99`,
 }
 
 function writeManagedSource(root: string, revision: string) {
+  fs.mkdirSync(path.join(root, "scripts", "lib"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "scripts", "lib", "install-openshell-sdk.mts"),
+    "// SDK fixture.\n",
+  );
   fs.mkdirSync(path.join(root, ".git"), { recursive: true });
   fs.mkdirSync(path.join(root, "bin"), { recursive: true });
   fs.mkdirSync(path.join(root, "dist", "lib", "onboard"), { recursive: true });
@@ -146,9 +151,10 @@ case "\${1:-}" in
   init)
     node -e 'const assert = require("node:assert/strict"); const fs = require("node:fs"); assert.equal(fs.statSync(process.argv[1]).mode & 0o777, 0o700)' "$NEMOCLAW_STATE_ROOT"
     target="\${@: -1}"
-    mkdir -p "$target/.git" "$target/bin" "$target/dist/lib/onboard" "$target/node_modules" \
+    mkdir -p "$target/scripts/lib" "$target/.git" "$target/bin" "$target/dist/lib/onboard" "$target/node_modules" \
       "$target/nemoclaw/dist" "$target/nemoclaw/node_modules"
     printf '%s' "$EXPECTED_REVISION" > "$target/.fixture-revision"
+    printf '%s\\n' '// SDK fixture.' > "$target/scripts/lib/install-openshell-sdk.mts"
     printf '%s\n' '{"name":"nemoclaw","dependencies":{"openclaw":"2026.7.1"}}' > "$target/package.json"
     printf '%s\n' '{"name":"nemoclaw-plugin"}' > "$target/nemoclaw/package.json"
     printf '%s' "\${COMMITTED_LOCKFILE:-}" > "$target/package-lock.json"

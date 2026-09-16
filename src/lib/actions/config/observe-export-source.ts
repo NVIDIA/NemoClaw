@@ -79,6 +79,7 @@ function qualifySnapshot(observed: ObservedExportSnapshot): QualifiedExportSnaps
 
 const LIVE_READ_SOURCE_LABELS = {
   registry: "sandbox registry",
+  "openshell-sdk": "OpenShell SDK",
   "gateway-binding": "registered gateway binding",
   "sandbox-inventory": "live sandbox inventory",
   "sandbox-identity": "live sandbox identity",
@@ -97,7 +98,9 @@ function failedLiveRead(stage: ExportSnapshotReadStage): ObservationAttempt {
       finding(
         "source.live",
         "live-verification-failed",
-        `The ${LIVE_READ_SOURCE_LABELS[stage]} could not be read or verified.`,
+        stage === "openshell-sdk"
+          ? "The OpenShell JavaScript SDK is missing or incomplete. Rerun the NemoClaw installer, or run node scripts/lib/install-openshell-sdk.mts from the NemoClaw checkout."
+          : `The ${LIVE_READ_SOURCE_LABELS[stage]} could not be read or verified.`,
       ),
     ],
   };

@@ -142,4 +142,36 @@ console.log(JSON.stringify([typeof sdk.connectManagedOpenShellSdk, typeof policy
     );
     expect(JSON.parse(output)).toEqual(["function", "function"]);
   });
+
+  it("identifies the missing SDK through the compiled read adapter", () => {
+    const root = packageFixture();
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+import { createRequire } from "node:module";
+import { importOpenShellSdk } from "./dist/lib/adapters/openshell/sdk-import.mjs";
+const require = createRequire(import.meta.url);
+const { readOpenShell } = require("./dist/lib/adapters/openshell/sdk-read.js");
+try {
+  await readOpenShell({
+    target: { kind: "named", gatewayName: "nemoclaw" },
+    workspace: "default",
+    signal: new AbortController().signal,
+  }, importOpenShellSdk);
+  process.exitCode = 1;
+} catch (error) {
+  console.log(JSON.stringify({ kind: error.kind, message: error.message }));
+}
+`,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(JSON.parse(output)).toEqual({
+      kind: "sdk-unavailable",
+      message: "OpenShell read failed (sdk-unavailable).",
+    });
+  });
 });
