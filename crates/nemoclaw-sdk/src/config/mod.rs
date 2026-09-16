@@ -173,8 +173,13 @@ impl Document {
                 names.push(c.env.as_str());
             }
         }
-        if let Some(search) = self.spec.sandboxes[0].web_search() {
-            names.push(&search.credential.env);
+        for binding in self.spec.sandboxes[0]
+            .integration_bindings(&self.spec.integrations)
+            .expect("validated integration references")
+        {
+            match binding.definition {
+                Integration::WebSearch(search) => names.push(&search.credential.env),
+            }
         }
         names
     }

@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw-web-search
+  uid: 3a1c6038-a264-48e1-a2b3-1ed10c9f6919
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      agents:
+        - name: researcher
+          harness: openclaw
+          integrationRefs: [search]
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3:4b
+        - name: writer
+          harness: openclaw
+          integrationRefs: [search]
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3:4b

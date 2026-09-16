@@ -11,8 +11,13 @@ fn destroy_environment(document: &Document) -> Document {
         provider.credential = None;
     }
     for sandbox in &mut environment.spec.sandboxes {
-        sandbox.integrations = None;
+        sandbox.integrations.clear();
+        for agent in &mut sandbox.agents {
+            agent.integrations.clear();
+            agent.integration_refs.clear();
+        }
     }
+    environment.spec.integrations.clear();
     environment
 }
 

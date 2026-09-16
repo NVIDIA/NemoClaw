@@ -22,12 +22,11 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
     let mut doc =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     doc.spec.gateway.endpoint = fixture.endpoint.clone();
-    doc.spec.sandboxes[0].integrations = Some(
-        serde_json::from_value(serde_json::json!({
-            "webSearch":{"provider":"brave","agentRefs":["main"],"credential":{"env":"SEARCH_KEY"}}
-        }))
-        .unwrap(),
-    );
+    doc.spec.integrations = serde_json::from_value(serde_json::json!({
+        "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
+    }))
+    .unwrap();
+    doc.spec.sandboxes[0].agents[0].integration_refs = vec!["search".into()];
     let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Key)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))

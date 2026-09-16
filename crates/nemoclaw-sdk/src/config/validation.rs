@@ -204,9 +204,10 @@ impl Document {
             "managed gateway requires the qualified Docker driver",
         )?;
         sandbox.network.validate()?;
-        sandbox.policy_proto()?;
         require(!sandbox.agents.is_empty(), "at least one agent is required")?;
-        if let Some(search) = sandbox.web_search() {
+        let web_search = self.web_search()?;
+        sandbox.policy_proto(web_search.is_some())?;
+        if let Some(search) = web_search {
             require(
                 provider.name != "brave-search",
                 "brave-search is reserved for web search",

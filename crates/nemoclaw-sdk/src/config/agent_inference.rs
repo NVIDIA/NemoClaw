@@ -148,7 +148,7 @@ pub(crate) struct RuntimeAgent {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeInference {
     #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
-    pub web_search: Option<WebSearch>,
+    pub web_search: Option<RuntimeWebSearch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observability: Option<AgentObservability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,15 +210,15 @@ impl RuntimeInference {
     }
 }
 impl Document {
-    pub(crate) fn runtime_inference(&self) -> Option<RuntimeInference> {
+    pub(crate) fn runtime_inference(&self) -> Result<Option<RuntimeInference>, ConfigError> {
         let agent = &self.spec.sandboxes[0].agents[0];
         let provider = &self.spec.inference_providers[0];
         let tuning = &agent.inference.routes[0].overrides.tuning;
         let agents = &self.spec.sandboxes[0].agents;
-        let roster = self.spec.sandboxes[0].web_search().is_some()
-            || agents.len() > 1
-            || agents.iter().any(|a| a.tools.is_some());
-        (provider.api.is_some()
+        let web_search = self.web_search()?;
+        let roster =
+            web_search.is_some() || agents.len() > 1 || agents.iter().any(|a| a.tools.is_some());
+        Ok((provider.api.is_some()
             || tuning != &RouteTuning::default()
             || agent.auth.is_some()
             || roster
@@ -226,7 +226,7 @@ impl Document {
             || agent.observability.is_some()
             || agent.interfaces.is_some())
         .then(|| RuntimeInference {
-            web_search: self.spec.sandboxes[0].web_search().cloned(),
+            web_search,
             observability: agent.observability.clone(),
             execution: agent.execution.clone(),
             interfaces: agent.interfaces.clone(),
@@ -246,6 +246,6 @@ impl Document {
                 .unwrap_or(InferenceApi::for_harness(&agent.harness)),
             tuning: tuning.clone(),
             auth: agent.auth.clone(),
-        })
+        }))
     }
 }

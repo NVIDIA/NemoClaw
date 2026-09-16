@@ -40,6 +40,10 @@ pub struct Metadata {
 #[serde(default, deny_unknown_fields)]
 /// The configuration requires one inference provider and one sandbox.
 pub struct Spec {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
     pub gateway: Gateway,
@@ -199,10 +203,10 @@ pub struct ManagedOllama {
 #[serde(default, deny_unknown_fields)]
 /// The gateway owns sandbox creation. Only OpenClaw accepts managed gateway or inference dependencies.
 pub struct Sandbox {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::Integrations")]
-    /// Optional credential-bearing agent integrations.
-    pub integrations: Option<super::Integrations>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "name")]
     /// Lowercase sandbox name.
     pub name: String,
@@ -270,6 +274,18 @@ pub struct Network {
 #[serde(default, deny_unknown_fields)]
 /// One Fabric harness and its inference route.
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes.
+    pub integrations: std::collections::BTreeMap<String, super::Integration>,
+    #[serde(
+        default,
+        rename = "integrationRefs",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(default)]
+    /// Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.
+    pub integration_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]
     /// Harness-native tracing, declared only on the first agent.

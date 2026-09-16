@@ -152,6 +152,25 @@
           "$ref": "#/$defs/Inference",
           "description": "Primary inference route for this agent."
         },
+        "integrationRefs": {
+          "description": "Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.",
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "integrations": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Integration"
+          },
+          "description": "Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
         "interfaces": {
           "$ref": "#/$defs/AgentInterfaces",
           "description": "Native dashboard access, declared only on the first agent in a sandbox."
@@ -1225,19 +1244,35 @@
       ],
       "type": "object"
     },
-    "Integrations": {
-      "additionalProperties": false,
-      "description": "Optional integrations shared by named agents in a sandbox.",
-      "properties": {
-        "webSearch": {
-          "$ref": "#/$defs/WebSearch",
-          "description": "Brave Search with gateway-held credentials and explicit agent grants."
+    "Integration": {
+      "description": "Integration configuration attached inline to an agent or selected through integrationRefs. Unsupported kinds are rejected.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Brave Search with gateway-held credentials and explicit agent grants.",
+          "properties": {
+            "credential": {
+              "$ref": "#/$defs/Credential",
+              "description": "Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox."
+            },
+            "kind": {
+              "const": "webSearch",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            },
+            "provider": {
+              "$ref": "#/$defs/SearchProvider",
+              "description": "Supported search service."
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "credential"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "webSearch"
-      ],
-      "type": "object"
+      ]
     },
     "ManagedManagement": {
       "description": "NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.",
@@ -2339,8 +2374,14 @@
           "description": "Sandbox agent image; omission selects the SDK default."
         },
         "integrations": {
-          "$ref": "#/$defs/Integrations",
-          "description": "Optional credential-bearing agent integrations."
+          "additionalProperties": {
+            "$ref": "#/$defs/Integration"
+          },
+          "description": "Named inline integration definitions visible only to this sandbox's agents. Names must not collide with deployment definitions.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
         },
         "name": {
           "description": "Lowercase sandbox name.",
@@ -2991,6 +3032,16 @@
           "minItems": 1,
           "type": "array"
         },
+        "integrations": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Integration"
+          },
+          "description": "Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
         "sandboxes": {
           "description": "Exactly one sandbox with one or more OpenClaw agents sharing a primary inference route, or one agent of another harness.",
           "items": {
@@ -3068,36 +3119,6 @@
           "type": "string"
         }
       ]
-    },
-    "WebSearch": {
-      "additionalProperties": false,
-      "description": "Web search through the native OpenClaw Brave plugin.",
-      "properties": {
-        "agentRefs": {
-          "description": "Unique names of unrestricted OpenClaw agents permitted to search.",
-          "items": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$",
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true
-        },
-        "credential": {
-          "$ref": "#/$defs/Credential",
-          "description": "Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox."
-        },
-        "provider": {
-          "$ref": "#/$defs/SearchProvider",
-          "description": "Supported search service."
-        }
-      },
-      "required": [
-        "provider",
-        "agentRefs",
-        "credential"
-      ],
-      "type": "object"
     }
   },
   "$id": "urn:nemoclaw:config:v1alpha1",
@@ -4096,6 +4117,7 @@
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+    "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
     "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."

@@ -103,14 +103,16 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         }
         values.extend(extra.into_iter().map(|(k, v)| (k.into(), v)));
         if kind == "sandbox" {
-            if let Some(settings) = document.runtime_inference() {
+            if let Some(settings) = document.runtime_inference()? {
                 values.insert(
                     "inference_json".into(),
                     serde_json::to_string(&settings).expect("typed inference settings"),
                 );
             }
-            let policy = crate::openshell::policy_json(&sandbox.policy_proto()?)
-                .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
+            let policy = crate::openshell::policy_json(
+                &sandbox.policy_proto(document.web_search()?.is_some())?,
+            )
+            .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
             if !policy.is_empty() {
                 values.insert("policy_json".into(), policy);
             }
@@ -125,7 +127,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
     }
-    if let Some(search) = sandbox.web_search() {
+    if let Some(search) = document.web_search()? {
         for (kind, name) in [
             ("provider_profile", "nemoclaw-brave"),
             ("provider", "brave-search"),
@@ -267,7 +269,7 @@ pub fn compile(
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
             }
-            attributes["depends_on"] = if document.spec.sandboxes[0].web_search().is_some() {
+            attributes["depends_on"] = if document.web_search()?.is_some() {
                 json!(["nemoclaw_route.primary", "nemoclaw_provider.web_search"])
             } else {
                 json!(["nemoclaw_route.primary"])

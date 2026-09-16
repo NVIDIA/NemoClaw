@@ -110,12 +110,17 @@ async fn hermes_interfaces_sdk_export_reapply_and_drift() {
 async fn web_search_cli_export_reapply_and_destroy() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document.spec.sandboxes[0].integrations = Some(
-        serde_json::from_value(serde_json::json!({
-            "webSearch":{"provider":"brave","agentRefs":["main"],"credential":{"env":"SEARCH_KEY"}}
-        }))
-        .unwrap(),
-    );
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agents[0].integration_refs = vec!["search".into()];
+    lifecycle(&document.yaml().unwrap()).await;
+    document.spec.sandboxes[0].integrations = std::mem::take(&mut document.spec.integrations);
+    lifecycle(&document.yaml().unwrap()).await;
+    let sandbox = &mut document.spec.sandboxes[0];
+    sandbox.agents[0].integration_refs.clear();
+    sandbox.agents[0].integrations = std::mem::take(&mut sandbox.integrations);
     lifecycle(&document.yaml().unwrap()).await;
 }
 
@@ -150,6 +155,10 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .path = Some("/docs/${file}/%{literal}".into());
     }
     document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let has_search = !document.spec.sandboxes[0]
+        .integration_bindings(&document.spec.integrations)
+        .unwrap()
+        .is_empty();
     struct FixtureSecrets;
     impl nemoclaw_sdk::openshell::Secrets for FixtureSecrets {
         fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
@@ -176,14 +185,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
     let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(
-        effects,
-        if document.spec.sandboxes[0].integrations.is_some() {
-            6
-        } else {
-            4
-        }
-    );
+    assert_eq!(effects, if has_search { 6 } else { 4 });
     if declare_ownership {
         document.spec.inference_providers[0].management =
             Some(nemoclaw_sdk::config::Management::External);
@@ -236,7 +238,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .is_empty()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    if document.spec.sandboxes[0].integrations.is_some() {
+    if has_search {
         let state_bytes = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let key = format!("{}/nemoclaw-brave", document.workspace());
         let profile = fixture.state.lock().unwrap().profiles[&key].clone();
@@ -427,14 +429,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .policy = original;
     }
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(
-        preview.changes.len(),
-        if document.spec.sandboxes[0].integrations.is_some() {
-            5
-        } else {
-            3
-        }
-    );
+    assert_eq!(preview.changes.len(), if has_search { 5 } else { 3 });
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -466,11 +461,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .unwrap()
             .changes
             .len(),
-        if document.spec.sandboxes[0].integrations.is_some() {
-            5
-        } else {
-            3
-        }
+        if has_search { 5 } else { 3 }
     );
 }
 

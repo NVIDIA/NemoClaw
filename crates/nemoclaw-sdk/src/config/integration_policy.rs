@@ -8,13 +8,16 @@ use openshell_core::proto;
 use serde_json::json;
 
 impl Sandbox {
-    pub(crate) fn policy_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
+    pub(crate) fn policy_proto(
+        &self,
+        web_search: bool,
+    ) -> Result<proto::SandboxPolicy, ConfigError> {
         let base = self.network.policy_proto()?;
         if self
             .agents
             .first()
             .is_none_or(|a| a.observability.is_none())
-            && self.web_search().is_none()
+            && !web_search
         {
             return Ok(base);
         }
@@ -52,7 +55,7 @@ impl Sandbox {
                 .expect("typed OTLP policy"),
             );
         }
-        if self.web_search().is_some() {
+        if web_search {
             if policy.network_policies.contains_key("nemoclaw-brave") {
                 return Err(ConfigError("nemoclaw-brave is reserved for web search"));
             }

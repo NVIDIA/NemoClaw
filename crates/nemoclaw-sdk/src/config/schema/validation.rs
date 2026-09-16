@@ -56,9 +56,28 @@ pub(super) fn constrain(root: &mut Value) {
     property(root, "apiVersion", json!({"const": API_VERSION}));
     property(root, "kind", json!({"const": c::KIND}));
     let defs = root["$defs"].as_object_mut().unwrap();
-    defs["WebSearch"]["properties"]["agentRefs"]["uniqueItems"] = json!(true);
-    defs["WebSearch"]["properties"]["agentRefs"]["items"]["pattern"] =
-        json!("^[a-z][a-z0-9-]{0,39}$");
+    for variant in defs["Integration"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged integration variants")
+    {
+        property(
+            variant,
+            "kind",
+            json!({"description": "Integration implementation selected by this definition."}),
+        );
+    }
+    for name in ["Spec", "Sandbox", "Agent"] {
+        property(
+            &mut defs[name],
+            "integrations",
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+    }
+    property(
+        &mut defs["Agent"],
+        "integrationRefs",
+        json!({"uniqueItems": true, "items": {"type": "string", "pattern": c::SLUG}}),
+    );
     for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
         property(
             defs.get_mut(name).unwrap(),
@@ -328,6 +347,7 @@ pub(super) fn constrain(root: &mut Value) {
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "The parser checks unique agent names, identical inference settings across multiple OpenClaw agents, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The parser compares providerRef with provider.name, route model with the served model, and snapshot identity with the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
