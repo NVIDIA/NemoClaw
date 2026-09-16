@@ -366,8 +366,19 @@ function parseSandboxGatewayProbe(result: SandboxCommandResult | null): true | n
   return result.stdout === "RUNNING" ? true : null;
 }
 
+function parseSandboxGatewayRecoveryProbe(result: SandboxCommandResult | null): boolean | null {
+  const running = parseSandboxGatewayProbe(result);
+  if (running === true) return true;
+  if (!result || result.status !== 0) return null;
+  return result.stdout === "STOPPED" ? false : null;
+}
+
 function sandboxGatewayHealthProbeCommand(probeUrl: string): string {
   return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo UNAVAILABLE ;; esac`;
+}
+
+function sandboxGatewayRecoveryProbeCommand(probeUrl: string): string {
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo STOPPED ;; esac`;
 }
 
 /**
@@ -388,8 +399,8 @@ async function isSandboxGatewayRunning(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
-  const command = sandboxGatewayHealthProbeCommand(probeUrl);
-  const execProbe = parseSandboxGatewayProbe(
+  const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
+  const execProbe = parseSandboxGatewayRecoveryProbe(
     await executeSandboxExecCommand(
       sandboxName,
       command,
@@ -407,7 +418,7 @@ async function isSandboxGatewayRunning(
   // their recovery contract is explicitly SSH-owned until manifests can
   // declare a trusted runtime user/supervisor.
   if (!agent || agent.name === "openclaw" || agent.name === "hermes") return null;
-  return parseSandboxGatewayProbe(
+  return parseSandboxGatewayRecoveryProbe(
     await executeSandboxCommand(
       sandboxName,
       command,
