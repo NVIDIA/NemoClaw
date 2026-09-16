@@ -3,8 +3,18 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { npmPackFilePaths, parseSingleNpmPackResult } from "../helpers/npm-pack-result";
 import { createPackageFixture } from "./helpers/package-fixture";
@@ -100,6 +110,62 @@ afterEach(() => {
 });
 
 describe("required OpenShell SDK installation", () => {
+  it("loads the SDK dependency tree from the release-built CLI artifact", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-sdk-release-artifact-"));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      HOME: root,
+      NEMOCLAW_INSTALLING: "1",
+      NPM_CONFIG_CACHE: path.join(root, "cache"),
+      NPM_CONFIG_AUDIT: "false",
+      NPM_CONFIG_FUND: "false",
+    };
+    const packed = spawnSync(
+      "npm",
+      ["pack", "--ignore-scripts", "--silent", "--json", "--pack-destination", root],
+      { cwd: repositoryRoot, env, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(packed.status, packed.stderr).toBe(0);
+    const jsonStart = packed.stdout.indexOf("[");
+    expect(jsonStart, packed.stdout).toBeGreaterThanOrEqual(0);
+    const packJson = packed.stdout.slice(jsonStart);
+    const packedResult = parseSingleNpmPackResult(packJson);
+    assert.ok(packedResult.filename, "npm pack did not report an archive filename");
+    expect(npmPackFilePaths(packJson)).toEqual(
+      expect.arrayContaining(
+        [sdkName, ...publicDependencies].map((name) => `node_modules/${name}/package.json`),
+      ),
+    );
+
+    const extracted = path.join(root, "extracted");
+    mkdirSync(extracted);
+    const extraction = spawnSync(
+      "tar",
+      ["-xzf", path.join(root, packedResult.filename), "-C", extracted],
+      { encoding: "utf8" },
+    );
+    expect(extraction.status, extraction.stderr).toBe(0);
+    const packageRoot = path.join(extracted, "package");
+    const sdkImportUrl = pathToFileURL(
+      path.join(packageRoot, "dist/lib/adapters/openshell/sdk-import.mjs"),
+    ).href;
+    const loaded = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const { importOpenShellSdk, importOpenShellRawSdk } = await import(${JSON.stringify(sdkImportUrl)});
+const sdk = await importOpenShellSdk();
+const raw = await importOpenShellRawSdk();
+console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolicySchema.typeName]));`,
+      ],
+      { cwd: packageRoot, encoding: "utf8", timeout: 30_000 },
+    );
+    expect(loaded.status, loaded.stderr).toBe(0);
+    expect(JSON.parse(loaded.stdout)).toEqual(["function", "openshell.sandbox.v1.SandboxPolicy"]);
+  }, 60_000);
+
   it("installs offline without credentials and loads both compiled CLI SDK imports", () => {
     const { root, probe, run } = fixture();
     const before = readFileSync(path.join(root, "package-lock.json"), "utf8");
