@@ -48,7 +48,7 @@ export function credentialsGatewayEndpointOverrideFailureLines(kind: "query" | "
   const action = kind === "query" ? "query" : "reach";
   return [
     `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway because OPENSHELL_GATEWAY_ENDPOINT overrides the recorded gateway selection.`,
-    `  Unset or correct OPENSHELL_GATEWAY_ENDPOINT before retrying.`,
+    `  Unset OPENSHELL_GATEWAY_ENDPOINT before retrying.`,
   ];
 }
 

@@ -81,7 +81,8 @@ describe("credential gateway recovery diagnostics", () => {
 
     const lines = reportFailure.mock.calls[0][0] as readonly string[];
     expect(lines.join("\n")).toContain("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(lines.join("\n")).toContain("Unset or correct");
+    expect(lines.join("\n")).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(lines.join("\n")).not.toContain("correct OPENSHELL_GATEWAY_ENDPOINT");
     expect(lines.join("\n")).not.toContain("credential-shaped-canary");
   });
 
