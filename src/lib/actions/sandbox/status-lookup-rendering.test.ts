@@ -212,24 +212,34 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
-  it.each([
-    { phase: "Failed", containerName: "openshell-beta-abc" },
-    { phase: "Error", containerName: null },
-  ])(
-    "keeps rebuild guidance for $phase when start cannot recover the container",
-    async ({ phase, containerName }) => {
-      const cap = captureConsoleLog();
-      await printGuidance({
-        phase,
-        dockerRuntime: { health: "none", paused: false, running: true, containerName },
-      });
-      const text = cap.lines();
-      cap.restore();
+  it("steers a provider without a Docker container to the OpenShell start path", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
 
-      expect(text).toContain("nemoclaw beta rebuild --yes");
-      expect(text).not.toContain("nemoclaw beta start");
-    },
-  );
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).toContain("restart the sandbox through OpenShell");
+    expect(text).not.toContain("Run `nemoclaw beta rebuild --yes` to recreate");
+  });
+
+  it("keeps rebuild guidance for a terminal phase other than Error", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Failed",
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        running: true,
+        containerName: "openshell-beta-abc",
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
 
   it("prints no guidance for a Ready sandbox", async () => {
     const cap = captureConsoleLog();

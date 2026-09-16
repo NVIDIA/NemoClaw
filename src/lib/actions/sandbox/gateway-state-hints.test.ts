@@ -282,7 +282,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("keeps rebuild guidance when an Error sandbox has no recoverable container", async () => {
+  it("steers an Error sandbox without a Docker container through OpenShell start", async () => {
     mockSandboxPhase("Error");
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
@@ -303,8 +303,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
 
     const output = lines.join("\n");
-    expect(output).toContain("nemoclaw instance-a rebuild --yes");
-    expect(output).not.toContain("nemoclaw instance-a start");
+    expect(output).toContain("nemoclaw instance-a start");
+    expect(output).toContain("restart the sandbox through OpenShell");
+    expect(output).not.toContain("Run `nemoclaw instance-a rebuild --yes` to recreate");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

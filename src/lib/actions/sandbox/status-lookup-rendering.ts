@@ -285,8 +285,8 @@ function printNonReadySandboxPhaseGuidance({
   // toward rebuild is wrong because the sandbox is fine and rebuild cannot
   // succeed until Docker is back. Reclassify as a runtime outage first
   // (#4428). Terminal phases (Failed/Error/...) are settled sandbox
-  // failures and keep the existing rebuild guidance even when Docker is
-  // down, so a genuine failure is never masked.
+  // failures and remain actionable below even when Docker is down, so a
+  // genuine failure is never masked.
   if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
     console.log("");
     printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
@@ -318,13 +318,19 @@ function printNonReadySandboxPhaseGuidance({
     "  This usually happens when a process crash inside the sandbox prevented clean startup.",
   );
   console.log("");
-  if (phase === "Error" && dockerRuntime?.containerName) {
+  if (phase === "Error") {
     console.log(
-      `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
+      `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
     );
-    console.log(
-      `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
-    );
+    if (dockerRuntime?.containerName) {
+      console.log(
+        `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
+      );
+    } else {
+      console.log(
+        `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, so use start first.)`,
+      );
+    }
     return;
   }
   console.log(
