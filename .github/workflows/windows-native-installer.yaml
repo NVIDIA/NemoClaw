@@ -1137,15 +1137,15 @@ jobs:
       - name: Check out the passing baseline inputs
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 07fa1d24fe86e63ffda93d421bea249fed2427f3
+          ref: 28528901623d75ced9baee9e8fafe0c9164721b4
           path: baseline
           persist-credentials: false
       - name: Download the immutable passing Bash evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: bash-compatibility-07fa1d24fe86e63ffda93d421bea249fed2427f3-1
+          name: bash-compatibility-28528901623d75ced9baee9e8fafe0c9164721b4-1
           github-token: ${{ github.token }}
-          run-id: 35114874393
+          run-id: 35149786471
           path: baseline-evidence
       - name: Require byte-identical producer inputs and rebind receipts
         run: |
