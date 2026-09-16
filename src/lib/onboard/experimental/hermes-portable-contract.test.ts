@@ -115,6 +115,22 @@ describe("Hermes portable startup contract", () => {
     expect(agent.expected_version).toBe("0.20.6");
   });
 
+  it.each(["0.20.6", "0.21.3"] as const)(
+    "accepts exact reviewed Hermes manifest version %s in the portable matrix (#9203)",
+    (expectedVersion) => {
+      const agent = copyAgent();
+      setExpectedManifestVersion(agent, expectedVersion);
+
+      expect(() =>
+        resolveHermesPortableStartupContract({
+          agent,
+          sandboxName: SANDBOX,
+          startupArgv: startupArgv(),
+        }),
+      ).not.toThrow();
+    },
+  );
+
   it.each([undefined, "", "0.19.0"])(
     "rejects Hermes manifest version %j outside the accepted portable matrix (#9203)",
     (expectedVersion) => {

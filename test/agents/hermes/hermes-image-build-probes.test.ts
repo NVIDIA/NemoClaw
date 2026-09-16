@@ -13,9 +13,57 @@ import { dockerfileInstructions } from "../../../src/lib/onboard/dockerfile-tool
 const root = path.join(import.meta.dirname, "../../..");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const baseDockerfile = fs.readFileSync(
+  path.join(root, "agents", "hermes", "Dockerfile.base"),
+  "utf8",
+);
 const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
+const reviewedHermesReleaseIdentities = [
+  {
+    label: "current 0.20.6",
+    environment: {
+      HERMES_VERSION: "v2026.8.27",
+      HERMES_SEMVER: "0.20.6",
+      HERMES_TARBALL_SHA256:
+        "e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7",
+      HERMES_NPM_INTEGRITY:
+        "sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==",
+    },
+  },
+  {
+    label: "prerequisite 0.21.3",
+    environment: {
+      HERMES_VERSION: "v2026.9.14",
+      HERMES_SEMVER: "0.21.3",
+      HERMES_TARBALL_SHA256:
+        "47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834",
+      HERMES_NPM_INTEGRITY:
+        "sha512-LvPt2/1z6hm4pTRJu34F6uAkBVSlSt94QeZp8fMBLFqASU9/wv7iMODSGMzF1WmrpNENXYGMnWN8s9hi/EUM5Q==",
+    },
+  },
+] as const;
+const hermesReleaseIdentityFields = [
+  "HERMES_VERSION",
+  "HERMES_SEMVER",
+  "HERMES_TARBALL_SHA256",
+  "HERMES_NPM_INTEGRITY",
+] as const;
+type HermesReleaseIdentityEnvironment = {
+  [Field in (typeof hermesReleaseIdentityFields)[number]]: string;
+};
+const rejectedHermesReleaseIdentities = reviewedHermesReleaseIdentities.flatMap(
+  ({ label, environment }) =>
+    hermesReleaseIdentityFields.map((field) => ({
+      label,
+      field,
+      environment: {
+        ...environment,
+        [field]: `${environment[field]}-unreviewed`,
+      },
+    })),
+);
 const commands = [
   "auxiliary-token-limit",
   "cron-backup",
@@ -42,6 +90,23 @@ const commands = [
 
 function writeExecutable(target: string, source: string): void {
   fs.writeFileSync(target, source, { mode: 0o755 });
+}
+
+function runHermesReleaseIdentityGuard(environment: HermesReleaseIdentityEnvironment) {
+  const guardStartMarker =
+    'RUN case "${HERMES_VERSION}|${HERMES_SEMVER}|${HERMES_TARBALL_SHA256}|${HERMES_NPM_INTEGRITY}" in';
+  const guardStart = baseDockerfile.indexOf(guardStartMarker);
+  const guardEndMarker = "    esac";
+  const guardEnd = baseDockerfile.indexOf(guardEndMarker, guardStart);
+  const guard = baseDockerfile
+    .slice(guardStart + "RUN ".length, guardEnd + guardEndMarker.length)
+    .replaceAll("\\", "");
+
+  return spawnSync("bash", ["-eu", "-c", guard], {
+    encoding: "utf8",
+    env: { ...process.env, ...environment },
+    timeout: 5000,
+  });
 }
 
 function runCompatibilityRetirementProbe({
@@ -170,6 +235,26 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
+  it.each(reviewedHermesReleaseIdentities)(
+    "accepts the exact $label Hermes release identity tuple",
+    ({ environment }) => {
+      const result = runHermesReleaseIdentityGuard(environment);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+    },
+  );
+
+  it.each(rejectedHermesReleaseIdentities)(
+    "rejects altered $field from the $label Hermes release identity tuple",
+    ({ environment }) => {
+      const result = runHermesReleaseIdentityGuard(environment);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("ERROR: unreviewed Hermes release identity tuple");
+    },
+  );
+
   // source-shape-contract: security -- Every executed probe must match the reviewed source digest
   it("binds every image build probe pin to its source digest", () => {
     const imageDockerfile = fs.readFileSync(
