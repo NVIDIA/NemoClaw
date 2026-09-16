@@ -185,10 +185,7 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use Portable Ollama">
     On Linux x86_64, fresh Hermes Portable onboarding can run the selected Ollama model in a current-user rootless Podman container.
-    This experimental path requires both the Podman client and the local rootless Podman engine to be exactly version `5.7.0`.
-    Newer and older versions are rejected.
-    NemoClaw does not install Podman, and a remote-client-only package does not provide the local engine this profile needs.
-    Run `podman version` before onboarding and confirm that both the client and server report `5.7.0`.
+    Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
     This path also requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
     Start fresh onboarding with an explicit Ollama model:
 
