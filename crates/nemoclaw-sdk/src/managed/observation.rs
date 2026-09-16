@@ -139,27 +139,12 @@ fn environment(values: Option<&[String]>) -> BTreeMap<&str, &str> {
         })
         .collect()
 }
-fn bind_source_matches(
-    wanted_source: Option<&str>,
-    wanted_target: Option<&str>,
-    actual_source: Option<&str>,
-    docker_desktop: bool,
-) -> bool {
-    if actual_source == wanted_source {
-        return true;
-    }
-    docker_desktop
-        && wanted_source == Some("/var/run/docker.sock")
-        && wanted_target == Some("/var/run/docker.sock")
-        && actual_source == Some("/run/host-services/docker.proxy.sock")
-}
 pub(crate) fn verify_container(
     spec: &Spec,
     container: &ContainerInspectResponse,
     data_path: &str,
     image_env: Option<&[String]>,
     image_id: &str,
-    docker_desktop: bool,
 ) -> Result<(), Error> {
     if container.id.as_ref().is_none_or(String::is_empty)
         || container
@@ -178,8 +163,10 @@ pub(crate) fn verify_container(
         .host_config
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
-    let labels = config.labels.as_ref().ok_or(ObservationError::Incomplete)?;
-    verify_labels(&spec.labels()?, labels)?;
+    verify_labels(
+        &spec.labels()?,
+        config.labels.as_ref().ok_or(ObservationError::Incomplete)?,
+    )?;
     let expected = spec.container(data_path)?;
     let expected_host = expected
         .host_config
@@ -270,12 +257,7 @@ pub(crate) fn verify_container(
                 {
                     actual.name == wanted.source
                 } else {
-                    bind_source_matches(
-                        wanted.source.as_deref(),
-                        wanted.target.as_deref(),
-                        actual.source.as_deref(),
-                        docker_desktop,
-                    )
+                    actual.source == wanted.source
                 }
         }) {
             return Err(Error::Conflict(
@@ -356,8 +338,6 @@ impl Engine {
                 &volume.mountpoint,
                 image_config.env.as_deref(),
                 image_id,
-                info.operating_system.as_deref() == Some("Docker Desktop")
-                    && info.name.as_deref() == Some("docker-desktop"),
             )?;
             let container_id = container.id.ok_or(ObservationError::Incomplete)?;
             let mut actual = format!(

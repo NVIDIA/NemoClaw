@@ -10,6 +10,7 @@ It does not run, patch, or inspect the v0 test harness.
 The checked-in synthetic export permits deterministic development before v0 E2E workflows publish reusable exports.
 It is modeled from `test/e2e/manifests/openclaw-nvidia.yaml` at NVIDIA/NemoClaw revision `f47724f29838fe08898993fad1c8c6b7fcb3e080`.
 Replace it with exact bytes from a qualified v0 export when those artifacts become available.
+For an ad hoc producer run, prefer an exactly identified release such as signed tag `v0.0.126`, which includes the public `nemoclaw config export` command, and record the installed executable hash.
 
 This scenario creates a new v1 deployment.
 It does not adopt a v0 deployment or migrate its workspace, conversations, credentials, or runtime state.
@@ -24,9 +25,10 @@ The caller supplies these v0 artifact properties:
 
 The translator rejects unknown v0 fields instead of silently dropping them.
 It carries portable deployment identity, gateway port, inference, agent, and network intent into v1.
-The caller separately binds the v1 gateway engine, gateway image, gateway network, and Fabric image because v0 exports do not identify those v1 runtime dependencies.
-Imported explicit policy remains literal, including its process user and group.
-The selected v1 Fabric image must provide those principals, or a separately reviewed migration contract must define how to translate them.
+The caller separately binds the v1 gateway engine, gateway image, gateway network, Fabric image, and process principal because v0 exports do not identify those v1 runtime dependencies.
+Process translation names both sides and fails unless the source export contains the declared v0 user and group.
+The current candidate maps v0 `sandbox:sandbox` to the v1 Fabric image's numeric `1000:1000` principal and records the product-decision reference with the evidence.
+This is an explicit compatibility difference, not an inferred equivalence; qualification requires review of that decision.
 
 The checked-in contract lives under `crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/`:
 
@@ -68,7 +70,7 @@ The key must be available only as `NVIDIA_INFERENCE_API_KEY`; do not place its v
 The test does not revoke it.
 
 Build a verified bundle and an immutable `nc-prototype-fabric` image for the Docker daemon's architecture.
-Use an immutable gateway image.
+Use the exact managed gateway image pinned by the SDK revision.
 Create a private state directory with this marker before running:
 
 ```json
@@ -89,9 +91,14 @@ export NEMOCLAW_LIVE_V0_SOURCE='producer scenario and exact revision'
 export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-state
 export NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle
 export NEMOCLAW_LIVE_GATEWAY_ENGINE=unix:///var/run/docker.sock
-export NEMOCLAW_LIVE_GATEWAY_IMAGE=repository@sha256:reviewed-digest
+export NEMOCLAW_LIVE_GATEWAY_IMAGE=ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a
 export NEMOCLAW_LIVE_GATEWAY_NETWORK_CIDR=owned-cidr
 export NEMOCLAW_LIVE_FABRIC_IMAGE=nc-prototype-fabric@sha256:local-digest
+export NEMOCLAW_LIVE_V0_PROCESS_USER=sandbox
+export NEMOCLAW_LIVE_V0_PROCESS_GROUP=sandbox
+export NEMOCLAW_LIVE_V1_PROCESS_USER=1000
+export NEMOCLAW_LIVE_V1_PROCESS_GROUP=1000
+export NEMOCLAW_LIVE_PROCESS_MAPPING_DECISION='reviewed issue or PR URL'
 ```
 
 For a Linux qualification candidate, use a clean checkout and the candidate acknowledgement:
@@ -118,8 +125,8 @@ export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-11810-local-feedback
 ```
 
 Docker Desktop may replace the requested socket source with `/run/host-services/docker.proxy.sock`.
-v1 accepts that exact source and target pair only when the selected daemon identifies its operating system as `Docker Desktop` and its name as `docker-desktop`.
-Other source changes remain drift.
+The managed-runtime observer treats that replacement as binding drift and fails closed.
+Supporting the replacement requires a separate product decision and does not belong to this native-Linux scenario.
 
 The managed gateway uses Linux host networking.
 Docker Desktop does not reproduce the native Linux gateway and sandbox callback topology from a controller container without an additional operator-owned forwarding layer.
@@ -127,7 +134,8 @@ Record any such layer as a feedback-only environment adaptation; do not treat th
 
 ## Linux Baseline
 
-Use a disposable native Linux x86_64 Docker host for qualification when matching Fabric and gateway images are available.
+Use a disposable native Linux Docker host with matching Fabric and gateway images.
+The current Fabric image build is qualified for native Linux ARM64, so ARM64 is the least-friction environment for this run; architecture remains an observed property rather than a scenario matrix.
 A GPU is not required because inference uses the hosted NVIDIA endpoint.
 Record the host release, kernel, architecture, Docker client and server versions, daemon identity, image digests, bundle manifest, v1 revision, artifact identity, and artifact hash.
 

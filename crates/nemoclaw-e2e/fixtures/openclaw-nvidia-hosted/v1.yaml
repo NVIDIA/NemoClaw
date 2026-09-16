@@ -3,6 +3,7 @@
 # Generated from the representative v0 export modeled at NVIDIA/NemoClaw revision
 # f47724f29838fe08898993fad1c8c6b7fcb3e080.
 # 2026-09-15: bound explicit v1 gateway and Fabric runtime identities.
+# 2026-09-16: updated the v1 schema and bound sandbox:sandbox to numeric 1000:1000.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -14,7 +15,7 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17691
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
+    image: ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a
     networkCIDR: 172.30.111.0/24
   inferenceProviders:
     - name: hosted-nvidia-prod
@@ -34,8 +35,8 @@ spec:
           explicit:
             version: 1
             process:
-              run_as_user: sandbox
-              run_as_group: sandbox
+              run_as_user: "1000"
+              run_as_group: "1000"
             network_policies:
               hosted-inference:
                 name: hosted-inference
@@ -52,7 +53,8 @@ spec:
                 - /sandbox
       agents:
         - name: primary
-          harness: openclaw
+          harness:
+            kind: openclaw
           inference:
             routes:
               - name: primary

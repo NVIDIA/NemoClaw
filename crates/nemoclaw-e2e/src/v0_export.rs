@@ -5,12 +5,13 @@
 // (Apache-2.0).
 // 2026-09-15: translated the strict exported subset into v1alpha1 desired state
 // and made v1-only runtime bindings explicit inputs.
+// 2026-09-16: updated the target schema and made process-principal translation explicit.
 
 //! Strict desired-state translation for configuration exported by pinned v0 deployments.
 
 use nemoclaw_sdk::config::{
-    API_VERSION, Agent, AgentAuth, Credential, Document, Gateway, Image, Inference, InferenceApi,
-    InferenceProvider, Metadata, Network, Runtime, Sandbox, Spec,
+    API_VERSION, Agent, AgentAuth, Credential, Document, Gateway, Harness, Image, Inference,
+    InferenceApi, InferenceProvider, Metadata, Network, Runtime, Sandbox, Spec,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, io::Read};
@@ -27,6 +28,17 @@ pub struct V1RuntimeBindings {
     pub gateway_image: String,
     pub gateway_network_cidr: String,
     pub sandbox_image: String,
+    pub process_principal: V1ProcessPrincipalBinding,
+}
+
+/// Explicit process-principal translation between the source and target images.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V1ProcessPrincipalBinding {
+    pub source_user: String,
+    pub source_group: String,
+    pub target_user: String,
+    pub target_group: String,
 }
 
 /// A fixed diagnostic that never contains source configuration values.
@@ -146,7 +158,7 @@ pub fn desired_state_from_v0_export(
     let mut providers = export.spec.inference_providers;
     let provider = providers.pop().unwrap();
     let mut sandboxes = export.spec.sandboxes;
-    let sandbox = sandboxes.pop().unwrap();
+    let mut sandbox = sandboxes.pop().unwrap();
     if sandbox.agents.len() != 1
         || sandbox.runtime.image.ref_.is_empty()
         || provider.provider.is_empty()
@@ -164,6 +176,28 @@ pub fn desired_state_from_v0_export(
         }
         _ => return Err(V0ExportError("unsupported v0 inference export")),
     };
+    let process = sandbox
+        .network
+        .policy
+        .as_mut()
+        .and_then(|selection| selection.explicit.process.as_mut())
+        .ok_or(V0ExportError(
+            "v0 process principal does not match the explicit binding",
+        ))?;
+    if process.run_as_user.as_deref() != Some(&bindings.process_principal.source_user)
+        || process.run_as_group.as_deref() != Some(&bindings.process_principal.source_group)
+    {
+        return Err(V0ExportError(
+            "v0 process principal does not match the explicit binding",
+        ));
+    }
+    if bindings.process_principal.target_user.is_empty()
+        || bindings.process_principal.target_group.is_empty()
+    {
+        return Err(V0ExportError("invalid v1 process principal binding"));
+    }
+    process.run_as_user = Some(bindings.process_principal.target_user.clone());
+    process.run_as_group = Some(bindings.process_principal.target_group.clone());
 
     let document = Document {
         api_version: API_VERSION.into(),
@@ -197,11 +231,17 @@ pub fn desired_state_from_v0_export(
                 network: sandbox.network,
                 agents: vec![Agent {
                     name: agent.name,
-                    harness: agent.harness,
-                    inference: agent.inference,
+                    harness: Some(Harness {
+                        kind: agent.harness,
+                        ..Harness::default()
+                    }),
+                    inference: Some(agent.inference),
                     auth: agent.auth,
+                    ..Agent::default()
                 }],
+                ..Sandbox::default()
             }],
+            ..Spec::default()
         },
     };
     let yaml = document

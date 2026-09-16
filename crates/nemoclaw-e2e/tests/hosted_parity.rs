@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::v0_export::{V1RuntimeBindings, desired_state_from_v0_export};
+use nemoclaw_e2e::v0_export::{
+    V1ProcessPrincipalBinding, V1RuntimeBindings, desired_state_from_v0_export,
+};
 use nemoclaw_sdk::config::Document;
 use sha2::{Digest, Sha256};
 
@@ -22,9 +24,15 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
         V1RuntimeBindings {
             gateway_engine: "unix:///var/run/docker.sock".into(),
-            gateway_image: "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792".into(),
+            gateway_image: "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a".into(),
             gateway_network_cidr: "172.30.111.0/24".into(),
             sandbox_image: "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd".into(),
+            process_principal: V1ProcessPrincipalBinding {
+                source_user: "sandbox".into(),
+                source_group: "sandbox".into(),
+                target_user: "1000".into(),
+                target_group: "1000".into(),
+            },
         },
     )
     .unwrap();
@@ -50,12 +58,26 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     let sandbox = &v1.spec.sandboxes[0];
     assert_eq!(sandbox.runtime.provider, "docker");
     assert!(sandbox.network.tier.is_empty());
-    assert!(sandbox.network.policy.is_some());
+    let process = sandbox
+        .network
+        .policy
+        .as_ref()
+        .unwrap()
+        .explicit
+        .process
+        .as_ref()
+        .unwrap();
+    assert_eq!(process.run_as_user.as_deref(), Some("1000"));
+    assert_eq!(process.run_as_group.as_deref(), Some("1000"));
     let agent = &sandbox.agents[0];
-    assert_eq!(agent.harness, "openclaw");
-    assert_eq!(agent.inference.routes[0].provider_ref, provider.name);
+    assert_eq!(v1.agent_harness(agent).unwrap().kind, "openclaw");
+    let inference = v1.agent_inference(agent).unwrap();
     assert_eq!(
-        agent.inference.routes[0].overrides.model,
+        inference.routes[0].provider_ref.as_deref(),
+        Some(provider.name.as_str())
+    );
+    assert_eq!(
+        inference.routes[0].overrides.model,
         "nvidia/nemotron-3-super-120b-a12b"
     );
 }
@@ -77,6 +99,12 @@ fn hosted_openclaw_translation_rejects_unrepresented_v0_fields() {
             gateway_image: "gateway@sha256:digest".into(),
             gateway_network_cidr: "172.30.111.0/24".into(),
             sandbox_image: "fabric@sha256:digest".into(),
+            process_principal: V1ProcessPrincipalBinding {
+                source_user: "sandbox".into(),
+                source_group: "sandbox".into(),
+                target_user: "1000".into(),
+                target_group: "1000".into(),
+            },
         },
     )
     .unwrap_err();
@@ -84,8 +112,35 @@ fn hosted_openclaw_translation_rejects_unrepresented_v0_fields() {
     assert_eq!(error.to_string(), "invalid or unsupported v0 export");
 }
 
+#[test]
+fn hosted_openclaw_translation_refuses_an_unexpected_source_principal() {
+    let error = desired_state_from_v0_export(
+        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+        V1RuntimeBindings {
+            gateway_engine: "unix:///var/run/docker.sock".into(),
+            gateway_image: nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE.into(),
+            gateway_network_cidr: "172.30.111.0/24".into(),
+            sandbox_image: "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd".into(),
+            process_principal: V1ProcessPrincipalBinding {
+                source_user: "node".into(),
+                source_group: "node".into(),
+                target_user: "1000".into(),
+                target_group: "1000".into(),
+            },
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "v0 process principal does not match the explicit binding"
+    );
+}
+
 mod live {
-    use nemoclaw_e2e::v0_export::{V1RuntimeBindings, desired_state_from_v0_export};
+    use nemoclaw_e2e::v0_export::{
+        V1ProcessPrincipalBinding, V1RuntimeBindings, desired_state_from_v0_export,
+    };
     use nemoclaw_sdk::{
         CancellationToken, Deployment,
         backend::Row,
@@ -216,6 +271,7 @@ mod live {
     fn live_translation_requires_an_explicit_immutable_local_fabric_image() {
         let valid = "nc-prototype-fabric@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         validate_fabric_image(valid);
+        validate_gateway_image(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
         for invalid in [
             "nc-prototype-fabric:openclaw",
             "other@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -223,6 +279,12 @@ mod live {
         ] {
             assert!(std::panic::catch_unwind(|| validate_fabric_image(invalid)).is_err());
         }
+        assert!(
+            std::panic::catch_unwind(|| validate_gateway_image(
+                "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792"
+            ))
+            .is_err()
+        );
     }
 
     fn validate_immutable_image(name: &str, image: &str) {
@@ -250,6 +312,15 @@ mod live {
         );
     }
 
+    fn validate_gateway_image(image: &str) {
+        validate_immutable_image("live gateway image", image);
+        assert_eq!(
+            image,
+            nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE,
+            "live managed gateway must use the SDK-pinned image"
+        );
+    }
+
     fn validate_scenario_document(document: &Document) {
         let provider = &document.spec.inference_providers[0];
         assert_eq!(provider.provider, "openai");
@@ -260,12 +331,26 @@ mod live {
         );
         let sandbox = &document.spec.sandboxes[0];
         assert_eq!(sandbox.runtime.provider, "docker");
-        assert!(sandbox.network.policy.is_some());
+        let process = sandbox
+            .network
+            .policy
+            .as_ref()
+            .unwrap()
+            .explicit
+            .process
+            .as_ref()
+            .unwrap();
+        assert_eq!(process.run_as_user.as_deref(), Some("1000"));
+        assert_eq!(process.run_as_group.as_deref(), Some("1000"));
         let agent = &sandbox.agents[0];
-        assert_eq!(agent.harness, "openclaw");
-        assert_eq!(agent.inference.routes[0].provider_ref, provider.name);
+        assert_eq!(document.agent_harness(agent).unwrap().kind, "openclaw");
+        let inference = document.agent_inference(agent).unwrap();
         assert_eq!(
-            agent.inference.routes[0].overrides.model,
+            inference.routes[0].provider_ref.as_deref(),
+            Some(provider.name.as_str())
+        );
+        assert_eq!(
+            inference.routes[0].overrides.model,
             "nvidia/nemotron-3-super-120b-a12b"
         );
     }
@@ -387,12 +472,32 @@ mod live {
             "this scenario requires the local Linux Docker socket"
         );
         let gateway_image = std::env::var("NEMOCLAW_LIVE_GATEWAY_IMAGE").unwrap();
-        validate_immutable_image("live gateway image", &gateway_image);
+        validate_gateway_image(&gateway_image);
+        let process_mapping_decision =
+            std::env::var("NEMOCLAW_LIVE_PROCESS_MAPPING_DECISION").unwrap();
+        assert!(
+            !process_mapping_decision.trim().is_empty(),
+            "the process-principal mapping requires an explicit decision reference"
+        );
+        if qualification_candidate {
+            assert!(
+                process_mapping_decision.starts_with("https://github.com/NVIDIA/NemoClaw/issues/")
+                    || process_mapping_decision
+                        .starts_with("https://github.com/NVIDIA/NemoClaw/pull/"),
+                "qualification requires a NemoClaw issue or pull-request decision reference"
+            );
+        }
         let bindings = V1RuntimeBindings {
             gateway_engine,
             gateway_image,
             gateway_network_cidr: std::env::var("NEMOCLAW_LIVE_GATEWAY_NETWORK_CIDR").unwrap(),
             sandbox_image: image.clone(),
+            process_principal: V1ProcessPrincipalBinding {
+                source_user: std::env::var("NEMOCLAW_LIVE_V0_PROCESS_USER").unwrap(),
+                source_group: std::env::var("NEMOCLAW_LIVE_V0_PROCESS_GROUP").unwrap(),
+                target_user: std::env::var("NEMOCLAW_LIVE_V1_PROCESS_USER").unwrap(),
+                target_group: std::env::var("NEMOCLAW_LIVE_V1_PROCESS_GROUP").unwrap(),
+            },
         };
         let document = desired_state_from_v0_export(v0_export_bytes.as_slice(), bindings.clone())
             .expect("the pinned v0 export must translate without dropping fields");
@@ -434,7 +539,7 @@ mod live {
                 "passed": false,
                 "qualified": false,
                 "qualificationCandidate": qualification_candidate,
-                "qualificationNote": "qualification requires external artifact-provenance and evidence review",
+                "qualificationNote": "qualification requires review of artifact provenance, the process-principal decision, and lifecycle evidence",
                 "resumedAfterFailedApply": !fresh,
                 "startedEpoch": now(),
                 "v1Revision": v1_revision,
@@ -448,6 +553,7 @@ mod live {
                 "translation": {
                     "contract": "strict-v0-export-to-v1alpha1-desired-state-v1",
                     "v1OnlyRuntimeBindings": bindings,
+                    "processPrincipalMappingDecision": process_mapping_decision,
                     "v1Input": serde_json::to_value(&document).unwrap()
                 },
                 "environment": current_environment,
@@ -493,7 +599,17 @@ mod live {
         assert!(!apply.changes.is_empty());
         evidence.record("initialApply", apply);
         let (before, sandbox) = state_bindings(&directory);
-        assert_eq!(before.len(), 6);
+        assert_eq!(
+            before.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "nemoclaw_gateway_storage.runtime",
+                "nemoclaw_managed_gateway.runtime",
+                "nemoclaw_provider.inference",
+                "nemoclaw_provider_profile.inference",
+                "nemoclaw_sandbox.agent",
+                "nemoclaw_workspace.deployment",
+            ]
+        );
         evidence.record("resourceIdentities", &before);
 
         let client =
