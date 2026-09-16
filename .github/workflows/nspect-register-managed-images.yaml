@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Security / Prepare nSpect Registration
+
+run-name: Prepare nSpect registration for ${{ github.event.workflow_run.head_branch }}
+
+on:
+  workflow_run:
+    workflows:
+      - Images / Publish Base and Managed Images
+    types:
+      - completed
+
+permissions: {}
+
+jobs:
+  prepare-registration:
+    if: >-
+      ${{
+      vars.NSPECT_REGISTRATION_ENABLED == 'true' &&
+      github.run_attempt == 1 &&
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.workflow_run.status == 'completed' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw' &&
+      github.event.workflow_run.path == '.github/workflows/base-image.yaml' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+      }}
+    concurrency:
+      group: nspect-registration-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - name: Checkout trusted registration controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Download immutable managed-image cohort contract
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_ARTIFACT_KIND: managed-image-cohort
+          PUBLICATION_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: >-
+          node --no-warnings tools/e2e/exact-artifact-download.mts
+          "${RUNNER_TEMP}/managed-image-cohort"
+
+      - id: plan
+        name: Prepare immutable nSpect registration plan
+        env:
+          NSPECT_ID: NSPECT-SQ44-PJFM
+          NSPECT_PROGRAM_VERSION: dev
+          PUBLICATION_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PUBLICATION_RELEASE: ${{ github.event.workflow_run.head_branch }}
+          PUBLICATION_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: >-
+          node --no-warnings tools/managed-images/nspect-registration-plan.mts
+          "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
+
+      - name: Record draft registration boundary
+        shell: bash
+        run: >-
+          printf '%s\n'
+          'Prepared the immutable nSpect registration plan. Registration remains disabled until an approved internal runner is configured.'
+          >> "$GITHUB_STEP_SUMMARY"
