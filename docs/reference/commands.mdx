@@ -1637,7 +1637,7 @@ A `pending` or `configuring` receipt instead directs you to resume Portable onbo
 
 When the container runs and OpenShell reports `Stopped`, `start` starts the sandbox through OpenShell to repair the phase. A running sandbox in another phase skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
-For a sandbox that uses the Docker driver, `docker_unreachable` means `docker info` did not return valid server data. It does not show that the sandbox container is missing. If Docker is stopped, follow [Docker is not running](troubleshooting#docker-is-not-running). If Docker is running, follow [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux). Make `docker info` succeed, then retry `$$nemoclaw <name> start`.
+For a sandbox that uses the Docker driver, `docker_unreachable` means `docker info` did not return valid server data. It does not show that the sandbox container is missing. If Docker is stopped, follow [Docker is not running](troubleshooting#docker-is-not-running). If `docker info` reports a permission-denied error on Linux, follow [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux). For any other failure, inspect and correct the reported `docker info` error, such as an invalid context or TLS configuration. Make `docker info` succeed, then retry `$$nemoclaw <name> start`.
 
 <AgentOnly variant="openclaw,hermes">
   Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
