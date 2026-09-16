@@ -16,7 +16,7 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from fabric import openclaw_execution
+from fabric import model_connection, openclaw_execution
 from interfaces import dashboard, gateway_settings, token
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
 from nemo_fabric_adapters.common import lifecycle
@@ -94,6 +94,7 @@ def agent_entries(name, inference):
 
 def native_configuration(name, inference=None):
     execution = openclaw_execution(inference)
+    connection = model_connection(inference)
     config = {
         **native_features(inference),
         "gateway": gateway_settings(inference),
@@ -101,14 +102,20 @@ def native_configuration(name, inference=None):
             "mode": "replace",
             "providers": {
                 "openshell": {
-                    "baseUrl": "https://inference.local/v1",
+                    "baseUrl": connection["base_url"],
                     "api": "openai-completions",
                     "timeoutSeconds": execution["timeoutSeconds"],
-                    "apiKey": "openshell-placeholder",
+                    "apiKey": (
+                        "${" + connection["api_key_env"] + "}"
+                        if connection["api_key_env"]
+                        else "unused"
+                    )
+                    if "connection" in (inference or {})
+                    else "openshell-placeholder",
                     "models": [
                         {
-                            "id": "primary",
-                            "name": "OpenShell route",
+                            "id": connection["model"],
+                            "name": connection["model"],
                             "contextWindow": 32768,
                             "maxTokens": 4096,
                             "input": ["text"],
@@ -120,7 +127,7 @@ def native_configuration(name, inference=None):
         },
         "agents": {
             "defaults": {
-                "model": {"primary": "openshell/primary"},
+                "model": {"primary": "openshell/" + connection["model"]},
                 "workspace": "/sandbox/workspace",
                 "sandbox": {"mode": "off"},
                 "timeoutSeconds": execution["timeoutSeconds"],
@@ -198,6 +205,7 @@ def owned_configuration(name, inference=None):
     if inference is not None:
         native = native_configuration(name, inference)
         config["models"] = native["models"]
+        config["agents"]["defaults"]["model"] = native["agents"]["defaults"]["model"]
         if "thinkingDefault" in native["agents"]["defaults"]:
             config["agents"]["defaults"]["thinkingDefault"] = native["agents"]["defaults"][
                 "thinkingDefault"
@@ -311,13 +319,8 @@ class OpenClawRuntime:
         ):
             raise ValueError("invalid OpenClaw runtime identity")
         model = config["models"]["default"]
-        if (
-            model["provider"] != "openai"
-            or model["model"] != "primary"
-            or model.get("base_url") != "https://inference.local/v1"
-            or model.get("api_key_env") != "OPENAI_API_KEY"
-        ):
-            raise ValueError("local OpenClaw adapter requires the OpenShell primary route")
+        if model != model_connection(self.inference):
+            raise ValueError("OpenClaw model differs from its configured inference connection")
         self.home = ROOT
         self.home.mkdir(parents=True, mode=0o700, exist_ok=True)
         self.state_lock = open(self.home / "adapter.lock", "a")

@@ -36,6 +36,54 @@ class InferenceConfiguration(unittest.TestCase):
             self.assertEqual(config["models"]["default"]["base_url"], "https://inference.local/v1")
             self.assertNotIn("NOUS_API_KEY", str(config))
 
+    def test_native_endpoint_and_model_reach_fabric_and_both_harnesses(self):
+        from unittest.mock import patch
+
+        from hermes_adapter import native_configuration as hermes
+        from openclaw_adapter import native_configuration as openclaw
+
+        connection = {
+            "provider": "openai",
+            "model": "real-model",
+            "base_url": "https://models.example.com/v1",
+            "api_key_env": "NEMOCLAW_INFERENCE_ORACLE_KEY",
+        }
+        options = {"api": "openai-completions", "tuning": {}, "connection": connection}
+        with patch.dict("os.environ", {connection["api_key_env"]: "opaque-test-placeholder"}):
+            for harness in ("openclaw", "hermes", "deepagents"):
+                config = configuration("main", harness, inference=options)
+                self.assertEqual(config["models"]["default"], connection)
+            native = openclaw("main", options)
+            provider = native["models"]["providers"]["openshell"]
+            self.assertEqual(provider["baseUrl"], connection["base_url"])
+            self.assertEqual(provider["models"][0]["id"], "real-model")
+            self.assertEqual(provider["apiKey"], "${NEMOCLAW_INFERENCE_ORACLE_KEY}")
+            self.assertEqual(
+                native["agents"]["defaults"]["model"]["primary"], "openshell/real-model"
+            )
+            native = hermes(options)
+            self.assertEqual(native["model"]["default"], "real-model")
+            self.assertEqual(native["model"]["base_url"], connection["base_url"])
+            self.assertEqual(native["custom_providers"][0]["api_key"], "opaque-test-placeholder")
+
+    def test_missing_attached_credential_fails_before_native_configuration_is_written(self):
+        from unittest.mock import patch
+
+        from hermes_adapter import native_configuration
+
+        options = {
+            "api": "openai-completions",
+            "tuning": {},
+            "connection": {
+                "provider": "openai",
+                "model": "real-model",
+                "base_url": "https://models.example.com/v1",
+                "api_key_env": "NEMOCLAW_INFERENCE_MISSING_KEY",
+            },
+        }
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(ValueError):
+            native_configuration(options)
+
 
 class NativeInference(unittest.TestCase):
     def test_native_api_limits_and_reasoning_are_verified_without_overwriting_drift(self):

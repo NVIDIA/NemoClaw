@@ -93,6 +93,45 @@ def relay_configuration(name):
     }
 
 
+def model_connection(inference=None):
+    connection = (inference or {}).get("connection")
+    if connection is None:
+        return {
+            "provider": "openai",
+            "model": "primary",
+            "base_url": "https://inference.local/v1",
+            "api_key_env": "OPENAI_API_KEY",
+        }
+    if (
+        not isinstance(connection, dict)
+        or set(connection) != {"provider", "model", "base_url", "api_key_env"}
+        or connection["provider"] not in ("openai", "anthropic")
+        or not isinstance(connection["model"], str)
+        or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", connection["model"])
+        or not isinstance(connection["base_url"], str)
+        or not connection["base_url"].startswith(("http://", "https://"))
+        or not isinstance(connection["api_key_env"], str)
+        or (
+            connection["api_key_env"]
+            and not re.fullmatch(r"NEMOCLAW_INFERENCE_[A-Z0-9_]+_KEY", connection["api_key_env"])
+        )
+    ):
+        raise ValueError("invalid native inference connection")
+    return dict(connection)
+
+
+def model_credential(inference=None):
+    if "connection" not in (inference or {}):
+        return "openshell-placeholder"
+    key = model_connection(inference)["api_key_env"]
+    if not key:
+        return "unused"
+    value = os.environ.get(key)
+    if not value:
+        raise ValueError("attached inference credential is unavailable")
+    return value
+
+
 def configuration(name, harness="deepagents", model=None, inference=None):
     if harness == "pi":
         if model is None:
@@ -217,6 +256,10 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             config["models"]["default"]["provider"] = (
                 "anthropic" if api == "anthropic-messages" else "openai"
             )
+    if "connection" in (inference or {}):
+        config["models"]["default"].update(model_connection(inference))
+        if harness == "remote-agent":
+            config["harness"]["settings"]["base_url"] = model_connection(inference)["base_url"]
     return config
 
 

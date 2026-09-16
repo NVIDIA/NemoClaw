@@ -12,6 +12,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from fabric import model_connection, model_credential
 from interfaces import token
 
 ROOT = Path("/sandbox/.hermes")
@@ -39,19 +40,20 @@ def interface_settings(inference):
 
 def native_configuration(inference):
     api = (inference or {}).get("api", "openai-completions")
+    connection = model_connection(inference)
     return {
         "model": {
-            "default": "primary",
+            "default": connection["model"],
             "provider": "custom:openshell",
-            "base_url": "https://inference.local/v1",
+            "base_url": connection["base_url"],
             "api_mode": MODES[api],
         },
         "custom_providers": [
             {
                 "name": "openshell",
-                "base_url": "https://inference.local/v1",
+                "base_url": connection["base_url"],
                 "api_mode": MODES[api],
-                "api_key": "openshell-placeholder",
+                "api_key": model_credential(inference),
             }
         ],
         "agent": {"max_turns": 8},
@@ -248,8 +250,11 @@ class HermesRuntime:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", self.runtime_id):
             raise ValueError("invalid runtime identity")
         model = config["models"]["default"]
-        if model["model"] != "primary" or model.get("base_url") != "https://inference.local/v1":
-            raise ValueError("Hermes requires the OpenShell primary route")
+        if (
+            model["model"] != model_connection(self.inference)["model"]
+            or model.get("base_url") != model_connection(self.inference)["base_url"]
+        ):
+            raise ValueError("Hermes model differs from its configured inference connection")
         ROOT.mkdir(parents=True, mode=0o700, exist_ok=True)
         self.state_lock = (ROOT / "adapter.lock").open("a")
         try:
@@ -261,8 +266,8 @@ class HermesRuntime:
             env = dict(
                 os.environ,
                 HERMES_HOME=str(ROOT),
-                OPENAI_API_KEY="openshell-placeholder",
-                OPENAI_BASE_URL="https://inference.local/v1",
+                OPENAI_API_KEY=model_credential(self.inference),
+                OPENAI_BASE_URL=model_connection(self.inference)["base_url"],
                 HERMES_DISABLE_LAZY_INSTALLS="1",
                 NEMOCLAW_HERMES_INTERFACES=json.dumps(interface_settings(self.inference)),
             )
