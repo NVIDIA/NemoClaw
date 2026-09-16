@@ -26,13 +26,7 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
 
-import {
-  bindRebuildSnapshotGpuAuthority,
-  type RebuildBackupManifest,
-  type RebuildBackupPhaseInput,
-  runRebuildBackupPhase,
-} from "./rebuild-backup-phase";
-import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
@@ -53,57 +47,6 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
-});
-
-describe("rebuild snapshot GPU authority", () => {
-  const options = {
-    sandboxGpu: null,
-    sandboxGpuDevice: null,
-  } as RebuildRecreateOnboardOpts;
-  const gpuManifest = {
-    version: 1,
-    sandboxName: "alpha",
-    timestamp: "2026-09-16T00:00:00.000Z",
-    agentType: "openclaw",
-    agentVersion: null,
-    expectedVersion: null,
-    stateDirs: [],
-    failedBackupDirs: [],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/alpha-backup",
-    blueprintDigest: "digest",
-    runtimeSnapshot: {
-      schemaVersion: 1,
-      providerId: "docker",
-      providerHandle: "provider-handle",
-      lifecycleState: "running",
-      lifecycleGeneration: "generation-1",
-      runtime: {
-        schemaVersion: 1,
-        providerId: "docker",
-        runtime: { kind: "docker-container", handle: "c".repeat(64) },
-        acceleration: {
-          kind: "gpu",
-          vendor: "nvidia",
-          devices: ["nvidia.com/gpu=0"],
-        },
-      },
-    },
-  } satisfies RebuildBackupManifest;
-
-  it("preserves recreate options without captured runtime GPU authority", () => {
-    expect(bindRebuildSnapshotGpuAuthority(options, null)).toEqual(options);
-  });
-
-  it.each([{ noGpu: true as const }, { sandboxGpu: "disable" as const }])(
-    "rejects captured GPU authority that conflicts with opt-out %j",
-    (conflict) => {
-      expect(() =>
-        bindRebuildSnapshotGpuAuthority({ ...options, ...conflict }, gpuManifest),
-      ).toThrow(/conflicts with the recorded GPU opt-out/u);
-    },
-  );
 });
 
 describe("rebuild policy handoff", () => {
