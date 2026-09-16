@@ -113,6 +113,11 @@ it(
     );
 
     fs.mkdirSync(path.join(root, ".git"));
+    fs.mkdirSync(path.join(root, "ci"));
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "ci", "reviewed-npm-audit.json"),
+      path.join(root, "ci", "reviewed-npm-audit.json"),
+    );
     fs.mkdirSync(path.join(root, "scripts", "lib"), { recursive: true });
     fs.cpSync(
       path.join(REPOSITORY_ROOT, "scripts", "vendor", "openshell-sdk"),

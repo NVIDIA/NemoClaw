@@ -37,6 +37,7 @@ function fixture() {
       "scripts/lib/reviewed-npm-archive.mts",
       "scripts/lib/reviewed-npm-cache.mts",
       "scripts/vendor/openshell-sdk",
+      "ci/reviewed-npm-audit.json",
       "dist/lib/adapters/openshell/sdk-import.mjs",
     ],
   });
@@ -249,6 +250,22 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
     const result = probe("prepare");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("integrity");
+    expect(existsSync(path.join(root, "cache"))).toBe(false);
+  });
+
+  it("rejects SDK identity drift from the reviewed package before creating an npm cache", () => {
+    const { root, probe } = fixture();
+    const configPath = path.join(root, "ci", "reviewed-npm-audit.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.sourceRegistryPackage.integrity = "sha512-reviewed-identity-drift";
+    writeFileSync(configPath, JSON.stringify(config));
+
+    const result = probe("prepare");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "package.json, package-lock.json, and reviewed identity must agree",
+    );
     expect(existsSync(path.join(root, "cache"))).toBe(false);
   });
 });
