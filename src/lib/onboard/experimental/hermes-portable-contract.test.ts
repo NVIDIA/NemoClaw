@@ -18,6 +18,8 @@ import {
 const SANDBOX = "alpha";
 const PRE_SKILLS_MANIFEST_SHA256 =
   "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
+const PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256 =
+  "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e";
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
@@ -65,6 +67,25 @@ function removeReviewedSkillsMetadata(agent: AgentDefinition): void {
   ].join("\n");
   expect(source.split(metadata)).toHaveLength(2);
   fs.writeFileSync(agent.manifestPath, source.replace(metadata, ""), { mode: 0o644 });
+}
+
+function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const previous = source
+    .replace("  - path: lazy-packages\n    clear_when_absent: false\n", "  - lazy-packages\n")
+    .replace("  - path: plugins\n    clear_when_absent: false\n", "  - plugins\n");
+  expect(previous).not.toBe(source);
+  fs.writeFileSync(agent.manifestPath, previous, { mode: 0o644 });
+  Object.defineProperty(agent, "stateDirectories", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: agent.stateDirectories.map((entry) =>
+      entry.kind === "path" && ["lazy-packages", "plugins"].includes(entry.path)
+        ? { ...entry, clearWhenAbsent: true }
+        : entry,
+    ),
+  });
 }
 
 function expectStartupCandidatesRejected(
@@ -188,28 +209,43 @@ describe("Hermes portable startup contract", () => {
     expect(() => assertCurrentHermesPortableStoredStartupContract(contract, SANDBOX)).not.toThrow();
   });
 
-  it("accepts the reviewed manifest metadata transition when startup authority is unchanged (#11248)", () => {
-    const installedAgent = copyAgent();
-    removeReviewedSkillsMetadata(installedAgent);
-    const installed = resolveHermesPortableStartupContract({
-      agent: installedAgent,
-      sandboxName: SANDBOX,
-      startupArgv: startupArgv(),
-    });
-    const input = {
-      agent: loadAgent("hermes"),
-      sandboxName: SANDBOX,
-      startupArgv: startupArgv(),
-    };
-    const current = resolveHermesPortableStartupContract(input);
+  it.each([
+    {
+      expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,
+      prepare: (agent: AgentDefinition) => {
+        removeReviewedSkillsMetadata(agent);
+        removeReviewedNativeOwnershipMetadata(agent);
+      },
+    },
+    {
+      expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
+      prepare: removeReviewedNativeOwnershipMetadata,
+    },
+  ])(
+    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766)",
+    ({ expectedManifestSha256, prepare }) => {
+      const installedAgent = copyAgent();
+      prepare(installedAgent);
+      const installed = resolveHermesPortableStartupContract({
+        agent: installedAgent,
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      });
+      const input = {
+        agent: loadAgent("hermes"),
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      };
+      const current = resolveHermesPortableStartupContract(input);
 
-    expect(installed.manifestSha256).toBe(PRE_SKILLS_MANIFEST_SHA256);
-    expect(installed.startupDescriptorSha256).toBe(current.startupDescriptorSha256);
-    expect(() =>
-      assertCurrentHermesPortableStoredStartupContract(installed, SANDBOX),
-    ).not.toThrow();
-    expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
-  });
+      expect(installed.manifestSha256).toBe(expectedManifestSha256);
+      expect(installed.startupDescriptorSha256).not.toBe(current.startupDescriptorSha256);
+      expect(() =>
+        assertCurrentHermesPortableStoredStartupContract(installed, SANDBOX),
+      ).not.toThrow();
+      expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
+    },
+  );
 
   it("rejects unreviewed manifest transitions with an unchanged startup descriptor (#11248)", () => {
     const current = resolveHermesPortableStartupContract({

@@ -45,11 +45,20 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
-// One-way compatibility bridge for the exact additive skills metadata change in #11248.
-const REVIEWED_MANIFEST_TRANSITION = Object.freeze({
-  installed: "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
-  current: "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
-});
+// One-way compatibility bridges for the exact additive skills metadata change
+// in #11248 and native plugin/package restore ownership in #11766.
+const REVIEWED_INSTALLED_MANIFESTS = new Set([
+  "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
+  "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
+]);
+const REVIEWED_INSTALLED_STARTUP_DESCRIPTOR =
+  "05ddfaa35bb2c129dbeaeb575ab72eba2076a24902925406013c6ee416ff1f54";
+const REVIEWED_INSTALLED_STATE_IDENTITY =
+  "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
+const CURRENT_MANIFEST = "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85";
+const CURRENT_STARTUP_DESCRIPTOR =
+  "4aa1004feb30a66df27d8c7dbbf514529c4fe6984fe25a978f1c56e65ad0c8c2";
+const CURRENT_STATE_IDENTITY = "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -319,14 +328,28 @@ function startupAuthorityMatches(
   installed: HermesPortableStartupContract,
 ): boolean {
   if (isDeepStrictEqual(current, installed)) return true;
-  if (
-    installed.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.installed ||
-    current.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.current
-  ) {
+  const reviewedTransition =
+    REVIEWED_INSTALLED_MANIFESTS.has(installed.manifestSha256) &&
+    installed.startupDescriptorSha256 === REVIEWED_INSTALLED_STARTUP_DESCRIPTOR &&
+    installed.stateIdentitySha256 === REVIEWED_INSTALLED_STATE_IDENTITY &&
+    current.manifestSha256 === CURRENT_MANIFEST &&
+    current.startupDescriptorSha256 === CURRENT_STARTUP_DESCRIPTOR &&
+    current.stateIdentitySha256 === CURRENT_STATE_IDENTITY;
+  if (!reviewedTransition) {
     return false;
   }
-  const { manifestSha256: _currentManifest, ...currentAuthority } = current;
-  const { manifestSha256: _installedManifest, ...installedAuthority } = installed;
+  const {
+    manifestSha256: _currentManifest,
+    startupDescriptorSha256: _currentDescriptor,
+    stateIdentitySha256: _currentState,
+    ...currentAuthority
+  } = current;
+  const {
+    manifestSha256: _installedManifest,
+    startupDescriptorSha256: _installedDescriptor,
+    stateIdentitySha256: _installedState,
+    ...installedAuthority
+  } = installed;
   return isDeepStrictEqual(currentAuthority, installedAuthority);
 }
 
