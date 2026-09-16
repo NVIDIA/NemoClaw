@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  readRepoText,
   readYaml,
   type Workflow,
   type WorkflowJob,
@@ -11,6 +12,8 @@ import {
 } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
+const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
+const REVIEWED_NPM_CONFIG_PATH = "ci/reviewed-npm-audit.json";
 const workflow = readYaml<
   Workflow & {
     concurrency: { group: string; queue: "max"; "cancel-in-progress": boolean };
@@ -18,6 +21,12 @@ const workflow = readYaml<
     permissions: Record<string, string>;
   }
 >(WORKFLOW_PATH);
+const wslHelperSource = readRepoText(WSL_HELPER_PATH);
+const reviewedNpmConfig = JSON.parse(readRepoText(REVIEWED_NPM_CONFIG_PATH)) as {
+  nodeVersion: string;
+  npmIntegrity: string;
+  npmVersion: string;
+};
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];
@@ -57,6 +66,23 @@ describe("platform evidence workflow", () => {
     ]);
     expect(JSON.stringify(workflow)).not.toContain("sdk-artifact-run-id");
     expect(JSON.stringify(workflow)).not.toContain("actions/download-artifact");
+  });
+
+  // source-shape-contract: security -- The WSL boundary must embed the integrity-bound Node and npm bootstrap because it cannot import the TypeScript identity helper
+  it("uses the reviewed Node and npm identities for the WSL build and test lane", () => {
+    expect(wslHelperSource).toContain(`node_version="${reviewedNpmConfig.nodeVersion}"`);
+    expect(wslHelperSource).toContain(`npm_version="${reviewedNpmConfig.npmVersion}"`);
+    expect(wslHelperSource).toContain(`expected_npm_integrity="${reviewedNpmConfig.npmIntegrity}"`);
+    expect(wslHelperSource).toContain('npm install --global "$npm_archive"');
+    const integrityCheckIndex = wslHelperSource.indexOf('test "$actual_npm_integrity"');
+    expect(integrityCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(integrityCheckIndex).toBeLessThan(
+      wslHelperSource.indexOf('npm install --global "$npm_archive"'),
+    );
+    expect(wslHelperSource).toContain('test "$(npm --version)" = "$npm_version"');
+    expect(step("wsl-vitest", "Install reviewed Node.js and npm in WSL").run).toContain(
+      "Install-WslNode",
+    );
   });
 
   it("marks the container checkout safe before generating build identity", () => {

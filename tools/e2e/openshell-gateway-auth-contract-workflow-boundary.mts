@@ -18,7 +18,7 @@ const OPENSHELL_INSTALL_RUN =
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const TRUSTED_PLAN_CONDITION = `\${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_NAME}') }}`;
 const GATEWAY_PROBE_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";

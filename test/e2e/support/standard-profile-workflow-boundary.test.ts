@@ -194,6 +194,7 @@ describe("standard E2E execution profile", () => {
             if?: string;
             name?: string;
             run?: string;
+            uses?: string;
             with?: Record<string, string>;
           }>;
         };
@@ -211,7 +212,7 @@ describe("standard E2E execution profile", () => {
       "unrelated";
     steps.find(
       (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
-    )!.run = "npm install @nvidia/openshell-sdk";
+    )!.uses = "./.github/actions/install-reviewed-openshell-sdk";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =

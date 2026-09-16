@@ -235,6 +235,8 @@ describe("onboard helpers", () => {
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+if [ "\${1:-}" = gateway ] && [ "\${2:-}" = list ]; then printf '[]\n'; exit 0; fi
+printf 'No gateway configured\n'
 exit 1
 `,
         { mode: 0o755 },
@@ -607,6 +609,9 @@ startGateway(null).catch((error) => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
     } finally {
@@ -744,6 +749,8 @@ childProcess.spawn = (...args) => {
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => child.emit("close", 0));
   return child;
@@ -1019,7 +1026,9 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
-require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${scriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.installForwardServiceReachabilityFixture();
 const onboardSession = require(${onboardSessionPath});
 onboardSession.loadSession = () => ({
   checkpoint: {

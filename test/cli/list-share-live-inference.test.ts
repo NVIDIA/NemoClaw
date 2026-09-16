@@ -66,6 +66,53 @@ function createShareTestEnv(prefix: string): Record<string, string> {
 }
 
 describe("list shows live gateway inference", () => {
+  it("redacts URL credentials while reporting raw route drift", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-redacted-drift-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          test: {
+            name: "test",
+            model: "https://stored-user:stored-password@example.com/model",
+            provider: "https://stored-user:stored-password@example.com/provider",
+          },
+        },
+        defaultSandbox: "test",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: live-provider'",
+        "  echo '  Model: live-model'",
+        "  echo '  Version: 1'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = runWithEnv("list", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.out).not.toMatch(/stored-(?:user|password)/);
+    expect(result.out).toContain("model: live-model  provider: live-provider");
+    expect(result.out).toContain("live OpenShell gateway differs from onboarded");
+  });
+
   it("shows live gateway inference for the default sandbox (#2369)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
     const localBin = path.join(home, "bin");

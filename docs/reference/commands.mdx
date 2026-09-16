@@ -178,6 +178,28 @@ Print the installed NemoClaw CLI version.
 $$nemoclaw --version
 ```
 
+<AgentOnly variant="hermes">
+
+### `nemoclaw-acp`
+
+Connect an external Agent Client Protocol (ACP) client to a managed Hermes sandbox.
+The adapter sends ACP traffic through standard input and standard output, and writes diagnostics to standard error.
+
+```bash
+nemoclaw-acp --sandbox <name> [--gateway <name>] [--timeout <seconds>]
+```
+
+`--sandbox` is required.
+When the sandbox name is registered on more than one gateway, pass `--gateway <name>` to select its owning NemoClaw gateway.
+`--timeout` ends the ACP session after the specified positive number of seconds, up to `86,400`.
+
+Before the adapter starts the session, it revalidates the registered sandbox and its ready state under the sandbox lifecycle lock.
+It also revalidates the sandbox lifecycle generation, identity, and OpenShell gateway.
+It can select and, when required, start only that exact gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
+A conflicting or ambiguous gateway identity, authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
+
+</AgentOnly>
+
 ### `$$nemoclaw completion`
 
 Generate a tab-completion script for Bash, Zsh, or Fish from the commands and flags available in the installed CLI. The script completes public global commands, the sandbox-first `$$nemoclaw <name> ...` grammar, flags, shell choices, and locally registered sandbox names. If you omit the shell name, `$$nemoclaw completion` detects the target from `$SHELL` and defaults to Bash when it cannot identify Zsh or Fish. The generated script is bound to the CLI name that created it, so install a separate script for each CLI alias you use. It loads sandbox names from the local registry the first time completion runs and caches them for the rest of that shell session.
@@ -438,6 +460,14 @@ OpenClaw onboarding does not enter the `complete` state until NemoClaw proves th
 </Warning>
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
+
+<AgentOnly variant="openclaw,hermes">
+
+During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
+It does not report the sandbox as ready.
+Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
 
 #### Inspect retained sandbox recovery
 
@@ -1098,7 +1128,8 @@ The command does not take over a system service or an unrelated user-managed Oll
 
 <AgentOnly variant="hermes">
 For an active Portable Hermes sandbox, `connect --probe-only` can resume only the stopped Ollama runner named by the published receipt.
-The `recover` command uses the same inference recovery path, but ordinary `connect` does not.
+When ordinary `connect` finds that its recorded `ollama-local` route is unavailable, it uses the same recovery path before it opens an interactive session.
+The `recover` command also uses that path.
 Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 </AgentOnly>
 
@@ -1171,8 +1202,9 @@ These diagnostics report durations and counts for authority, container, health, 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
 <AgentOnly variant="hermes">
-For Portable Hermes, `connect --probe-only` and `recover` can resume a stopped published Ollama runner only for the recorded `ollama-local` provider.
-For another configured provider, they verify the recorded inference route and required forwards without Ollama recovery.
+For Portable Hermes, `connect`, `connect --probe-only`, and `recover` can resume a stopped published Ollama runner only for the recorded `ollama-local` provider.
+Ordinary `connect` starts recovery only when its recorded inference route is unavailable.
+For another configured provider, `connect --probe-only` and `recover` verify the recorded inference route and required forwards without Ollama recovery.
 Refer to [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks and rollback handling.
 </AgentOnly>
 
@@ -1397,11 +1429,21 @@ Host-side config, inference, gateway recovery, snapshot, policy, channel, and sa
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session. Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
 
-For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness. It leaves a running or paused container unchanged. If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
+For a stopped, non-paused Docker-driver container, `recover` starts the sandbox through OpenShell before it waits for readiness. If the container already runs while OpenShell reports `Stopped`, `recover` still starts the sandbox through OpenShell to repair the phase. It leaves paused containers and running sandboxes in other phases unchanged. If OpenShell cannot start a stopped container, recovery starts the container directly when needed, then continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-For built-in OpenClaw and Hermes sandboxes, `recover` sends an authenticated lifecycle request through registry-scoped privileged direct-container control. The host selects the controller from the live container topology. In a direct root-entrypoint container, the request reaches the root PID 1 supervisor. In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1. It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaunch as a fallback. When the root-owned managed controller attests two unchanged zero-supervisor process scans with a stable PID 1 and reports `SUPERVISOR_NOT_RUNNING`, a local Docker-driver sandbox with the legacy keepalive startup can enter a transactional container recreation. The recreation uses a credential-free managed startup command, pins the registered container identity, and retains the previous container for rollback. Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest. NemoClaw waits for the exact replacement to pass managed gateway health and OpenShell re-registration before it restores state. After state restoration, it restarts the gateway in the exact replacement container and requires an authenticated `ok` result. It then runs the managed settle check. It commits only after the replacement identity, state restoration, gateway restart, and settle check pass. At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container. After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path. This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`. If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable. If OpenShell re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement. The primary dashboard or API host forward stays stopped. NemoClaw removes the temporary state backup after a successful restore or rollback. If state restoration and rollback both fail, it retains the backup and prints host recovery guidance. Mounted state remains available, but a committed swap does not retain other writable-layer changes. It is idempotent. When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+The `recover` command requires a Podman sandbox to be running and ready in OpenShell before it delegates an in-sandbox gateway failure to the registered runtime provider.
+The provider restarts the exact managed container without changing its identity.
+If provider recovery fails, NemoClaw reports the provider diagnostic and stops before it restores host-side forwards.
+If the Podman container itself is stopped, the command cannot reach provider recovery through the readiness gate; run `$$nemoclaw <name> start` before `recover`.
+
+For providers that use the managed gateway controller, `recover` sends an authenticated lifecycle request through registry-scoped privileged direct-container control.
+The host selects the controller from the live container topology.
+In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
+In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
+It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
 
 - Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `GATEWAY_HEALTH_TIMEOUT`, or `SUPERVISOR_BUSY`. A typed host-side container-not-found result is sanitized to the exact `PRIVILEGED_CONTROL_UNAVAILABLE` line and is also retryable. The same line without that typed result is terminal.
 - Status `137` with blank stdout and stderr.
@@ -1415,8 +1457,16 @@ At the default interval, the polling delay is at most 60 seconds for container d
 The recovery loop also has a 210-second deadline that includes controller execution and polling.
 Recovery stops after 3 attempts return `SUPERVISOR_BUSY`.
 The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence. That result delays recovery but cannot authorize container recreation or accept a supervisor identity; a later request must perform the complete identity proof again. Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window. Status `137` and the Docker restart result remain terminal during that confirmation. The managed supervisor startup waiter accepts the three exact controller startup results, the typed container-not-found result, `SUPERVISOR_BUSY`, and the two container-transition results.
-The final supervisor startup loop uses the same separate attempt allowances and its own 210-second deadline.
-Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal. NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes. It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance. Other controller failures also stop immediately. Only an exact `SUPERVISOR_NOT_RUNNING` result that remains after the bounded startup retries can enter transactional legacy keepalive recreation. The pinned controller probe must then confirm the missing supervisor before recreation proceeds. If the gateway is already running, the command does not force-restart it; it can still re-evaluate supported safety checks and check or recover host-side forwards, and it exits zero only when those forward checks succeed. When the dashboard port is held by a listener that NemoClaw cannot attribute to the sandbox's own OpenShell forward, the command reports the port, leaves that listener running, does not restore a forward onto it, and exits nonzero. Legacy SSH forward records do not establish ownership. Stop the owning OpenShell gateway or service to release the listener, then run `recover` again. Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
+NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
+It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
+Other controller failures also stop immediately.
+If `SUPERVISOR_NOT_RUNNING` remains after the bounded retries, NemoClaw leaves the container unchanged and directs you to rebuild or re-onboard.
+If the gateway is already running, the command does not force-restart it; it can still re-evaluate supported safety checks and check or recover host-side forwards, and it exits zero only when those forward checks succeed.
+When the dashboard port is held by a listener that NemoClaw cannot attribute to the sandbox's own OpenShell forward, the command reports the port, leaves that listener running, does not restore a forward onto it, and exits nonzero.
+Legacy SSH forward records do not establish ownership.
+Stop the owning OpenShell gateway or service to release the listener, then run `recover` again.
+Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 
 ```bash
 $$nemoclaw my-assistant recover
@@ -1433,6 +1483,7 @@ For a portable experimental-profile sandbox with the recorded `ollama-local` pro
 <AgentOnly variant="hermes">
 
 Hermes Portable forward repair reports the failed boundary and the affected port or operation when available.
+It allows 30 seconds for forward verification and 60 seconds for the complete inspection, start, and verification operation.
 Before mutation, it distinguishes an occupied port, a failed or invalid `openshell forward list` result, unresolved recorded ports, and an inconclusive reachability check.
 After mutation begins, it distinguishes a failed `start` or `stop` operation from a settlement timeout.
 NemoClaw does not stop an unproved owner and does not publish launch-readiness evidence after any of these failures.
@@ -1584,7 +1635,7 @@ A `pending` or `configuring` receipt instead directs you to resume Portable onbo
 
 </AgentOnly>
 
-Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+When the container runs and OpenShell reports `Stopped`, `start` starts the sandbox through OpenShell to repair the phase. A running sandbox in another phase skips the container start and still runs the gateway and forward health checks. A paused container is unpaused. If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
 <AgentOnly variant="openclaw,hermes">
   Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
@@ -2012,7 +2063,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 
 ### `$$nemoclaw <name> destroy`
 
-Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+Stop managed local inference resources, remove runtime-provider-owned resources created during onboarding, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
 
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
 
@@ -2048,6 +2099,9 @@ If Docker reports another OpenShell-managed container, removal fails, or NemoCla
 Correct the reported Docker state, then rerun `destroy`.
 If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
 For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
+
+If onboarding fails before NemoClaw records a runtime provider, keep the original `NEMOCLAW_GATEWAY_RUNTIME` selection set when you rerun `destroy`.
+Recorded sandbox or gateway ownership takes precedence over that fallback and must agree when both are present.
 
 If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
 
@@ -2860,7 +2914,15 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 
 ### `$$nemoclaw <name> sessions export [keys...]`
 
-Export an OpenClaw sandbox's session history from the running sandbox to the host. The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` files, plus optional `<sessionId>.trajectory.jsonl` files. It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping. By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload. With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, the command reports that there are no sessions to bundle and writes no artifact. Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging. Pass one or more keys, as aliases or canonical `agent:<id>:<rest>` keys, to filter.
+Export an OpenClaw sandbox's session history from the running sandbox to the host.
+The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only matching `<sessionId>.jsonl` files and optional `<sessionId>.trajectory.jsonl` files.
+It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
+For a registered sandbox, session lookup, transfer, and staging cleanup use its recorded OpenShell gateway.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
+By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
+With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, it writes no artifact.
+Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
+Pass one or more keys, as aliases or canonical `agent:<id>:<rest>` keys, to filter.
 
 ```bash
 $$nemoclaw my-assistant sessions export
@@ -2886,7 +2948,13 @@ The export keeps its original success or failure result, so a cleanup warning af
 
 ### `$$nemoclaw <name> sessions export`
 
-Export a Hermes sandbox's session history from the running sandbox to the host. The command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging`, then downloads the resulting single JSONL stream to the host. Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error when the sandbox is Hermes. `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value. The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
+Export a Hermes sandbox's session history from the running sandbox to the host.
+The command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging`, then downloads the resulting single JSONL stream to the host.
+For a registered sandbox, export, transfer, and staging cleanup use its recorded OpenShell gateway.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
+Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error.
+`--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
+The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
 ```bash
 $$nemoclaw my-assistant sessions export
@@ -2909,6 +2977,8 @@ The export keeps its original success or failure result, so a cleanup warning af
 ### `$$nemoclaw <name> download <sandbox-path> [host-dest]`
 
 Host-side wrapper around `openshell sandbox download` that checks the live sandbox.
+For a registered sandbox, it sends the transfer and source checks to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process, verification, publication, and cleanup before it returns.
 The command confirms before and after transfer that the source remains a file or directory.
 Symbolic links, source-type changes, and other special source types are refused.
 A directory source is refused when any member is a symbolic link or another special file, and the host destination is not created for a refused source.
@@ -2952,6 +3022,8 @@ $$nemoclaw my-assistant download /sandbox/.deepagents/.state/ ./deepagents-state
 
 Host-side wrapper around `openshell sandbox upload`.
 It confirms that the sandbox is live and resolves relative host source paths from the caller's working directory.
+For a registered sandbox, it sends the transfer to the sandbox's recorded OpenShell gateway.
+It waits for the OpenShell transfer process to close before it returns.
 OpenShell performs the transfer.
 With no `sandbox-dest`, the destination defaults to `/sandbox/` inside the sandbox.
 
@@ -2982,7 +3054,16 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 ### `$$nemoclaw <name> rebuild`
 
-Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
+Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state.
+
+<AgentOnly variant="openclaw,hermes">
+
+Prepared backup recovery for a legacy upgrade reuses the digest-verified pre-upgrade policy handoff instead.
+It stops before deletion if that handoff is missing or changed.
+
+</AgentOnly>
+
+Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
@@ -2998,7 +3079,7 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt. It does not bypass an unavailable MCP source or allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up. |
+| `--force` | Skip the confirmation prompt. It does not bypass an unavailable MCP source or allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up, when the selected remote provider (other than Hermes Provider) no longer exposes the recorded credential key, when that credential is expired, or when its expiration metadata cannot be verified. A present credential key without an expiration entry is treated as non-expiring. |
 | `--retire-recovery <transaction-id>` | Retire the exact rebuild-recovery transaction after the recorded sandbox is confirmed deleted and required data recovery is complete. Requires `--yes`; it removes only the transaction-bound policy handoff and recovery marker, preserves the remaining backup, and does not start a rebuild. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
@@ -3017,7 +3098,7 @@ If that source cannot be read safely, rebuild stops before deletion even with `-
 NemoClaw carries the source entries only in the bounded rebuild transaction and does not persist a second MCP registry.
 NemoClaw rechecks the source, recorded gateway, resolved targets, policy, and provider identities immediately before deletion.
 Legacy, conflicting, or ambiguous bridge state stops before deletion and points to `mcp migrate` when conversion is available.
-Rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
+Except for prepared legacy backup recovery, rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
 NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed.
 It then attempts NIM cleanup on a best-effort basis.
@@ -3037,6 +3118,9 @@ Restore OpenShell connectivity and confirm the sandbox's live state before you r
 Keep the printed backup path for recovery.
 Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
 Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
+NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
+If either check fails, the retry stops without another delete attempt.
 A mount-free journal written before host-mount identity binding remains resumable.
 An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
 Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic.
@@ -3058,7 +3142,7 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw restores the previous MCP state and keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command restores Deep Agents manifest-defined state, regenerates `/sandbox/.deepagents/config.toml`, and writes the agent-native `/sandbox/.deepagents/.mcp.json` from the bounded source handoff while preserving unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded `inference.local` route is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 
@@ -3724,9 +3808,20 @@ Use the dedicated gateway state directory created for that port, not a shared or
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
 If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+When `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` is unset, a non-default port can also remove NemoClaw state after onboarding fails during preflight, before it creates a gateway or sandbox.
+This interrupted-preflight cleanup does not apply to a custom state root.
+For a custom state root, uninstall exits nonzero and preserves the interrupted state.
+Resolve the preflight failure, then resume onboarding with the original port and custom state root.
+After onboarding creates the managed gateway, run uninstall with those same settings.
+The failed checkpoint must identify the selected gateway and port, the selected registry and gateway state must be absent, the port must be free, and complete process and gateway-registration checks must prove absence.
+Uninstall acquires the onboarding lock, recovers a stale lock when its recorded process is no longer active, revalidates the evidence throughout cleanup, and atomically detaches the validated state root before deleting it.
+An active lock, changed checkpoint, new selected-gateway state, occupied port, incomplete process evidence, or ambiguous registration preserves the state root and makes uninstall exit nonzero so you can resolve the reported condition and retry.
+If a sibling gateway appears during cleanup, uninstall switches to gateway-scoped cleanup and preserves shared resources.
 Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization.
 If uninstall reports that onboarding owns the state directory while onboarding is active, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
-If the reported `onboard.lock` remains after onboarding ended abruptly, confirm that no NemoClaw onboarding process is active in any environment that shares the state root, remove only the reported lock, and rerun uninstall.
+If the reported `onboard.lock` remains after onboarding ended abruptly, rerun uninstall after the recorded process ends so NemoClaw can recover the stale lock.
+Uninstall reports the lock path and preserves a recent malformed lock for 30 seconds because another process can still be writing it.
+Wait until the lock has not changed for at least 30 seconds, confirm that no onboarding process shares the state root, and retry.
 Successful managed cleanup recursively removes that directory and all contents; portable cleanup and `--keep-openshell` preserve it.
 Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
 
@@ -4233,6 +4328,12 @@ Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.co
 
 Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemocua` agent, including discovery, launch, agent commands, sandbox creation, and rebuild.
 
+<Warning title="Host-local Ollama is not supported">
+NemoCUA does not currently support host-local inference.
+Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that combination exits with `Unsupported host-local inference application 'nemocua'`.
+Choose a non-host-local inference provider instead.
+</Warning>
+
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
@@ -4376,7 +4477,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Onboarding preserves a partially created sandbox when the deadline expires. Follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery); do not delete the sandbox by mutable name. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -4384,11 +4485,13 @@ For newly created OpenClaw and Hermes sandboxes, `NEMOCLAW_SANDBOX_READY_TIMEOUT
 
 </AgentOnly>
 
-An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health. Recreated-sandbox OpenShell registration uses 120 seconds when the recovery path does not supply another budget.
+An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health.
+Post-recovery OpenShell readiness uses 120 seconds when the recovery path does not supply another budget.
 
 <AgentOnly variant="openclaw,hermes">
 
-For managed recovery, `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` covers OpenShell re-registration before state restoration and replacement commit. When the deadline expires, NemoClaw attempts to roll back the replacement and leaves the primary dashboard or API host forward stopped.
+For managed or provider recovery, `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` covers gateway health and post-recovery OpenShell readiness.
+When the deadline expires, NemoClaw leaves the existing container identity unchanged and does not restore the primary dashboard or API host forward.
 
 </AgentOnly>
 
@@ -4400,7 +4503,7 @@ $$nemoclaw onboard
 
 <AgentOnly variant="openclaw,hermes">
 
-Set the recovery override before a `start` or `recover` command that can recreate the sandbox.
+Set the recovery override before a `start` or `recover` command when gateway health or OpenShell readiness needs more time.
 
 ```bash
 export NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=300
@@ -4435,7 +4538,6 @@ The following flags change defaults for commands that manage existing sandboxes.
 <AgentOnly variant="openclaw">
 | `NEMOCLAW_PORTABLE_OLLAMA_REENROLL` | Exactly `1` for one recovery run | After you verify `${HOME}/.local/bin/ollama`, explicitly records that regular executable as NemoClaw-managed for a portable experimental-profile sandbox whose recorded provider is `ollama-local`. Use this once for a user-local Ollama that NemoClaw installed before ownership receipts existed. It never claims a system Ollama, symlink, non-executable file, or non-Ollama sandbox. |
 </AgentOnly>
-| `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH` | `1` to enable | Skips the automatic trusted container recreation during `$$nemoclaw <name> recover` when two managed scans find no supervisor while PID 1 remains stable. Use only as a troubleshooting escape hatch; recovery then falls back to the rebuild or re-onboard guidance. |
 | `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `$$nemoclaw backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
 | `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS` | `1` to opt in | Makes `$$nemoclaw uninstall` remove every gateway port on the host instead of only the port `NEMOCLAW_GATEWAY_PORT` selects. Equivalent to passing the `--all-gateway-ports` flag; the whole-host `Proceed?` confirmation still applies unless `--yes` is also passed. Each port runs as its own uninstall, and the variable is dropped from those runs so the sweep cannot re-enter itself. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall`, skips eligible fresh sandbox backups, and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) in the selected gateway's state root. It does not select the explicit `--destroy-user-data` CLI-shim removal path; shim handling follows the ordinary selected-gateway scope. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |

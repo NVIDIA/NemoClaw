@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { canonicalTargets } from "./definitions/baseline.ts";
+import { requireLiveTargetExecution } from "./execution.ts";
+import { requireExpectedState } from "./expected-states.ts";
 import type { TargetDefinition } from "./types.ts";
 
 export const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -33,6 +35,10 @@ export function buildTargetRegistry(targets: TargetDefinition[]): TargetRegistry
   }
   if (duplicates.size > 0) {
     throw new Error(`Duplicate target IDs: ${Array.from(duplicates).sort().join(", ")}`);
+  }
+  for (const target of targets) {
+    requireLiveTargetExecution(target);
+    requireExpectedState(target.expectedStateId);
   }
   return { targets: [...targets], byId };
 }
