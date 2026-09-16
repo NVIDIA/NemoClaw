@@ -69,6 +69,33 @@ it("rejects a failure artifact path outside its workspace", () => {
   ).toThrow("simple artifact directory");
 });
 
+it.each(["artifacts", "artifacts/specialist"])(
+  "rejects a recovered directory link at %s without writing outside the workspace",
+  (relative) => {
+    const env = advisorEnvironment();
+    const outside = temporaryDirectory();
+    const sentinel = path.join(outside, "sentinel");
+    fs.writeFileSync(sentinel, "keep");
+    const link = path.join(env.GITHUB_WORKSPACE!, relative);
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(outside, link);
+    expect(() => recordAdvisorJobFailure(env)).toThrow("must be a real directory");
+    expect(fs.readdirSync(outside)).toEqual(["sentinel"]);
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("keep");
+  },
+);
+
+it("rejects a recovered receipt link without changing its target", () => {
+  const env = advisorEnvironment();
+  const outside = path.join(temporaryDirectory(), "sentinel");
+  fs.writeFileSync(outside, "keep");
+  const directory = path.join(env.GITHUB_WORKSPACE!, "artifacts", "specialist");
+  fs.mkdirSync(directory, { recursive: true });
+  fs.symlinkSync(outside, path.join(directory, "job-failure.json"));
+  expect(() => recordAdvisorJobFailure(env)).toThrow();
+  expect(fs.readFileSync(outside, "utf8")).toBe("keep");
+});
+
 it("retains partial native sessions and redacted failure evidence without a complete review", () => {
   const directory = temporaryDirectory();
   const session = path.join(directory, "input.jsonl");
@@ -113,8 +140,12 @@ it.each([
   expect(
     fs.existsSync(path.join(directory, "pr-review-architecture-standard-work-session.jsonl")),
   ).toBe(false);
-  expect(fs.readFileSync(path.join(directory, "failure.json"), "utf8")).toContain(
-    "missing E2E receipt",
+  const receipt = JSON.parse(fs.readFileSync(path.join(directory, "failure.json"), "utf8"));
+  expect(receipt.errors).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("missing E2E receipt"),
+      expect.stringContaining("Session preservation failed:"),
+    ]),
   );
 });
 

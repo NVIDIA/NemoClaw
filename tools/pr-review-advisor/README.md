@@ -27,7 +27,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Prepares the target PR as inert analysis data, including the latest trusted human review contract and an exact follow-up delta when applicable, and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist performs either the initial complete assessment or the bounded frozen-contract follow-up, reads repository evidence, and records a native session trace.
-6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
+6. Each successfully completed specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, a trusted aggregate job validates all exact-attempt finding ledgers and E2E receipts. It fails the workflow for any P0/P1 finding, unresolved E2E recommendation, or incomplete or malformed evidence.
 8. For a PR-bound run, a read-only coordinator shadow consumes the same exact-head context and
    specialist evidence. It publishes only a job summary and decision artifact.
@@ -45,7 +45,7 @@ used by the merge-conflict fixer.
 
 Provider failures, timeouts, missing specialist artifacts, blocker findings, unresolved E2E recommendations, and malformed evidence fail closed. GitHub context collection has one 120-second deadline across all required API reads. A timeout or partial result prevents context artifact publication. Workflow logs retain orchestration diagnostics. Hosted failed specialist execution attempts to recover artifacts before sandbox cleanup. When the model session returns an invalid result, its artifact retains `failure.json`, `failed-analysis.txt`, and the native session when available. These files are diagnostic evidence, not completed review receipts. Recovery failure does not suppress the original error or skip cleanup.
 
-Hosted specialist failures also retain `job-failure.json` with step outcomes and run identity. A PR revision that changes before checkout is classified as `superseded`; the SHA check still rejects that revision. Setup failures may have only this host receipt. No automatic infrastructure retry is added.
+After the trusted Advisor checkout is available, hosted specialist failures also retain `job-failure.json` with each subsequent setup and analysis step outcome plus run identity. Earlier checkout failures have workflow logs only. A PR revision that changes before checkout is classified as `superseded`; the SHA check still rejects that revision. Setup failures may have only this host receipt. No automatic infrastructure retry is added.
 
 Findings submission requires a recorded E2E recommendation result. The bounded terminal repair can record missing E2E recommendations before submitting findings. A repair that still omits required evidence fails closed.
 
@@ -153,7 +153,7 @@ The discovered specialists use the workflow-configured model and share the same 
 
 ## Artifacts
 
-Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, E2E recommendations, a findings ledger, and shared review-queue context. See [Review queue evidence](REVIEW-QUEUE.md) for the consumer contract. The
+Each successfully completed specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, E2E recommendations, a findings ledger, and shared review-queue context. Failed artifacts may contain only diagnostic failure evidence and cannot satisfy the review-queue contract. See [Review queue evidence](REVIEW-QUEUE.md) for the consumer contract. The
 workflow run also displays each Markdown review as a job summary. Replace `<interest>` with the
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
@@ -236,7 +236,7 @@ database URLs for its gateway; it does not read or replace an existing gateway d
 
 ## Output contract
 
-Each specialist returns a Markdown review grounded in repository evidence and shared trusted
+Each successfully completed specialist returns a Markdown review grounded in repository evidence and shared trusted
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
 

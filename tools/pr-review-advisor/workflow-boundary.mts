@@ -16,6 +16,7 @@ const EXPECTED_ENTRY_CONDITION = "${{ github.repository == 'NVIDIA/NemoClaw' }}"
 
 type WorkflowPermissions = Record<string, unknown> | string;
 type WorkflowStep = {
+  if?: string;
   env?: Record<string, unknown>;
   name?: string;
   run?: string;
@@ -223,6 +224,17 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Download GitHub review context",
   );
   const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
+  const failureReceipt = specialistSteps.find(
+    (step) => step.name === "Preserve specialist failure status",
+  );
+  if (
+    !failureReceipt ||
+    failureReceipt.if !== "${{ failure() }}" ||
+    specialistUpload?.if !== "${{ always() && matrix.advisor.interest != '' }}" ||
+    specialistSteps.indexOf(specialistUpload) <= specialistSteps.indexOf(failureReceipt)
+  ) {
+    errors.push("Unified advisor failure receipt must run before upload after a failed step");
+  }
   const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
   if (
     contextUpload?.with?.name !== contextArtifactName ||

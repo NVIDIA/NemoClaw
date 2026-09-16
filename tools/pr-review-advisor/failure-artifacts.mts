@@ -25,8 +25,21 @@ export function recordAdvisorJobFailure(env: NodeJS.ProcessEnv): void {
       "Advisor failure artifact requires a workspace and simple artifact directory name",
     );
   }
-  const directory = path.join(env.GITHUB_WORKSPACE, "artifacts", artifact);
-  fs.mkdirSync(directory, { recursive: true });
+  const workspace = fs.realpathSync(env.GITHUB_WORKSPACE);
+  const root = path.join(workspace, "artifacts");
+  const directory = path.join(root, artifact);
+  // Recovery has finished before this host write. Reject links at each untrusted
+  // path component; exclusive creation below also rejects an existing receipt.
+  for (const component of [root, directory]) {
+    try {
+      fs.mkdirSync(component);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (!fs.lstatSync(component).isDirectory() || fs.realpathSync(component) !== component) {
+      throw new Error("Advisor failure artifact directory must be a real directory");
+    }
+  }
   const record = {
     status: "failed",
     specialist: env.PR_REVIEW_ADVISOR_INTEREST,
@@ -37,8 +50,18 @@ export function recordAdvisorJobFailure(env: NodeJS.ProcessEnv): void {
     classification:
       env.ADVISOR_PREPARATION_CLASSIFICATION === "superseded" ? "superseded" : "failed",
     steps: {
+      dispatchCheckout: env.ADVISOR_DISPATCH_CHECKOUT_OUTCOME,
+      defaultWorkdir: env.ADVISOR_DEFAULT_WORKDIR_OUTCOME,
+      nodeSetup: env.ADVISOR_NODE_SETUP_OUTCOME,
+      npmSetup: env.ADVISOR_NPM_SETUP_OUTCOME,
+      runtimeImage: env.ADVISOR_RUNTIME_IMAGE_OUTCOME,
       preparation: env.ADVISOR_PREPARATION_OUTCOME,
-      runtime: env.ADVISOR_RUNTIME_OUTCOME,
+      removeSymlinks: env.ADVISOR_REMOVE_SYMLINKS_OUTCOME,
+      runtimeDownload: env.ADVISOR_RUNTIME_DOWNLOAD_OUTCOME,
+      runtimeRestore: env.ADVISOR_RUNTIME_RESTORE_OUTCOME,
+      contextDownload: env.ADVISOR_CONTEXT_DOWNLOAD_OUTCOME,
+      sandboxInputs: env.ADVISOR_SANDBOX_INPUTS_OUTCOME,
+      openShellInstall: env.ADVISOR_OPENSHELL_INSTALL_OUTCOME,
       analysis: env.ADVISOR_ANALYSIS_OUTCOME,
     },
   };

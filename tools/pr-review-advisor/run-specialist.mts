@@ -101,11 +101,6 @@ export function preserveSpecialistRun(
     fs.writeFileSync(path.join(outDir, "failed-analysis.txt"), redactAdvisorDiagnostic(run.text), {
       mode: 0o600,
     });
-    fs.writeFileSync(
-      path.join(outDir, "failure.json"),
-      JSON.stringify({ status: "failed", errors: errors.map(redactAdvisorDiagnostic) }, null, 2),
-      { mode: 0o600 },
-    );
   }
   try {
     if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
@@ -120,7 +115,14 @@ export function preserveSpecialistRun(
       `Session preservation failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (errors.length) throw new Error(errors.join("; "));
+  if (errors.length) {
+    fs.writeFileSync(
+      path.join(outDir, "failure.json"),
+      JSON.stringify({ status: "failed", errors: errors.map(redactAdvisorDiagnostic) }, null, 2),
+      { mode: 0o600 },
+    );
+    throw new Error(errors.join("; "));
+  }
 }
 
 async function main(): Promise<void> {
