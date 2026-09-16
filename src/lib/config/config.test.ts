@@ -6,7 +6,6 @@ import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
-  EXPORTED_OLLAMA_MODEL,
   EXPORTED_VLLM_PROFILE_ID,
   EXPORTED_VLLM_RECIPE_ID,
   isCredentialEnvironmentReferenceName,
@@ -975,9 +974,9 @@ describe("fixed managed serving public contract", () => {
   });
 });
 
-function ollamaConfig() {
+function ollamaConfig(model = "qwen3.5:9b") {
   const value = config();
-  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = EXPORTED_OLLAMA_MODEL;
+  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = model;
   return {
     ...value,
     spec: {
@@ -991,7 +990,7 @@ function ollamaConfig() {
             backend: "ollama",
             daemon: { management: "external", hostPort: 11439 },
             proxy: { management: "nemoclaw", hostPort: 11440 },
-            model: { servedName: EXPORTED_OLLAMA_MODEL, digest: `sha256:${"a".repeat(64)}` },
+            model: { servedName: model, digest: `sha256:${"a".repeat(64)}` },
           },
         },
       ],
@@ -1000,11 +999,21 @@ function ollamaConfig() {
 }
 
 describe("attached Ollama serving public contract", () => {
-  it("round trips the external daemon separately from its managed proxy (#11435)", () => {
-    const value = ollamaConfig();
-    const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
-    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
-  });
+  it.each(["qwen3.5:9b", "qwen2.5:0.5b"])(
+    "round trips the selected model %s and external daemon (#11857)",
+    (model) => {
+      const value = ollamaConfig(model);
+      const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
+      expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+    },
+  );
+
+  it.each(["", "qwen2.5:0.5b\n", "qwen\u200b2.5:0.5b", "m".repeat(513)])(
+    "rejects an invalid selected model even when the route agrees %# (#11857)",
+    (model) => {
+      expect(() => validateNemoClawConfig(ollamaConfig(model))).toThrow();
+    },
+  );
 
   it.each([
     { daemon: { management: "nemoclaw", hostPort: 11439 } },
@@ -1012,7 +1021,7 @@ describe("attached Ollama serving public contract", () => {
     { proxy: { management: "external", hostPort: 11440 } },
     { proxy: { management: "nemoclaw", hostPort: 65536 } },
     { model: { servedName: "other:tag", digest: `sha256:${"a".repeat(64)}` } },
-    { model: { servedName: EXPORTED_OLLAMA_MODEL, digest: "not-a-digest" } },
+    { model: { servedName: "qwen3.5:9b", digest: "not-a-digest" } },
     { runtime: { image: { ref: "ollama:latest" } } },
   ])("rejects unsupported lifecycle or model declarations %# (#11435)", (change) => {
     const value = ollamaConfig();
@@ -1033,8 +1042,8 @@ describe("attached Ollama serving public contract", () => {
   );
 
   it.each([
-    { agent: "hermes", runtime: "docker", model: EXPORTED_OLLAMA_MODEL },
-    { agent: "openclaw", runtime: "remote", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "hermes", runtime: "docker", model: "qwen3.5:9b" },
+    { agent: "openclaw", runtime: "remote", model: "qwen3.5:9b" },
     { agent: "openclaw", runtime: "docker", model: "different-model" },
   ])("rejects an unsupported local consumer %s (#11435)", (change) => {
     const value = ollamaConfig();

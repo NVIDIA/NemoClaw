@@ -312,7 +312,6 @@ const NemoClawManagedInferenceProviderConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const EXPORTED_OLLAMA_MODEL = "qwen3.5:9b" as const;
 export const NemoClawOllamaServingSchema = Type.Object(
   {
     backend: Type.Literal("ollama"),
@@ -325,7 +324,7 @@ export const NemoClawOllamaServingSchema = Type.Object(
       { additionalProperties: false },
     ),
     model: Type.Object(
-      { servedName: Type.Literal(EXPORTED_OLLAMA_MODEL), digest: ServingDigestSchema },
+      { servedName: BoundedTextSchema, digest: ServingDigestSchema },
       { additionalProperties: false },
     ),
   },

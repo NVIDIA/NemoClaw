@@ -183,49 +183,6 @@ Use these details when your first-run path needs more control.
     Refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed) for recovery details.
   </Accordion>
 
-  <Accordion title="Use Portable Ollama">
-    Hermes Portable uses a current-user rootless Podman container for the selected Ollama model.
-    This path requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
-
-    <Note>
-    OpenShell and Podman executables and their parent directories must be owned by root or your current user.
-    They must not be writable by the group or other users, even when the group is private.
-    A rejected path with mode `0775` needs its group write permission removed.
-    If the diagnostic names your own `~/.local/bin` directory, restrict only that directory:
-
-    ```bash
-    chmod go-w -- "$HOME/.local/bin"
-    stat -c '%a %n' -- "$HOME/.local/bin"
-    ```
-
-    A directory that had mode `0775` now has mode `755`.
-    This change does not modify files inside the directory or contact any service.
-    For a different rejected path, inspect its ownership before changing permissions.
-    Ask your administrator about paths you do not own.
-    After correcting the reported path, retry the recovery command printed by onboarding without deleting its retained state.
-    </Note>
-
-    Start fresh onboarding with an explicit Ollama model:
-
-    ```bash
-    NEMOCLAW_PROVIDER=ollama \
-      NEMOCLAW_MODEL=qwen3-vl:4b \
-      nemohermes onboard --experimental-profile portable --fresh
-    ```
-
-    This path does not inspect, start, or use a host Ollama process.
-    It does not use the default Docker runtime.
-    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
-    NemoClaw records the provider selection only after those checks pass.
-
-    Run `nemohermes uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
-    NemoClaw revalidates the lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
-    If cleanup is interrupted, preserve the reported state and rerun the same command.
-    NemoClaw resumes the recorded phase without deleting a same-name replacement, shared provider or inference runtime, or Podman image.
-    Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
-    Refer to [Set Up Ollama](../inference/local-inference/set-up-ollama#use-portable-ollama-with-hermes) for the fail-closed uninstall boundary.
-  </Accordion>
-
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
     A sandbox receives those ports when no other sandbox or host listener already holds them.

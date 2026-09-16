@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
+import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { TextDecoder } from "node:util";
 import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
 
@@ -2295,13 +2296,27 @@ export async function prepareHermesPortableSandboxRemoval(
     async removeAndVerify() {
       const current = await inspect();
       if (!current.present) return;
-      const removed = current.capture(
-        ["sandbox", "delete", "-g", receipt.gatewayName, receipt.sandboxName],
-        40_000,
-      );
+      const removed = await createCliOpenShellSandboxLifecycle({
+        environment: commandEnv,
+        capture: (args, options) => {
+          const captured = current.capture(args, options.timeout);
+          const stdout = String(captured.stdout ?? "");
+          const stderr = String(captured.stderr ?? "");
+          return {
+            ...captured,
+            stdout,
+            stderr,
+            output: `${stdout}\n${stderr}`.trim(),
+          };
+        },
+      }).deleteSandbox({
+        sandboxName: receipt.sandboxName,
+        target: { kind: "named", gatewayName: receipt.gatewayName },
+        timeoutMs: 40_000,
+      });
       const after = await inspect(true);
       if (after.present) {
-        if (removed.status !== 0 || removed.error) fail("exact sandbox deletion failed");
+        if (removed.kind === "failed") fail("exact sandbox deletion failed");
         fail("exact sandbox remained after deletion");
       }
     },

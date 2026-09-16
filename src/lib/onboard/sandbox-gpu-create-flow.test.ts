@@ -543,7 +543,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       { expectedContainerId: replacementContainerId },
     );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
   });
