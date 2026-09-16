@@ -260,11 +260,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
     [
-      "spec.sandboxes[].agents.secondary",
-      entry.openclawImagePluginInstalls,
-      "secondary agents or added agent plugins",
-    ],
-    [
       "spec.sandboxes[].agents[0].dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",

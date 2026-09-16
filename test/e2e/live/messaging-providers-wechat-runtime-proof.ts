@@ -34,38 +34,6 @@ const readWechatPackageName: (
   }
 };
 
-const addManagedNpmProjectWechatCandidates: (
-  projectsDir: string,
-  candidates: string[],
-  fileSystem: typeof fs,
-  pathModule: typeof path,
-) => void = function addManagedNpmProjectWechatCandidates(
-  projectsDir,
-  candidates,
-  fileSystem,
-  pathModule,
-) {
-  const entries = (() => {
-    try {
-      return fileSystem.readdirSync(projectsDir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-  })();
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-    candidates.push(
-      pathModule.join(
-        projectsDir,
-        entry.name,
-        "node_modules",
-        "@tencent-weixin",
-        "openclaw-weixin",
-      ),
-    );
-  }
-};
-
 const linkWechatNodeModulesEntries: (
   nodeModulesRoot: string,
   sourceNodeModules: string,
@@ -109,26 +77,17 @@ const resolveInstalledWechatPluginRootWithDependencies: (
   fileSystem,
   pathModule,
 ) {
-  const candidates = [pathModule.join(stateDir, "extensions", "openclaw-weixin")];
-  addManagedNpmProjectWechatCandidates(
-    pathModule.join(stateDir, "npm", "projects"),
-    candidates,
-    fileSystem,
-    pathModule,
-  );
-  const matches: string[] = [];
-  for (const candidate of candidates) {
-    if (
-      readWechatPackageName(candidate, fileSystem, pathModule) !== "@tencent-weixin/openclaw-weixin"
-    ) {
-      continue;
-    }
-    try {
-      const resolved = fileSystem.realpathSync(candidate);
-      if (!matches.includes(resolved)) matches.push(resolved);
-    } catch {}
+  const candidate = pathModule.join(stateDir, "extensions", "openclaw-weixin");
+  if (
+    readWechatPackageName(candidate, fileSystem, pathModule) !== "@tencent-weixin/openclaw-weixin"
+  ) {
+    return null;
   }
-  return matches.length === 1 ? matches[0] : null;
+  try {
+    return fileSystem.realpathSync(candidate);
+  } catch {
+    return null;
+  }
 };
 
 export function resolveInstalledWechatPluginRoot(stateDir: string): string | null {
@@ -188,7 +147,6 @@ function invariant(condition, message) {
 }
 
 const readWechatPackageName = ${readWechatPackageName.toString()};
-const addManagedNpmProjectWechatCandidates = ${addManagedNpmProjectWechatCandidates.toString()};
 const linkWechatNodeModulesEntries = ${linkWechatNodeModulesEntries.toString()};
 const resolveInstalledWechatPluginRootWithDependencies = ${resolveInstalledWechatPluginRootWithDependencies.toString()};
 const resolveInstalledOpenClawRoot = ${resolveInstalledOpenClawRoot.toString()};

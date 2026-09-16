@@ -73,7 +73,6 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "name",
   "nimContainer",
   "observabilityEnabled",
-  "openclawImagePluginInstalls",
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",

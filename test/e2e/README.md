@@ -799,72 +799,21 @@ contains only the numeric port and TUI boolean. The fixture retains identity-dri
 registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
 disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
-## Current OpenClaw plugin EXDEV lifecycle
+## Native plugin and package lifecycle
 
-The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job
+and its custom-image prebuild/recreation fixtures. That removes one default E2E
+job and the image-ownership contract it existed to verify.
 
-1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
-2. Install v1-exdev with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1-exdev.
-4. Recreate the sandbox with the plugin changed to v2 and verify v2.
-
-The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If onboarding or recreation reports missing canonical
-CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
-record structured diagnostics, attempts to write bounded `failed-no-retry`
-evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence write failure propagates, so that retry artifact may be
-absent. `tools.invoke`
-assertions prove the plugin version after onboarding, restart, and recreation.
-The job uses OpenClaw's real plugin installer from a read-only host mount whose
-device differs from the extension target. This proves installation across the
-filesystem boundary, not a particular internal `EXDEV` system call or fallback.
-
-The live assertions stop at the boundary outcomes: v1 after onboarding,
-distinct source and target devices, a successful real install, v1-exdev after a
-real gateway restart, v2 after recreation, and registered cleanup. The target
-does not rewrite OpenShell commands or assert terminal wording. Its one
-forward-specific setup check proves the restarted listener belongs to the exact
-canonical OpenShell command before targeted termination, then bounds port
-release before recreation. Fast tests own the listener matching and
-termination behavior. `e2e-support` also owns canonical component composition,
-immutable image handoff, recreation command shape, fixture extraction safety,
-output parsing, and cleanup ordering. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
-permutations remain outside this live contract. Workspace preservation and
-policy selection retain their focused coverage. The `rebuild-openclaw` job
-remains the canonical live rebuild coverage.
-
-The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, extracts the cross-device payload
-from the matching immutable image ID into a fresh canonical `/dev/shm`
-directory, and mounts that directory read-only at the same target during
-onboarding and recreation. A minimal custom Dockerfile pins the image ID while
-preserving the tool-disclosure build arguments. Canonical OpenShell CLI,
-gateway, and sandbox executables own every forward lifecycle command. User
-`--from` Dockerfiles retain the gateway-builder trust boundary and are never
-host-prebuilt by this fixture. The current-checkout fixture enables local
-base-image resolution after the workflow removes Docker Hub credentials.
-
-The release-baseline lane is retired. Historical package versions are not part
-of this current runtime contract.
-
-At issue creation, the live target had 9 direct `expect` calls and 17 direct
-assertion points across 654 lines. Its three companions raised the transitive
-totals to 9 `expect` calls, 32 assertion points, and three generated probe
-blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
-though the core cross-device install took about seven seconds. After #11552
-fixed canonical forward ownership, the current base kept those assertion totals
-while growing to 658 target lines and 1,202 transitive live lines. Its first
-automatic main run completed the live step in 7 minutes 26 seconds.
-
-The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
-calls while lowering the direct assertion points from 17 to 16. Its two
-companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
-and no generated probe blocks across 1,140 lines. Against the current base, the
-live target falls from 658 to 585 lines and the transitive live surface falls
-from 1,202 to 1,140 lines.
-Push-run timing for this revision is recorded by the focused PR E2E run.
+The standard `full-e2e` target now owns native OpenClaw installation,
+invocation, update command access, local-source replacement, self-update dry
+run, restart survival, credential non-exposure, and removal in one sandbox.
+`rebuild-openclaw` proves a user-installed native plugin survives rebuild with
+no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+lazy-package state survive rebuild. Managed-image activation exercises native
+OpenClaw and Hermes discovery before and after gateway restart. Deterministic
+state-restore tests prove complete native directories are archived without
+image-plugin exclusions.
 
 ## OpenShell development artifact retention
 

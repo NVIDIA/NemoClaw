@@ -1087,60 +1087,11 @@ describe("messaging provider installed-runtime proofs", () => {
     ).toBe(false);
   });
 
-  it("finds Slack only in its canonical managed npm project", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-managed-project-"));
-    const projectsDir = path.join(dir, "npm", "projects");
-    const slackProject = path.join(projectsDir, "openclaw-slack-reviewed");
-    const unrelatedProject = path.join(projectsDir, "unrelated-plugin");
-    const malformedProject = path.join(projectsDir, "malformed-plugin");
-    const slackPackageRoot = path.join(slackProject, "node_modules", "@openclaw", "slack");
-
-    try {
-      fs.mkdirSync(slackPackageRoot, { recursive: true });
-      fs.writeFileSync(
-        path.join(slackProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
-      );
-      fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
-        recursive: true,
-      });
-      fs.writeFileSync(
-        path.join(unrelatedProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/discord": "2026.6.10" } }),
-      );
-      fs.mkdirSync(malformedProject, { recursive: true });
-      fs.writeFileSync(path.join(malformedProject, "package.json"), "not json");
-
-      const source = [
-        'import fs from "node:fs";',
-        'import path from "node:path";',
-        SLACK_RUNTIME_DISCOVERY_SOURCE,
-        "const candidates = [];",
-        "addManagedNpmProjectSlackCandidates(",
-        "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
-        "  (candidate) => candidates.push(path.resolve(candidate)),",
-        ");",
-        "process.stdout.write(JSON.stringify(candidates));",
-      ].join("\n");
-      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
-        encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_TEST_PROJECTS_DIR: projectsDir },
-        input: source,
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("loads Slack through its real managed-project root and nested OpenClaw symlink", () => {
+  it("loads Slack through its native extension root and nested OpenClaw symlink", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-root-"));
     const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
     const openclawPackageRoot = path.join(installRoot, "openclaw");
-    const slackProjectRoot = path.join(dir, "state", "npm", "projects", "openclaw-slack");
-    const slackPackageRoot = path.join(slackProjectRoot, "node_modules", "@openclaw", "slack");
+    const slackPackageRoot = path.join(dir, "state", "extensions", "slack");
     const globalNodeModules = path.join(dir, "lib", "node_modules");
     try {
       fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
@@ -1166,10 +1117,6 @@ describe("messaging provider installed-runtime proofs", () => {
         'import uri from "fast-uri"; export default uri;',
       );
       fs.mkdirSync(path.join(slackPackageRoot, "dist"), { recursive: true });
-      fs.writeFileSync(
-        path.join(slackProjectRoot, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
-      );
       fs.writeFileSync(
         path.join(slackPackageRoot, "package.json"),
         JSON.stringify({ name: "@openclaw/slack", type: "module" }),
@@ -1218,7 +1165,6 @@ describe("messaging provider installed-runtime proofs", () => {
         env: {
           ...process.env,
           OPENCLAW_PACKAGE_ROOT: path.join(globalNodeModules, "openclaw"),
-          OPENCLAW_SLACK_PACKAGE_ROOT: path.join(globalNodeModules, "@openclaw", "slack"),
           OPENCLAW_STATE_DIR: path.join(dir, "state"),
         },
         input: source,

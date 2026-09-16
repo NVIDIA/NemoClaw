@@ -14,18 +14,10 @@ import {
 } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 describe("messaging provider installed-runtime paths", () => {
-  it("finds the installed WeChat runtime in its managed npm project", () => {
+  it("finds the installed WeChat runtime through native OpenClaw discovery (#11766)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-runtime-location-"));
     const stateDir = path.join(dir, "state");
-    const pluginRoot = path.join(
-      stateDir,
-      "npm",
-      "projects",
-      "wechat-project",
-      "node_modules",
-      "@tencent-weixin",
-      "openclaw-weixin",
-    );
+    const pluginRoot = path.join(stateDir, "extensions", "openclaw-weixin");
 
     try {
       fs.mkdirSync(pluginRoot, { recursive: true });
