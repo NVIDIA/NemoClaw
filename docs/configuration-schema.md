@@ -55,6 +55,9 @@ Keep schema changes, descriptions, examples, tests, and regenerated files in the
 
 ## Preserve the Input Contract
 
+Reusable application objects follow the [definitions and references contract](configuration-references.md).
+Keep its coverage table accurate when adding a family or changing supported scopes.
+
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
 Schema annotations restore required fields that the parser validates after deserialization.
 They also distinguish an omitted option from an explicit null value.

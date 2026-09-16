@@ -45,7 +45,7 @@ Choose one inference service path for a deployment.
 The gateway may also be managed or external.
 The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
 
-Each document contains one inference provider and one sandbox.
+Each document selects one inference provider and contains one sandbox.
 OpenClaw can declare multiple agents sharing the primary inference route; other harnesses require one agent.
 Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
 

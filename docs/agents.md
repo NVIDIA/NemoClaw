@@ -245,6 +245,8 @@ Production migration remains gated on a released Fabric adapter compatible with 
 
 ## Define and Attach Integrations
 
+Integrations follow the schema-wide [definitions and references contract](configuration-references.md).
+
 Define an integration once in `spec.integrations` and select it from each consuming agent's `integrationRefs`.
 For reuse only within a sandbox, put the same definition in `spec.sandboxes[].integrations`.
 For one agent, define it directly in `spec.sandboxes[].agents[].integrations`; no reference is required.

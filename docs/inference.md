@@ -4,7 +4,8 @@
 # Configure Inference APIs, Limits, and Authentication
 
 Choose who operates the inference service, then select the API and model used by the agent.
-NemoClaw declares one inference provider per deployment document.
+NemoClaw selects one active inference provider per deployment document.
+Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 The provider's local `name` connects it to an agent route; it does not select a vendor or download a model catalog.
 
 ## Choose a Service Mode
@@ -37,7 +38,7 @@ OpenShell routes the request and supplies the provider credential; selecting an 
 | Pi | Native model metadata | Omit provider `api`; see [Pi model selection](agents.md#pi-model-selection) |
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
-The provider name is the local reference used by routes and authentication; it does not select a vendor.
+The provider name is the local reference used by routes; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
 ### Prepare an External Endpoint
@@ -230,7 +231,7 @@ Unrelated native settings, including channels and plugins, remain owned by OpenC
 
 ## Authenticate Hermes through the Provider
 
-Declare an external HTTPS provider with a credential reference, then reference it from both the route and Hermes authentication:
+Declare an external HTTPS provider with a credential reference, then select it from the route and enable Hermes authentication:
 
 ```yaml
 # Under spec.inferenceProviders:
@@ -244,7 +245,6 @@ Declare an external HTTPS provider with a credential reference, then reference i
 # Under the Hermes agent:
 auth:
   method: api-key
-  providerRef: nous
 inference:
   routes:
     - name: primary
@@ -256,7 +256,11 @@ inference:
 Supply `NOUS_API_KEY` to the applying process through your secret-management mechanism.
 The SDK resolves the reference and supplies the credential to the OpenShell provider.
 Hermes sends requests through `https://inference.local/v1` using a sandbox placeholder key; the real upstream key is not added to its launch environment or exported YAML.
-The auth reference must name the primary route's credential-bearing provider.
+Authentication derives its provider from the primary route, including when that provider is inline.
+Omit the former `auth.providerRef` field; it is rejected.
+Retained Hermes intent containing that field is not migrated automatically; editing only the input YAML does not update saved intent.
+Use the matching previous bundle for export or teardown of that deployment.
+The selected provider must carry a credential.
 That provider may also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
 

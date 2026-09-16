@@ -5,7 +5,7 @@
 
 Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-NemoClaw supports one inference provider and sandbox per document, with [one or more OpenClaw agents](agents.md) sharing a primary route or one agent of another harness.
+NemoClaw supports one selected inference provider and one sandbox per document, with [one or more OpenClaw agents](agents.md) sharing a primary route or one agent of another harness.
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
 Apply creates or changes runtime resources and can download model data and send inference requests.
@@ -42,6 +42,7 @@ Ordinary models can omit `service.recipe`.
 
 ## Configuration and Credentials
 
+Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [YAML field reference](reference/configuration.md) to check field names, defaults, conditional requirements, and validation limits.
 
 Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected.
@@ -162,7 +163,7 @@ Apply recomputes its plan; a successful earlier plan does not reserve resources 
 | Route `overrides.model`, with the same API and launch settings | Can update the route without replacing the sandbox; use a model served by the selected endpoint and recheck a real agent reply |
 | Pi model or native model metadata | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
 | External inference endpoint with the same provider identity/API | Plan the provider update and verify the new route after apply; do not change the gateway endpoint to move inference |
-| Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or declared integrations | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed vLLM process image or serving specification | May replace the process only after checking retained storage and the established engine/resource identities; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound runtime engine | Cannot retarget the existing state; create a separate deployment |
