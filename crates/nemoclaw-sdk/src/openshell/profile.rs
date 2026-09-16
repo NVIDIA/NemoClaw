@@ -80,6 +80,7 @@ fn row(
     mut profile: proto::ProviderProfile,
     workspace: &str,
     name: &str,
+    catalog_entry: bool,
 ) -> Result<Row, ObservationError> {
     let owner = profile.annotations.get(OWNER).cloned().unwrap_or_default();
     let generation = profile
@@ -90,8 +91,11 @@ fn row(
     if (!name.starts_with("nemoclaw-inference-") && name != "nemoclaw-brave")
         || profile.id != name
         || profile.resource_version == 0
-        || profile.source != "user"
-        || profile.scope != "workspace"
+        || if catalog_entry {
+            profile.source != "user" || profile.scope != "workspace"
+        } else {
+            !profile.source.is_empty() || !profile.scope.is_empty()
+        }
         || owner.is_empty()
         || generation.is_empty()
     {
@@ -190,6 +194,7 @@ impl OpenShell {
                 response.profile.ok_or(ObservationError::Incomplete)?,
                 workspace,
                 name,
+                true,
             )
         })
         .transpose()
@@ -221,6 +226,7 @@ impl OpenShell {
             response.profiles.into_iter().next().unwrap(),
             &want["workspace"],
             &want["name"],
+            false,
         )?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())

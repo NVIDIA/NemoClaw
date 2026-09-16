@@ -604,6 +604,9 @@ fn import_profiles(
         profile.scope = "workspace".into();
         state.effects += 1;
         state.profiles.insert(key, profile.clone());
+        // Import replies lack the catalog decoration added by GetProviderProfile.
+        profile.source.clear();
+        profile.scope.clear();
         profiles.push(profile);
     }
     state.created("provider_profile");

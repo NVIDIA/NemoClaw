@@ -325,7 +325,10 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .spec
             .as_mut()
             .unwrap()
-            .providers = vec!["brave-search".into()];
+            .providers = vec![
+            document.inference_provider().unwrap().name.clone(),
+            "brave-search".into(),
+        ];
         assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     }
     if document.spec.sandboxes[0].agents.len() > 1 {
