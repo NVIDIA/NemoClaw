@@ -80,6 +80,17 @@ describe("createSetupNim", () => {
     });
     expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
       defaultModel: ultra,
+      fallbackModelOptions: [
+        {
+          id: "nvidia/nemotron-3-ultra-550b-a55b",
+          label: "Nemotron 3 Ultra 550B",
+        },
+        {
+          id: "nvidia/nemotron-3-super-120b-a12b",
+          label: "Nemotron 3 Super 120B",
+        },
+        { id: "minimaxai/minimax-m3", label: "Minimax M3" },
+      ],
       retiredModelIds: [],
       writeLine: log,
     });
