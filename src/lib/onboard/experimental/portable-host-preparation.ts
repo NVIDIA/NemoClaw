@@ -70,7 +70,13 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
+// Stored image references can retain localhost; resolve them through the same IPv4 listener.
 const REGISTRY_FRAGMENT = `[[registry]]
+location = "${PORTABLE_LOCAL_REGISTRY}"
+insecure = true
+
+[[registry]]
+prefix = "localhost:5000"
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
 `;

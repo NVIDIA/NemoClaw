@@ -391,7 +391,7 @@ describe("preparePortableExperimentalHost", () => {
       home,
       ".config/containers/registries.conf.d/99-nemoclaw-portable.conf",
     );
-    expect(fs.readFileSync(registryConfig, "utf-8")).toContain('location = "127.0.0.1:5000"');
+    expect(fs.readFileSync(registryConfig, "utf-8")).toContain('prefix = "localhost:5000"');
     expect(fs.statSync(registryConfig).mode & 0o777).toBe(0o600);
     const containersConf = path.join(home, ".config/nemoclaw/portable/containers.conf");
     expect(fs.readFileSync(containersConf, "utf-8")).toContain(
