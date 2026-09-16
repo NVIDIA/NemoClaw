@@ -48,6 +48,14 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
     )
     .unwrap();
     assert_eq!(runtime["connection"]["model"], "fast-model");
+    let descriptor: Value = serde_json::from_str(include_str!(
+        "../../../image/fabric/openclaw.fabric-adapter.json"
+    ))
+    .unwrap();
+    jsonschema::validator_for(&descriptor["settings_schema"])
+        .unwrap()
+        .validate(&json!({"agent_name": "main", "inference": runtime}))
+        .expect("compiled settings must satisfy the Fabric adapter contract");
     assert_eq!(runtime["agents"][0]["inference"]["default"], "fast");
     assert_eq!(runtime["agents"][1]["inference"]["default"], "primary");
     assert_eq!(
