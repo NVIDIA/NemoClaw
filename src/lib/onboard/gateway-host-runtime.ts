@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { waitForPort } from "../core/wait";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
+import { preparePackageManagedDockerDriverGatewayServiceEnv } from "./docker-driver-gateway-env";
 import {
   hasOpenShellGatewayUserService,
   startOpenShellGatewayUserService,
@@ -51,8 +52,8 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
-function restartTrustedPackagedGateway(owner: GatewayOwner): void {
-  const result = startOpenShellGatewayUserService();
+function restartTrustedPackagedGateway(owner: GatewayOwner, prepareServiceEnv: () => void): void {
+  const result = startOpenShellGatewayUserService({ prepareServiceEnv });
   if (!result.attempted || !result.started) {
     const detail = result.reason ? `: ${result.reason}` : "";
     throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
@@ -72,6 +73,12 @@ export interface GatewayHostRuntimeDeps {
   hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
   /** Restart the trusted packaged service after its binaries are replaced in place. */
   restartPackagedGatewayAfterTrustedInstall?(owner: GatewayOwner): void;
+  /** Stamp the complete authenticated service environment before that restart. */
+  preparePackagedGatewayServiceEnvAfterTrustedInstall?(owner: GatewayOwner): void;
+  /** Build the complete authenticated Docker-driver environment when no test seam is supplied. */
+  getDockerDriverGatewayEnv?(): Record<string, string>;
+  /** Override the package-service environment writer for deterministic tests. */
+  preparePackageManagedGatewayServiceEnv?: typeof preparePackageManagedDockerDriverGatewayServiceEnv;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
@@ -147,6 +154,23 @@ export interface GatewayHostRuntime {
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   };
   probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
+}
+
+function prepareTrustedPackagedGatewayServiceEnv(
+  deps: GatewayHostRuntimeDeps,
+  owner: GatewayOwner,
+): void {
+  if (deps.preparePackagedGatewayServiceEnvAfterTrustedInstall) {
+    deps.preparePackagedGatewayServiceEnvAfterTrustedInstall(owner);
+    return;
+  }
+  if (!deps.getDockerDriverGatewayEnv) {
+    throw new Error("OpenShell packaged gateway restart requires its managed service environment.");
+  }
+  (
+    deps.preparePackageManagedGatewayServiceEnv ??
+    preparePackageManagedDockerDriverGatewayServiceEnv
+  )(deps.getDockerDriverGatewayEnv());
 }
 
 function externalGatewayForwardClientEnv(
@@ -283,7 +307,14 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     // Restart only the owner that was independently resolved as NemoClaw's
     // trusted packaged service; standalone and declared supervisors stay untouched.
     if (boundOwner.mode === "nemoclaw-managed" && boundOwner.source === "packaged-service") {
-      (deps.restartPackagedGatewayAfterTrustedInstall ?? restartTrustedPackagedGateway)(boundOwner);
+      const owner = boundOwner;
+      if (deps.restartPackagedGatewayAfterTrustedInstall) {
+        deps.restartPackagedGatewayAfterTrustedInstall(owner);
+      } else {
+        restartTrustedPackagedGateway(owner, () =>
+          prepareTrustedPackagedGatewayServiceEnv(deps, owner),
+        );
+      }
     }
     return boundOwner;
   }
