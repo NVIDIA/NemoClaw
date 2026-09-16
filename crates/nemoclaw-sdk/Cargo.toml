@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 jsonschema.workspace = true
 
 [dependencies]

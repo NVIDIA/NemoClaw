@@ -23,6 +23,17 @@ fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
     Ok(status.phase)
 }
 
+async fn readiness_deadline(
+    wait: impl std::future::Future<Output = Result<(), Error>>,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    tokio::select! {
+        () = cancel.cancelled() => Err(Error::Cancelled),
+        result = tokio::time::timeout(Duration::from_secs(120), wait) =>
+            result.map_err(|_| Error::Conflict("agent readiness timed out; resources retained"))?,
+    }
+}
+
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
@@ -263,11 +274,9 @@ impl OpenShell {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
-        tokio::select! {
-            ()=cancel.cancelled()=>Err(Error::Cancelled),
-            result=tokio::time::timeout(Duration::from_secs(120),wait)=>result.map_err(|_|Error::Conflict("agent readiness timed out; resources retained"))?,
-        }
+        readiness_deadline(wait, cancel).await
     }
+
     pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
         if value(binding, "agent_runtime") == "fabric-pi" {
             let model = binding
@@ -381,6 +390,49 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let error = readiness_deadline(std::future::pending(), &cancel)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("readiness timed out"));
+        assert_eq!(started.elapsed(), Duration::from_secs(120));
+        readiness_deadline(
+            async {
+                tokio::time::sleep(Duration::from_secs(119)).await;
+                Ok(())
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_cancellation_and_terminal_errors_do_not_wait_for_the_deadline() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let (_, result) = tokio::join!(
+            async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                cancel.cancel();
+            },
+            readiness_deadline(std::future::pending(), &cancel)
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let error = readiness_deadline(
+            async { Err(Error::Conflict("terminal")) },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "terminal");
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
     #[test]
     fn hermes_reply_requires_success_before_accepting_text() {
         assert_eq!(
