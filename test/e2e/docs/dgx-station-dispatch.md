@@ -3,6 +3,8 @@
 
 # DGX Station Express dispatch
 
+Before dispatching a candidate that uses the shared entrypoint, deploy the matching Station backend update. Select a candidate that contains `test/e2e/live/dgx-express.test.ts`.
+
 Select `dgx-station-express` by itself in the `jobs` or `targets` input of the E2E workflow. The target is excluded from default runs. Its GitHub-hosted controller runs from the trusted main workflow and sends the candidate commit and selected managed-image publication revision to the operator's Station receiver.
 
 The backend selects only the Station case in `test/e2e/live/dgx-express.test.ts` with `E2E_TARGET_ID=dgx-station-express` and `--selector '^dgx-station-express:'`. The Spark case has its own selector.
