@@ -20,9 +20,13 @@ import {
 
 describe("native Hermes dashboard readiness", () => {
   it("disables optional file publication even when the parent supplies a path", () => {
-    const parent = { HERMES_DESKTOP_READY_FILE: "outside-ready.json" };
+    const parent = {
+      HERMES_DESKTOP_READY_FILE: "outside-ready.json",
+      HERMES_NODE: "owned-node",
+    };
     const environment = dashboardChildEnvironment(parent);
     expect(environment.HERMES_DESKTOP_READY_FILE).toBe("");
+    expect(environment.HERMES_NODE).toBe("owned-node");
     expect(parent.HERMES_DESKTOP_READY_FILE).toBe("outside-ready.json");
   });
 

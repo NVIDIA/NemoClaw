@@ -24,9 +24,9 @@ const generator = source.statements.find(
     ts.isFunctionDeclaration(node) && node.name?.text === "gatewaySource",
 );
 if (!generator) throw new Error("The native OpenClaw workload generator is missing.");
-const generated = new vm.Script(generator.getText(source) + "\ngatewaySource();").runInNewContext({
-  String,
-}) as string;
+const generated = new vm.Script(
+  generator.getText(source).replace(/^export\s+/, "") + "\ngatewaySource();",
+).runInNewContext({ String }) as string;
 const workload = ts.createSourceFile(
   "workload.mjs",
   generated,

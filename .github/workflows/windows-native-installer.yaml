@@ -1378,11 +1378,11 @@ jobs:
           & "$env:GITHUB_WORKSPACE\packaging\windows\performance\acl-snapshot.test.ps1"
           $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
           & $node --experimental-strip-types --no-warnings --test `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-python-temp.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\performance\measurement.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\performance\compile-cache-experiment.test.mts"
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/hermes/probe-components.test.mts') `
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/hermes/portable-git-arguments.test.mts') `
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/hermes/probe-python-temp.test.mts') `
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/performance/measurement.test.mts') `
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/performance/compile-cache-experiment.test.mts')
           if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
       - name: Execute the official components inside MXC
@@ -1515,8 +1515,11 @@ jobs:
       - name: Set up the profiling controller Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.22.3
+          node-version: 24.18.1
           architecture: arm64
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Record actual installation and dashboard CPU and file I/O
         shell: powershell
@@ -1622,8 +1625,11 @@ jobs:
       - name: Set up actual ARM64 Node for the shared-file fixture
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.23.2
+          node-version: 24.18.1
           architecture: arm64
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Exercise actual browser request channel cleanup
         shell: powershell
@@ -1634,7 +1640,7 @@ jobs:
           try {
             $ErrorActionPreference = 'Continue'
             & node --experimental-strip-types --no-warnings --test --test-reporter=tap `
-              "$env:GITHUB_WORKSPACE\packaging\windows\runtime\native-runtime-browser.test.mts" 2>&1 | Tee-Object -FilePath $log
+              (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-runtime-browser.test.mts') 2>&1 | Tee-Object -FilePath $log
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           $text = Get-Content -LiteralPath $log -Raw
@@ -1682,7 +1688,7 @@ jobs:
           try {
             $ErrorActionPreference = 'Continue'
             & node --experimental-strip-types --no-warnings --test --test-reporter=tap `
-              "$env:GITHUB_WORKSPACE\packaging\windows\performance\relay-measurements.test.mts" `
+              (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/performance/relay-measurements.test.mts') `
               2>&1 | Tee-Object -FilePath $relayLog
             $relayResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }

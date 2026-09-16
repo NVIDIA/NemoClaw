@@ -10,6 +10,7 @@ import { finished } from "node:stream/promises";
 import vm from "node:vm";
 import ts from "typescript";
 import { hermesDashboardPythonSource } from "../../packaging/windows/runtime/native-hermes-dashboard.mts";
+import { nativeHermesConfiguration } from "../../packaging/windows/runtime/native-options.mts";
 import { createNativeDiagnosticCapture } from "../../packaging/windows/runtime/native-session-diagnostics.mts";
 
 const source = ts.createSourceFile(
@@ -41,7 +42,7 @@ const generator = findNode(
 );
 const generated = new vm.Script(
   generator.getText(source).replace(/^export\s+/, "") + "\ninteractiveWorkloadSource();",
-).runInNewContext({ String, hermesDashboardPythonSource }) as string;
+).runInNewContext({ String, hermesDashboardPythonSource, nativeHermesConfiguration }) as string;
 const workload = ts.createSourceFile(
   "workload.mjs",
   generated,
@@ -92,6 +93,14 @@ export const watchNativeStopRequest = implementation.watchNativeStopRequest;
 export const stopOwnedNativeAgent = implementation.stopOwnedNativeAgent;
 
 export function dashboardChildEnvironment(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const required = findNode(
+    workload,
+    (node) =>
+      ts.isVariableStatement(node) &&
+      node.declarationList.declarations.some(
+        (value) => value.name.getText(workload) === "required",
+      ),
+  );
   const assignment = findNode(
     workload,
     (node) =>
@@ -108,7 +117,8 @@ export function dashboardChildEnvironment(parent: NodeJS.ProcessEnv): NodeJS.Pro
       ),
   );
   return new vm.Script(
-    "let extraEnvironment;\n" +
+    required.getText(workload) +
+      "\nlet extraEnvironment;\n" +
       assignment.getText(workload) +
       ";\n" +
       declaration.getText(workload) +
