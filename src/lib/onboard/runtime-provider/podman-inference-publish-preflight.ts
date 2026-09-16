@@ -59,6 +59,17 @@ export function lsofListenArguments(address: string, port: number): readonly str
   return Object.freeze(["-nP", `-iTCP@${address}:${String(port)}`, "-sTCP:LISTEN"]);
 }
 
+export function lsofListenerArgvCandidates(
+  address: string,
+  port: number,
+): readonly (readonly string[])[] {
+  const args = lsofListenArguments(address, port);
+  return Object.freeze([
+    Object.freeze(["/usr/bin/lsof", ...args]),
+    Object.freeze(["/usr/bin/sudo", "-n", "/usr/bin/lsof", ...args]),
+  ]);
+}
+
 export function parseLsofListener(
   output: string,
   address: string,
@@ -87,13 +98,7 @@ function publishInspectTargetValid(address: string, port: number): boolean {
 
 function lsofListener(address: string, port: number): OccupiedInferencePublish | null {
   if (!publishInspectTargetValid(address, port)) return null;
-  const args = lsofListenArguments(address, port);
-  for (const argv of [
-    ["/usr/bin/lsof", ...args],
-    ["lsof", ...args],
-    ["/usr/bin/sudo", "-n", "/usr/bin/lsof", ...args],
-    ["sudo", "-n", "lsof", ...args],
-  ]) {
+  for (const argv of lsofListenerArgvCandidates(address, port)) {
     const result = spawnSync(argv[0]!, argv.slice(1), {
       encoding: "utf8",
       timeout: 5_000,

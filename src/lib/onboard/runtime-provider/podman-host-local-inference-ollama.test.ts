@@ -189,6 +189,29 @@ describe("Podman managed Ollama lifecycle", () => {
     expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
   });
 
+  it("names a post-preflight 11434 occupant instead of the raw Podman bind error (#11723)", () => {
+    const occupied = {
+      address: "127.0.0.1",
+      port: 11434,
+      process: "ollama",
+      pid: 4242,
+    } as const;
+    const occupancy = { events: [] as string[] };
+    const fixture = managedOllamaFixture({
+      inspectPublishedPort: (address, port) =>
+        occupancy.events.some((event) => event.startsWith("podman:run ")) &&
+        address === occupied.address &&
+        port === occupied.port
+          ? occupied
+          : null,
+    });
+    occupancy.events = fixture.harness.events;
+    fixture.harness.state.runFailsWithoutContainer = true;
+
+    expect(() => prepareManagedOllama(fixture)).toThrow(occupiedInferencePublishMessage(occupied));
+    expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(true);
+  });
+
   it("creates and rolls back a receipt-owned runtime for fresh Portable Hermes (#9596)", () => {
     const fixture = managedOllamaFixture();
     const { assertCurrent, harness, input } = fixture;

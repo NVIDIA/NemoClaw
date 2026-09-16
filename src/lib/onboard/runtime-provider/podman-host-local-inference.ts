@@ -3947,6 +3947,11 @@ export function createPodmanHostLocalInferenceRuntime(
               })());
         const foundId = lookupContainerId(engine, spec.containerName);
         if (foundId === null) {
+          assertInferencePublishPortsFree(
+            spec.endpoint.port,
+            spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+            options.inspectPublishedPort,
+          );
           throw new Error(
             `Podman host-local inference container start failed without an owned runtime: ${redactedCommandEvidence(sensitiveRedactor, result)}`,
           );

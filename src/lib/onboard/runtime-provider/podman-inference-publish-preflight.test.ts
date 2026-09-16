@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   firstOccupiedInferencePublish,
   lsofListenArguments,
+  lsofListenerArgvCandidates,
   occupiedFromBindProbeStatus,
   occupiedInferencePublishMessage,
   parseLsofListener,
@@ -76,6 +77,19 @@ describe("Podman inference publish preflight", () => {
       "-iTCP@127.0.0.1:11434",
       "-sTCP:LISTEN",
     ]);
+  });
+
+  it("does not resolve lsof or sudo through PATH (#11723)", () => {
+    const commands = lsofListenerArgvCandidates("127.0.0.1", 11434);
+    expect(commands).toEqual([
+      ["/usr/bin/lsof", "-nP", "-iTCP@127.0.0.1:11434", "-sTCP:LISTEN"],
+      ["/usr/bin/sudo", "-n", "/usr/bin/lsof", "-nP", "-iTCP@127.0.0.1:11434", "-sTCP:LISTEN"],
+    ]);
+    for (const argv of commands) {
+      expect(argv[0]?.startsWith("/")).toBe(true);
+      expect(argv).not.toContain("lsof");
+      expect(argv).not.toContain("sudo");
+    }
   });
 
   it("inspects loopback before the portable gateway publish (#11723)", () => {
