@@ -588,8 +588,16 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const resolveGatewayRuntimeProviderIdSpy = vi
     .spyOn(destroyGateway, "resolveGatewayCleanupRuntimeProviderId")
     .mockImplementation(
-      (_gatewayName: string, registeredProviderId?: string | null) =>
-        registeredProviderId ?? options.recoveredGatewayRuntimeProviderId ?? null,
+      (
+        _gatewayName: string,
+        registeredProviderId?: string | null,
+        deps?: { configuredRuntimeProviderId?: string | null },
+      ) =>
+        registeredProviderId ??
+        options.recoveredGatewayRuntimeProviderId ??
+        deps?.configuredRuntimeProviderId ??
+        process.env.NEMOCLAW_GATEWAY_RUNTIME?.trim().toLowerCase() ??
+        null,
     );
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
