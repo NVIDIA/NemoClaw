@@ -7,6 +7,7 @@ import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-cens
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
+const DOCKERFILE_GROWTH_EXCEPTIONS_FILE = "ci/dockerfile-growth-exceptions.json";
 const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
@@ -18,6 +19,12 @@ const STOCK_DOCKERFILE = "Dockerfile";
 type TestFileSizeBudget = {
   readonly defaultMaxLines: number;
   readonly legacyMaxLines: Readonly<Record<string, number>>;
+};
+
+type DockerfileGrowthException = {
+  readonly pullRequest: number;
+  readonly maxLines: number;
+  readonly maxBytes: number;
 };
 
 type TestChange = {
@@ -73,6 +80,51 @@ function parseBudget(source: string, label: string): TestFileSizeBudget {
     defaultMaxLines: positiveInteger(parsed.defaultMaxLines, `${label}: defaultMaxLines`),
     legacyMaxLines,
   };
+}
+
+/** Parse trusted-base exceptions; malformed policy fails the guardrail closed. */
+function parseDockerfileGrowthExceptions(source: string): readonly DockerfileGrowthException[] {
+  const parsed = JSON.parse(source) as {
+    readonly schemaVersion?: unknown;
+    readonly exceptions?: unknown;
+  };
+  if (parsed.schemaVersion !== 1) {
+    throw new Error(`${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: schemaVersion must be 1`);
+  }
+  if (!Array.isArray(parsed.exceptions)) {
+    throw new Error(`${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions must be an array`);
+  }
+
+  const seenPullRequests = new Set<number>();
+  return parsed.exceptions.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}] must be an object`,
+      );
+    }
+    const exception = value as Record<string, unknown>;
+    const pullRequest = positiveInteger(
+      exception.pullRequest,
+      `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].pullRequest`,
+    );
+    if (seenPullRequests.has(pullRequest)) {
+      throw new Error(
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: duplicate exception for PR #${pullRequest}`,
+      );
+    }
+    seenPullRequests.add(pullRequest);
+    return {
+      pullRequest,
+      maxLines: positiveInteger(
+        exception.maxLines,
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].maxLines`,
+      ),
+      maxBytes: positiveInteger(
+        exception.maxBytes,
+        `${DOCKERFILE_GROWTH_EXCEPTIONS_FILE}: exceptions[${index}].maxBytes`,
+      ),
+    };
+  });
 }
 
 function testChanges(files: readonly PullRequestFile[]): TestChange[] {
@@ -320,20 +372,33 @@ export async function dockerfileBudgetGrowthViolations(
   );
   if (!changed) return [];
   const [base, head] = await Promise.all([
-    diff.readBase([STOCK_DOCKERFILE]),
+    diff.readBase([STOCK_DOCKERFILE, DOCKERFILE_GROWTH_EXCEPTIONS_FILE]),
     diff.readHead([STOCK_DOCKERFILE]),
   ]);
   const baseBudget = dockerfileBudget(base.get(STOCK_DOCKERFILE) ?? null);
   const headBudget = dockerfileBudget(head.get(STOCK_DOCKERFILE) ?? null);
+  const exceptionsSource = base.get(DOCKERFILE_GROWTH_EXCEPTIONS_FILE);
+  const exception =
+    diff.pullRequestNumber === null || exceptionsSource === null || exceptionsSource === undefined
+      ? undefined
+      : parseDockerfileGrowthExceptions(exceptionsSource).find(
+          ({ pullRequest }) => pullRequest === diff.pullRequestNumber,
+        );
+  const maxLines = Math.max(baseBudget.lines, exception?.maxLines ?? baseBudget.lines);
+  const maxBytes = Math.max(baseBudget.bytes, exception?.maxBytes ?? baseBudget.bytes);
   const violations: string[] = [];
-  if (headBudget.lines > baseBudget.lines) {
+  if (headBudget.lines > maxLines) {
     violations.push(
-      `${STOCK_DOCKERFILE} line budget increased from ${baseBudget.lines} to ${headBudget.lines}`,
+      exception
+        ? `${STOCK_DOCKERFILE} line budget exceeded the PR #${exception.pullRequest} maximum of ${maxLines} with ${headBudget.lines}`
+        : `${STOCK_DOCKERFILE} line budget increased from ${baseBudget.lines} to ${headBudget.lines}`,
     );
   }
-  if (headBudget.bytes > baseBudget.bytes) {
+  if (headBudget.bytes > maxBytes) {
     violations.push(
-      `${STOCK_DOCKERFILE} byte budget increased from ${baseBudget.bytes} to ${headBudget.bytes}`,
+      exception
+        ? `${STOCK_DOCKERFILE} byte budget exceeded the PR #${exception.pullRequest} maximum of ${maxBytes} with ${headBudget.bytes}`
+        : `${STOCK_DOCKERFILE} byte budget increased from ${baseBudget.bytes} to ${headBudget.bytes}`,
     );
   }
   return violations;

@@ -4,12 +4,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
   preclean,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
+  it("prepares the Hermes restart refusal through the native .env boundary", () => {
+    const command = managedHermesBoundaryPoisonCommand();
+    expect(command).toContain("/sandbox/.hermes/.env");
+    expect(command).toContain("DEVTEST_API_TOKEN=");
+    expect(command).not.toContain("gateway restart");
+  });
+
   it("drives the managed OpenClaw caller through sessions_spawn", () => {
     expect(managedOpenClawSubagentCommand("subagent-proof")).toEqual(
       expect.arrayContaining([

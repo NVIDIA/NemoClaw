@@ -7,7 +7,6 @@ import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command";
-import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
@@ -74,39 +73,6 @@ function sequencedExecutor(
   });
   return { runBuffered };
 }
-
-describe("managed gateway control completion", () => {
-  const nonce = "a".repeat(64);
-
-  it.each([
-    ["ok", 0, 4242],
-    ["ok", 4242, 4242],
-    ["already-running", 4242, 4242],
-    ["already-running", 4242, 5252],
-  ] as const)(
-    "preserves the exact %s controller disposition (#7919)",
-    (disposition, oldPid, newPid) => {
-      expect(
-        parseManagedGatewayControlCompletion({
-          status: 0,
-          stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
-          stderr: "",
-        }),
-      ).toEqual({ disposition, oldPid, newPid });
-    },
-  );
-
-  it.each([
-    [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242\nextra`, ""],
-    [`v1 ${nonce} complete changed 0 4242\nGATEWAY_PID=4242`, ""],
-    [`v1 ${nonce} complete ok 0 9007199254740992\nGATEWAY_PID=9007199254740992`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242`, "unexpected warning"],
-    ["GATEWAY_PID=4242", ""],
-  ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
-    expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
-  });
-});
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {

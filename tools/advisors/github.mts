@@ -81,13 +81,18 @@ export class GitHubApiError extends Error {
   }
 }
 
-export async function githubRest<T>(apiPath: string, token: string): Promise<T> {
+export async function githubRest<T>(
+  apiPath: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(`https://api.github.com/${apiPath}`, {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
     },
+    signal,
   });
   if (!response.ok)
     throw new Error(`GitHub REST ${apiPath} failed: ${response.status} ${await response.text()}`);
@@ -97,17 +102,20 @@ export async function githubRest<T>(apiPath: string, token: string): Promise<T> 
 export async function githubRestPaginated<T>(
   apiPath: string,
   token: string,
-  limit: number,
+  limit?: number,
+  signal?: AbortSignal,
 ): Promise<T[]> {
   const results: T[] = [];
-  for (let page = 1; results.length < limit; page += 1) {
+  for (let page = 1; limit === undefined || results.length < limit; page += 1) {
     const separator = apiPath.includes("?") ? "&" : "?";
+    const pageSize = limit === undefined ? 100 : Math.min(100, limit - results.length);
     const items = await githubRest<T[]>(
-      `${apiPath}${separator}per_page=${Math.min(100, limit - results.length)}&page=${page}`,
+      `${apiPath}${separator}per_page=${pageSize}&page=${page}`,
       token,
+      signal,
     );
     results.push(...items);
-    if (items.length < 100) break;
+    if (items.length < pageSize) break;
   }
   return results;
 }
