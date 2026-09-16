@@ -542,8 +542,10 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Does not infer the live contract from a generic unit-test claim.",
-      "Routes the change back to implementation for canonical owners and stayed, moved, or removed dispositions.",
-      "Does not publish until the handoff identifies the distinct retained live evidence or proves that no live contract remains."
+      "Routes the change back to implementation for a stayed, moved, or removed disposition for every changed live assertion.",
+      "Requires each retained live contract to identify its real boundary, semantic outcome and distinct regression, lower-layer evidence owner, canonical live test, and smallest live assertion.",
+      "Requires a rationale showing why the recorded dispositions leave semantic coverage complete.",
+      "Does not publish until every required field is recorded and the handoff identifies distinct retained live evidence or proves that no live contract remains."
     ]
   }
 ]

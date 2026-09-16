@@ -210,7 +210,9 @@
       "Classifies the failure before changing coverage.",
       "Does not update the expected third-party progress sentence.",
       "Removes the incidental assertion or proves its deterministic contract in a lower layer.",
-      "Retains the smallest stable live assertion for the sandbox outcome."
+      "Retains the smallest stable live assertion for the sandbox outcome.",
+      "Records each changed assertion as stayed live, moved to a lower layer, or removed.",
+      "Explains why the recorded dispositions leave semantic coverage complete."
     ]
   }
 ]
