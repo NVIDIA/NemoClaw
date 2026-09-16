@@ -27,7 +27,7 @@ npm metadata retains the optional dependency for isolated CI jobs that do not us
 The command-scoped registry setting lets npm 12 recognize the locked SDK URL without changing user configuration.
 Existing CI continues to verify the same registry identity and integrity through its reviewed dependency pipeline.
 
-When upgrading the SDK, obtain the reviewed registry archive and replace this file alongside the manifest, lockfile, and reviewed dependency pins.
+When upgrading the SDK, obtain the reviewed registry archive and replace `nvidia-openshell-sdk-<version>.tgz` alongside the manifest, lockfile, and reviewed dependency pins.
 Do not substitute a locally repacked archive: its compressed bytes can differ from the reviewed checksum.
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
