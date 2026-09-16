@@ -1263,6 +1263,19 @@ function mockManagedStateVolumeOnboardLifecycle() {
     materializeSandboxCreatePlan: (input, materialize) => materialize(input),
     commit: () => {},
   });
+  const managedStartupRootApply = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/docker-root-apply.ts"),
+  );
+  const managedStartupSharedState = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/docker-shared-state.ts"),
+  );
+  managedStartupRootApply.resolveDockerManagedStartupContainer = () =>
+    ONBOARD_SANDBOX_OLD_CONTAINER_ID;
+  managedStartupRootApply.applyDockerManagedStartupRootRequest = () => null;
+  managedStartupSharedState.finalizeDockerManagedStartupSharedState = () => ({
+    supervisorReady: true,
+    failure: null,
+  });
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {
@@ -1284,10 +1297,11 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.includes("openshell.ai/sandbox-id")
     ) {
-      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
-      return state.finalCommitReleased || state.legacyRecoverySandboxId
-        ? row
-        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+      const containerId =
+        state.finalCommitReleased || state.legacyRecoverySandboxId
+          ? ONBOARD_SANDBOX_NEW_CONTAINER_ID
+          : ONBOARD_SANDBOX_OLD_CONTAINER_ID;
+      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
