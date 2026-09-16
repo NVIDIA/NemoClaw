@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import shutil
 
-BASELINE = "7b2aea349e0a8668ffff1b35b7ae047879060ad2"
+BASELINE = "3bf621dcf585e07cd60ce5e2c93863a16d2b0d69"
 INPUTS = (
     "packaging/windows/mxc-bash",
     "packaging/windows/host-preparation",
