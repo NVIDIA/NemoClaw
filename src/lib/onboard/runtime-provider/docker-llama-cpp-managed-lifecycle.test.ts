@@ -339,11 +339,12 @@ type HostLoopbackProbe = NonNullable<
 function hostProbeLifecycle(
   probe: HostLoopbackProbe = () => ({ status: 0, stdout: "", stderr: "" }),
   store = journalStore(),
+  readinessTimeoutSeconds = 1_800,
 ) {
   const fixture = dockerFixture();
   const hostLoopbackProbe = vi.fn<HostLoopbackProbe>(probe);
   const lifecycle = createLifecycle(
-    { ...options(fixture, store), loopbackProbe: "host-process" },
+    { ...options(fixture, store), loopbackProbe: "host-process", readinessTimeoutSeconds },
     { hostLoopbackProbe },
   );
   return { fixture, hostLoopbackProbe, lifecycle, store };
@@ -568,13 +569,17 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
-    const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle();
+    const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle(
+      undefined,
+      undefined,
+      86_400,
+    );
 
     lifecycle.start(receiptWriter());
 
     expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
       "http://127.0.0.1:8081/health",
-      1_800,
+      86_400,
     );
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
