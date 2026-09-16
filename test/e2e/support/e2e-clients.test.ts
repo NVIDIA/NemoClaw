@@ -183,6 +183,25 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("preserves the explicit native gateway recovery command sequence (#11940)", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Run: nemoclaw assistant start" });
+    runner.enqueue({ exitCode: 0 });
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    const stopped = await host.nemoclaw(["assistant", "status"]);
+    const started = await host.nemoclaw(["assistant", "start"]);
+    const restarted = await host.nemoclaw(["assistant", "gateway", "restart"]);
+
+    expect([stopped.exitCode, started.exitCode, restarted.exitCode]).toEqual([1, 0, 0]);
+    expect(runner.calls.map((call) => [call.command, ...call.args])).toEqual([
+      ["nemoclaw", "assistant", "status"],
+      ["nemoclaw", "assistant", "start"],
+      ["nemoclaw", "assistant", "gateway", "restart"],
+    ]);
+  });
+
   it("does not require a stock-image receipt for onboarding help", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner);
