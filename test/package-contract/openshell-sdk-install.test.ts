@@ -66,7 +66,7 @@ function fixture() {
     name: "nemoclaw-sdk-install-contract",
     version: "1.0.0",
     exports: { "./*": "./*" },
-    files: ["dist/", "scripts/"],
+    files: ["ci/", "dist/", "scripts/"],
     bundleDependencies: sourceManifest.bundleDependencies.filter(
       (name: string) => name === sdkName,
     ),
@@ -135,9 +135,12 @@ describe("required OpenShell SDK installation", () => {
     const listing = spawnSync("tar", ["-tzf", archivePath], { encoding: "utf8" });
     expect(listing.status, listing.stderr).toBe(0);
     expect(listing.stdout.split("\n")).toEqual(
-      expect.arrayContaining(
-        [sdkName, ...publicDependencies].map((name) => `package/node_modules/${name}/package.json`),
-      ),
+      expect.arrayContaining([
+        "package/ci/reviewed-npm-audit.json",
+        ...[sdkName, ...publicDependencies].map(
+          (name) => `package/node_modules/${name}/package.json`,
+        ),
+      ]),
     );
 
     const extracted = path.join(root, "extracted");
