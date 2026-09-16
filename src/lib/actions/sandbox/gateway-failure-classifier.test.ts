@@ -178,6 +178,18 @@ describe("isDockerRuntimeDown", () => {
     expect(isDockerRuntimeDown("alpha")).toBe(true);
   });
 
+  it("treats absent Docker stdout as an unreachable daemon (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 1,
+      stderr: "Cannot start Docker",
+      stdout: null as unknown as string,
+    });
+
+    expect(isDockerDaemonReachable()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
   it("accepts Docker info only when the daemon request succeeds (#11715)", () => {
     expect(isDockerDaemonReachable()).toBe(true);
     getSandboxMock.mockReturnValue({ openshellDriver: "docker" });

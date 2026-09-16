@@ -668,6 +668,9 @@ describe("startSandbox", () => {
     expect(h.printDockerRuntimeDownGuidance).toHaveBeenCalledWith("my-sandbox", {
       retryCommand: "start",
     });
+    expect(h.captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.dockerUnpause).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
