@@ -12,6 +12,7 @@ import {
   portableLifecycleLockOptions,
   resolveHermesPortableLifecycleLockOptions,
 } from "../../../onboard/experimental/portable-lifecycle-lock";
+import { currentHermesPortableStartupOperation } from "../../../onboard/experimental/hermes-portable-startup-operation";
 import { isMcpLifecycleLockHeld } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { portableHostFencePath } from "../../../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock, withSandboxLifecycleLockSync } from "./lock";
@@ -53,6 +54,22 @@ describe("Portable-aware sandbox lifecycle lock", () => {
     });
 
     expect(fs.existsSync(portableHostFencePath(homeDir))).toBe(false);
+  });
+
+  it("enables bounded startup reuse for a recognized Portable receipt without a profile override", async () => {
+    delete process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+
+    await withSandboxLifecycleLock("alpha", () => {
+      expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
+    });
+  });
+
+  it("does not override an explicit non-Portable profile", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
+
+    await withSandboxLifecycleLock("alpha", () => {
+      expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+    });
   });
 
   it("selects host receipt state only for a Hermes Portable candidate", () => {
