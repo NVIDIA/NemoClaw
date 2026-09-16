@@ -499,7 +499,7 @@ describe("live test progress", () => {
       }),
     } as unknown as SandboxClient;
     const finishActivity = vi.fn();
-    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn() };
+    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn(), onOutput: vi.fn() };
     await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
     expect(progress.event.mock.calls.slice(0, 3)).toEqual([
       ["inspect OpenShell gateway started"],
@@ -526,7 +526,7 @@ describe("live test progress", () => {
       }),
     } as unknown as SandboxClient;
     const finishActivity = vi.fn();
-    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn() };
+    const progress = { activity: vi.fn(() => finishActivity), event: vi.fn(), onOutput: vi.fn() };
     await expect(cleanupTurnSandboxes(host, sandbox, fakeInference(), progress)).rejects.toThrow(
       "cleanup failed (inspect OpenShell gateway)",
     );
