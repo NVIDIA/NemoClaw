@@ -3,7 +3,6 @@
 
 import { shellQuote } from "../fixtures/clients/command.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
@@ -28,31 +27,24 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_NEMOCLAW_COMMIT must be a full lowercase commit SHA; got ${fixture.nemoclawCommit}`,
     );
   }
-  if (
-    !/^[0-9a-f]{64}$/.test(fixture.installerSha256) ||
-    fixture.installerSha256 !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256
-  ) {
+  if (!/^[0-9a-f]{64}$/.test(fixture.installerSha256)) {
     throw new Error(
       `NEMOCLAW_OLD_INSTALLER_SHA256 must match the reviewed descriptor's lowercase SHA-256 digest; got ${fixture.installerSha256}`,
     );
   }
   if (
     !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion) ||
-    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion) ||
-    fixture.openShellVersion !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion
+    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion)
   ) {
     throw new Error(
       `NEMOCLAW_OLD_OPENCLAW_VERSION and NEMOCLAW_OLD_OPENSHELL_VERSION must match the reviewed descriptor; got ${fixture.openclawVersion}/${fixture.openShellVersion}`,
     );
   }
-  reviewedOldInstallerProfile(fixture);
+  const reviewedFixture = reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (
-    !sandboxBaseDigest ||
-    fixture.sandboxBaseImageRef !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef
-  ) {
+  if (!sandboxBaseDigest || fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef) {
     throw new Error(
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );

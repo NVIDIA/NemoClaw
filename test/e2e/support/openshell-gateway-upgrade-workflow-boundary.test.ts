@@ -11,7 +11,11 @@ import {
   E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
+  REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES,
+} from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
@@ -30,11 +34,19 @@ describe("OpenShell gateway upgrade boundary", () => {
   it("pins the retained gateway-upgrade fixture in the catalogue (#10517)", () => {
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).toBe(true);
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURES)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openClawArchive)).toBe(
+      true,
+    );
     expect(
       E2E_TARGET_CATALOGUE.filter((entry) => entry.targetId === "openshell-gateway-upgrade").map(
         (entry) => entry.id,
       ),
-    ).toEqual(["openshell-gateway-upgrade-v0-0-89-x86-64"]);
+    ).toEqual([
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-aarch64",
+    ]);
 
     const { environment, runner, shard } = catalogueTarget(
       "openshell-gateway-upgrade-v0-0-89-x86-64",
@@ -58,6 +70,40 @@ describe("OpenShell gateway upgrade boundary", () => {
       sandboxBaseImageRef: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
       openShellVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
       openClawVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    });
+  });
+
+  it("pins the v0.0.123 gateway-registration regression target (#11898)", () => {
+    const { environment, runner, shard } = catalogueTarget(
+      "openshell-gateway-upgrade-v0-0-123-aarch64",
+    );
+
+    expect({
+      runner,
+      shard,
+      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+      commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+      openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+    }).toEqual({
+      runner: "ubuntu-24.04-arm",
+      shard: "v0-0-123-aarch64",
+      nemoclawRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
+      commit: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
+      installerSha256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
+      sandboxBaseImageRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
+      openShellVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
+      openClawVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
+    });
+    validateLegacyGatewayUpgradeFixture({
+      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+      nemoclawCommit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+      openclawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
     });
   });
 

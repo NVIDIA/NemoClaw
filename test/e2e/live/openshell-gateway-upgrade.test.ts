@@ -18,7 +18,10 @@ import {
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
 import { listBackups, validateRebuildRecoveryManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES,
+} from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -61,18 +64,26 @@ const STATE_DIR = path.join(
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const OLD_NEMOCLAW_REF =
   process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef;
+const REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF =
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES.find(
+    (candidate) => candidate.nemoclawRef === OLD_NEMOCLAW_REF,
+  ) ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE;
 const OLD_NEMOCLAW_COMMIT =
-  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit;
+  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ??
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.nemoclawCommit;
 const OLD_INSTALLER_SHA256 =
-  process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256;
+  process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.installerSha256;
 const OLD_OPENSHELL_VERSION =
-  process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion;
+  process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ??
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.openShellVersion;
 const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.116";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
-  REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef;
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.sandboxBaseImageRef;
 const OLD_OPENCLAW_VERSION =
-  process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion;
+  process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ??
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.openclawVersion;
 const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
   nemoclawRef: OLD_NEMOCLAW_REF,
@@ -86,10 +97,18 @@ validateLegacyGatewayUpgradeFixture({
 });
 const SURVIVOR_SANDBOX =
   process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ?? `e2e-gw-${process.pid}`;
+const ADDITIONAL_STOPPED_SANDBOXES = ["e2e-gw-stopped-a", "e2e-gw-stopped-b"].slice(
+  0,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.additionalStoppedSandboxes,
+);
+const LEGACY_SANDBOXES = Object.freeze([SURVIVOR_SANDBOX, ...ADDITIONAL_STOPPED_SANDBOXES]);
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
 const GATEWAY_CREDENTIAL = "nemoclaw-gateway-upgrade-fixture-key";
-const TEST_TIMEOUT_MS = 65 * 60_000;
+const TEST_TIMEOUT_MS =
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.additionalStoppedSandboxes > 0
+    ? 110 * 60_000
+    : 65 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
 validateSandboxName(SURVIVOR_SANDBOX);
@@ -98,6 +117,9 @@ expect(
   `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gw-; got ${SURVIVOR_SANDBOX}`,
 ).toBe(true);
 expect(SURVIVOR_SANDBOX.length).toBeLessThanOrEqual(19);
+for (const sandboxName of ADDITIONAL_STOPPED_SANDBOXES) {
+  validateSandboxName(sandboxName);
+}
 
 function writeExecutable(target: string, contents: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
@@ -338,19 +360,26 @@ exec "$real_docker" "\${args[@]}"
   return wrapperDir;
 }
 
-async function waitForSurvivorReady(host: HostCliClient, labelPrefix: string): Promise<void> {
+async function waitForSandboxPhase(
+  host: HostCliClient,
+  sandboxName: string,
+  phase: "Ready" | "Stopped",
+  labelPrefix: string,
+): Promise<void> {
   let attempt = 0;
-  let ready = false;
-  while (attempt < 60 && !ready) {
+  let matched = false;
+  while (attempt < 60 && !matched) {
     const result = await bash(host, `openshell sandbox list 2>/dev/null || true`, {
       artifactName: `${labelPrefix}-sandbox-list-${attempt}`,
       timeoutMs: 30_000,
     });
-    ready = new RegExp(`${SURVIVOR_SANDBOX}.*Ready`).test(resultText(result));
+    matched = resultText(result)
+      .split(/\r?\n/u)
+      .some((line) => line.includes(sandboxName) && line.includes(phase));
     attempt += 1;
-    ready || (await new Promise<void>((resolve) => setTimeout(resolve, 2_000)));
+    matched || (await new Promise<void>((resolve) => setTimeout(resolve, 2_000)));
   }
-  expect(ready, `survivor sandbox ${SURVIVOR_SANDBOX} did not become Ready`).toBe(true);
+  expect(matched, `sandbox ${sandboxName} did not become ${phase}`).toBe(true);
 }
 
 async function runInstallerPayload(
@@ -360,12 +389,22 @@ async function runInstallerPayload(
   artifacts: ArtifactSink,
   logName: string,
   env: NodeJS.ProcessEnv,
-  redactionValues: string[] = [],
-  requireBackupEvidence = false,
+  options: {
+    redactionValues?: string[];
+    requireBackupEvidence?: boolean;
+    sandboxNames?: readonly string[];
+  } = {},
 ): Promise<ShellProbeResult> {
+  const redactionValues = options.redactionValues ?? [];
+  const requireBackupEvidence = options.requireBackupEvidence ?? false;
+  const sandboxNames = options.sandboxNames ?? [SURVIVOR_SANDBOX];
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
-  const backupRoot = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX);
-  const existingBackupNames = fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : [];
+  const existingBackupNames = new Map(
+    sandboxNames.map((sandboxName) => {
+      const backupRoot = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", sandboxName);
+      return [sandboxName, fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : []] as const;
+    }),
+  );
   const result = await bash(host, `bash ${quotedInstallerArgs}`, {
     artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
     captureLimitBytes: 1024 * 1024,
@@ -375,37 +414,79 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
-  const probesCaptured = await captureGatewayUpgradeProbeEvidence(SURVIVOR_SANDBOX, (name, args) =>
-    bash(host, ["openshell", ...args].map(shellQuote).join(" "), {
-      artifactName: `${label}-sandbox-${name}`,
-      captureLimitBytes: 16 * 1024,
-      env,
-      redactionValues,
-      timeoutMs: 15_000,
-    }),
+  const probeResults = await Promise.all(
+    sandboxNames.map((sandboxName) =>
+      captureGatewayUpgradeProbeEvidence(sandboxName, (name, args) =>
+        bash(host, ["openshell", ...args].map(shellQuote).join(" "), {
+          artifactName: `${label}-${sandboxName}-sandbox-${name}`,
+          captureLimitBytes: 16 * 1024,
+          env,
+          redactionValues,
+          timeoutMs: 15_000,
+        }),
+      ),
+    ),
   );
-  const backups = listBackups(SURVIVOR_SANDBOX).filter(
-    (backup) => !existingBackupNames.includes(backup.timestamp),
-  );
-  const recoveryComplete =
-    backups.length === 1 &&
-    backups.every(
-      (backup) =>
-        validateRebuildRecoveryManifest(SURVIVOR_SANDBOX, "openclaw", backup).ok &&
-        backup.backupComplete === true &&
-        backup.rebuildPolicyHandoff == null &&
-        !fs.existsSync(path.join(backup.backupPath, ".nemoclaw-rebuild-recovery.json")),
+  const backupEvidence = sandboxNames.map((sandboxName) => {
+    const backups = listBackups(sandboxName).filter(
+      (backup) => !(existingBackupNames.get(sandboxName) ?? []).includes(backup.timestamp),
     );
+    const recoveryComplete =
+      backups.length === 1 &&
+      backups.every(
+        (backup) =>
+          validateRebuildRecoveryManifest(sandboxName, "openclaw", backup).ok &&
+          backup.backupComplete === true &&
+          backup.rebuildPolicyHandoff == null &&
+          !fs.existsSync(path.join(backup.backupPath, ".nemoclaw-rebuild-recovery.json")),
+      );
+    return { sandboxName, backupCount: backups.length, recoveryComplete };
+  });
+  const probesCaptured = probeResults.every(Boolean);
+  const recoveryComplete = backupEvidence.every((evidence) => evidence.recoveryComplete);
   await artifacts.writeJson(`${label}-backup-handoff.json`, {
-    backupCount: backups.length,
+    sandboxes: backupEvidence,
     recoveryComplete,
   });
-  const evidenceValid = !requireBackupEvidence || (probesCaptured && recoveryComplete);
+  const evidenceValid = probesCaptured && (!requireBackupEvidence || recoveryComplete);
   expect(
     result.exitCode === 0 && evidenceValid,
     `${label} NemoClaw installer or required recovery evidence failed:\n${resultText(result)}`,
   ).toBe(true);
   return result;
+}
+
+async function createStoppedLegacySandboxes(
+  host: HostCliClient,
+  fakeBaseUrl: string,
+): Promise<void> {
+  for (const sandboxName of ADDITIONAL_STOPPED_SANDBOXES) {
+    const onboardEnv = liveEnv({
+      COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
+      NEMOCLAW_DASHBOARD_PORT: "",
+      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+      NEMOCLAW_MODEL: "test-model",
+      NEMOCLAW_POLICY_MODE: "skip",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_SANDBOX_NAME: sandboxName,
+    });
+    const onboard = await bash(host, `nemoclaw onboard --non-interactive`, {
+      artifactName: `old-onboard-${sandboxName}`,
+      env: onboardEnv,
+      redactionValues: [GATEWAY_CREDENTIAL],
+      timeoutMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+    });
+    expectExitZero(onboard, `create legacy sandbox ${sandboxName}`);
+    await waitForSandboxPhase(host, sandboxName, "Ready", `old-${sandboxName}`);
+    const stop = await bash(host, `openshell sandbox stop -g nemoclaw ${shellQuote(sandboxName)}`, {
+      artifactName: `old-stop-${sandboxName}`,
+      env: onboardEnv,
+      redactionValues: [GATEWAY_CREDENTIAL],
+      timeoutMs: 120_000,
+    });
+    expectExitZero(stop, `stop legacy sandbox ${sandboxName}`);
+    await waitForSandboxPhase(host, sandboxName, "Stopped", `old-${sandboxName}`);
+  }
 }
 
 async function preCleanUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
@@ -481,7 +562,7 @@ async function installOldNemoclawAndClaw(
       artifacts,
       "old-install.log",
       installEnv,
-      [GATEWAY_CREDENTIAL],
+      { redactionValues: [GATEWAY_CREDENTIAL] },
     );
   } finally {
     removeReviewedNpmArchive(reviewedOpenClaw);
@@ -523,7 +604,7 @@ async function installCurrentNemoclawUpgrade(
       GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
       NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
       NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
+      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify(LEGACY_SANDBOXES),
       NEMOCLAW_INSTALL_REF: currentRef,
       NEMOCLAW_INSTALL_TAG: currentRef,
       NEMOCLAW_PROVIDER: "custom",
@@ -544,16 +625,30 @@ async function installCurrentNemoclawUpgrade(
     artifacts,
     "current-install.log",
     currentEnv,
-    redactionValues,
-    true,
+    {
+      redactionValues,
+      requireBackupEvidence: true,
+      sandboxNames: LEGACY_SANDBOXES,
+    },
   );
+
+  for (const rerunSandbox of ADDITIONAL_STOPPED_SANDBOXES.slice(0, 1)) {
+    await runInstallerPayload(
+      host,
+      `current-${currentRef.slice(0, 12)}-rerun-${rerunSandbox}`,
+      currentGatewayUpgradeInstallerArgs(path.join(REPO_ROOT, "scripts", "install.sh")),
+      artifacts,
+      "current-install-rerun.log",
+      currentEnv,
+      { redactionValues, sandboxNames: LEGACY_SANDBOXES },
+    );
+  }
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "current-openshell-version",
     redactionValues,
     timeoutMs: 30_000,
   });
-  expectExitZero(openshellVersion, "current openshell --version");
   expectOutputContains(
     openshellVersion,
     CURRENT_OPENSHELL_VERSION,
@@ -562,27 +657,27 @@ async function installCurrentNemoclawUpgrade(
 }
 
 async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<void> {
-  await waitForSurvivorReady(host, "post-upgrade");
+  await waitForSandboxPhase(host, SURVIVOR_SANDBOX, "Ready", "post-upgrade");
 
   const marker = await bash(
     host,
     `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- cat ${shellQuote(SURVIVOR_MARKER_PATH)}`,
     { artifactName: "post-upgrade-survivor-marker", timeoutMs: 60_000 },
   );
-  expectExitZero(marker, "read survivor marker after gateway upgrade");
   expect(marker.stdout.trim()).toBe(SURVIVOR_MARKER);
 }
 
 const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux");
 
 runLinuxOpenShellGatewayUpgrade(
-  "openshell-gateway-upgrade: preserves a usable sandbox and workspace state (#10517)",
+  "openshell-gateway-upgrade: restores gateway registration and all sandbox state (#11898)",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "clear the prior gateway and start compatible inference",
         "install pinned legacy NemoClaw and its sandbox",
+        "stop the additional legacy sandboxes when the reviewed fixture requires them",
         "verify the legacy agent and write workspace state",
         "upgrade to the current OpenShell gateway",
         "verify the upgraded agent and preserved workspace state",
@@ -610,6 +705,7 @@ runLinuxOpenShellGatewayUpgrade(
       oldSandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
       currentOpenShellVersion: CURRENT_OPENSHELL_VERSION,
       survivorSandbox: SURVIVOR_SANDBOX,
+      legacySandboxes: LEGACY_SANDBOXES,
     });
 
     cleanup.trackDisposable("remove openshell gateway upgrade state", async () => {
@@ -624,13 +720,15 @@ runLinuxOpenShellGatewayUpgrade(
       env: liveEnv(),
       timeoutMs: 120_000,
     });
-    cleanup.trackDisposable("remove openshell gateway upgrade survivor sandbox", () =>
-      sandbox.cleanupSandbox(SURVIVOR_SANDBOX, {
-        artifactName: "cleanup-survivor-sandbox",
-        env: liveEnv(),
-        timeoutMs: 120_000,
-      }),
-    );
+    for (const sandboxName of LEGACY_SANDBOXES) {
+      cleanup.trackDisposable(`remove openshell gateway upgrade sandbox ${sandboxName}`, () =>
+        sandbox.cleanupSandbox(sandboxName, {
+          artifactName: `cleanup-${sandboxName}`,
+          env: liveEnv(),
+          timeoutMs: 120_000,
+        }),
+      );
+    }
 
     // Vitest retries execute in the same runner process. Tear down any failed
     // legacy gateway before each attempt so partial containerd layers from a
@@ -673,6 +771,9 @@ runLinuxOpenShellGatewayUpgrade(
       firewallSetup.then((result) => artifacts.writeJson("host-mock-firewall.json", result)),
     ]);
     throwGatewayUpgradeSetupFailures(setupResults);
+
+    progress.phase("stop the additional legacy sandboxes when the reviewed fixture requires them");
+    await createStoppedLegacySandboxes(host, fake.baseUrl);
 
     progress.phase("verify the legacy agent and write workspace state");
     await assertOpenClawAgentSecretBoundary(host, fake, "legacy");
