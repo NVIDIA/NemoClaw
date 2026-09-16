@@ -344,22 +344,25 @@ describe("managed startup profile", () => {
       expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
     },
   );
-  it("migrates a canonical prior-version OpenClaw profile without retired device-auth state", () => {
-    const encoded = encodeCanonicalUnknown({
-      ...OPENCLAW_PROFILE,
-      schemaVersion: 1,
-      agentConfig: {
-        ...OPENCLAW_PROFILE.agentConfig,
-        deviceAuth: { disabled: true, optOutSource: "operator" },
-      },
-    });
+  it.each([true, false])(
+    "migrates a canonical prior-version OpenClaw profile with deviceAuth.disabled=%s",
+    (disabled) => {
+      const encoded = encodeCanonicalUnknown({
+        ...OPENCLAW_PROFILE,
+        schemaVersion: 1,
+        agentConfig: {
+          ...OPENCLAW_PROFILE.agentConfig,
+          deviceAuth: { disabled, optOutSource: "operator" },
+        },
+      });
 
-    const decoded = decodeManagedStartupProfile(encoded);
+      const decoded = decodeManagedStartupProfile(encoded);
 
-    expect(decoded).toEqual(validateManagedStartupProfile(OPENCLAW_PROFILE));
-    expect(decoded.agentConfig).not.toHaveProperty("deviceAuth");
-    expect(serializeManagedStartupProfile(decoded)).not.toContain("deviceAuth");
-  });
+      expect(decoded).toEqual(validateManagedStartupProfile(OPENCLAW_PROFILE));
+      expect(decoded.agentConfig).not.toHaveProperty("deviceAuth");
+      expect(serializeManagedStartupProfile(decoded)).not.toContain("deviceAuth");
+    },
+  );
   it("round-trips all OpenClaw-only startup settings", () => {
     const profile = decodeManagedStartupProfile(encodeManagedStartupProfile(OPENCLAW_PROFILE));
     expect(profile).toMatchObject({

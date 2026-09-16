@@ -2180,7 +2180,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 interface ManagedStartupProfileDecodeMigration {
   readonly value: unknown;
   readonly migratedLegacyProfile: boolean;
-  readonly legacyDeviceAuthDisabled: boolean | null;
 }
 
 function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProfileDecodeMigration {
@@ -2189,7 +2188,6 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
     return {
       value,
       migratedLegacyProfile: false,
-      legacyDeviceAuthDisabled: null,
     };
   }
 
@@ -2198,7 +2196,6 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
     return {
       value: { ...profile, schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION },
       migratedLegacyProfile: true,
-      legacyDeviceAuthDisabled: null,
     };
   }
 
@@ -2206,10 +2203,7 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
   rejectUnknownKeys(agentConfig, LEGACY_OPENCLAW_CONFIG_KEYS, "agentConfig");
   const deviceAuth = requireRecord(agentConfig.deviceAuth, "agentConfig.deviceAuth");
   rejectUnknownKeys(deviceAuth, LEGACY_DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
-  const legacyDeviceAuthDisabled = requireBoolean(
-    deviceAuth.disabled,
-    "agentConfig.deviceAuth.disabled",
-  );
+  requireBoolean(deviceAuth.disabled, "agentConfig.deviceAuth.disabled");
   requireStringEnum(
     deviceAuth.optOutSource,
     LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES,
@@ -2225,7 +2219,6 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
       agentConfig: migratedAgentConfig,
     },
     migratedLegacyProfile: true,
-    legacyDeviceAuthDisabled,
   };
 }
 
@@ -2295,15 +2288,6 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
   }
   const migration = migrateDecodedManagedStartupProfile(parsed);
   const profile = validateManagedStartupProfile(migration.value);
-  if (
-    migration.migratedLegacyProfile &&
-    profile.agent === "openclaw" &&
-    profile.dashboard.agent === "openclaw" &&
-    profile.dashboard.mode === "remote" &&
-    !migration.legacyDeviceAuthDisabled
-  ) {
-    invalid("remote OpenClaw dashboard exposure requires device auth to be disabled");
-  }
   const canonicalPayload = migration.migratedLegacyProfile
     ? JSON.stringify(canonicalizeJson(parsed))
     : serializeManagedStartupProfile(profile);
