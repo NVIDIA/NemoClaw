@@ -281,6 +281,12 @@ describe("shared gateway inference route compatibility", () => {
     expect(warning).toContain("will re-point the one shared inference route");
     expect(warning).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
     expect(warning).toContain("not per sandbox");
+    expect(
+      formatGatewayRouteImpactWarning(
+        result as Exclude<typeof result, { ok: true }>,
+        "inference-set",
+      ),
+    ).toContain("Changing inference for 'target'");
   });
 
   it("allows different routes on different gateways (#6315)", () => {

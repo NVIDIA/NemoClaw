@@ -9,6 +9,7 @@ import {
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
+  parseOpenClawGatewayModelRun,
 } from "../live/openclaw-inference-switch-helpers.ts";
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
@@ -105,6 +106,52 @@ describe("openclaw-inference-switch agent reply matching", () => {
     expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
     expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
     expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
+  });
+});
+
+describe("openclaw-inference-switch gateway model-run output", () => {
+  it("accepts the stable gateway inference envelope", () => {
+    expect(
+      parseOpenClawGatewayModelRun(
+        JSON.stringify({
+          ok: true,
+          capability: "model.run",
+          transport: "gateway",
+          provider: "anthropic",
+          model: "mock-anthropic-model",
+          attempts: [],
+          outputs: [{ text: "PONG", mediaUrl: null }],
+        }),
+      ),
+    ).toEqual({
+      model: "mock-anthropic-model",
+      provider: "anthropic",
+      text: "PONG",
+      transport: "gateway",
+    });
+  });
+
+  it.each([
+    "not json",
+    JSON.stringify({ ok: false, capability: "model.run", transport: "gateway", outputs: [] }),
+    JSON.stringify({
+      ok: true,
+      capability: "model.run",
+      transport: "local",
+      provider: "anthropic",
+      model: "mock-anthropic-model",
+      outputs: [{ text: "PONG" }],
+    }),
+    JSON.stringify({
+      ok: true,
+      capability: "model.run",
+      transport: "gateway",
+      provider: "anthropic",
+      model: "mock-anthropic-model",
+      outputs: [{ mediaUrl: null }],
+    }),
+  ])("rejects malformed or non-gateway output", (raw) => {
+    expect(parseOpenClawGatewayModelRun(raw)).toBeNull();
   });
 });
 

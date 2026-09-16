@@ -61,6 +61,52 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
   return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
 }
 
+export interface OpenClawGatewayModelRunResult {
+  model: string;
+  provider: string;
+  text: string;
+  transport: "gateway";
+}
+
+/** Parse the stable JSON envelope emitted by `openclaw infer model run --gateway`. */
+export function parseOpenClawGatewayModelRun(raw: string): OpenClawGatewayModelRunResult | null {
+  let document: unknown;
+  try {
+    document = JSON.parse(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) return null;
+  const record = document as Record<string, unknown>;
+  if (
+    record.ok !== true ||
+    record.capability !== "model.run" ||
+    record.transport !== "gateway" ||
+    typeof record.provider !== "string" ||
+    typeof record.model !== "string" ||
+    !Array.isArray(record.outputs)
+  ) {
+    return null;
+  }
+  const text = record.outputs
+    .map((output) =>
+      output &&
+      typeof output === "object" &&
+      typeof (output as { text?: unknown }).text === "string"
+        ? (output as { text: string }).text
+        : "",
+    )
+    .join("")
+    .trim();
+  if (!text) return null;
+  return {
+    model: record.model,
+    provider: record.provider,
+    text,
+    transport: "gateway",
+  };
+}
+
 // Baseline (mock-Anthropic) inference config the live target builds when
 // NEMOCLAW_SWITCH_MOCK_ANTHROPIC=1 points OpenClaw at a local fake OpenAI-
 // compatible server. Extracted so the fast e2e-support project can assert the
