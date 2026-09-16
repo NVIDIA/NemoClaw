@@ -2,7 +2,7 @@
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw",
   "version": "0.1.0",
-  "description": "NemoClaw \u2014 run OpenClaw inside OpenShell with NVIDIA inference",
+  "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "exports": {
     "./lifecycle": {
@@ -110,10 +110,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1046.0",
-    "@bufbuild/protobuf": "2.12.1",
-    "@connectrpc/connect": "2.1.2",
-    "@connectrpc/connect-node": "2.1.2",
-    "@nvidia/openshell-sdk": "0.0.116",
     "@oclif/core": "^4.10.5",
     "ajv": "^8.17.0",
     "execa": "^9.6.1",
@@ -124,6 +120,12 @@
     "typebox": "1.1.38",
     "undici": "8.10.0",
     "yaml": "2.8.3"
+  },
+  "optionalDependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
+    "@nvidia/openshell-sdk": "0.0.116"
   },
   "bundleDependencies": [
     "p-retry",

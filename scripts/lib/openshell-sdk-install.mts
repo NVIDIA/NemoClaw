@@ -12,11 +12,11 @@ import { stageReviewedArchiveWithNpm } from "./reviewed-npm-cache.mts";
 const root = resolve(import.meta.dirname, "../..");
 const name = "@nvidia/openshell-sdk";
 
-function requiredVersion(): string {
+function pinnedVersion(): string {
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  const version: unknown = manifest.dependencies?.[name];
+  const version: unknown = manifest.optionalDependencies?.[name] ?? manifest.dependencies?.[name];
   if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/u.test(version)) {
-    throw new Error("OpenShell SDK must be an exact required dependency in package.json");
+    throw new Error("OpenShell SDK must be an exact dependency pin in package.json");
   }
   return version;
 }
@@ -25,9 +25,9 @@ function prepare(version: string): void {
   const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
   const entry = lock.packages?.[`node_modules/${name}`];
   if (
-    lock.packages?.[""]?.dependencies?.[name] !== version ||
+    (lock.packages?.[""]?.optionalDependencies?.[name] ??
+      lock.packages?.[""]?.dependencies?.[name]) !== version ||
     entry?.version !== version ||
-    entry?.optional === true ||
     typeof entry?.integrity !== "string"
   ) {
     throw new Error("OpenShell SDK package.json and package-lock.json must agree");
@@ -81,7 +81,7 @@ try {
   if (process.argv.length !== 3 || (mode !== "prepare" && mode !== "check")) {
     throw new Error("Usage: node scripts/lib/openshell-sdk-install.mts <prepare|check>");
   }
-  const version = requiredVersion();
+  const version = pinnedVersion();
   if (mode === "prepare") prepare(version);
   else await check(version);
 } catch (error) {

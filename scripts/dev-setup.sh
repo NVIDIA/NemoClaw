@@ -412,7 +412,7 @@ repair_repository() {
   fi
   run_setup_step "Prepare the required OpenShell SDK" \
     node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" prepare || return 1
-  run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts --prefer-offline || return 1
+  run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com || return 1
   run_setup_step "Verify the required OpenShell SDK" \
     node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check || return 1
   run_setup_step "Install plugin dependencies" \

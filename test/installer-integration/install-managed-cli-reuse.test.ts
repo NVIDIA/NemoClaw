@@ -279,7 +279,11 @@ describe("installer-managed CLI reuse", () => {
     });
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts --prefer-offline$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
   });
 
   it("creates owner-only managed state under an account umask of 0002 (#8795)", () => {
@@ -336,7 +340,11 @@ describe("installer-managed CLI reuse", () => {
     );
     expect(result.stdout).toContain("NemoClaw CLI was already prepared during this installer run");
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts --prefer-offline$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
@@ -353,7 +361,11 @@ describe("installer-managed CLI reuse", () => {
     expect(result.stdout).toContain("Reusing the installed NemoClaw CLI at the selected revision");
     expect(lockfile).toBe(COMMITTED_LOCKFILE);
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts --prefer-offline$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
   });
 
@@ -383,7 +395,11 @@ describe("installer-managed CLI reuse", () => {
     );
     expect(result.stdout).toContain("NemoClaw CLI was already prepared during this installer run");
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts --prefer-offline$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);

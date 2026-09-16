@@ -748,7 +748,9 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain("Ready to create a feature branch.");
     const commands = readCommandLog(fixture);
-    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
     expect(commands).not.toContain("uv sync");
     expect(commands).toContain("prek install");
@@ -763,24 +765,28 @@ describe("contributor repository setup", () => {
     expect(runSetup(fixture, ["--repair"]).status).toBe(0);
 
     const commands = readCommandLog(fixture);
-    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
     expect(commands).not.toContain("uv sync");
     expect(commands).not.toContain("npm-link-or-shim");
     expect(commands).not.toContain("onboard");
   });
 
-  it("keeps development dependencies when production npm settings are inherited", () => {
+  it("keeps development dependencies and the SDK when npm omissions are inherited", () => {
     const fixture = createFixture();
 
     const result = runSetup(fixture, [], {
       NODE_ENV: "production",
-      npm_config_omit: "dev",
+      npm_config_omit: "dev optional",
     });
 
     expect(result.status).toBe(0);
     const commands = readCommandLog(fixture);
-    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
   });
 
@@ -850,7 +856,9 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Setup stopped while attempting: Install root dependencies");
     const commands = readCommandLog(fixture);
-    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      "npm install --include=dev --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com",
+    );
     expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 

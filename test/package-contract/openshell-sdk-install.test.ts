@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { npmPackFilePaths, parseSingleNpmPackResult } from "../helpers/npm-pack-result";
 import { createPackageFixture } from "./helpers/package-fixture";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
@@ -55,8 +57,11 @@ function fixture() {
     bundleDependencies: sourceManifest.bundleDependencies.filter(
       (name: string) => name === sdkName,
     ),
-    dependencies: Object.fromEntries(
-      [sdkName, ...publicDependencies].map((name) => [name, sourceManifest.dependencies[name]]),
+    optionalDependencies: Object.fromEntries(
+      [sdkName, ...publicDependencies].map((name) => [
+        name,
+        sourceManifest.optionalDependencies[name],
+      ]),
     ),
     scripts: { postinstall: "node -e \"require('fs').writeFileSync('lifecycle-ran', 'yes')\"" },
   };
@@ -72,7 +77,8 @@ function fixture() {
     cpSync(path.join(repositoryRoot, "node_modules", name), source, { recursive: true });
     const result = run("npm", ["pack", source, "--ignore-scripts", "--json"]);
     expect(result.status, result.stderr).toBe(0);
-    const [packed] = JSON.parse(result.stdout);
+    const packed = parseSingleNpmPackResult(result.stdout);
+    assert.ok(packed.filename && packed.integrity, "Incomplete npm pack result");
     packages[`node_modules/${name}`] = {
       ...lock.packages[`node_modules/${name}`],
       resolved: `file:${path.join(root, packed.filename)}`,
@@ -96,8 +102,17 @@ describe("required OpenShell SDK installation", () => {
   it("installs offline without credentials and loads both compiled CLI SDK imports", () => {
     const { root, probe, run } = fixture();
     const before = readFileSync(path.join(root, "package-lock.json"), "utf8");
-    const args = ["ci", "--ignore-scripts", "--prefer-offline", "--omit=optional"];
-    expect(run("npm", args).status).not.toBe(0);
+    const args = [
+      "ci",
+      "--ignore-scripts",
+      "--prefer-offline",
+      "--omit=optional",
+      "--include=optional",
+      "--@nvidia:registry=https://npm.pkg.github.com",
+    ];
+    // npm may silently omit this optional package. The installer must still fail.
+    run("npm", args);
+    expect(probe("check").status).toBe(1);
     const prepared = probe("prepare");
     expect(prepared.status, prepared.stderr).toBe(0);
     const installed = run("npm", args);
@@ -123,8 +138,11 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
     expect(existsSync(path.join(root, "lifecycle-ran"))).toBe(false);
     const packed = run("npm", ["pack", "--ignore-scripts", "--json"]);
     expect(packed.status, packed.stderr).toBe(0);
-    const [contents] = JSON.parse(packed.stdout);
-    expect(contents.bundled).toEqual(expect.arrayContaining([sdkName, ...publicDependencies]));
+    expect(npmPackFilePaths(packed.stdout)).toEqual(
+      expect.arrayContaining(
+        [sdkName, ...publicDependencies].map((name) => `node_modules/${name}/package.json`),
+      ),
+    );
     rmSync(path.join(root, "node_modules", "@connectrpc", "connect-node"), { recursive: true });
     const broken = probe("check");
     expect(broken.status).toBe(1);
