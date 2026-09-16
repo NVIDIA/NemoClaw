@@ -69,7 +69,12 @@ function defaultDockerInfo(): boolean {
     suppressOutput: true,
     timeout: DOCKER_TIMEOUT_MS,
   });
-  const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
+  const stdout =
+    typeof result.stdout === "string"
+      ? result.stdout
+      : result.stdout == null
+        ? ""
+        : result.stdout.toString("utf8");
   if (result.status !== 0) {
     return false;
   }
