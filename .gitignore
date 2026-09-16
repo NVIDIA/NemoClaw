@@ -11,3 +11,5 @@
 
 __pycache__/
 *.pyc
+/image/node_modules/
+.ruff_cache/

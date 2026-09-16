@@ -1,0 +1,14 @@
+{
+  "name": "nemoclaw-image-checks",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "lint": "cd .. && image/node_modules/.bin/oxlint -c image/.oxlintrc.json --deny-warnings image/fabric test",
+    "format:check": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --check 'image/fabric/*.{ts,mjs}' 'test/*.mjs'",
+    "format": "cd .. && image/node_modules/.bin/oxfmt -c image/.oxfmtrc.json --write 'image/fabric/*.{ts,mjs}' 'test/*.mjs'"
+  },
+  "devDependencies": {
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0"
+  }
+}

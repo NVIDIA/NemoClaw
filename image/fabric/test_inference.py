@@ -1,22 +1,40 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import unittest
+
 from fabric import configuration
+
 
 class InferenceConfiguration(unittest.TestCase):
     def test_openclaw_receives_api_and_tuning(self):
-        options = {'api': 'openai-responses', 'tuning': {'contextWindow': 65536, 'maxTokens': 8192, 'reasoning': True, 'reasoningEffort': 'high'}}
-        config = configuration('main', 'openclaw', inference=options)
-        self.assertEqual(config['harness']['settings']['inference'], options)
+        options = {
+            "api": "openai-responses",
+            "tuning": {
+                "contextWindow": 65536,
+                "maxTokens": 8192,
+                "reasoning": True,
+                "reasoningEffort": "high",
+            },
+        }
+        config = configuration("main", "openclaw", inference=options)
+        self.assertEqual(config["harness"]["settings"]["inference"], options)
 
     def test_hermes_api_modes_and_placeholder_auth(self):
-        for api, mode in [('openai-completions', 'chat_completions'), ('openai-responses', 'codex_responses'), ('anthropic-messages', 'anthropic_messages')]:
-            options = {'api': api, 'tuning': {}, 'auth': {'method': 'api-key', 'providerRef': 'nous'}}
-            config = configuration('main', 'hermes', inference=options)
-            self.assertEqual(config['harness']['settings']['api_mode'], mode)
-            self.assertEqual(config['models']['default']['api_key_env'], 'OPENAI_API_KEY')
-            self.assertEqual(config['models']['default']['base_url'], 'https://inference.local/v1')
-            self.assertNotIn('NOUS_API_KEY', str(config))
+        for api, mode in [
+            ("openai-completions", "chat_completions"),
+            ("openai-responses", "codex_responses"),
+            ("anthropic-messages", "anthropic_messages"),
+        ]:
+            options = {
+                "api": api,
+                "tuning": {},
+                "auth": {"method": "api-key", "providerRef": "nous"},
+            }
+            config = configuration("main", "hermes", inference=options)
+            self.assertEqual(config["harness"]["settings"]["api_mode"], mode)
+            self.assertEqual(config["models"]["default"]["api_key_env"], "OPENAI_API_KEY")
+            self.assertEqual(config["models"]["default"]["base_url"], "https://inference.local/v1")
+            self.assertNotIn("NOUS_API_KEY", str(config))
 
 
 class NativeInference(unittest.TestCase):
@@ -25,69 +43,97 @@ class NativeInference(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
+
         import openclaw_adapter as adapter
-        options = {'api': 'anthropic-messages', 'tuning': {'contextWindow': 65536, 'maxTokens': 8192, 'reasoning': True, 'reasoningEffort': 'high'}}
-        with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):
+
+        options = {
+            "api": "anthropic-messages",
+            "tuning": {
+                "contextWindow": 65536,
+                "maxTokens": 8192,
+                "reasoning": True,
+                "reasoningEffort": "high",
+            },
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(adapter, "ROOT", Path(directory)),
+        ):
             runtime = adapter.OpenClawRuntime()
-            runtime.name, runtime.home, runtime.inference = 'main', Path(directory), options
+            runtime.name, runtime.home, runtime.inference = "main", Path(directory), options
             runtime.initialize_configuration()
-            path = Path(directory) / 'openclaw.json'
+            path = Path(directory) / "openclaw.json"
             config = json.loads(path.read_text())
-            provider = config['models']['providers']['openshell']
-            self.assertEqual(provider['api'], 'anthropic-messages')
-            self.assertEqual(provider['models'][0]['maxTokens'], 8192)
-            self.assertEqual(config['agents']['defaults']['thinkingDefault'], 'high')
-            self.assertTrue(adapter.configuration_matches('main', options))
-            provider['models'][0]['maxTokens'] = 4096
+            provider = config["models"]["providers"]["openshell"]
+            self.assertEqual(provider["api"], "anthropic-messages")
+            self.assertEqual(provider["models"][0]["maxTokens"], 8192)
+            self.assertEqual(config["agents"]["defaults"]["thinkingDefault"], "high")
+            self.assertTrue(adapter.configuration_matches("main", options))
+            provider["models"][0]["maxTokens"] = 4096
             path.write_text(json.dumps(config))
             before = path.read_bytes()
-            self.assertFalse(adapter.configuration_matches('main', options))
+            self.assertFalse(adapter.configuration_matches("main", options))
             with self.assertRaises(RuntimeError):
                 runtime.initialize_configuration()
             self.assertEqual(path.read_bytes(), before)
 
 
-
 class ToolDisclosure(unittest.TestCase):
     def test_native_disclosure_defaults_and_read_only_policy(self):
         from openclaw_adapter import native_configuration
-        self.assertEqual(native_configuration('primary')['tools']['toolSearch'],
-                         {'mode': 'tools', 'searchDefaultLimit': 8, 'maxSearchLimit': 20})
-        for mode in ('direct', 'progressive'):
-            options = {'api': 'openai-completions', 'tuning': {}, 'agents': [
-                {'name': 'primary', 'tools': {'disclosure': mode}},
-                {'name': 'reader', 'tools': {'allow': ['read']}}]}
-            native = native_configuration('primary', options)
-            self.assertEqual(native['tools']['toolSearch'] is False, mode == 'direct')
-            self.assertEqual(native['agents']['entries']['reader']['tools'], {'allow': ['read']})
-            self.assertNotIn('tools', native['agents']['entries']['primary'])
-        options['agents'].append({'name': 'conflicting', 'tools': {'disclosure': 'direct'}})
+
+        self.assertEqual(
+            native_configuration("primary")["tools"]["toolSearch"],
+            {"mode": "tools", "searchDefaultLimit": 8, "maxSearchLimit": 20},
+        )
+        for mode in ("direct", "progressive"):
+            options = {
+                "api": "openai-completions",
+                "tuning": {},
+                "agents": [
+                    {"name": "primary", "tools": {"disclosure": mode}},
+                    {"name": "reader", "tools": {"allow": ["read"]}},
+                ],
+            }
+            native = native_configuration("primary", options)
+            self.assertEqual(native["tools"]["toolSearch"] is False, mode == "direct")
+            self.assertEqual(native["agents"]["entries"]["reader"]["tools"], {"allow": ["read"]})
+            self.assertNotIn("tools", native["agents"]["entries"]["primary"])
+        options["agents"].append({"name": "conflicting", "tools": {"disclosure": "direct"}})
         with self.assertRaises(ValueError):
-            native_configuration('primary', options)
+            native_configuration("primary", options)
 
     def test_disclosure_drift_is_rejected_without_overwriting_native_state(self):
         import json
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
         from unittest.mock import patch
+
         import openclaw_adapter as adapter
-        for mode in ('direct', 'progressive'):
-            options = {'api': 'openai-completions', 'tuning': {}, 'agents': [
-                {'name': 'primary', 'tools': {'disclosure': mode}}]}
-            with tempfile.TemporaryDirectory() as directory, patch.object(adapter, 'ROOT', Path(directory)):
+
+        for mode in ("direct", "progressive"):
+            options = {
+                "api": "openai-completions",
+                "tuning": {},
+                "agents": [{"name": "primary", "tools": {"disclosure": mode}}],
+            }
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                patch.object(adapter, "ROOT", Path(directory)),
+            ):
                 runtime = adapter.OpenClawRuntime()
-                runtime.name, runtime.home, runtime.inference = 'primary', Path(directory), options
+                runtime.name, runtime.home, runtime.inference = "primary", Path(directory), options
                 runtime.initialize_configuration()
-                path = Path(directory) / 'openclaw.json'
+                path = Path(directory) / "openclaw.json"
                 native = json.loads(path.read_text())
-                native['tools']['toolSearch'] = mode == 'direct'
+                native["tools"]["toolSearch"] = mode == "direct"
                 path.write_text(json.dumps(native))
                 before = path.read_bytes()
-                self.assertFalse(adapter.configuration_matches('primary', options))
+                self.assertFalse(adapter.configuration_matches("primary", options))
                 with self.assertRaises(RuntimeError):
                     runtime.initialize_configuration()
                 self.assertEqual(path.read_bytes(), before)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

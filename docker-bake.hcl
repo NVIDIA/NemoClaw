@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+variable "IMAGE_PREFIX" {
+  default = "nc-fabric"
+}
+
+# These locks contain native CPython 3.13 ARM64 wheels. Other platforms need
+# their own locks and qualification before they can be added here.
+variable "HARNESSES" {
+  default = {
+    deepagents     = { stage = "generic", adapter = "deepagents", lock = "dependencies.lock" }
+    claude         = { stage = "generic", adapter = "claude", lock = "claude-dependencies.lock" }
+    codex          = { stage = "generic", adapter = "codex", lock = "codex-dependencies.lock" }
+    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent", lock = "mini-swe-agent-dependencies.lock" }
+    nooa           = { stage = "generic", adapter = "nooa", lock = "nooa-dependencies.lock" }
+    nooa-bench     = { stage = "generic", adapter = "nooa", lock = "nooa-dependencies.lock" }
+    remote-agent   = { stage = "generic", adapter = "remote-agent", lock = "remote-agent-dependencies.lock" }
+    openclaw       = { stage = "openclaw", adapter = "", lock = "sdk-dependencies.lock" }
+    hermes         = { stage = "hermes", adapter = "hermes", lock = "hermes-dependencies.lock" }
+    pi             = { stage = "pi", adapter = "", lock = "sdk-dependencies.lock" }
+  }
+}
+
+group "default" {
+  targets = ["openclaw"]
+}
+
+target "_fabric" {
+  context = "."
+  dockerfile = "image/fabric/Dockerfile"
+  platforms = ["linux/arm64"]
+}
+
+target "agents" {
+  inherits = ["_fabric"]
+  name = harness
+  matrix = { harness = keys(HARNESSES) }
+  target = HARNESSES[harness].stage
+  args = {
+    HARNESS = harness
+    ADAPTER = HARNESSES[harness].adapter
+    LOCKFILE = HARNESSES[harness].lock
+  }
+  tags = ["${IMAGE_PREFIX}:${harness}"]
+}
+
+target "ollama-proxy" {
+  context = "."
+  dockerfile = "image/ollama-proxy/Dockerfile"
+  platforms = ["linux/arm64"]
+  target = "runtime"
+  tags = ["${IMAGE_PREFIX}:ollama-proxy"]
+}
+
+# Checks use disposable build stages and never start deployed resources.
+group "check" {
+  targets = ["lint", "unit-tests", "pi-tests", "proxy-tests"]
+}
+
+target "lint" {
+  inherits = ["_fabric"]
+  output = ["type=cacheonly"]
+  target = "lint"
+}
+
+target "unit-tests" {
+  inherits = ["_fabric"]
+  output = ["type=cacheonly"]
+  target = "unit-tests"
+}
+
+target "pi-tests" {
+  inherits = ["_fabric"]
+  output = ["type=cacheonly"]
+  target = "pi-build"
+}
+
+target "proxy-tests" {
+  inherits = ["ollama-proxy"]
+  output = ["type=cacheonly"]
+  target = "test"
+  tags = []
+}

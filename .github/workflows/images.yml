@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Agent images
+on:
+  pull_request:
+    branches: [v1]
+  push:
+    branches: [v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: agent-images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  images:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate image selection and Dockerfile instructions
+        run: |
+          python3 -B -m unittest discover -s image -p test_builds.py
+          docker buildx bake --check agents ollama-proxy
+      - name: Lint, format, compile TypeScript, and run unit tests
+        run: docker buildx bake check
+      - name: Build all supported agent images locally
+        run: docker buildx bake agents ollama-proxy --load
+      - name: Verify assembled images and retained source hashes
+        run: |
+          for harness in deepagents claude codex mini-swe-agent nooa nooa-bench remote-agent pi openclaw hermes; do
+            docker run --rm --runtime=runc --network none \
+              -e NEMOCLAW_TEST_HARNESS="$harness" -v "$PWD/image/test_image.py:/test.py:ro" \
+              --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
+          done
+      - name: Exercise native adapters against isolated protocol fixtures
+        run: |
+          for harness in deepagents claude codex mini-swe-agent nooa nooa-bench remote-agent pi; do
+            python3 tools/fabric-adapter-experiment.py --harness "$harness"
+          done
+          python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
+          python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --inference-api openai-completions
+          python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api anthropic-messages
+          python3 tools/openclaw-native-test.py
+      - name: Exercise OpenClaw tools, execution, search, and tracing
+        run: |
+          docker run --rm --runtime=runc --network none --user 0 \
+            --add-host host.openshell.internal:127.0.0.1 \
+            -e PYTHONPATH=/opt/nemoclaw \
+            -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e NEMOCLAW_TEST_NATIVE_FEATURES=1 -e NEMOCLAW_TEST_NATIVE_EXECUTION=1 \
+            -v "$PWD/image/fabric:/tests:ro" -w /tests \
+            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
+            -B -m unittest test_openclaw_adapter test_inference test_interfaces \
+            test_execution test_observability test_web_search test_openclaw_tools_gateway
+          for test in test_openclaw_tools.mjs test_openclaw_disclosure.mjs test_web_search.mjs; do
+            docker run --rm --runtime=runc --network none --user 0 \
+              -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
+              --entrypoint node nc-fabric:openclaw "/tests/$test"
+          done
