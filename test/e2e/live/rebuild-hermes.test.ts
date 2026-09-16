@@ -32,7 +32,17 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+    skip,
+  }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const env = phase6Env({
       agent: "hermes",
@@ -102,32 +112,17 @@ test(
       timeoutMs: 20 * 60_000,
     });
     const rebuildOutput = resultText(rebuild);
-    const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
-    const stop = await sandbox.openshell(["sandbox", "stop", "-g", gateway, SANDBOX_NAME], {
-      artifactName: "rebuild-hermes-openshell-stop-after-restore",
-      env,
-      timeoutMs: 120_000,
-    });
-    const start = await sandbox.openshell(["sandbox", "start", "-g", gateway, SANDBOX_NAME], {
-      artifactName: "rebuild-hermes-openshell-start-after-restore",
-      env,
-      timeoutMs: 120_000,
-    });
     expect(
-      (rebuild.exitCode === 0 || /Restore result: success=true/u.test(rebuildOutput)) &&
-        stop.exitCode === 0 &&
-        start.exitCode === 0,
-      `${rebuildOutput}\n${resultText(stop)}\n${resultText(start)}`,
+      rebuild.exitCode === 0 || /Restore result: success=true/u.test(rebuildOutput),
+      rebuildOutput,
     ).toBe(true);
 
     progress.phase("verify restored state and native readiness");
-    await expectSandboxReady(
-      host,
-      SANDBOX_NAME,
+    await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
+      artifactNamePrefix: "rebuild-hermes-ready-after-rebuild",
       env,
-      redactions,
-      "rebuild-hermes-ready-after-rebuild",
-    );
+      redactionValues: redactions,
+    });
     await waitForNativeHermes(sandbox, redactions);
     const read = await sandboxSh(
       sandbox,
