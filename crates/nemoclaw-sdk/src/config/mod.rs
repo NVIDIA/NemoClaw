@@ -35,7 +35,7 @@ pub use validation::{is_fabric_harness, validate_endpoint};
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub const DEFAULT_AGENT_IMAGE: &str =
-    "nc-multi-models@sha256:a189e6f51291d5b4a30b68a3039e8d8e82f74c8082efb757894009d18f4c955b";
+    "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0";
 pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a";
 
 /// Configuration errors contain fixed diagnostic text, never source values.
