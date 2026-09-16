@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 
 import {
-  bindRebuildSnapshotGpuAuthority,
   buildRebuildRecreateOnboardOpts,
   getRebuildSandboxGpuOverrides,
   rebuildShouldOptOutGpu,
@@ -363,46 +362,5 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     });
 
     expect(opts.preparedDcodeRebuild).toBe(preparedDcodeRebuild);
-  });
-});
-
-describe("bindRebuildSnapshotGpuAuthority", () => {
-  it("pins auto-mode recreation to the provider-captured exact GPU (#10758)", () => {
-    const options = buildRebuildRecreateOnboardOpts({
-      sb: {
-        dashboardPort: 18789,
-        sandboxGpuMode: "auto",
-        sandboxGpuEnabled: true,
-        sandboxGpuDevice: null,
-      },
-      rebuildAgent: "openclaw",
-      storedFromDockerfile: null,
-      autoYes: true,
-      usageNoticeAccepted: true,
-    });
-
-    const bound = bindRebuildSnapshotGpuAuthority(options, {
-      schemaVersion: 1,
-      providerId: "docker",
-      providerHandle: "provider-handle",
-      lifecycleState: "running",
-      lifecycleGeneration: "generation-1",
-      runtime: {
-        schemaVersion: 1,
-        providerId: "docker",
-        runtime: { kind: "docker-container", handle: "c".repeat(64) },
-        acceleration: {
-          kind: "gpu",
-          vendor: "nvidia",
-          devices: ["nvidia.com/gpu=0"],
-        },
-      },
-    });
-
-    expect(bound).toMatchObject({
-      sandboxGpu: "enable",
-      sandboxGpuDevice: "nvidia.com/gpu=0",
-    });
-    expect(options).toMatchObject({ sandboxGpu: null, sandboxGpuDevice: null });
   });
 });

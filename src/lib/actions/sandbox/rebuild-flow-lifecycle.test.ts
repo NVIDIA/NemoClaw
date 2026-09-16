@@ -108,6 +108,59 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
+  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+    const events: string[] = [];
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "auto",
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: {
+        schemaVersion: 1,
+        providerId: "docker",
+        providerHandle: "provider-handle",
+        lifecycleState: "running",
+        lifecycleGeneration: "generation-1",
+        runtime: {
+          schemaVersion: 1,
+          providerId: "docker",
+          runtime: { kind: "docker-container", handle: "c".repeat(64) },
+          acceleration: {
+            kind: "gpu",
+            vendor: "nvidia",
+            devices: ["nvidia.com/gpu=0"],
+          },
+        },
+      },
+      runOpenshell: (args) => {
+        args.join(" ") === "sandbox delete -g nemoclaw alpha" && events.push("delete");
+        return undefined;
+      },
+      onboard: (_session, options) => {
+        events.push(`onboard:${String(options.sandboxGpuDevice)}`);
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxGpu: "enable",
+        sandboxGpuDevice: "nvidia.com/gpu=0",
+      }),
+    );
+    expect(events).toEqual(["delete", "onboard:nvidia.com/gpu=0"]);
+    const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+      (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
+    );
+    expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
+    );
+  });
+
   it("observes current MCP sources, recreates with the captured policy, and restores OpenClaw", async ({
     onTestFinished,
   }) => {

@@ -27,13 +27,11 @@ import type {
   RebuildProviderReconfigureHandoff,
   RebuildRouteHandoff,
 } from "../../onboard/rebuild-route-handoff";
-import { resolveDockerSnapshotRecreateGpuDevice } from "../../onboard/runtime-provider/snapshot";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { PreservedEnvFile } from "../../state/preserved-env";
-import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -157,24 +155,6 @@ export type RebuildRecreateOnboardOpts = {
   preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata;
   noGpu?: true;
 };
-
-/** Bind replacement creation to the provider-observed GPU selected by the source runtime. */
-export function bindRebuildSnapshotGpuAuthority(
-  options: RebuildRecreateOnboardOpts,
-  runtimeSnapshot: SandboxRuntimeSnapshot | undefined,
-): RebuildRecreateOnboardOpts {
-  if (!runtimeSnapshot) return options;
-  const sandboxGpuDevice = resolveDockerSnapshotRecreateGpuDevice(runtimeSnapshot);
-  if (!sandboxGpuDevice) return options;
-  if (options.noGpu === true || options.sandboxGpu === "disable") {
-    throw new Error("Captured GPU runtime authority conflicts with the recorded GPU opt-out.");
-  }
-  return {
-    ...options,
-    sandboxGpu: "enable",
-    sandboxGpuDevice,
-  };
-}
 
 export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;

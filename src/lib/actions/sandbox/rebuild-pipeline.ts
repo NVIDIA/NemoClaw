@@ -494,10 +494,7 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
       try {
-        recreateOptions = bindRebuildSnapshotGpuAuthority(
-          recreateOptions,
-          backup.backupManifest?.runtimeSnapshot,
-        );
+        recreateOptions = bindRebuildSnapshotGpuAuthority(recreateOptions, backup.backupManifest);
       } catch (error) {
         return bail(
           `Captured sandbox GPU authority cannot be replayed safely: ${rebuildFailureDetail(error)}`,

@@ -13,6 +13,7 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { resolveDockerSnapshotRecreateGpuDevice } from "../../onboard/runtime-provider/snapshot";
 import { secureTempFile } from "../../onboard/temp-files";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
 import {
@@ -24,6 +25,7 @@ import { captureRecordedSandboxBasePolicy } from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export {
@@ -36,12 +38,26 @@ export {
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
-export { bindRebuildSnapshotGpuAuthority } from "./rebuild-gpu-opt-out";
 
 export type RebuildBackupManifest = Exclude<
   Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
+
+/** Bind replacement creation to the provider-observed GPU selected by the source runtime. */
+export function bindRebuildSnapshotGpuAuthority(
+  options: RebuildRecreateOnboardOpts,
+  manifest: RebuildBackupManifest,
+): RebuildRecreateOnboardOpts {
+  const sandboxGpuDevice = manifest?.runtimeSnapshot
+    ? resolveDockerSnapshotRecreateGpuDevice(manifest.runtimeSnapshot)
+    : null;
+  if (!sandboxGpuDevice) return options;
+  if (options.noGpu === true || options.sandboxGpu === "disable") {
+    throw new Error("Captured GPU runtime authority conflicts with the recorded GPU opt-out.");
+  }
+  return { ...options, sandboxGpu: "enable", sandboxGpuDevice };
+}
 
 export interface RebuildBackupPhaseInput {
   sandboxName: string;
