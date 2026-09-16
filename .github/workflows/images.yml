@@ -6,6 +6,14 @@ on:
     branches: [v1]
   push:
     branches: [v1]
+    paths:
+      - image/**
+      - test/**
+      - tools/fabric-adapter-experiment.py
+      - docker-bake.hcl
+      - .dockerignore
+      - ruff.toml
+      - .github/workflows/images.yml
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::config::RuntimeInference;
+use crate::config::SandboxRuntimeSettings;
 
 pub(super) const INFERENCE_ENV: &str = "NEMOCLAW_INFERENCE_CONFIG";
 pub(super) fn inference_settings(
     text: &str,
     runtime: &str,
-) -> Result<Option<RuntimeInference>, ObservationError> {
+) -> Result<Option<SandboxRuntimeSettings>, ObservationError> {
     if text.is_empty() {
         return Ok(None);
     }
-    let settings: RuntimeInference =
+    let settings: SandboxRuntimeSettings =
         serde_json::from_str(text).map_err(|_| ObservationError::Query)?;
     settings
         .validate(

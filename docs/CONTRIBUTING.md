@@ -47,6 +47,9 @@ When moving content, update inbound links and the index; retain old paths or anc
 
 Verify changed commands against their parser, script, or executable help, and check local links and anchors.
 Run `python3 tools/docs/fern.py check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](AUTOMATION.md#validate-locally) apply.
+The documentation build parses every `yaml` and `yml` fenced example on rendered pages and checks complete deployments with the SDK parser.
+Keep fragments syntactically valid; put settings for different YAML locations in separate fences.
+Fragment parsing checks syntax only; maintained complete examples have separate parser, schema, and adapter-contract tests.
 For structural changes, account for moved or removed content.
 Run the repository checks required by [AGENTS.md](../AGENTS.md) and `git diff --check`; report checks that could not run and why.
 Documentation-only changes need no new runtime tests or live resources.

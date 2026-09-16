@@ -19,6 +19,7 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
+    pub sandbox_phase: Option<p::SandboxPhase>,
     pub exec_exit: i32,
     pub inference_exit: i32,
     pub exec_truncated: bool,
@@ -450,7 +451,7 @@ fn create_sandbox(
         metadata: Some(state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)),
         spec: q.spec,
         status: Some(p::SandboxStatus {
-            phase: p::SandboxPhase::Ready as i32,
+            phase: state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready) as i32,
             ..Default::default()
         }),
         ..Default::default()

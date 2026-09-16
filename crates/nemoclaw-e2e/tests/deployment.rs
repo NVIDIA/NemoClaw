@@ -539,7 +539,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     document.spec.gateway.endpoint = fixture.endpoint.clone();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().exec_exit = 2;
+    fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
     assert!(deployment.apply(&document, &cancel).await.is_err());
     let state_path = directory.path().join("terraform.tfstate");
     let established = fs::read(&state_path).unwrap();
@@ -549,7 +549,9 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(intent["pending"], false);
     assert_eq!(intent["succeeded"], false);
-    fixture.state.lock().unwrap().exec_exit = 0;
+    for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
+        sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
+    }
     assert!(
         deployment
             .apply(&document, &cancel)

@@ -40,6 +40,37 @@ fn parser(text: &str) -> Parser<'_> {
     Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH)
 }
 
+fn check_yaml(source: &Path, text: &str) -> Result<()> {
+    let mut yaml = None;
+    for (event, range) in parser(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info)))
+                if matches!(info.split_whitespace().next(), Some("yaml" | "yml")) =>
+            {
+                yaml = Some((range.start, String::new()));
+            }
+            Event::Text(text) if yaml.is_some() => yaml.as_mut().unwrap().1.push_str(&text),
+            Event::End(TagEnd::CodeBlock) if yaml.is_some() => {
+                let (offset, content) = yaml.take().unwrap();
+                let location = format!(
+                    "{}:{}",
+                    source.display(),
+                    text[..offset].bytes().filter(|byte| *byte == b'\n').count() + 1
+                );
+                let value: serde_json::Value = serde_saphyr::from_str(&content)
+                    .map_err(|error| format!("{location}: invalid YAML example: {error}"))?;
+                if value.get("apiVersion").is_some() && value.get("kind").is_some() {
+                    nemoclaw_sdk::config::Document::parse(content.as_bytes()).map_err(|error| {
+                        format!("{location}: invalid deployment example: {error}")
+                    })?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn anchors(text: &str) -> BTreeSet<String> {
     let mut anchors = BTreeSet::new();
     let mut heading = None;
@@ -151,6 +182,7 @@ impl Renderer<'_> {
 
     fn render(&self, source: &Path) -> Result<String> {
         let text = fs::read_to_string(source)?;
+        check_yaml(source, &text)?;
         let mut events = Vec::new();
         let mut in_title = false;
         let mut in_code = false;

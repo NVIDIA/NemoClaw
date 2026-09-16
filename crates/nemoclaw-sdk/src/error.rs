@@ -13,6 +13,11 @@ pub enum Error {
     Bundle(&'static str),
     #[error("{0}")]
     Conflict(&'static str),
+    #[error("sandbox startup failed: {phase}, exit code {exit_code}; resources retained")]
+    SandboxStartup {
+        phase: &'static str,
+        exit_code: String,
+    },
     #[error("OpenTofu {operation} failed: {diagnostic}")]
     Execution {
         operation: String,

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
-pub const OPENTOFU_VERSION: &str = "1.12.6";
+pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +32,9 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     let provider = document.inference_provider()?;
     let sandbox = &document.spec.sandboxes[0];
     let agent = &sandbox.agents[0];
+    let harness = document.sandbox_harness()?;
+    let settings = document.sandbox_runtime_settings()?;
+    let providers = document.selected_inference_providers()?;
     let mut result = Vec::new();
     for (kind, name, logical, generation_kind, extra) in [
         (
@@ -49,7 +52,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             vec![
                 ("image", sandbox.image.ref_.clone()),
                 ("agent_name", agent.name.clone()),
-                ("agent_runtime", document.sandbox_harness()?.runtime()),
+                ("agent_runtime", harness.runtime()),
             ],
         ),
     ] {
@@ -66,17 +69,15 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         }
         values.extend(extra.into_iter().map(|(k, v)| (k.into(), v)));
         if kind == "sandbox" {
-            if let Some(settings) = document.runtime_inference()? {
-                values.insert(
-                    "inference_json".into(),
-                    serde_json::to_string(&settings).expect("typed inference settings"),
-                );
-            }
+            values.insert(
+                "inference_json".into(),
+                serde_json::to_string(&settings).expect("typed sandbox runtime settings"),
+            );
             let mut policy = sandbox.policy_proto(
-                document.web_search()?.is_some(),
-                document.sandbox_harness()?.observability.as_ref(),
+                settings.web_search.is_some(),
+                harness.observability.as_ref(),
             )?;
-            for provider in document.selected_inference_providers()? {
+            for provider in &providers {
                 let connection = document.provider_connection(provider)?;
                 let profile = crate::openshell::inference_profile(
                     &provider.name,
@@ -114,12 +115,12 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         });
     }
     result.splice(1..1, inference_targets(document, provider, generations)?);
-    for selected in document.selected_inference_providers()? {
+    for selected in providers {
         if !std::ptr::eq(selected, provider) {
             result.extend(inference_targets(document, selected, generations)?);
         }
     }
-    if let Some(search) = document.web_search()? {
+    if let Some(search) = settings.web_search {
         for (kind, name) in [
             ("provider_profile", "nemoclaw-brave"),
             ("provider", "brave-search"),

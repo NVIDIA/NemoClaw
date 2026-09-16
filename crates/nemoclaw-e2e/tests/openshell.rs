@@ -533,3 +533,64 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     }
     assert!(client.read("sandbox", &row, false).await.is_err());
 }
+
+#[tokio::test]
+async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() {
+    let fixture = Fixture::start().await;
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations).unwrap() {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let key = format!(
+        "{}/{}",
+        document.workspace(),
+        document.spec.sandboxes[0].name
+    );
+    for phase in [
+        openshell_core::proto::SandboxPhase::Error,
+        openshell_core::proto::SandboxPhase::Completed,
+    ] {
+        {
+            let mut state = fixture.state.lock().unwrap();
+            let status = state
+                .sandboxes
+                .get_mut(&key)
+                .unwrap()
+                .status
+                .as_mut()
+                .unwrap();
+            status.phase = phase as i32;
+            status.exit_code = Some(1);
+            status.conditions = vec![openshell_core::proto::SandboxCondition {
+                reason: "secret-do-not-print".into(),
+                message: "secret-do-not-print".into(),
+                ..Default::default()
+            }];
+        }
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.ready(
+                binding.as_ref().unwrap(),
+                &nemoclaw_sdk::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("terminal phases must fail immediately")
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(phase.as_str_name()), "{error}");
+        assert!(error.contains("exit code 1"), "{error}");
+        assert!(!error.contains("secret-do-not-print"));
+    }
+}

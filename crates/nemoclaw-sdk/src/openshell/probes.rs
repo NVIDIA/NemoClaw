@@ -5,6 +5,35 @@ use super::*;
 use crate::{CancellationToken, Error};
 use std::time::Duration;
 
+fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
+    if let Ok(
+        phase @ (proto::SandboxPhase::Error
+        | proto::SandboxPhase::Deleting
+        | proto::SandboxPhase::Stopped
+        | proto::SandboxPhase::Completed),
+    ) = proto::SandboxPhase::try_from(status.phase)
+    {
+        return Err(Error::SandboxStartup {
+            phase: phase.as_str_name(),
+            exit_code: status
+                .exit_code
+                .map_or_else(|| "unknown".into(), |code| code.to_string()),
+        });
+    }
+    Ok(status.phase)
+}
+
+async fn readiness_deadline(
+    wait: impl std::future::Future<Output = Result<(), Error>>,
+    cancel: &CancellationToken,
+) -> Result<(), Error> {
+    tokio::select! {
+        () = cancel.cancelled() => Err(Error::Cancelled),
+        result = tokio::time::timeout(Duration::from_secs(120), wait) =>
+            result.map_err(|_| Error::Conflict("agent readiness timed out; resources retained"))?,
+    }
+}
+
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
@@ -55,7 +84,7 @@ impl OpenShell {
             .await
             .map_err(|error| remote_error(&error))?
             .into_inner();
-        if info.gateway_version != "0.0.117-dev.155+gb3e4ad457"
+        if info.gateway_version != crate::artifact_pins::OPENSHELL_VERSION
             || info.compute_drivers.len() != 1
             || (info.compute_drivers[0].name != driver
                 && info.compute_drivers[0]
@@ -184,24 +213,14 @@ impl OpenShell {
     pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                let phase = self
-                    .bound_sandbox(binding)
-                    .await?
-                    .status
-                    .ok_or(ObservationError::Incomplete)?
-                    .phase;
+                let phase = startup_phase(
+                    self.bound_sandbox(binding)
+                        .await?
+                        .status
+                        .ok_or(ObservationError::Incomplete)?,
+                )?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     return Ok::<(), Error>(());
-                }
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "Pi sandbox is unavailable; resources retained",
-                    ));
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -245,17 +264,7 @@ impl OpenShell {
         let wait = async {
             loop {
                 let sandbox = self.bound_sandbox(binding).await?;
-                let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "sandbox readiness failed; established identity retained",
-                    ));
-                }
+                let phase = startup_phase(sandbox.status.ok_or(ObservationError::Incomplete)?)?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     let (command, environment) = self.configuration_command(binding)?;
                     if let Ok((0, _)) = self.exec_bound(binding, command, environment, 20).await {
@@ -265,11 +274,9 @@ impl OpenShell {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
-        tokio::select! {
-            ()=cancel.cancelled()=>Err(Error::Cancelled),
-            result=tokio::time::timeout(Duration::from_secs(120),wait)=>result.map_err(|_|Error::Conflict("agent readiness timed out; resources retained"))?,
-        }
+        readiness_deadline(wait, cancel).await
     }
+
     pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
         if value(binding, "agent_runtime") == "fabric-pi" {
             let model = binding
@@ -383,6 +390,49 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let error = readiness_deadline(std::future::pending(), &cancel)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("readiness timed out"));
+        assert_eq!(started.elapsed(), Duration::from_secs(120));
+        readiness_deadline(
+            async {
+                tokio::time::sleep(Duration::from_secs(119)).await;
+                Ok(())
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_cancellation_and_terminal_errors_do_not_wait_for_the_deadline() {
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let (_, result) = tokio::join!(
+            async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                cancel.cancel();
+            },
+            readiness_deadline(std::future::pending(), &cancel)
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let error = readiness_deadline(
+            async { Err(Error::Conflict("terminal")) },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "terminal");
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
     #[test]
     fn hermes_reply_requires_success_before_accepting_text() {
         assert_eq!(

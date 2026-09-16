@@ -155,3 +155,19 @@ fn refuses_ambiguous_routes_and_non_immutable_source_revisions() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("40"));
 }
+
+#[test]
+fn malformed_yaml_examples_stop_documentation_generation() {
+    let root = fixture();
+    fs::write(
+        root.path().join("docs/start.md"),
+        "# Start\n\n```yaml\n- name: provider\nauth:\n  method: api-key\n```\n",
+    )
+    .unwrap();
+    let result = generate(root.path(), false);
+    assert!(
+        !result.status.success(),
+        "invalid mixed sequence and mapping must fail"
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("YAML"));
+}

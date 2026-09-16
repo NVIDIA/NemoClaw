@@ -19,8 +19,8 @@ pub const SERVICE_KIND: &str = "inference_service";
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION_LABEL: &str = "nemoclaw.nvidia.com/generation";
 pub const SPEC_LABEL: &str = "nemoclaw.nvidia.com/runtime-spec";
-pub const SUPERVISOR_IMAGE: &str = "ghcr.io/nvidia/openshell/supervisor@sha256:5787e5bad644cdaf064d6a40a1671942d72cec4b27e31422ec0e7466fc3c794d";
-pub const SANDBOX_RUNTIME_IMAGE: &str = "ghcr.io/nvidia/openshell/sandbox@sha256:854dcef3a4354780422dd4bc0e8b38bbd301974815c9b028ef1bb7c20ebc9868";
+pub use crate::artifact_pins::SANDBOX_RUNTIME_IMAGE;
+pub use crate::artifact_pins::SUPERVISOR_IMAGE;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
