@@ -235,6 +235,19 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
+  it("keeps the active Hermes release defaults pinned to exact 0.20.6 identity", () => {
+    const currentIdentity = reviewedHermesReleaseIdentities[0].environment;
+
+    expect(baseDockerfile).toContain(`ARG HERMES_VERSION=${currentIdentity.HERMES_VERSION}`);
+    expect(baseDockerfile).toContain(`ARG HERMES_SEMVER=${currentIdentity.HERMES_SEMVER}`);
+    expect(baseDockerfile).toContain(
+      `ARG HERMES_TARBALL_SHA256=${currentIdentity.HERMES_TARBALL_SHA256}`,
+    );
+    expect(baseDockerfile).toContain(
+      `ARG HERMES_NPM_INTEGRITY=${currentIdentity.HERMES_NPM_INTEGRITY}`,
+    );
+  });
+
   it.each(reviewedHermesReleaseIdentities)(
     "accepts the exact $label Hermes release identity tuple",
     ({ environment }) => {
