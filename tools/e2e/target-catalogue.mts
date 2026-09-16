@@ -1282,10 +1282,15 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("sandbox-operations", {
-    displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
+    displayName: "Sandbox: preserves lifecycle and final gateway cleanup",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
+    owningPaths: [
+      "src/lib/actions/sandbox/destroy-gateway-cleanup.ts",
+      "src/lib/actions/sandbox/destroy.ts",
+      "src/lib/domain/sandbox/destroy.ts",
+    ],
     timeoutMinutes: 120,
     installMode: "credential-free",
     installNonInteractive: true,
