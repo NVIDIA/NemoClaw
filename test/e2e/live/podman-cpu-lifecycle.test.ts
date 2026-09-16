@@ -222,7 +222,7 @@ exit 1
     expect(warmReadiness).toMatchObject({ ok: true, timing: { mode: "warm" } });
     runtimeEngines = engines();
 
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
+    const root = fs.mkdtempSync(path.join(REPO_ROOT, ".nemoclaw-podman-openshell-"));
     const stateDir = path.join(root, "gateway-state");
     ensureManagedGatewayStateRoot({
       gatewayName: GATEWAY_NAME,
