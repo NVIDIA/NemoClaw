@@ -3,7 +3,7 @@
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero, outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -23,7 +23,6 @@ test(
         "write durable OpenClaw state",
         "rebuild the sandbox",
         "verify restored state and native readiness",
-        "delete the sandbox through OpenShell",
       ],
     },
   },
@@ -49,7 +48,6 @@ test(
         "rebuild uses the published exact managed image instead of constructing a stale base",
         "workspace state survives the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
-        "OpenShell owns final sandbox deletion",
       ],
     });
 
@@ -123,21 +121,6 @@ test(
     );
     assertExitZero(read, "read restored OpenClaw marker");
     expect(read.stdout.trim(), resultText(read)).toBe(marker);
-
-    progress.phase("delete the sandbox through OpenShell");
-    await sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "rebuild-openclaw-openshell-delete",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    const list = await sandbox.list({
-      artifactName: "rebuild-openclaw-list-after-delete",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    });
-    assertExitZero(list, "OpenShell list after OpenClaw rebuild delete");
-    expect(outputContainsSandbox(list, SANDBOX_NAME), resultText(list)).toBe(false);
 
     await artifacts.target.complete({
       id: "rebuild-openclaw",

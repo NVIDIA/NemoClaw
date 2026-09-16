@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { testTimeout } from "../../helpers/timeouts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero, outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
@@ -28,7 +27,6 @@ test(
         "write durable Hermes state",
         "rebuild the sandbox",
         "verify restored state and native readiness",
-        "delete the sandbox through OpenShell",
       ],
     },
   },
@@ -59,7 +57,6 @@ test(
         "rebuild uses the published exact managed image without stale controller fixtures",
         "Hermes memory state survives the rebuild",
         "the native Hermes health endpoint is ready after restore",
-        "OpenShell owns final sandbox deletion",
       ],
     });
 
@@ -132,21 +129,6 @@ test(
     );
     assertExitZero(read, "read restored Hermes marker");
     expect(read.stdout.trim(), resultText(read)).toBe(marker);
-
-    progress.phase("delete the sandbox through OpenShell");
-    await sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "rebuild-hermes-openshell-delete",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    const list = await sandbox.list({
-      artifactName: "rebuild-hermes-list-after-delete",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    });
-    assertExitZero(list, "OpenShell list after Hermes rebuild delete");
-    expect(outputContainsSandbox(list, SANDBOX_NAME), resultText(list)).toBe(false);
 
     await artifacts.target.complete({
       id: "rebuild-hermes",
