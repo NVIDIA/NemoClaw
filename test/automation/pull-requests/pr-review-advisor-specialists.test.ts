@@ -218,11 +218,40 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
       expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
       expect(turn.prompt).toContain("do not try to preload the complete diff");
+      expect(turn.prompt).not.toContain(
+        "Treat the trusted human review as the frozen review contract",
+      );
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBe(RECORD_ADVISOR_FINDINGS_TOOL);
       expect(turn.terminalSubmitRepairPrompt).toContain(RECORD_ADVISOR_FINDINGS_TOOL);
     },
   );
+
+  it("bounds a follow-up review to the frozen contract and exact commit delta", () => {
+    const followUpDiffPath = ".pr-review-advisor-context/follow-up-diff.patch";
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
+      ...context,
+      followUp: {
+        review: {
+          reviewId: 10,
+          reviewedHeadSha: "a".repeat(40),
+          state: "CHANGES_REQUESTED",
+          body: "Preserve the completed command result.",
+          inlineComments: [],
+        },
+        diffPath: followUpDiffPath,
+      },
+    });
+
+    expect(turn.contextToolResults?.map(({ toolName }) => toolName)).toContain(
+      "pr_review_follow_up_context",
+    );
+    expect(turn.requiredReadOneOfPaths).toEqual([followUpDiffPath]);
+    expect(turn.prompt).toContain("Treat the trusted human review as the frozen review contract");
+    expect(turn.prompt).toContain("Do not restart the original full review");
+    expect(turn.prompt).toContain("the follow-up delta introduces it");
+    expect(turn.prompt).toContain("record a clear ledger");
+  });
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
