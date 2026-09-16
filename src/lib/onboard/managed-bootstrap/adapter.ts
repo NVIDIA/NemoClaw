@@ -365,12 +365,22 @@ export class ManagedBootstrapRecoveryBlockedError extends Error {
 /** Retain rollback evidence on the original failure, redacting Error and string details before adding recovery guidance. */
 export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): Error {
   const redactedRollbackError = sanitizeOnboardFailure(rollbackError);
-  Object.defineProperty(failure, "managedBootstrapRollbackError", {
-    configurable: true,
-    enumerable: true,
-    value: redactedRollbackError,
-    writable: true,
-  });
+  const rollbackDescriptor = Object.getOwnPropertyDescriptor(
+    failure,
+    "managedBootstrapRollbackError",
+  );
+  if (rollbackDescriptor?.configurable || (!rollbackDescriptor && Object.isExtensible(failure))) {
+    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+      configurable: true,
+      enumerable: true,
+      value: redactedRollbackError,
+      writable: true,
+    });
+  } else if (rollbackDescriptor && "value" in rollbackDescriptor && rollbackDescriptor.writable) {
+    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+      value: redactedRollbackError,
+    });
+  }
   const detailDescriptor = Object.getOwnPropertyDescriptor(redactedRollbackError, "message");
   const detail =
     detailDescriptor && "value" in detailDescriptor && typeof detailDescriptor.value === "string"
@@ -384,9 +394,10 @@ export function attachManagedBootstrapRollbackError(failure: Error, rollbackErro
   if (message.includes(detail)) return redactedRollbackError;
   const nextMessage = `${message}\nManaged bootstrap rollback requires attention: ${detail}`;
   if (
-    messageDescriptor &&
-    !messageDescriptor.configurable &&
-    (!("value" in messageDescriptor) || !messageDescriptor.writable)
+    (!messageDescriptor && !Object.isExtensible(failure)) ||
+    (messageDescriptor &&
+      !messageDescriptor.configurable &&
+      (!("value" in messageDescriptor) || !messageDescriptor.writable))
   ) {
     return redactedRollbackError;
   }

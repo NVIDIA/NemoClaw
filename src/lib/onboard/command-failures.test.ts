@@ -65,6 +65,67 @@ async function renderThroughOclifHandle(error: Error): Promise<string> {
 }
 
 describe("onboarding command failures", () => {
+  it.each<[string, (failure: Error) => Error, RegExp]>([
+    ["frozen", Object.freeze, /^Primary startup failed$/],
+    ["sealed", Object.seal, /Managed bootstrap rollback requires attention:/],
+    ["non-extensible", Object.preventExtensions, /Managed bootstrap rollback requires attention:/],
+  ])("retains a %s primary failure when rollback also fails", (_kind, lock, expectedMessage) => {
+    const failure = lock(new Error("Primary startup failed"));
+    const secret = `nvapi-${"b".repeat(60)}`;
+    const rollback = new Error(`Retry rollback: ${secret}`);
+
+    const sanitized = attachManagedBootstrapRollbackError(failure, rollback);
+
+    expect(sanitized).toBe(rollback);
+    expect(sanitized.message).toContain("Retry rollback:");
+    expect(inspect(sanitized, { depth: null })).not.toContain(secret);
+    expect(failure.message).toContain("Primary startup failed");
+    expect(Object.hasOwn(failure, "managedBootstrapRollbackError")).toBe(false);
+    expect(failure.message).toMatch(expectedMessage);
+    expect(failure.message).not.toContain(secret);
+  });
+
+  it("preserves a locked rollback property without invoking its accessor", () => {
+    const failure = new Error("Primary startup failed");
+    const access = vi.fn(() => "Untrusted diagnostic");
+    Object.defineProperty(failure, "managedBootstrapRollbackError", { get: access });
+    const rollback = new Error("Retry rollback");
+
+    expect(attachManagedBootstrapRollbackError(failure, rollback)).toBe(rollback);
+
+    expect(access).not.toHaveBeenCalled();
+    expect(failure.message).toContain("Primary startup failed");
+    expect(failure.message).toContain("Retry rollback");
+  });
+
+  it("updates a writable rollback property without changing its locked attributes", () => {
+    const failure = new Error("Primary startup failed");
+    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+      value: new Error("Previous rollback failure"),
+      writable: true,
+    });
+    const rollback = new Error("Retry rollback");
+
+    expect(attachManagedBootstrapRollbackError(failure, rollback)).toBe(rollback);
+
+    expect(Object.getOwnPropertyDescriptor(failure, "managedBootstrapRollbackError")).toEqual({
+      value: rollback,
+      writable: true,
+      configurable: false,
+      enumerable: false,
+    });
+  });
+
+  it("retains a non-extensible primary failure without an own message", () => {
+    const failure = Object.preventExtensions(new Error());
+    const rollback = new Error("Retry rollback");
+
+    expect(attachManagedBootstrapRollbackError(failure, rollback)).toBe(rollback);
+
+    expect(Object.hasOwn(failure, "message")).toBe(false);
+    expect(Object.hasOwn(failure, "managedBootstrapRollbackError")).toBe(false);
+  });
+
   it("shadows every inherited error field read by Oclif Command.catch", async () => {
     const secret = `nvapi-${"j".repeat(60)}`;
     const exitCode = vi.fn(() => {
