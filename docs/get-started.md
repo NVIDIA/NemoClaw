@@ -26,7 +26,8 @@ Keep the bundle unchanged while using the deployment.
 If you need to rebuild it, first copy the complete bundle to a dedicated location and put the copy's `bin` directory first on `PATH`.
 Use the copied CLI with its matching provider/schema; `--bundle` alone does not select a different CLI executable.
 
-Apply creates resources and sends an inference request that may incur endpoint charges.
+Apply creates resources and checks configuration and readiness.
+The later native-agent verification sends an inference request that may incur endpoint charges.
 Destroy deletes sandbox files and conversation history.
 Review [credential ownership](security.md#credentials-and-authentication) and [data retention](state.md) before continuing.
 
@@ -97,9 +98,9 @@ Authentication, connectivity, or ownership errors must be resolved before procee
 nemoclaw apply --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml
 ```
 
-Apply computes its own checked plan, creates the deployment resources, checks agent configuration, and probes the selected inference API.
+Apply computes its own checked plan, creates the deployment resources, and checks agent configuration and readiness.
 Expect exit status zero and JSON with `outcome: "succeeded"`.
-For this external-service path, that probe is not evidence of a completed native agent conversation; verify one in the next step.
+Apply does not request a model or agent response; verify a native conversation in the next step.
 On failure, keep the YAML, bundle, and state directory and follow [troubleshooting](troubleshooting.md).
 
 Export the observed configuration to a new file:

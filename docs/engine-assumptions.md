@@ -39,7 +39,7 @@ The [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) c
 | SDK `managed/spec.rs`, `managed/mutation.rs`, and `managed/observation.rs` | Bridge identity and published bind addresses belong to the engine host. A local bridge address is not a general cross-host inference address. |
 | SDK `managed/gateway_storage.rs` and `managed/observation.rs` | Volume verification uses the selected daemon’s `DockerRootDir`, including non-default roots. It rejects paths outside that root and retains label, creation-time, network, and image checks. |
 | SDK `managed/artifacts.rs` and `docker/mod.rs` | Image pulls and archive transfers use the selected daemon. Model metadata and registry access are separate clients. Failed reads are not absence. |
-| SDK `config/`, `compile.rs`, and `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Apply probes `inference.local` from the sandbox through OpenShell. A client-side request cannot prove sandbox reachability. |
+| SDK `config/`, `compile.rs`, and `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. A client-side request cannot prove sandbox reachability. |
 | Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
 
 The runtime retains model storage on destroy.

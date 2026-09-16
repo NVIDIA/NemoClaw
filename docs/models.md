@@ -113,7 +113,8 @@ If status is missing or the engine is unreachable, retain the original apply err
 After correcting the conditions, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
 An unfinished apply must first reconcile that exact intent; do not change its timeout/model settings to bypass the guard.
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
-Successful recovery must pass readiness and return the managed service's native `agentResponse`; a restarted container alone is insufficient.
+Successful recovery must pass configuration and service readiness checks.
+Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
 No recovery step requires deleting receipts, keys, volumes, or ownership bindings.
 
 The [runtime reporter](../crates/nemoclaw-runtime/src/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK status reader](../crates/nemoclaw-sdk/src/managed/artifacts.rs) define these diagnostics and failure boundaries.

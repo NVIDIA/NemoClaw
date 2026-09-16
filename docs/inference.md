@@ -31,8 +31,8 @@ Select a gateway, current agent image, endpoint, and models using the prerequisi
 The adapter configures each agent's native model aliases, initial model, and model-selection policy.
 These are harness restrictions inside a shared sandbox, not provider credential or network isolation between agents.
 This configuration supplies no automatic fallback, oracle consultation, or agent delegation behavior.
-Apply probes each distinct configured API, endpoint, credential reference, and model combination within one 80-second request budget.
-A missing credential or failed choice fails readiness and retains the deployment resources.
+Apply installs provider attachments and checks the declared agent configuration without requesting model responses.
+Missing credential references still fail deployment; actual endpoint authentication and model compatibility require explicit inference verification.
 Use native requests to verify model selection through the agent interface separately.
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
@@ -79,7 +79,8 @@ The current tests establish configuration, compilation, API attachment, and drif
 | The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark-inline.yaml) |
 
-Managed Ollama/vLLM and external Ollama with a managed proxy are accepted for OpenClaw and Hermes; the [harness matrix](reference/fabric-harnesses.md) lists restrictions for other agents.
+Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
+The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
 Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
 An accepted example is a configuration contract; [validation records](validation/README.md) identify which combinations completed live inference and at which revision.
@@ -144,7 +145,7 @@ See [deployment recovery](usage.md) for the operation workflow.
 
 ## Run Managed Ollama
 
-Use the [managed Ollama example](../examples/managed-ollama.yaml) with OpenClaw or Hermes and `openai-completions`.
+Use the [managed Ollama example](../examples/managed-ollama.yaml) with a harness using OpenAI Completions.
 Before planning, select your own deployment UID, current agent image, immutable `ollama/ollama@sha256:...` image, and route model including its tag.
 This backend uses a local Docker engine and an existing network that supports published container ports.
 It does not create that network.
@@ -157,7 +158,7 @@ The current container contract requests no GPU devices.
 Use a CPU-sized model for this path; GPU acceleration in this managed contract remains **TBD**.
 For an independently operated GPU-enabled Ollama daemon, evaluate the separate [external proxy path](#use-external-ollama-through-a-managed-proxy).
 
-Apply can pull the image and model, creates an owned model volume and container, and sends inference requests.
+Apply can pull the image and model, creates an owned model volume and container, and checks readiness without generation.
 Ensure the engine can fetch the image and the container can fetch the model, with enough storage and host memory for both.
 From the directory containing your adapted `deployment.yaml`:
 
@@ -171,7 +172,7 @@ Inspect the plan before applying and use the export only after it succeeds.
 The SDK pulls a model through `/api/pull` only after a complete `/api/tags` inventory confirms it is absent.
 Ollama model tags are mutable; NemoClaw records the observed digest in model state, but this does not turn the requested tag into an immutable pin.
 The generic vLLM backend instead requires an immutable repository revision before download.
-Successful apply establishes the API probe described under [verification](#verify-the-result); verify a native reply separately.
+Successful apply establishes the configuration and readiness checks described under [verification](#verify-the-result); verify a native reply separately.
 
 If the owned container is stopped, apply can start it and then inspect its model inventory.
 An inaccessible or malformed inventory does not authorize another model pull.
@@ -365,8 +366,8 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 120-second wait |
-| Apply's API probe | Fixed 90-second sandbox execution; non-Pi HTTP probes abort after 80 seconds |
-| Managed vLLM apply's native reply probe | OpenClaw: 300-second native turn; local Hermes: 280-second HTTP request within a 300-second Fabric probe; Relay Hermes: 300-second Fabric probe; all have a 360-second sandbox-execution bound |
+| Explicit SDK API probe (`OpenShell::inference_ready`) | Fixed 90-second sandbox execution; non-Pi HTTP probes abort after 80 seconds |
+| Explicit SDK agent probe (`OpenShell::agent_response`, OpenClaw/Hermes) | OpenClaw: 300-second native turn; local Hermes: 280-second HTTP request within a 300-second Fabric probe; Relay Hermes: 300-second Fabric probe; all have a 360-second sandbox-execution bound |
 
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
@@ -376,7 +377,8 @@ For a stopped managed service, inspect its [retained status](models.md#diagnose-
 
 ## Verify the Result
 
-Apply checks the agent configuration and sends an inference probe using the selected API.
+Apply checks resource ownership, agent configuration, and readiness without requesting model or agent responses.
+Managed services retain startup, model-inventory, capacity, and memory-supervision checks.
 Export compares the retained intent with the observed launch settings and agent configuration.
 Changed or missing settings stop export and preserve deployment state for inspection.
 An unchanged exported document can be reapplied without restarting the sandbox.
@@ -384,13 +386,15 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | Check | What success establishes | What it does not establish |
 |---|---|---|
 | Parse and plan | Accepted fields and observed ownership/configuration; a `deferred` list identifies checks that cannot run yet | No runtime creation, model request, or complete result for deferred stages |
-| Apply readiness | The sandbox has the declared agent configuration and the selected API probe succeeds | A native conversation for every service mode |
-| Managed vLLM apply (`service`) | Also returns a confirmed native reply in JSON `agentResponse` | General model quality, tool reliability, or a user's existing conversation |
+| Apply readiness | Required managed services are ready and the sandbox has the declared agent configuration | Successful generation, upstream inference credentials, or a native agent conversation |
 | Export | Observed configuration agrees with retained intent | An inference request or native-data backup |
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
-Managed Ollama, the Ollama proxy, and external endpoints use the API probe during apply; they do not populate `agentResponse` through the managed-vLLM check.
-An empty `changes` list on apply does not skip these readiness requests.
+An empty `changes` list on apply does not skip configuration or readiness checks.
+Operation results no longer contain `agentResponse`.
+After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
+Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
+The SDK retains `OpenShell::inference_ready` and the OpenClaw/Hermes `OpenShell::agent_response` checks for explicit callers with a verified sandbox binding; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 

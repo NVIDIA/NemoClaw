@@ -10,7 +10,8 @@ Each document contains one sandbox with exactly one harness configuration.
 At most one selected provider may have [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
-Apply creates or changes runtime resources and can download model data and send inference requests.
+Apply creates or changes runtime resources and can download model data.
+It checks configuration and readiness without sending generation requests.
 If you omit `--state-dir`, the CLI uses `.nemoclaw` in the working directory.
 
 ```sh
@@ -36,8 +37,7 @@ Plan observes resources without creating containers, downloading models, prepari
 A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
 Apply always creates its own checked plan; a previous public plan is not an approval artifact.
 
-Managed vLLM service apply checks an actual agent reply even when the resource change list is empty.
-Other inference paths perform the configured API probe; see [verification levels](inference.md#verify-the-result).
+Verify inference and a native agent reply separately; see [verification levels](inference.md#verify-the-result).
 
 For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
 Ordinary models can omit `service.recipe`.
@@ -54,7 +54,7 @@ Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`,
 The checked-in [DGX Spark example](../examples/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
 Follow [managed Ollama](inference.md#run-managed-ollama) for its endpoint, local engine, network, model, and recovery requirements.
 Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
-Fabric harnesses other than OpenClaw and Hermes require external gateway and inference.
+Gateway and inference ownership are independent of the harness; the selected service must still support its request API.
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
@@ -193,7 +193,8 @@ nemoclaw apply --state-dir .local/deployment exported-new.yaml
 
 For a fully observed unchanged deployment, expect an empty `changes` list.
 A nonempty `deferred` list means the plan is incomplete, even if the current changes list is empty.
-Unchanged apply still performs readiness and inference checks; it can send requests and fail if a service is unavailable.
+Unchanged apply still performs configuration and readiness checks; it can fail if a required service is unavailable.
+It does not send generation requests.
 Keep the original YAML until verification succeeds.
 
 ### Recover an Interrupted Operation

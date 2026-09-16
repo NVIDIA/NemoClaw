@@ -66,7 +66,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 | Method | Input and result | Effect |
 |---|---|---|
 | `plan(&document, &cancel)` | `OperationResult` with changes and any deferred checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and send inference requests |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up native data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox files/history under the [retention rules](state.md) |

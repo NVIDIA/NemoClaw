@@ -163,7 +163,7 @@ execution:
 
 `timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
 Fabric's outer deadline includes time for the gateway response and cleanup.
-Startup, readiness, and managed-inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
+Startup, readiness, and explicit inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
 
 Omitting `heartbeatEvery` leaves OpenClaw's native heartbeat defaults in place.
 An explicit interval uses an isolated heartbeat session; `0m` disables heartbeat.
@@ -244,8 +244,8 @@ Replace `assistant` with your sandbox name.
 Look for per-session `events.atof.jsonl` and `trajectory-*.atif.json` files; inspect their contents privately before sharing.
 Full payload capture being disabled does not establish that every trace is free of private data.
 Trace files live in the sandbox and are deleted with it; there is no managed collector or independent archival lifecycle.
-An API-only apply probe does not invoke Hermes and need not produce these artifacts.
-Managed vLLM apply invokes the hosted Relay runtime with a normal prompt and updates its in-memory conversation history; the probe is not isolated from that conversation.
+Apply does not invoke Hermes or produce conversation traces.
+An explicitly requested Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation.
 General interactive access to this experimental hosted adapter remains **TBD**; do not use the local API/dashboard/token procedure for it.
 On failure, preserve deployment state and inspect the original error; do not replay an uncertain invocation merely to produce traces.
 
@@ -352,9 +352,9 @@ The private API token in `/sandbox/.hermes/interface-token` is reused across res
 Only the sandbox user can read the token; it remains with retained native state and is removed when that state is deleted.
 Missing or insecure credentials beside existing native configuration stop startup.
 
-Managed DGX Spark apply probes the already-running Fabric runtime with a separate conversation.
+The explicit Hermes agent probe invokes the already-running Fabric runtime with a separate conversation.
 The probe does not extend the Fabric conversation or store a Responses continuation; native session records may remain.
-It requires a successful agent response before reporting success; failure retains the established resources.
+Apply checks configuration and readiness without invoking this probe.
 Managed support does not establish that a particular model has enough context or reliable tool behavior.
 Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `docker buildx bake hermes --load` and use its immutable digest.
 Existing images and native state are not automatically migrated; use a fresh deployment UID and state directory when switching from the embedded Hermes adapter.
@@ -387,7 +387,7 @@ Use Pi's native `contextWindow` and `maxTokens` names; the former NemoClaw `cont
 Set limits and capabilities to match your endpoint.
 Pi rejects invalid native values at startup, with resources retained for a corrected apply.
 
-The inference probe also uses Pi's native model API.
+The optional inference probe uses Pi's native model API; apply does not invoke it.
 
 Apply configures Pi after attaching the native provider.
 A model or metadata change stops Pi, updates its separate model configuration, and starts a new Pi runtime in the existing sandbox.
@@ -436,7 +436,7 @@ Fabric's local OpenClaw adapter owns one native gateway with a session for each 
 An uncertain invocation result stops that runtime and is never replayed automatically.
 Agent configuration readiness does not invoke the model.
 
-Managed vLLM service apply additionally checks an actual agent reply; other paths use the configured API probe.
+Apply stops at configuration and readiness checks; verify a native agent reply separately.
 The adapter preserves unrelated native configuration and rejects conflicts in deployment-owned settings.
 
 With the [offline fixture prerequisites](testing/fixtures.md#inference-api-fixtures), run from the repository root:
@@ -461,7 +461,7 @@ A Fabric SDK `run` starts a new runtime rather than attaching to the one hosted 
 Hermes rejects the example DGX Spark service's 32K context; its successful short-response run used Ollama/Qwen3.
 This does not qualify long-context accuracy or general tool-use reliability.
 
-[Fabric-only OpenClaw validation](validation/rust-fabric-only-openclaw-linux-arm64.json) covers the shared managed-apply agent probe, a real response through OpenShell, unchanged apply, export/reapply, and stable Fabric runtime identity.
+[Fabric-only OpenClaw validation](validation/rust-fabric-only-openclaw-linux-arm64.json) records the former managed-apply agent probe, a real response through OpenShell, unchanged apply, export/reapply, and stable Fabric runtime identity at its recorded revision.
 The test creates and removes an owned sandbox against an existing inference service.
 
 ## Additional Agent Integrations

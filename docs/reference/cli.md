@@ -17,7 +17,7 @@ The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and
 | `nemoclaw export` | Retained state; no YAML | Observed YAML after configuration and ownership checks |
 | `nemoclaw destroy` | Retained state; no YAML | JSON result; removes owned workloads under the retention rules |
 
-Apply can download models and make inference requests.
+Apply can download models and check readiness; it does not request model or agent responses.
 Destroy does not prompt for confirmation and deletes sandbox files and conversation history.
 Read [deployment lifecycle](../usage.md) and preview deletion before destroying a deployment.
 
@@ -55,9 +55,8 @@ The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines t
 | Field | Meaning |
 |---|---|
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
-| `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness or inference checks |
+| `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `deferred` | Checks or changes deferred by planning; omitted when empty |
-| `agentResponse` | Native agent reply from the managed vLLM apply path; omitted when empty, including paths that only perform an API probe |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
 Use [inference verification](../inference.md#verify-the-result) to interpret a successful result.

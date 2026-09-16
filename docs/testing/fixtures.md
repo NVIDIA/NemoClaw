@@ -201,7 +201,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test remote_service managed_hermes -- --ignored
 ```
 
-It simulates SSH/Docker, OpenShell, and the agent response while exercising apply, export/reapply, observation failures, and retained data through the bundled CLI/provider.
+It simulates SSH/Docker and OpenShell configuration/readiness while exercising apply, export/reapply, observation failures, and retained data through the bundled CLI/provider.
+Generation is configured to fail, and the test asserts that apply sends no generation probes.
 
 ### Hermes Interface Modes
 

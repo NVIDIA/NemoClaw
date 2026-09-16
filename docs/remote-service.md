@@ -43,6 +43,7 @@ See [the validation evidence](validation/rust-dual-daemon-linux-arm64.json).
 
 Both daemons shared the physical host and GPU; a separate-host deployment and other hardware remain qualification gates.
 
-A successful apply includes an agent response through OpenShell.
+A successful apply establishes configuration and readiness.
+Verify an agent response through OpenShell separately using [inference verification](inference.md#verify-the-result).
 On failure, retain the configuration and state directory for [explicit recovery](usage.md#updates-and-recovery).
 Use [the destroy procedure](usage.md#destroy) when retiring the deployment.

@@ -56,6 +56,7 @@ Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json)
 ## Spark and Fabric
 
 For complete DGX Spark qualification, use the concrete `examples/spark-inline.yaml` on an available GB10 host.
+The Spark lifecycle and image-upgrade tests require OpenClaw or Hermes for their explicit agent-response check.
 Change its deployment UID, gateway port, and network only when creating a separate deployment.
 Build the pinned local runtime artifact first, check capacity, and preserve the same state directory throughout:
 
@@ -66,7 +67,8 @@ nemoclaw export --state-dir .local/spark --output .local/spark-export.yaml
 nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
 ```
 
-A successful DGX Spark apply includes an actual agent response through OpenShell.
+The live lifecycle test explicitly verifies an agent response through OpenShell after apply.
+Apply itself checks configuration and readiness without generation.
 Unchanged apply must have no resource changes and retain process/storage IDs and artifact receipts.
 The download and preparation fixtures cover deterministic interruption boundaries; live evidence also records an interrupted download and explicit recovery.
 
@@ -100,7 +102,7 @@ It retains JSON evidence and the workspace.
 The hosted Fabric runtime must keep its identity throughout native access and reconciliation.
 This test makes a real model request.
 
-Managed vLLM service apply also checks an actual agent reply, including unchanged apply.
+Agent-response checks belong to the explicitly selected live tests, including verification after unchanged apply.
 
 Use the separate `spark_image_change` test filter with the same three DGX Spark paths to qualify an explicit runtime image upgrade.
 The new YAML may differ from retained intent only by its inference image pin.
@@ -111,7 +113,7 @@ It retains `spark-artifact-validation.json`.
 ## Generic Models
 
 The generic model lifecycle has a separate opt-in live test.
-Supply a fresh, owned deployment configuration with a free gateway port and subnet, its state directory, and an immutable bundle:
+Supply a fresh, owned OpenClaw or Hermes deployment configuration with a free gateway port and subnet, its state directory, and an immutable bundle:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -121,7 +123,7 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
     selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
-It checks initial apply and an actual agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
+It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
 Explicit recovery must preserve resource identities and the snapshot receipt.
 Successful completion destroys workloads, retains storage, and writes `model-proof.json` in the supplied state directory.
 
@@ -148,7 +150,7 @@ The caller owns fixture setup and cleanup; never target an unrelated container.
 The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 NVIDIA host without provisioning resources.
 
 The existing `fabric_live` test also accepts an external gateway with a managed SSH inference service.
-Managed applies retain their active agent-reply check, including applies with no resource changes.
+The live test requests an agent reply separately from apply.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
 The [two-daemon evidence](../validation/rust-dual-daemon-linux-arm64.json) records its live rootless Podman run, controlled download interruption, protection trip, engine retarget rejection, and retained model data.
