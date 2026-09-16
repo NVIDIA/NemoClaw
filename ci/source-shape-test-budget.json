@@ -132,33 +132,28 @@
       "category": "security"
     },
     {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "keeps direct and reusable scans off by default",
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "keeps publication scans off by default",
       "category": "security"
     },
     {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "limits scan credentials to an opted-in NVIDIA main run",
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "limits scan credentials to trusted manual publications",
       "category": "security"
     },
     {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "blocks Critical vulnerabilities in %s",
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "scans all six published managed-image digests",
       "category": "security"
     },
     {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "sanitizes secret reports and blocks verified results or scanner errors",
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "reuses exact published digests and enforces scan results",
       "category": "security"
     },
     {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "isolates credentials and reports for both malware archive scans",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/sandbox-image-security-scan-workflow.test.ts",
-      "test": "uploads sanitized reports before enforcing every scan result",
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "uploads sanitized reports before the optional promotion gate",
       "category": "security"
     },
     {

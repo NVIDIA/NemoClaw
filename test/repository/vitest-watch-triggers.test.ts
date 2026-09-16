@@ -267,10 +267,12 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+      "test/e2e/support/managed-image-security-scan-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
+      "test/e2e/support/managed-image-security-scan-workflow.test.ts",
     ]);
     expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([
       "test/inference/managed/managed-image-publication-workflow.test.ts",

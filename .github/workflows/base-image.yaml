@@ -100,6 +100,11 @@ on:
         description: "OpenClaw version to install (leave blank to use the default in Dockerfile.base)"
         required: false
         default: ""
+      run_security_scans:
+        description: "Scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -441,3 +446,8 @@ jobs:
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
       hermes-base-contract-base64: ${{ needs.build-and-push-hermes.outputs.contract-base64 }}
       openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}
+      run_security_scans: ${{ inputs.run_security_scans || false }}
+    secrets:
+      NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
+      PULSE_SSA_CLIENT_ID: ${{ secrets.PULSE_SSA_CLIENT_ID }}
+      PULSE_SSA_CLIENT_SECRET: ${{ secrets.PULSE_SSA_CLIENT_SECRET }}
