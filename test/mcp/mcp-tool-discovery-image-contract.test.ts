@@ -15,7 +15,7 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
 const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]: "ccf41540d77b26b0558c2cba212fe965da8cd8e28ce24bbdb888820e61832815",
+  [managedStartupRuntimeBundle]: "e0045136e6d71dd63a520c6e7b0c475a822b59660291a3e6180969be0f5de5f5",
 };
 const dockerfiles = [
   "Dockerfile",
