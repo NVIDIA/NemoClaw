@@ -27,6 +27,7 @@ import {
 } from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
+import { usesExternalOpenShellCdiQualificationStack } from "./sandbox-gpu-route-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
@@ -82,6 +83,7 @@ function deduplicateDirectGpuSysfsEntries(
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
+  qualificationSysfsReadOnly?: boolean;
 };
 
 export { isStationGb300ProductName };
@@ -218,6 +220,15 @@ export function buildDirectGpuPolicyYaml(
     sysfsReadOnlyPathSet,
   ).filter((entry: string) => !sysfsReadOnlyPathSet.has(entry) || !readWriteSet.has(entry));
   fsPolicy.read_write = readWrite;
+  if (
+    options.qualificationSysfsReadOnly === true &&
+    !fsPolicy.read_only.includes(SYSFS_PATH) &&
+    !fsPolicy.read_write.includes(SYSFS_PATH)
+  ) {
+    // The development OpenShell CDI stack under qualification does not yet
+    // grant sysfs. CUDA on AGX Thor reads it during cuInit(0).
+    fsPolicy.read_only.push(SYSFS_PATH);
+  }
   if (
     sysfsReadOnlyPaths.length > 0 &&
     !fsPolicy.read_only.includes(SYSFS_PATH) &&
@@ -452,9 +463,16 @@ function resolveInitialSandboxCreatePolicy(
     basePolicy = content;
   };
   if (options.directGpu) {
+    const qualificationSysfsReadOnly = usesExternalOpenShellCdiQualificationStack();
+    if (qualificationSysfsReadOnly) {
+      console.warn(
+        "  ⚠ Test-only: allowing read-only /sys for OpenShell CDI CUDA qualification on Jetson.",
+      );
+    }
     adoptPolicy(
       buildDirectGpuPolicyYaml(basePolicy, {
         procReadWrite: options.dockerGpuPatch === true,
+        qualificationSysfsReadOnly,
         sysfsReadOnlyPaths:
           options.stationGb300SysfsReadOnlyPaths ??
           discoverHostStationGb300SysfsReadOnlyPaths({

@@ -384,6 +384,13 @@ export async function setupRemoteProviderInference(
           restoreUncommittedProxy();
           return exitProcess(providerResult.status || 1);
         }
+        // Temporary OpenShell #2846 bridge: sandbox provider attachment replaces
+        // the removed gateway-wide `openshell inference set` route.
+        if (provider === "nvidia-prod") {
+          if (sandboxName) registry.updateSandbox(sandboxName, { model, provider });
+          log(`  ✓ Provider attachment ready: ${provider} / ${model}`);
+          return { done: true, result: { ok: true } };
+        }
         const argsv = ["inference", "set"];
         if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
           // Host-side verification cannot resolve the sandbox-only bridge URL.
