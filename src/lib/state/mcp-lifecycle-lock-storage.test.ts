@@ -1,198 +1,153 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { createMcpLifecycleLockOwner, type LockObservation } from "./mcp-lifecycle-lock-identity";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { McpLifecycleLockOwner } from "./mcp-lifecycle-lock-identity";
 import {
-  getMcpLifecycleLockPath,
-  mcpLifecycleLockPathExists,
-  mcpLifecycleLockPathExistsSync,
   readMcpLifecycleLockObservation,
   readMcpLifecycleLockObservationSync,
   reclaimStaleMcpLifecycleLockGeneration,
   reclaimStaleMcpLifecycleLockGenerationSync,
-  safelyReleaseMcpLifecycleLock,
-  safelyReleaseMcpLifecycleLockSync,
   writeMcpLifecycleLockCandidateAndLink,
   writeMcpLifecycleLockCandidateAndLinkSync,
 } from "./mcp-lifecycle-lock-storage";
 
-describe("MCP lifecycle lock storage", () => {
-  let stateDir: string;
+const owner = (token: string): McpLifecycleLockOwner => ({
+  version: 1,
+  sandboxName: "alpha",
+  pid: process.pid,
+  processIdentity: null,
+  token,
+  acquiredAt: "2026-09-16T00:00:00.000Z",
+});
+
+const variants = [
+  {
+    mode: "async",
+    read: readMcpLifecycleLockObservation,
+    reclaim: reclaimStaleMcpLifecycleLockGeneration,
+    publish: writeMcpLifecycleLockCandidateAndLink,
+  },
+  {
+    mode: "sync",
+    read: readMcpLifecycleLockObservationSync,
+    reclaim: reclaimStaleMcpLifecycleLockGenerationSync,
+    publish: writeMcpLifecycleLockCandidateAndLinkSync,
+  },
+];
+
+describe.each(variants)("$mode lock reclamation recovery", ({ read, reclaim, publish }) => {
+  let root: string;
   let lockPath: string;
 
   beforeEach(() => {
-    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
-    lockPath = getMcpLifecycleLockPath("alpha", stateDir);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-storage-"));
+    lockPath = path.join(root, "alpha.lock");
   });
 
   afterEach(() => {
-    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("observes valid and malformed lock records through both APIs", async () => {
-    const owner = createMcpLifecycleLockOwner("alpha", "valid-owner");
-    fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
+  it("does not trust a symlink target as the lock owner", async () => {
+    const target = path.join(root, "target");
+    const contents = JSON.stringify(owner("target-owner"));
+    fs.writeFileSync(target, contents);
+    fs.symlinkSync(target, lockPath);
+    const link = fs.lstatSync(lockPath);
 
-    await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toMatchObject({
-      owner: { token: owner.token },
-      reclaimable: true,
-    });
-    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
-      owner: { token: owner.token },
-      reclaimable: true,
-    });
-
-    fs.writeFileSync(lockPath, "not-json\n");
-    await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toMatchObject({
+    expect(await read(lockPath)).toEqual({
       owner: null,
+      mtimeMs: link.mtimeMs,
+      dev: link.dev,
+      ino: link.ino,
       reclaimable: true,
     });
-    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
-      owner: null,
-      reclaimable: true,
-    });
-
-    fs.writeFileSync(lockPath, "{}\n");
-    await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toMatchObject({
-      owner: null,
-      reclaimable: true,
-    });
-    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
-      owner: null,
-      reclaimable: true,
-    });
+    expect(fs.readFileSync(target, "utf8")).toBe(contents);
   });
 
-  it("reports missing paths through asynchronous and synchronous probes", async () => {
-    await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toBeNull();
-    expect(readMcpLifecycleLockObservationSync(lockPath)).toBeNull();
-    await expect(mcpLifecycleLockPathExists(lockPath)).resolves.toBe(false);
-    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(false);
+  it("keeps directories out of the reclaimable lock classification", async () => {
+    fs.mkdirSync(lockPath);
 
-    fs.writeFileSync(lockPath, "invalid\n");
-    await expect(mcpLifecycleLockPathExists(lockPath)).resolves.toBe(true);
-    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(true);
+    expect(await read(lockPath)).toMatchObject({ owner: null, reclaimable: false });
+    expect(fs.lstatSync(lockPath).isDirectory()).toBe(true);
   });
 
-  it("classifies directories and symbolic links without following them", async () => {
-    const directoryPath = path.join(stateDir, "directory.lock");
-    const symlinkPath = path.join(stateDir, "symlink.lock");
-    fs.mkdirSync(directoryPath);
-    fs.symlinkSync(directoryPath, symlinkPath);
+  it("restores the same owner inode when authorization fails after claiming it", async () => {
+    await publish(lockPath, owner("original"));
+    const expected = await read(lockPath);
+    assert.ok(expected);
 
-    await expect(readMcpLifecycleLockObservation(directoryPath)).resolves.toMatchObject({
-      owner: null,
-      reclaimable: false,
-    });
-    expect(readMcpLifecycleLockObservationSync(directoryPath)).toMatchObject({
-      owner: null,
-      reclaimable: false,
-    });
-    await expect(readMcpLifecycleLockObservation(symlinkPath)).resolves.toMatchObject({
-      owner: null,
-      reclaimable: true,
-    });
-    expect(readMcpLifecycleLockObservationSync(symlinkPath)).toMatchObject({
-      owner: null,
-      reclaimable: true,
-    });
+    await expect(async () =>
+      reclaim(lockPath, expected, () => {
+        throw new Error("authorization changed");
+      }),
+    ).rejects.toThrow("authorization changed");
+
+    expect(await read(lockPath)).toEqual(expected);
+    expect(fs.readdirSync(root)).toEqual(["alpha.lock"]);
   });
 
-  it("publishes and releases only the matching asynchronous owner", async () => {
-    const owner = createMcpLifecycleLockOwner("alpha", "async-owner");
+  it("removes the reclaimed generation after successful authorization", async () => {
+    expect(await publish(lockPath, owner("stale"))).toBe(true);
+    const expected = await read(lockPath);
+    assert.ok(expected);
 
-    await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, owner)).resolves.toBe(true);
-    await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, owner)).resolves.toBe(false);
+    expect(await reclaim(lockPath, expected)).toBe(true);
 
-    await safelyReleaseMcpLifecycleLock(lockPath, "replacement-token");
-    await expect(mcpLifecycleLockPathExists(lockPath)).resolves.toBe(true);
-
-    await safelyReleaseMcpLifecycleLock(lockPath, owner.token);
-    await expect(mcpLifecycleLockPathExists(lockPath)).resolves.toBe(false);
-    await expect(safelyReleaseMcpLifecycleLock(lockPath, owner.token)).resolves.toBeUndefined();
+    expect(await read(lockPath)).toBeNull();
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
-  it("publishes and releases only the matching synchronous owner", () => {
-    const owner = createMcpLifecycleLockOwner("alpha", "sync-owner");
+  it("preserves a replacement owner that appears after the stale observation", async () => {
+    await publish(lockPath, owner("original"));
+    const expected = await read(lockPath);
+    assert.ok(expected);
+    fs.unlinkSync(lockPath);
+    await publish(lockPath, owner("replacement"));
+    const replacement = await read(lockPath);
 
-    expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)).toBe(true);
-    expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)).toBe(false);
+    expect(await reclaim(lockPath, expected)).toBe(false);
 
-    safelyReleaseMcpLifecycleLockSync(lockPath, "replacement-token");
-    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(true);
-
-    safelyReleaseMcpLifecycleLockSync(lockPath, owner.token);
-    expect(mcpLifecycleLockPathExistsSync(lockPath)).toBe(false);
-    expect(() => safelyReleaseMcpLifecycleLockSync(lockPath, owner.token)).not.toThrow();
+    expect(await read(lockPath)).toEqual(replacement);
+    expect(fs.readdirSync(root)).toEqual(["alpha.lock"]);
   });
 
-  it("reconciles successful publication when link replies are lost", async () => {
-    const asyncOwner = createMcpLifecycleLockOwner("alpha", "async-lost-reply");
-    const link = fs.promises.link.bind(fs.promises);
-    const asyncLink = vi
-      .spyOn(fs.promises, "link")
-      .mockImplementationOnce(async (source, target) => {
-        await link(source, target);
-        throw Object.assign(new Error("lost link reply"), { code: "EIO" });
-      });
+  it("retains both generations when another owner publishes during failed recovery", async () => {
+    await publish(lockPath, owner("original"));
+    const expected = await read(lockPath);
+    assert.ok(expected);
 
-    await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, asyncOwner)).resolves.toBe(true);
-    asyncLink.mockRestore();
-    await safelyReleaseMcpLifecycleLock(lockPath, asyncOwner.token);
+    await expect(async () =>
+      reclaim(lockPath, expected, () => {
+        fs.writeFileSync(lockPath, JSON.stringify(owner("replacement")), { flag: "wx" });
+        throw new Error("authorization changed");
+      }),
+    ).rejects.toThrow("authorization changed");
 
-    const syncOwner = createMcpLifecycleLockOwner("alpha", "sync-lost-reply");
-    const linkSync = fs.linkSync.bind(fs);
-    const syncLink = vi.spyOn(fs, "linkSync").mockImplementationOnce((source, target) => {
-      linkSync(source, target);
-      throw Object.assign(new Error("lost link reply"), { code: "EIO" });
-    });
-
-    expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, syncOwner)).toBe(true);
-    syncLink.mockRestore();
-    safelyReleaseMcpLifecycleLockSync(lockPath, syncOwner.token);
+    expect((await read(lockPath))?.owner?.token).toBe("replacement");
+    const retained = fs.readdirSync(root).filter((name) => name !== "alpha.lock");
+    expect(retained).toHaveLength(1);
+    expect(await read(path.join(root, retained[0]))).toEqual(expected);
   });
 
-  it("restores a claimed generation when its owner does not match", async () => {
-    const owner = createMcpLifecycleLockOwner("alpha", "published-owner");
-    const replacement = createMcpLifecycleLockOwner("alpha", "expected-owner");
-    fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
-    const stat = fs.statSync(lockPath);
-    const expected: LockObservation = {
-      owner: replacement,
-      mtimeMs: stat.mtimeMs,
-      dev: stat.dev,
-      ino: stat.ino,
-      reclaimable: true,
-    };
+  it("does not mistake a different corrupt inode for the observed stale generation", async () => {
+    fs.writeFileSync(lockPath, "corrupt original");
+    const expected = await read(lockPath);
+    assert.ok(expected);
+    const replacementPath = path.join(root, "replacement");
+    fs.writeFileSync(replacementPath, "corrupt replacement");
+    fs.renameSync(replacementPath, lockPath);
+    const replacement = await read(lockPath);
 
-    await expect(reclaimStaleMcpLifecycleLockGeneration(lockPath, expected)).resolves.toBe(false);
-    await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toMatchObject({
-      owner: { token: owner.token },
-    });
+    expect(await reclaim(lockPath, expected)).toBe(false);
 
-    expect(reclaimStaleMcpLifecycleLockGenerationSync(lockPath, expected)).toBe(false);
-    expect(readMcpLifecycleLockObservationSync(lockPath)).toMatchObject({
-      owner: { token: owner.token },
-    });
-  });
-
-  it("reports a missing generation as an unsuccessful reclaim", async () => {
-    const expected: LockObservation = {
-      owner: null,
-      mtimeMs: 0,
-      dev: 0,
-      ino: 0,
-      reclaimable: true,
-    };
-
-    await expect(reclaimStaleMcpLifecycleLockGeneration(lockPath, expected)).resolves.toBe(false);
-    expect(reclaimStaleMcpLifecycleLockGenerationSync(lockPath, expected)).toBe(false);
+    expect(await read(lockPath)).toEqual(replacement);
+    expect(fs.readFileSync(lockPath, "utf8")).toBe("corrupt replacement");
+    expect(fs.readdirSync(root)).toEqual(["alpha.lock"]);
   });
 });
