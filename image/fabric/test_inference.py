@@ -183,5 +183,66 @@ class ToolDisclosure(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), before)
 
 
+class MultipleModels(unittest.TestCase):
+    def test_agents_select_native_models_with_separate_provider_credentials(self):
+        from openclaw_adapter import native_configuration
+
+        fast = {
+            "provider": "local",
+            "connection": {
+                "provider": "openai",
+                "model": "fast-model",
+                "base_url": "http://172.20.0.1:11434/v1",
+                "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+            },
+            "api": "openai-completions",
+            "tuning": {"contextWindow": 8192},
+        }
+        smart = {
+            "provider": "oracle",
+            "connection": {
+                "provider": "anthropic",
+                "model": "smart-model",
+                "base_url": "https://oracle.example/v1",
+                "api_key_env": "NEMOCLAW_INFERENCE_ORACLE_KEY",
+            },
+            "api": "anthropic-messages",
+            "tuning": {"maxTokens": 8192, "reasoningEffort": "high"},
+        }
+        options = {
+            **smart,
+            "agents": [
+                {
+                    "name": "researcher",
+                    "inference": {"default": "smart", "models": {"smart": smart, "fast": fast}},
+                },
+                {"name": "writer", "inference": {"default": "fast", "models": {"fast": fast}}},
+            ],
+        }
+        native = native_configuration("researcher", options)
+        providers = native["models"]["providers"]
+        self.assertEqual(len(providers), 3)
+        oracle = providers["nemoclaw_researcher_smart"]
+        self.assertEqual(oracle["api"], "anthropic-messages")
+        self.assertEqual(oracle["apiKey"], "${NEMOCLAW_INFERENCE_ORACLE_KEY}")
+        self.assertEqual(oracle["models"][0]["id"], "smart-model")
+        entries = native["agents"]["entries"]
+        self.assertEqual(
+            entries["researcher"]["model"]["primary"], "nemoclaw_researcher_smart/smart-model"
+        )
+        self.assertEqual(entries["researcher"]["thinkingDefault"], "high")
+        self.assertEqual(entries["writer"]["model"]["primary"], "nemoclaw_writer_fast/fast-model")
+        self.assertEqual(
+            entries["writer"]["modelPolicy"]["allow"], ["nemoclaw_writer_fast/fast-model"]
+        )
+        self.assertEqual(
+            entries["researcher"]["models"]["nemoclaw_researcher_fast/fast-model"]["alias"], "fast"
+        )
+        self.assertNotIn("fallbacks", str(native))
+        options["agents"][0]["inference"]["default"] = "missing"
+        with self.assertRaises(ValueError):
+            native_configuration("researcher", options)
+
+
 if __name__ == "__main__":
     unittest.main()

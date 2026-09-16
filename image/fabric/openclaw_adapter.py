@@ -67,7 +67,7 @@ def agent_entries(name, inference):
     for agent in agents:
         if (
             not isinstance(agent, dict)
-            or set(agent) - {"name", "tools"}
+            or set(agent) - {"name", "tools", "inference"}
             or not isinstance(agent.get("name"), str)
             or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", agent["name"])
             or agent["name"] in entries
@@ -92,6 +92,36 @@ def agent_entries(name, inference):
     return entries
 
 
+def native_provider(inference, execution):
+    connection = model_connection(inference)
+    settings = inference or {"api": "openai-completions", "tuning": {}}
+    return {
+        "baseUrl": connection["base_url"],
+        "api": settings["api"],
+        "timeoutSeconds": execution["timeoutSeconds"],
+        "apiKey": (
+            "${" + connection["api_key_env"] + "}" if connection["api_key_env"] else "unused"
+        )
+        if "connection" in settings
+        else "openshell-placeholder",
+        "models": [
+            {
+                "id": connection["model"],
+                "name": connection["model"],
+                "contextWindow": 32768,
+                "maxTokens": 4096,
+                "input": ["text"],
+                "reasoning": False,
+                **{
+                    key: value
+                    for key, value in settings["tuning"].items()
+                    if key != "reasoningEffort"
+                },
+            }
+        ],
+    }
+
+
 def native_configuration(name, inference=None):
     execution = openclaw_execution(inference)
     connection = model_connection(inference)
@@ -100,30 +130,7 @@ def native_configuration(name, inference=None):
         "gateway": gateway_settings(inference),
         "models": {
             "mode": "replace",
-            "providers": {
-                "openshell": {
-                    "baseUrl": connection["base_url"],
-                    "api": "openai-completions",
-                    "timeoutSeconds": execution["timeoutSeconds"],
-                    "apiKey": (
-                        "${" + connection["api_key_env"] + "}"
-                        if connection["api_key_env"]
-                        else "unused"
-                    )
-                    if "connection" in (inference or {})
-                    else "openshell-placeholder",
-                    "models": [
-                        {
-                            "id": connection["model"],
-                            "name": connection["model"],
-                            "contextWindow": 32768,
-                            "maxTokens": 4096,
-                            "input": ["text"],
-                            "reasoning": False,
-                        }
-                    ],
-                }
-            },
+            "providers": {"openshell": native_provider(inference, execution)},
         },
         "agents": {
             "defaults": {
@@ -158,14 +165,41 @@ def native_configuration(name, inference=None):
         # OpenClaw persists this marker for an explicit roster at gateway startup.
         config["agents"]["ownership"] = "explicit"
     if inference is not None:
-        provider = config["models"]["providers"]["openshell"]
-        provider["api"] = inference["api"]
-        model = provider["models"][0]
-        for key, value in inference["tuning"].items():
-            if key != "reasoningEffort":
-                model[key] = value
-            elif value != "default":
-                config["agents"]["defaults"]["thinkingDefault"] = value
+        effort = inference["tuning"].get("reasoningEffort", "default")
+        if effort != "default":
+            config["agents"]["defaults"]["thinkingDefault"] = effort
+    if any("inference" in agent for agent in (inference or {}).get("agents", [])):
+        providers = {}
+        for agent in inference["agents"]:
+            selection = agent.get("inference")
+            if (
+                not isinstance(selection, dict)
+                or set(selection) != {"default", "models"}
+                or not isinstance(selection["models"], dict)
+                or selection["default"] not in selection["models"]
+            ):
+                raise ValueError("invalid agent inference selection")
+            entry = config["agents"]["entries"][agent["name"]]
+            choices = {}
+            for alias, settings in selection["models"].items():
+                if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", alias):
+                    raise ValueError("invalid model alias")
+                key = f"nemoclaw_{agent['name']}_{alias}"
+                provider = native_provider(settings, execution)
+                providers[key] = provider
+                ref = key + "/" + provider["models"][0]["id"]
+                choices[ref] = {"alias": alias}
+                if alias == selection["default"]:
+                    entry["model"] = {"primary": ref}
+                    effort = settings["tuning"].get("reasoningEffort", "default")
+                    if effort != "default":
+                        entry["thinkingDefault"] = effort
+            entry["models"] = choices
+            entry["modelPolicy"] = {"allow": list(choices)}
+        config["models"]["providers"] = providers
+        defaults = config["agents"]["defaults"]
+        defaults["model"] = config["agents"]["entries"][name]["model"]
+        defaults.pop("thinkingDefault", None)
     return config
 
 
