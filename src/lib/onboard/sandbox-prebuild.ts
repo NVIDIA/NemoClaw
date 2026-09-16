@@ -231,6 +231,21 @@ export async function prebuildSandboxImageIfEligible(
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
+  if (portable) {
+    const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_SANDBOX_IMAGE_REPO}`);
+    try {
+      const response = await fetch(registryUrl, {
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 200) throw new Error("Registry is not ready");
+    } catch {
+      throw new Error(
+        `Managed local registry at ${registryUrl.origin} is unavailable. Check its service and port before retrying. Sandbox image build has not started.`,
+      );
+    }
+  }
   const builderName = portable ? "rootless Podman" : "BuildKit";
   const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
   log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);

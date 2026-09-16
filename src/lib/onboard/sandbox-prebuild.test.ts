@@ -659,6 +659,9 @@ describe("sandbox BuildKit prebuild", () => {
   });
 
   it("publishes portable-profile builds to the managed loopback registry", async () => {
+    const fetchRegistry = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
     let credentialConfig = "";
@@ -691,6 +694,9 @@ describe("sandbox BuildKit prebuild", () => {
     expect(publishImage).toHaveBeenCalledWith(
       ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
       expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(fetchRegistry.mock.invocationCallOrder[0]).toBeLessThan(
+      buildImage.mock.invocationCallOrder[0],
     );
     expect(buildImage).toHaveBeenCalledWith(
       expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
