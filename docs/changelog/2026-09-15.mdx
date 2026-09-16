@@ -9,7 +9,8 @@ NemoClaw v0.0.126 moves sandbox, gateway, and host-forward recovery onto typed O
 It also strengthens Podman onboarding, destructive-operation safety, secret redaction, policy activation, Portable admission, and package execution.
 
 - Sandbox lifecycle and host-forward operations now share typed OpenShell adapters for selection, registration, observation, recovery, and cleanup.
-  Stop, destroy, rebuild, snapshot, messaging, and Hermes Portable flows preserve state when they cannot verify forward ownership or release.
+  Stop, destroy, and rebuild retain the local sandbox registry record when forward release cannot be proved.
+  Snapshot, messaging, and Hermes Portable paths apply the same ownership and cleanup rules.
   Gateway startup offers a service stop command only when one stable active service is the sole listener and owns the selected state, and supported recovery no longer replaces legacy keepalive containers.
   Related changes: [PR #11594](https://github.com/NVIDIA/NemoClaw/pull/11594), [PR #11725](https://github.com/NVIDIA/NemoClaw/pull/11725), [PR #11741](https://github.com/NVIDIA/NemoClaw/pull/11741), and [PR #11776](https://github.com/NVIDIA/NemoClaw/pull/11776).
   For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).

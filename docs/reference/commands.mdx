@@ -2897,7 +2897,7 @@ Export an OpenClaw sandbox's session history from the running sandbox to the hos
 The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only matching `<sessionId>.jsonl` files and optional `<sessionId>.trajectory.jsonl` files.
 It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 For a registered sandbox, session lookup, transfer, and staging cleanup use its recorded OpenShell gateway.
-NemoClaw reports success only after transfer, verification, publication, cleanup, and the lifecycle lock settle.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
 With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, it writes no artifact.
 Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
@@ -2930,7 +2930,7 @@ The export keeps its original success or failure result, so a cleanup warning af
 Export a Hermes sandbox's session history from the running sandbox to the host.
 The command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging`, then downloads the resulting single JSONL stream to the host.
 For a registered sandbox, export, transfer, and staging cleanup use its recorded OpenShell gateway.
-NemoClaw reports success only after transfer, verification, publication, cleanup, and the lifecycle lock settle.
+NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
 Hermes stores session history in a SQLite database, so the command refuses positional keys, `--format tar`, and `--include-trajectory` with a clear error.
 `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
 The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
