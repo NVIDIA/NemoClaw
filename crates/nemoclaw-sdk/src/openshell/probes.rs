@@ -5,6 +5,24 @@ use super::*;
 use crate::{CancellationToken, Error};
 use std::time::Duration;
 
+fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
+    if let Ok(
+        phase @ (proto::SandboxPhase::Error
+        | proto::SandboxPhase::Deleting
+        | proto::SandboxPhase::Stopped
+        | proto::SandboxPhase::Completed),
+    ) = proto::SandboxPhase::try_from(status.phase)
+    {
+        return Err(Error::SandboxStartup {
+            phase: phase.as_str_name(),
+            exit_code: status
+                .exit_code
+                .map_or_else(|| "unknown".into(), |code| code.to_string()),
+        });
+    }
+    Ok(status.phase)
+}
+
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
@@ -184,24 +202,14 @@ impl OpenShell {
     pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                let phase = self
-                    .bound_sandbox(binding)
-                    .await?
-                    .status
-                    .ok_or(ObservationError::Incomplete)?
-                    .phase;
+                let phase = startup_phase(
+                    self.bound_sandbox(binding)
+                        .await?
+                        .status
+                        .ok_or(ObservationError::Incomplete)?,
+                )?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     return Ok::<(), Error>(());
-                }
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "Pi sandbox is unavailable; resources retained",
-                    ));
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -245,17 +253,7 @@ impl OpenShell {
         let wait = async {
             loop {
                 let sandbox = self.bound_sandbox(binding).await?;
-                let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
-                if matches!(
-                    proto::SandboxPhase::try_from(phase),
-                    Ok(proto::SandboxPhase::Error
-                        | proto::SandboxPhase::Deleting
-                        | proto::SandboxPhase::Stopped)
-                ) {
-                    return Err(Error::Conflict(
-                        "sandbox readiness failed; established identity retained",
-                    ));
-                }
+                let phase = startup_phase(sandbox.status.ok_or(ObservationError::Incomplete)?)?;
                 if phase == proto::SandboxPhase::Ready as i32 {
                     let (command, environment) = self.configuration_command(binding)?;
                     if let Ok((0, _)) = self.exec_bound(binding, command, environment, 20).await {
