@@ -101,6 +101,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // preserves the generated openclaw.json dashboard binding.
   "5a05a0165f86404dfab14fcd4b0cc94b97eca42c1ebf264b385b245f323d07d0",
   "76961dfa868381e4fb3756eb8eae0c6645074132bc0e9d96bda7f3058ac12706",
+  // Native gateway lifecycle plus the 2026.9.1 canonical pairing-state
+  // reader. This merged instruction only hardens installed helper metadata.
+  "e119ca83b4982da2201821e5d29bb9964cc9fd1c60dc95cd56a6abcaa17d6416",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.
