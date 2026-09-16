@@ -232,6 +232,7 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
+    writeFixture(path.join("scripts", "managed-startup-hold.sh"), "#!/bin/sh\n", 0o755);
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
