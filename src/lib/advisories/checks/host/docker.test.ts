@@ -284,6 +284,7 @@ describe("Docker host advisories (#3213)", () => {
       "invalid_docker_host",
       "docker_probe_inconclusive",
       "docker_authority_conflict",
+      "docker_endpoint_socket_missing",
       "docker_group_permission",
       "start_docker",
       "docker_desktop_credential_store_headless",
