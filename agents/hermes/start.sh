@@ -2248,10 +2248,7 @@ wait_for_hermes_gateway_internal() {
         200 | 401) return 0 ;;
       esac
     fi
-    # An exec transition can briefly make the live child's role unreadable.
-    # Keep polling within the deadline; waiting for that process to exit here
-    # would block startup forever. Readiness still requires its exact role,
-    # listener ownership, and HTTP health above.
+    # Do not wait on a live child when its role is briefly unreadable.
     if ! gateway_control_pid_is_live "$gateway_pid"; then
       echo "[gateway] Hermes gateway exited before internal health became ready" >&2
       return 1

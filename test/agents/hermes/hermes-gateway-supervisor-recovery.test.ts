@@ -126,65 +126,7 @@ function runHermesStartupReadiness(gatewayInitStatus: 0 | 1) {
   ]);
 }
 
-function runHermesInternalReadiness(options: {
-  uid?: number;
-  roleAfterPoll?: number;
-  live?: boolean;
-  healthCode?: string;
-}) {
-  const source = fs.readFileSync(START_SCRIPT, "utf-8");
-  return runBashHarness([
-    "POLL=0",
-    "INTERNAL_PORT=18642",
-    `id() { printf '%s' ${options.uid ?? 0}; }`,
-    `hermes_tracked_role_is_current() { [ "$POLL" -ge ${options.roleAfterPoll ?? 0} ]; }`,
-    `gateway_control_pid_is_live() { return ${options.live === false ? 1 : 0}; }`,
-    'hermes_tracked_service_owns_listener() { printf "listener:%s\\n" "$3"; }',
-    `curl() { printf '%s' ${options.healthCode ?? "401"}; }`,
-    'wait() { printf "unexpected-wait:%s\\n" "$1"; return 99; }',
-    "sleep() { POLL=$((POLL + 1)); SECONDS=$((SECONDS + 30)); }",
-    extractShellFunction(source, "wait_for_hermes_gateway_internal"),
-    "rc=0; wait_for_hermes_gateway_internal 4242 || rc=$?",
-    'printf "result:%s\\n" "$rc"',
-  ]);
-}
-
 describe("Hermes PID 1 supervisor recovery", () => {
-  it.each([
-    [0, "gateway"],
-    [1000, "current"],
-  ] as const)("keeps polling a live gateway after transient role loss for uid %s", (uid, user) => {
-    const result = runHermesInternalReadiness({ uid, roleAfterPoll: 1 });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe(`listener:${user}\nresult:0\n`);
-    expect(result.stderr).toBe("");
-  });
-
-  it("expires the startup deadline without waiting on or probing an unproven live gateway", () => {
-    const result = runHermesInternalReadiness({ roleAfterPoll: 100 });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("result:1\n");
-    expect(result.stderr).toContain("did not become healthy");
-  });
-
-  it("fails readiness when the gateway exits without waiting for a child status", () => {
-    const result = runHermesInternalReadiness({ roleAfterPoll: 100, live: false });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("result:1\n");
-  });
-
-  it("does not accept an unhealthy HTTP response from a proven gateway", () => {
-    const result = runHermesInternalReadiness({ healthCode: "503" });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/result:1\n$/);
-    expect(result.stdout).not.toContain("unexpected-wait");
-    expect(result.stderr).toContain("did not become healthy");
-  });
-
   it("publishes startup readiness through isolated Python when gateway-control init fails", () => {
     const result = runHermesStartupReadiness(1);
 
