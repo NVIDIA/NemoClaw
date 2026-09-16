@@ -93,8 +93,9 @@ export function createDockerDriverGatewayStateOwnership(
         })
       ) {
         const processEnv = readProcessEnvironment(recordedPid);
-        if (!processEnv) return true;
-        if (
+        if (!processEnv) {
+          if (deps.isPidAlive(recordedPid)) return true;
+        } else if (
           processEnvironmentUsesSelectedGatewayState(
             processEnv,
             deps.getDockerDriverGatewayStateDir(),

@@ -201,6 +201,21 @@ describe("docker-driver gateway selected-state ownership", () => {
     expect(processScan).not.toHaveBeenCalled();
   });
 
+  it("continues the complete scan when the recorded PID exits before its environment is read", () => {
+    const isPidAlive = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const processScan = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const ownership = makeOwnership({
+      getDockerDriverGatewayPid: () => 4242,
+      isPidAlive,
+      readProcessEnvironment: () => null,
+      runCaptureEx: processScan,
+    });
+
+    expect(ownership.isDockerDriverGatewayStateInUse()).toBe(false);
+    expect(isPidAlive).toHaveBeenCalledTimes(2);
+    expect(processScan).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       label: "legacy default namespace with the exact database path",
