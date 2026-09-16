@@ -21,6 +21,8 @@ import {
   mcpLifecycleLockPathExistsSync,
   readMcpLifecycleLockObservation,
   readMcpLifecycleLockObservationSync,
+  safelyReleaseMcpLifecycleLock,
+  safelyReleaseMcpLifecycleLockSync,
 } from "./mcp-lifecycle-lock-storage";
 
 describe("sandbox mutation lock acquisition", () => {
@@ -253,5 +255,24 @@ describe("sandbox mutation lock acquisition", () => {
       owner: null,
       reclaimable: true,
     });
+  });
+
+  it("releases only the exact async and sync lock-owner token", async () => {
+    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const owner = createMcpLifecycleLockOwner("alpha", "release-owner");
+    const publish = () => fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
+
+    publish();
+    await safelyReleaseMcpLifecycleLock(lockPath, "other-owner");
+    expect(fs.existsSync(lockPath)).toBe(true);
+    await safelyReleaseMcpLifecycleLock(lockPath, owner.token);
+    expect(fs.existsSync(lockPath)).toBe(false);
+
+    publish();
+    safelyReleaseMcpLifecycleLockSync(lockPath, "other-owner");
+    expect(fs.existsSync(lockPath)).toBe(true);
+    safelyReleaseMcpLifecycleLockSync(lockPath, owner.token);
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 });
