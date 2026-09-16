@@ -14,6 +14,10 @@ export type InvestigateTurnContext = {
   operations: unknown;
   reconciliation: unknown;
   metadata: string;
+  followUp?: {
+    review: unknown;
+    diffPath: string;
+  };
 };
 
 export function buildInvestigateTurn(context: InvestigateTurnContext): AdvisorPromptTurn {
@@ -79,6 +83,16 @@ export function buildInvestigateTurn(context: InvestigateTurnContext): AdvisorPr
       "text",
       "metadata fields",
     ),
+    ...(context.followUp
+      ? [
+          createAdvisorContextToolResult(
+            "pr_review_follow_up_context",
+            json(context.followUp),
+            "json",
+            "trusted human review contract and exact follow-up delta path",
+          ),
+        ]
+      : []),
   ];
   const requiredToolNames = contextToolResults.map((result) => result.toolName);
   return {
