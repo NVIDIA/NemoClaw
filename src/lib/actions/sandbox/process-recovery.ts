@@ -696,6 +696,17 @@ export async function isSandboxGatewayRunningForStatus(
     if (isExactlyManagedControlMarker(result, "SUPERVISOR_NOT_RUNNING")) return false;
     return null;
   }
+  return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
+}
+
+export async function isSandboxGatewayHttpReachableForStatus(
+  sandboxName: string,
+  gatewayName?: string,
+  options: {
+    commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+    getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
+  } = {},
+): Promise<boolean | null> {
   const probeUrl = (options.getHealthProbeUrl ?? getSandboxHealthProbeUrl)(sandboxName);
   const command = sandboxGatewayHealthProbeCommand(probeUrl);
   return parseSandboxGatewayProbe(
