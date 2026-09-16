@@ -33,6 +33,7 @@ function createTrustedBuildContext(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const buildCtx of temporaryBuildContexts.splice(0)) {
     fs.rmSync(buildCtx, { recursive: true, force: true });
   }
@@ -799,6 +800,8 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
   });
 
   it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const buildImage = vi.fn(async () => 1);
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
@@ -822,7 +825,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
           NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         },
-        buildImage: async () => 1,
+        buildImage,
         log: vi.fn(),
         origin: "generated",
       },
@@ -833,5 +836,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       imageRef: null,
       imageId: null,
     });
+    expect(buildImage).toHaveBeenCalledOnce();
   });
 });
