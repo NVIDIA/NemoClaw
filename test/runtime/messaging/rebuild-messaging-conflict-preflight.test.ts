@@ -145,7 +145,8 @@ function createConflictFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5954-"));
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
-  const legacyForwardListMarker = path.join(tmpDir, "legacy-forward-list-called");
+  const forwardListMarker = path.join(tmpDir, "forward-list-called");
+  const sandboxDeleteMarker = path.join(tmpDir, "sandbox-delete-called");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   const sandboxEntry = (name: string) => ({
@@ -195,7 +196,11 @@ function createConflictFixture() {
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.stderr.write("openshell delete must not run before the conflict preflight\\n"); process.exit(17); }
+if (a[0]==="sandbox" && a[1]==="delete") {
+  require("node:fs").writeFileSync(${JSON.stringify(sandboxDeleteMarker)}, "called", { mode: 0o600 });
+  process.stderr.write("openshell delete must not run before the conflict preflight\\n");
+  process.exit(17);
+}
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -204,7 +209,8 @@ if (a[0]==="inference")                      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a.some((value, index) => value === "forward" && a[index + 1] === "list")) {
-  require("node:fs").writeFileSync(${JSON.stringify(legacyForwardListMarker)}, "called", { mode: 0o600 });
+  require("node:fs").writeFileSync(${JSON.stringify(forwardListMarker)}, "called", { mode: 0o600 });
+  process.stderr.write("forward ownership lookup unavailable in fixture\\n");
   process.exit(17);
 }
 process.exit(0);
@@ -237,7 +243,7 @@ process.exit(17);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir, legacyForwardListMarker };
+  return { tmpDir, nemoclawDir, forwardListMarker, sandboxDeleteMarker };
 }
 
 function createHostPortConflictFixture() {
@@ -307,17 +313,18 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(output).toContain("uses the same teams credential");
       expect(output).toContain("Aborting");
 
-      // Nothing destructive ran: the sandbox is untouched and still registered.
+      // No backup or sandbox deletion ran; the registry still contains the sandbox.
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(output).not.toContain("must not run before the conflict preflight");
-      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
+      expect(fs.existsSync(f.forwardListMarker)).toBe(false);
+      expect(fs.existsSync(f.sandboxDeleteMarker)).toBe(false);
       expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
     },
   );
 
   it(
-    "aborts BEFORE backup/delete when an unrelated process owns the Teams webhook port",
+    "aborts before backup/delete when the Teams webhook port is occupied and forward ownership is unavailable",
     { timeout: 90_000 },
     () => {
       const f = createHostPortConflictFixture();
@@ -332,7 +339,8 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(output).not.toContain("must not run before the conflict preflight");
-      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
+      expect(fs.existsSync(f.forwardListMarker)).toBe(true);
+      expect(fs.existsSync(f.sandboxDeleteMarker)).toBe(false);
       expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
     },
   );

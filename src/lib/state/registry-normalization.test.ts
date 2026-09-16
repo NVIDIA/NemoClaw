@@ -331,8 +331,15 @@ describe("sandbox registry normalization", () => {
     const f = await prepareMessagingIdentityRecovery();
     f.sessionStore.saveSession(mutate(f.before!));
 
-    expect(f.validate).toThrow("incomplete lifecycle identity");
-    expect(f.validate).toThrow(
+    let validationError: unknown;
+    try {
+      f.validate();
+    } catch (error) {
+      validationError = error;
+    }
+    expect(validationError).toBeInstanceOf(Error);
+    expect((validationError as Error).message).toContain("incomplete lifecycle identity");
+    expect((validationError as Error).message).toContain(
       `Run \`${CLI_NAME} legacy rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
     );
     expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
@@ -435,6 +442,11 @@ describe("sandbox registry normalization", () => {
     expect(f.sessionStore.acquireOnboardLock("test lifecycle recovery").acquired).toBe(true);
     try {
       expect(f.validate).not.toThrow();
+      expect(f.registry.getSandbox("legacy")).toEqual({
+        ...f.expected,
+        lifecycleGeneration: generation,
+        lifecycleLiveIdentityFingerprint: fingerprint,
+      });
       expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(true);
     } finally {
       f.sessionStore.releaseOnboardLock();
