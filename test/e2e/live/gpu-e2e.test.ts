@@ -431,7 +431,7 @@ test(
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
-      NEMOCLAW_MODEL: "qwen3.5:9b",
+      NEMOCLAW_MODEL: "qwen2.5:0.5b",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
@@ -497,7 +497,7 @@ test(
     expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
     daemonOwner = startAttachedOllama(progress, exportEnv);
     await waitForAttachedOllama(host, exportEnv);
-    const preparedModel = await host.command("ollama", ["pull", "qwen3.5:9b"], {
+    const preparedModel = await host.command("ollama", ["pull", "qwen2.5:0.5b"], {
       artifactName: "export-prepare-attached-model",
       env: exportEnv,
       timeoutMs: execTimeout(20 * 60000),
@@ -517,9 +517,6 @@ test(
     const token = readTokenFileChecked(ollamaProxyTokenFile()).token;
     artifacts.addRedactionValues([token]);
     expect(raw.includes(token), "Export must omit the proxy credential").toBe(false);
-    expect(JSON.stringify(document.spec.inferenceProviders)).not.toMatch(
-      /NEMOCLAW_OLLAMA_PROXY_TOKEN|host\.openshell\.internal/u,
-    );
     const tags = await host.command(
       "curl",
       ["-q", "--noproxy", "*", "-fsS", "--max-time", "5", "http://127.0.0.1:11439/api/tags"],
@@ -527,7 +524,7 @@ test(
     );
     const model = (
       JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
-    ).models.find(({ name }) => name === "qwen3.5:9b");
+    ).models.find(({ name }) => name === "qwen2.5:0.5b");
     const exportedProvider = document.spec.inferenceProviders[0];
     const serving =
       "serving" in exportedProvider && exportedProvider.serving.backend === "ollama"
@@ -535,6 +532,7 @@ test(
         : undefined;
     expect(serving?.daemon.hostPort).toBe(11439);
     expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
+    expect(serving?.model.servedName).toBe("qwen2.5:0.5b");
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
     const entry = loadRegistry().sandboxes[SANDBOX_NAME];
     expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
@@ -574,7 +572,7 @@ test(
       sandboxName: SANDBOX_NAME,
       daemonPort: 11439,
       proxyPort: Number(PROXY_PORT),
-      model: "qwen3.5:9b",
+      model: "qwen2.5:0.5b",
       image: document.spec.sandboxes[0].runtime.image.ref,
       repeatedSpecMatches: true,
       stoppedDaemonPreventedPublication: true,

@@ -498,8 +498,8 @@ runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing its model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
+the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
 checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
 definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
