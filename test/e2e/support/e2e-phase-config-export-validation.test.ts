@@ -8,14 +8,15 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ValidatedNemoClawConfig } from "../../../src/lib/config/model.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
+  type ConfigExportDocument,
   type ConfigExportEvidenceEnvelope,
   type ConfigExportValidationDependencies,
   ConfigExportValidationPhaseFixture,
+  parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
@@ -65,7 +66,7 @@ function manifest(
   };
 }
 
-function document(overrides: { observability?: boolean } = {}): ValidatedNemoClawConfig {
+function document(overrides: { observability?: boolean } = {}): ConfigExportDocument {
   return {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
@@ -119,7 +120,7 @@ function document(overrides: { observability?: boolean } = {}): ValidatedNemoCla
         },
       ],
     },
-  } as unknown as ValidatedNemoClawConfig;
+  } as ConfigExportDocument;
 }
 
 function instance(expectedFailure = false): NemoClawInstance {
@@ -146,7 +147,7 @@ function dependencies(
   options: {
     credentialRefs?: string[];
     features?: Record<string, unknown>;
-    parsedDocument?: ValidatedNemoClawConfig;
+    parsedDocument?: ConfigExportDocument;
     removeDirectory?: (directory: string) => void;
   } = {},
 ): ConfigExportValidationDependencies {
@@ -261,6 +262,7 @@ function fixture(
     host,
     phase: new ConfigExportValidationPhaseFixture(
       host as never,
+      { openshell: vi.fn() } as never,
       secrets,
       cleanup,
       artifacts,
@@ -287,9 +289,14 @@ afterEach(() => {
 });
 
 describe("automatic config export validation phase", () => {
-  it("publishes exact validated bytes after required semantics and cleanup pass (#11485)", async () => {
+  it("publishes only the validated byte count and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
-    const test = fixture({ host: successfulHost(raw) });
+    const independentDependencies = dependencies();
+    independentDependencies.parseConfig = parseConfigExport;
+    const test = fixture({
+      dependencies: independentDependencies,
+      host: successfulHost(raw),
+    });
 
     const evidence = await test.phase.from(target("required"), instance());
 
@@ -299,9 +306,10 @@ describe("automatic config export validation phase", () => {
       passed: true,
       command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
       cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: { bytes: raw, sha256: sha256(raw) },
+      export: { byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
+    expect(evidence.export).not.toHaveProperty("bytes");
     expect(evidence.verifications.every((entry) => entry.passed)).toBe(true);
     expect(evidence.producer).toEqual({
       sourceRevision: SOURCE_REVISION,
@@ -335,7 +343,7 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
-  it("withholds exported bytes when a known fixture secret leaks (#11485)", async () => {
+  it("withholds export metadata when a known fixture secret leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# ${SECRET}\n`),
       secret: SECRET,
@@ -350,7 +358,7 @@ describe("automatic config export validation phase", () => {
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
   });
 
-  it("withholds exported bytes when an internal credential transport leaks (#11485)", async () => {
+  it("withholds export metadata when an internal credential transport leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# openshell:resolve:env:KEY\n`),
     });
@@ -472,7 +480,7 @@ describe("automatic config export validation phase", () => {
     expect(host.nemoclaw).not.toHaveBeenCalled();
   });
 
-  it("classifies cleanup failure and withholds passing bytes (#11485)", async () => {
+  it("classifies cleanup failure and withholds passing export metadata (#11485)", async () => {
     const test = fixture({
       dependencies: dependencies({
         removeDirectory: () => {
@@ -485,9 +493,31 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       passed: false,
-      cleanup: { succeeded: false },
+      failureStage: "cleanup",
+      cleanup: { succeeded: false, diagnostic: "owned cleanup failed" },
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
+  it("preserves the primary failure when cleanup also fails (#11485)", async () => {
+    const invalid = dependencies({
+      removeDirectory: () => {
+        throw new Error("owned cleanup failed");
+      },
+    });
+    invalid.parseConfig = () => {
+      throw new Error("invalid exported configuration");
+    };
+    const test = fixture({ dependencies: invalid });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "verification",
+      diagnostic: "invalid exported configuration",
+      cleanup: { succeeded: false, diagnostic: "owned cleanup failed" },
+    });
   });
 
   it("redacts bounded refusal diagnostics before evidence publication (#11485)", async () => {

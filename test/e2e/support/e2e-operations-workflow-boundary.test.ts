@@ -21,6 +21,8 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const CONFIG_EXPORT_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -54,6 +56,18 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       "live E2E must upload cold-onboard performance evidence",
+    );
+  });
+  it("requires automatic config export evidence in retained live artifacts (#11485)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .filter((line) => line.trim() !== CONFIG_EXPORT_EVIDENCE_PATH)
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload automatic config export evidence",
     );
   });
   it("requires the scorecard to wait for every reporting dependency", () => {

@@ -8,11 +8,6 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
-
-import type { ValidatedNemoClawConfig } from "../../../../src/lib/config/model.ts";
-import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
-import { load as loadSandboxRegistry } from "../../../../src/lib/state/registry/persistence.ts";
-import type { SandboxRegistry } from "../../../../src/lib/state/registry/types.ts";
 import { type LoadedManifest, loadManifest } from "../../registry/manifests.ts";
 import type {
   ConfigExportExpectation,
@@ -20,9 +15,11 @@ import type {
   TargetDefinition,
 } from "../../registry/types.ts";
 import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { CleanupRegistry } from "../cleanup.ts";
 import { resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
+import type { SandboxClient } from "../clients/sandbox.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
@@ -97,7 +94,7 @@ export interface ConfigExportEvidenceEnvelope {
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
   export?: {
-    bytes: string;
+    byteLength: number;
     sha256: string;
   };
   security: {
@@ -107,6 +104,7 @@ export interface ConfigExportEvidenceEnvelope {
   cleanup: {
     registeredBeforeExport: boolean;
     succeeded: boolean;
+    diagnostic?: string;
   };
   elapsedMs: number;
   failureStage?: ConfigExportFailureStage;
@@ -118,39 +116,217 @@ export interface PolicyReadResult {
   value?: { document: string };
 }
 
+export interface ConfigExportRegistryEntry {
+  name?: string;
+  agent?: string;
+  openshellDriver?: string;
+  gatewayName?: string;
+  provider?: string;
+  preferredInferenceApi?: string;
+  endpointUrl?: string;
+  model?: string;
+  credentialEnv?: string;
+  workload?: {
+    kind?: string;
+    reference?: string;
+  };
+}
+
+export interface ConfigExportRegistry {
+  sandboxes: Record<string, ConfigExportRegistryEntry>;
+}
+
+interface ConfigExportProviderDocument {
+  name: string;
+  provider: string;
+  api: string;
+  endpoint?: string;
+  credential?: { env?: string };
+}
+
+interface ConfigExportRouteDocument {
+  name: string;
+  providerRef: string;
+  overrides?: { model?: string };
+}
+
+interface ConfigExportAgentDocument {
+  name?: string;
+  type: string;
+  inference: { routes: ConfigExportRouteDocument[] };
+  observability?: unknown;
+}
+
+interface ConfigExportSandboxDocument {
+  name: string;
+  runtime: { provider: string; image: { ref: string } };
+  network: { policy: { explicit: unknown } };
+  agents: ConfigExportAgentDocument[];
+  integrations?: { webSearch?: unknown };
+}
+
+export interface ConfigExportDocument {
+  spec: {
+    inferenceProviders: ConfigExportProviderDocument[];
+    sandboxes: ConfigExportSandboxDocument[];
+  };
+}
+
 export interface ConfigExportValidationDependencies {
   exists(filePath: string): boolean;
   loadManifest(filePath: string): LoadedManifest;
-  loadRegistry(): SandboxRegistry;
+  loadRegistry(): ConfigExportRegistry;
   makeTempDirectory(prefix: string): string;
   now(): number;
-  parseConfig(raw: string): ValidatedNemoClawConfig;
+  parseConfig(raw: string): ConfigExportDocument;
   producer(): ConfigExportProducer;
   readFile(filePath: string): string;
-  readPolicy(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
+  readPolicy?(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
   removeDirectory(directory: string): void;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   exists: fs.existsSync,
   loadManifest,
-  loadRegistry: loadSandboxRegistry,
+  loadRegistry: readRegistry,
   makeTempDirectory: (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix)),
   now: Date.now,
-  parseConfig: (raw) => validateNemoClawConfig(YAML.parse(raw)),
+  parseConfig: parseConfigExport,
   producer: readProducer,
   readFile: (filePath) => fs.readFileSync(filePath, "utf8"),
-  readPolicy: async (gatewayName, sandboxName) => {
-    const { cliOpenShellSandboxPolicyReader, namedOpenShellGateway } =
-      await import("../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts");
-    return cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-      target: namedOpenShellGateway(gatewayName),
-      sandboxName,
-      scope: "effective",
-    });
-  },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
+
+function requiredRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`exported configuration field '${field}' must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requiredArray(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`exported configuration field '${field}' must be an array`);
+  }
+  return value;
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`exported configuration field '${field}' must be a non-empty string`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, field: string): string | undefined {
+  return value === undefined ? undefined : requiredString(value, field);
+}
+
+function parseProvider(value: unknown, index: number): ConfigExportProviderDocument {
+  const provider = requiredRecord(value, `spec.inferenceProviders[${index}]`);
+  const credential =
+    provider.credential === undefined
+      ? undefined
+      : requiredRecord(provider.credential, `spec.inferenceProviders[${index}].credential`);
+  return {
+    name: requiredString(provider.name, `spec.inferenceProviders[${index}].name`),
+    provider: requiredString(provider.provider, `spec.inferenceProviders[${index}].provider`),
+    api: requiredString(provider.api, `spec.inferenceProviders[${index}].api`),
+    ...(optionalString(provider.endpoint, `spec.inferenceProviders[${index}].endpoint`)
+      ? { endpoint: provider.endpoint as string }
+      : {}),
+    ...(credential
+      ? {
+          credential: {
+            env: optionalString(credential.env, `spec.inferenceProviders[${index}].credential.env`),
+          },
+        }
+      : {}),
+  };
+}
+
+function parseRoute(value: unknown, sandboxIndex: number, agentIndex: number, index: number) {
+  const prefix = `spec.sandboxes[${sandboxIndex}].agents[${agentIndex}].inference.routes[${index}]`;
+  const route = requiredRecord(value, prefix);
+  const overrides =
+    route.overrides === undefined
+      ? undefined
+      : requiredRecord(route.overrides, `${prefix}.overrides`);
+  return {
+    name: requiredString(route.name, `${prefix}.name`),
+    providerRef: requiredString(route.providerRef, `${prefix}.providerRef`),
+    ...(overrides
+      ? { overrides: { model: optionalString(overrides.model, `${prefix}.overrides.model`) } }
+      : {}),
+  };
+}
+
+function parseAgent(
+  value: unknown,
+  sandboxIndex: number,
+  index: number,
+): ConfigExportAgentDocument {
+  const prefix = `spec.sandboxes[${sandboxIndex}].agents[${index}]`;
+  const agent = requiredRecord(value, prefix);
+  const inference = requiredRecord(agent.inference, `${prefix}.inference`);
+  return {
+    type: requiredString(agent.type, `${prefix}.type`),
+    inference: {
+      routes: requiredArray(inference.routes, `${prefix}.inference.routes`).map(
+        (route, routeIndex) => parseRoute(route, sandboxIndex, index, routeIndex),
+      ),
+    },
+    ...(agent.observability === undefined ? {} : { observability: agent.observability }),
+  };
+}
+
+function parseSandbox(value: unknown, index: number): ConfigExportSandboxDocument {
+  const prefix = `spec.sandboxes[${index}]`;
+  const sandbox = requiredRecord(value, prefix);
+  const runtime = requiredRecord(sandbox.runtime, `${prefix}.runtime`);
+  const image = requiredRecord(runtime.image, `${prefix}.runtime.image`);
+  const network = requiredRecord(sandbox.network, `${prefix}.network`);
+  const policy = requiredRecord(network.policy, `${prefix}.network.policy`);
+  const integrations =
+    sandbox.integrations === undefined
+      ? undefined
+      : requiredRecord(sandbox.integrations, `${prefix}.integrations`);
+  return {
+    name: requiredString(sandbox.name, `${prefix}.name`),
+    runtime: {
+      provider: requiredString(runtime.provider, `${prefix}.runtime.provider`),
+      image: { ref: requiredString(image.ref, `${prefix}.runtime.image.ref`) },
+    },
+    network: { policy: { explicit: policy.explicit } },
+    agents: requiredArray(sandbox.agents, `${prefix}.agents`).map((agent, agentIndex) =>
+      parseAgent(agent, index, agentIndex),
+    ),
+    ...(integrations ? { integrations: { webSearch: integrations.webSearch } } : {}),
+  };
+}
+
+export function parseConfigExport(raw: string): ConfigExportDocument {
+  const root = requiredRecord(YAML.parse(raw), "document");
+  if (root.apiVersion !== "nemoclaw.nvidia.com/v1" || root.kind !== "NemoClawConfig") {
+    throw new Error("exported configuration has an unsupported contract");
+  }
+  const spec = requiredRecord(root.spec, "spec");
+  return {
+    spec: {
+      inferenceProviders: requiredArray(spec.inferenceProviders, "spec.inferenceProviders").map(
+        parseProvider,
+      ),
+      sandboxes: requiredArray(spec.sandboxes, "spec.sandboxes").map(parseSandbox),
+    },
+  };
+}
+
+function readRegistry(): ConfigExportRegistry {
+  const registryPath = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
+  const root = requiredRecord(JSON.parse(fs.readFileSync(registryPath, "utf8")), "registry");
+  const sandboxes = requiredRecord(root.sandboxes, "registry.sandboxes");
+  return { sandboxes: sandboxes as Record<string, ConfigExportRegistryEntry> };
+}
 
 function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
@@ -198,8 +374,8 @@ function enabledManifestFeatures(manifest: LoadedManifest): string[] {
 }
 
 function observedFeatures(
-  sandbox: ValidatedNemoClawConfig["spec"]["sandboxes"][number] | undefined,
-  agent: ValidatedNemoClawConfig["spec"]["sandboxes"][number]["agents"][number] | undefined,
+  sandbox: ConfigExportSandboxDocument | undefined,
+  agent: ConfigExportAgentDocument | undefined,
 ): string[] {
   const features: string[] = [];
   if (sandbox?.integrations?.webSearch) features.push("webSearch");
@@ -207,14 +383,13 @@ function observedFeatures(
   return features.sort();
 }
 
-function semanticsFromDocument(document: ValidatedNemoClawConfig): ConfigExportSemantics {
+function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
   const agent = sandbox?.agents[0];
   const route = agent?.inference.routes[0];
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,
   );
-  const hostedProvider = provider && !("serving" in provider) ? provider : undefined;
   return {
     sandboxName: sandbox?.name ?? null,
     agent: agent?.type ?? null,
@@ -223,9 +398,9 @@ function semanticsFromDocument(document: ValidatedNemoClawConfig): ConfigExportS
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
-    inferenceEndpoint: hostedProvider?.endpoint ?? null,
-    model: route?.overrides.model ?? null,
-    credentialReference: hostedProvider?.credential?.env ?? null,
+    inferenceEndpoint: provider?.endpoint ?? null,
+    model: route?.overrides?.model ?? null,
+    credentialReference: provider?.credential?.env ?? null,
     routeName: route?.name ?? null,
     routeProviderReference: route?.providerRef ?? null,
     policySha256: sandbox ? sha256(canonicalJson(sandbox.network.policy.explicit)) : null,
@@ -237,6 +412,7 @@ async function expectedSemantics(
   target: TargetDefinition,
   instance: NemoClawInstance,
   dependencies: ConfigExportValidationDependencies,
+  readPolicy: (gatewayName: string, sandboxName: string) => Promise<PolicyReadResult>,
 ): Promise<ConfigExportSemantics> {
   const manifest = dependencies.loadManifest(path.join(REPO_ROOT, target.manifestPath));
   const entry = dependencies.loadRegistry().sandboxes[instance.sandboxName];
@@ -244,8 +420,9 @@ async function expectedSemantics(
   if (entry.workload?.kind !== "managed-image") {
     throw new Error("automatic config export validation requires an immutable managed image");
   }
+  const imageRef = requiredString(entry.workload.reference, "registry workload reference");
   if (!entry.gatewayName) throw new Error("the live sandbox is missing its gateway binding");
-  const policy = await dependencies.readPolicy(entry.gatewayName, instance.sandboxName);
+  const policy = await readPolicy(entry.gatewayName, instance.sandboxName);
   if (!policy.ok || !policy.value) {
     throw new Error("the effective sandbox policy could not be read");
   }
@@ -258,7 +435,7 @@ async function expectedSemantics(
     sandboxName: instance.sandboxName,
     agent: manifest.document.spec.onboarding.agent,
     runtimeProvider: entry.openshellDriver ?? null,
-    imageRef: entry.workload.reference,
+    imageRef,
     inferenceProviderName: null,
     inferenceProvider: entry.provider ?? null,
     inferenceApi: entry.preferredInferenceApi ?? null,
@@ -319,11 +496,33 @@ function refusalCategory(output: string): string | undefined {
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
+    private readonly sandbox: SandboxClient,
     private readonly secrets: SecretStore,
     private readonly cleanup: CleanupRegistry,
     private readonly artifacts: ArtifactSink,
     private readonly dependencies: ConfigExportValidationDependencies = DEFAULT_DEPENDENCIES,
   ) {}
+
+  private async readPolicy(gatewayName: string, sandboxName: string): Promise<PolicyReadResult> {
+    if (this.dependencies.readPolicy) {
+      return this.dependencies.readPolicy(gatewayName, sandboxName);
+    }
+    const result = await this.sandbox.openshell(["policy", "get", "--full", sandboxName], {
+      artifactName: "config-export-effective-policy",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        OPENSHELL_GATEWAY: gatewayName,
+      },
+      redactionValues: this.secrets.redactionValues(),
+      timeoutMs: 60_000,
+    });
+    if (result.exitCode !== 0 || result.signal !== null || result.timedOut) return { ok: false };
+    const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(result.stdout);
+    const document = separator
+      ? result.stdout.slice(separator.index + separator[0].length)
+      : result.stdout;
+    return document.trim() === "" ? { ok: false } : { ok: true, value: { document } };
+  }
 
   async from(
     target: TargetDefinition,
@@ -366,7 +565,7 @@ export class ConfigExportValidationPhaseFixture {
     let observed: ConfigExportSemantics | undefined;
     let raw: string | undefined;
     let verifications: ConfigExportVerification[] = [];
-    let classification: ConfigExportClassification = "failure";
+    let classification: ConfigExportClassification;
     let diagnostic: string | undefined;
     let knownSecretsAbsent: boolean | null = null;
     let internalTransportsAbsent: boolean | null = null;
@@ -423,7 +622,12 @@ export class ConfigExportValidationPhaseFixture {
         const document = this.dependencies.parseConfig(raw);
         observed = semanticsFromDocument(document);
         failureStage = "observation";
-        expected = await expectedSemantics(target, instance, this.dependencies);
+        expected = await expectedSemantics(
+          target,
+          instance,
+          this.dependencies,
+          this.readPolicy.bind(this),
+        );
         failureStage = "verification";
         verifications = compareSemantics(expected, observed);
         const failed = verifications.filter((verification) => !verification.passed);
@@ -440,14 +644,18 @@ export class ConfigExportValidationPhaseFixture {
     }
 
     let cleanupSucceeded = false;
+    let cleanupDiagnostic: string | undefined;
     try {
       this.dependencies.removeDirectory(directory);
       removed = true;
       cleanupSucceeded = true;
     } catch (error) {
-      diagnostic = boundedDiagnostic(this.secrets, error);
+      cleanupDiagnostic = boundedDiagnostic(this.secrets, error);
+      if (classification !== "failure") {
+        diagnostic = cleanupDiagnostic;
+        failureStage = "cleanup";
+      }
       classification = "failure";
-      failureStage = "cleanup";
     }
 
     const passed = classification === "success" || classification === "expected-refusal";
@@ -466,9 +674,15 @@ export class ConfigExportValidationPhaseFixture {
       ...(observed ? { observed } : {}),
       verifications,
       ...(command ? { command } : {}),
-      ...(passed && cleanupSucceeded && raw ? { export: { bytes: raw, sha256: sha256(raw) } } : {}),
+      ...(passed && cleanupSucceeded && raw
+        ? { export: { byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) } }
+        : {}),
       security: { knownSecretsAbsent, internalTransportsAbsent },
-      cleanup: { registeredBeforeExport: true, succeeded: cleanupSucceeded },
+      cleanup: {
+        registeredBeforeExport: true,
+        succeeded: cleanupSucceeded,
+        ...(cleanupDiagnostic ? { diagnostic: cleanupDiagnostic } : {}),
+      },
       elapsedMs: this.dependencies.now() - startedAt,
       ...(classification === "failure" ? { failureStage } : {}),
       ...(diagnostic ? { diagnostic } : {}),

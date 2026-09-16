@@ -33,6 +33,8 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const CONFIG_EXPORT_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -980,6 +982,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");
+  }
+  if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload automatic config export evidence");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");

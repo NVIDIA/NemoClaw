@@ -78,14 +78,23 @@ Before it validates deployment semantics, the config export fixture rejects
 known fixture secrets and internal credential transport markers. It creates
 the export in a private temporary directory. It registers cleanup before it
 invokes the CLI and removes the directory before it writes retained evidence.
+For `required` coverage, the fixture parses the exported document without the
+product config validator. It reads the host registry directly and queries the
+effective policy through the OpenShell CLI. These independent observations
+prevent the exporter and validator from sharing the same product readers.
 
 The `config-export-evidence.v1.json` artifact binds each result to the source
 revision, CLI version, and compiled CLI entry-point hash. Each record includes
 elapsed time and a structured command outcome when the fixture invokes the
-CLI. Successful `required` evidence includes the validated export bytes and
-their SHA-256 hash. Failure evidence omits export bytes. Its failure stage
-distinguishes transport errors from export failures. Evidence diagnostics are
-bounded and redacted.
+CLI. Successful `required` evidence includes only the validated export byte
+count and SHA-256 hash; it never retains the exported configuration itself.
+Failure evidence omits export metadata. Its failure stage distinguishes
+transport errors from export failures, while cleanup has its own diagnostic so
+it cannot hide the primary failure. Evidence diagnostics are bounded and
+redacted.
+
+The E2E workflow uploads `config-export-evidence.v1.json` with each target's
+retained artifacts.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
