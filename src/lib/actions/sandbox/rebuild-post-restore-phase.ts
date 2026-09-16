@@ -27,7 +27,6 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
-  verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
@@ -301,14 +300,16 @@ export async function runRebuildPostRestorePhase(
     return;
   }
 
-  // Restart before restoring MCP. The Hermes MCP transaction performs an
-  // acknowledged reload of its own; restarting afterwards would replace the
-  // only runtime whose managed MCP configuration was proven to have loaded.
-  const hermesGatewayRestartState = await restartHermesGatewayAfterStateRestore(
-    sandboxName,
-    targetAgentName,
-    hermesPostRestoreGatewayDeps,
-  );
+  // The managed image owns the ordinary Hermes process lifecycle. Only an
+  // active cron-restore gate requires the bounded replacement transaction that
+  // keeps dispatch drained across a process identity change.
+  const hermesGatewayRestartState = hermesCronRestoreIdentity
+    ? await restartHermesGatewayAfterStateRestore(
+        sandboxName,
+        targetAgentName,
+        hermesPostRestoreGatewayDeps,
+      )
+    : "not-applicable";
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
     sandboxName,
     mcpEntries,
@@ -348,15 +349,7 @@ export async function runRebuildPostRestorePhase(
         hermesCronRestoreIdentity,
         hermesPostRestoreGatewayDeps,
       )
-    : {
-        state: await verifyHermesGatewayAfterStateRestore(
-          sandboxName,
-          targetAgentName,
-          hermesGatewayRestartState,
-          hermesPostRestoreGatewayDeps,
-        ),
-        replacementIdentity: undefined,
-      };
+    : { state: "not-applicable" as const, replacementIdentity: undefined };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   let verifiedAgentVersion: string | null = null;
@@ -391,10 +384,7 @@ export async function runRebuildPostRestorePhase(
     }
     verifiedAgentVersion = rebuiltVersion.sandboxVersion;
   }
-  if (
-    targetAgentName === "hermes" &&
-    (hermesGatewayRestoreState === "healthy" || hermesGatewayRestoreState === "recovered")
-  ) {
+  if (targetAgentName === "hermes") {
     const mutableConfigVerification = inspectMutableHermesConfigPerms(sandboxName);
     mutableConfigPermissionsVerified = mutableConfigVerification.verified;
     if (mutableConfigPermissionsVerified) {
