@@ -13,7 +13,7 @@ import {
   runOpenClawPostRestoreDoctor,
 } from "./process-recovery";
 
-describe("OpenClaw rebuild doctor restart", () => {
+describe("OpenClaw post-upgrade recovery doctor", () => {
   it("publishes an owner-only one-shot marker atomically", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-"));
     try {
