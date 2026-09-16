@@ -61,8 +61,10 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 ## Build Agent Images
 
 Use Docker with Buildx and a native Linux ARM64 builder.
-The image locks select CPython 3.13 ARM64 wheels; this workflow does not qualify other platforms.
-Build stages use pinned Rust, Node, and uv images and Debian Python, so the host needs no language toolchains for image assembly.
+The image locks select CPython ARM64 wheels; this workflow does not qualify other platforms.
+Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
+The `nooa`, `nooa-bench`, and `hermes` targets use Python 3.13.15 because their pinned upstream releases require Python below 3.14.
+Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 

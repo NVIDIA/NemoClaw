@@ -129,12 +129,12 @@ docker run --rm --network none --pull=never \
 docker run --rm --network none --pull=never -e PYTHONPATH=/work \
   -v "$PWD/image/fabric:/work:ro" -w /work \
   --entrypoint /usr/local/bin/node nc-fabric:openclaw \
-  /work/test_openclaw_tools.mjs
+  /work/test_openclaw_tools.mts
 
 docker run --rm --network none --pull=never -e PYTHONPATH=/work \
   -v "$PWD/image/fabric:/work:ro" -w /work \
   --entrypoint /usr/local/bin/node nc-fabric:openclaw \
-  /work/test_openclaw_disclosure.mjs
+  /work/test_openclaw_disclosure.mts
 
 docker run --rm --network none --pull=never \
   -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e PYTHONPATH=/work \

@@ -25,11 +25,11 @@ docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
-Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, Oxlint, Oxfmt, Python behavior tests, and Pi's TypeScript compilation and native model tests.
+Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, Oxlint, Oxfmt, strict TypeScript checks, Python behavior tests, and Pi's TypeScript compilation and native model tests.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
 
-For a faster source-only edit loop with host uv and Node.js 24.18.1 or newer:
+For a faster source-only edit loop with host uv and Node.js 24.21.0 or newer:
 
 ```sh
 uv tool run --from ruff==0.16.7 ruff check .
@@ -37,10 +37,14 @@ uv tool run --from ruff==0.16.7 ruff format --check .
 npm --prefix image ci --ignore-scripts
 npm --prefix image run lint
 npm --prefix image run format:check
+npm --prefix image run typecheck
 ```
 
 Use `ruff format .` through the same pinned uv invocation and `npm --prefix image run format` to apply formatting.
 The scope includes image Python/TypeScript, the native fixture code, and their two host runners.
+Standalone TypeScript fixtures use `.mts` and Node's native type stripping; they need no transpiler or generated JavaScript files.
+The host type check covers OpenClaw fixtures; the Pi build checks its model code and fixture against installed upstream declarations.
+OpenClaw's private bundles ship no declarations, so [small fixture declarations](../test/openclaw.d.ts) describe the consumed API shapes and native tests verify those boundaries.
 Upstream sources and model-specific recipe code retain their own conventions and checks.
 
 The [image workflow](../.github/workflows/images.yml) runs these checks on changes targeting `v1`, builds all ten agent images plus the proxy, and exercises native adapters against isolated local protocol fixtures.

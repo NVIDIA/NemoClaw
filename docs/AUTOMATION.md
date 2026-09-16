@@ -42,7 +42,7 @@ To recover a damaged import, stop the preview server, remove only the generated 
 ## Validate Locally
 
 Complete the Rust and `protoc` prerequisites in [build.md](build.md).
-Install Node.js 24.18.1 and Python 3.12 or newer for the documentation tooling.
+Install Node.js 24.21.0 and Python 3.12 or newer for the documentation tooling.
 Node runs main's imported generators and the pinned Fern CLI through `npx`; the application remains a Cargo workspace with no root npm package.
 The first Fern invocation downloads its npm dependencies.
 CI uses the same Node version and main's pinned reviewed-npm setup action.
