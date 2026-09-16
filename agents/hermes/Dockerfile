@@ -722,6 +722,9 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 
+# Temporary startup diagnostics for the failing root-entrypoint image probe.
+RUN /usr/bin/python3 -I -c 'from pathlib import Path; p = Path("/opt/hermes/gateway/run.py"); s = p.read_text(); anchor = "        logger.info(\"Starting Hermes Gateway...\")\n"; assert s.count(anchor) == 1; p.write_text(s.replace(anchor, anchor + "        faulthandler.dump_traceback_later(60, repeat=True)\n"))'
+
 # Hermes v0.20.6 computes `sessions list` preview from the first user message.
 # Its workspace-aware titled table then hides the preview behind an automatic
 # seed title. Patch both pinned source shapes and prove that an automatically
