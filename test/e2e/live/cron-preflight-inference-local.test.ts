@@ -88,7 +88,7 @@ test(
 
     progress.phase("create native scheduled work");
     const cronName = `nemoclaw-native-cron-${Date.now()}`;
-    let add = await sandbox.exec(
+    await sandbox.exec(
       SANDBOX_NAME,
       [
         "openclaw",
@@ -112,55 +112,85 @@ test(
         timeoutMs: 120_000,
       },
     );
-    if (
-      add.exitCode !== 0 &&
-      /scope upgrade pending approval|pairing required: device is asking for more scopes/iu.test(
-        resultText(add),
-      )
-    ) {
-      const devices = await sandbox.exec(SANDBOX_NAME, ["openclaw", "devices", "list", "--json"], {
-        artifactName: "cron-preflight-native-devices-list",
+    const approve = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "sh",
+        "-lc",
+        [
+          "set -eu",
+          'devices="$(mktemp)"',
+          "trap 'rm -f -- \"$devices\"' EXIT",
+          'openclaw devices list --json >"$devices"',
+          'request_id="$(python3 - "$devices" <<\'PY\'',
+          "import json, sys",
+          "from pathlib import Path",
+          "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
+          "decoder=json.JSONDecoder()",
+          "values=[]",
+          "for index, char in enumerate(raw):",
+          "    if char != '{': continue",
+          "    try: value,_=decoder.raw_decode(raw[index:])",
+          "    except Exception: continue",
+          "    values.append(value)",
+          "def visit(value):",
+          "    if isinstance(value, list):",
+          "        for item in value:",
+          "            found=visit(item)",
+          "            if found: return found",
+          "        return ''",
+          "    if not isinstance(value, dict): return ''",
+          "    scopes=[]",
+          "    for key in ('scopes','requestedScopes'):",
+          "        if isinstance(value.get(key), list): scopes.extend(value[key])",
+          "    if 'operator.admin' in scopes:",
+          "        request_id=str(value.get('requestId') or value.get('id') or '').strip()",
+          "        if request_id: return request_id",
+          "    for child in value.values():",
+          "        found=visit(child)",
+          "        if found: return found",
+          "    return ''",
+          "for value in values:",
+          "    found=visit(value)",
+          "    if found: print(found); raise SystemExit(0)",
+          "raise SystemExit('operator.admin request not found')",
+          "PY",
+          ')"',
+          'openclaw devices approve "$request_id"',
+        ].join("\n"),
+      ],
+      {
+        artifactName: "cron-preflight-native-devices-approve",
         env,
         redactionValues: redactions,
         timeoutMs: 60_000,
-      });
-      const requestId = findOperatorAdminRequestId(resultText(devices));
-      const approve = await sandbox.exec(
-        SANDBOX_NAME,
-        ["openclaw", "devices", "approve", requestId],
-        {
-          artifactName: "cron-preflight-native-devices-approve",
-          env,
-          redactionValues: redactions,
-          timeoutMs: 60_000,
-        },
-      );
-      assertExitZero(approve, "native OpenClaw device scope approval");
-      add = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "openclaw",
-          "cron",
-          "add",
-          "--name",
-          cronName,
-          "--every",
-          "2h",
-          "--agent",
-          "main",
-          "--session",
-          "isolated",
-          "--message",
-          "Reply with exactly PONG and no other text.",
-        ],
-        {
-          artifactName: "cron-preflight-native-add-after-approval",
-          env,
-          redactionValues: redactions,
-          timeoutMs: 120_000,
-        },
-      );
-    }
+      },
+    );
+    assertExitZero(approve, "native OpenClaw device scope approval");
+    const add = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "openclaw",
+        "cron",
+        "add",
+        "--name",
+        cronName,
+        "--every",
+        "2h",
+        "--agent",
+        "main",
+        "--session",
+        "isolated",
+        "--message",
+        "Reply with exactly PONG and no other text.",
+      ],
+      {
+        artifactName: "cron-preflight-native-add-after-approval",
+        env,
+        redactionValues: redactions,
+        timeoutMs: 120_000,
+      },
+    );
     assertExitZero(add, "native OpenClaw cron add");
     const cronId = findCronId(resultText(add), cronName);
     expect(cronId, resultText(add)).not.toBe("");
@@ -228,35 +258,4 @@ function nativeCronRunAccepted(output: string): boolean {
       (value.ran === true ||
         (value.enqueued === true && typeof value.runId === "string" && value.runId.length > 0)),
   );
-}
-
-function findOperatorAdminRequestId(output: string): string {
-  const visit = (value: unknown): string => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const found = visit(item);
-        if (found) return found;
-      }
-      return "";
-    }
-    if (!value || typeof value !== "object") return "";
-    const record = value as Record<string, unknown>;
-    const scopes = [record.scopes, record.requestedScopes]
-      .filter(Array.isArray)
-      .flat() as unknown[];
-    if (scopes.includes("operator.admin")) {
-      const requestId = record.requestId ?? record.id;
-      if (typeof requestId === "string" && requestId.trim()) return requestId.trim();
-    }
-    for (const child of Object.values(record)) {
-      const found = visit(child);
-      if (found) return found;
-    }
-    return "";
-  };
-  for (const value of decodedObjects(output)) {
-    const found = visit(value);
-    if (found) return found;
-  }
-  return "";
 }
