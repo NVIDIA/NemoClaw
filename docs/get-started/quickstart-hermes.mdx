@@ -1,3 +1,188 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NemoClaw Quickstart with Hermes"
+sidebar-title: "Quickstart with Hermes"
+description: "Install NemoClaw, launch a Hermes sandbox, and run your first Hermes prompt."
+description-agent: "Installs NemoClaw, selects Hermes, launches a sandbox, and runs the first prompt. Use when setting up NemoHermes or running Hermes inside OpenShell."
+keywords: ["nemohermes quickstart", "hermes agent nemoclaw", "run hermes openshell sandbox"]
+content:
+  type: "get_started"
+skill:
+  priority: 20
+agent-variants: ["hermes"]
+---
+Create a sandboxed Hermes agent, then chat with it from the dashboard or terminal.
+The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
+
+## Set Up with the Starter Prompt on Your Coding Agent
+
+Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
+The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the command that receives credentials.
+
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
+
+If you prefer to control setup directly, use [Set Up with the Interactive Installer on Your Terminal](#set-up-with-the-interactive-installer-on-your-terminal).
+
+## Set Up with the Interactive Installer on Your Terminal
+
+If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
+The prompt directs your coding agent to this quickstart, so it has the full setup context.
+
+<Note>
+Review the [Prerequisites](prerequisites) before you begin.
+</Note>
+
+<Steps>
+  <Step title="Install NemoClaw for Hermes">
+    Run the hosted installer.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
+    ```
+    If NVIDIA hosted inference credentials are not available yet and no sandbox exists, you can install without onboarding:
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --defer-onboarding
+    ```
+
+    This option does not create a provider, sandbox, or completed onboarding state.
+    It does not support a local model profile.
+    After credentials are available, run `nemohermes onboard`.
+  </Step>
+
+  <Step title="Complete Onboarding">
+    The explicit `NEMOCLAW_AGENT=hermes` setting keeps Hermes selected through interactive or Express setup.
+
+    <Note>
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
+      Press Enter to use the recommended express install mode for that platform.
+      This mode applies preset settings and runs the remaining onboarding non-interactively.
+      Express install mode preserves the explicit Hermes selection in the install command.
+      Enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, the selected provider must meet its existing requirements, and local NVIDIA NIM remains unavailable.
+      Refer to [Use a container runtime and supported platforms](#use-a-container-runtime-and-supported-platforms) for more information.
+    </Note>
+
+    The install command creates the `my-hermes` sandbox used in the commands that follow.
+    If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt, choose an inference provider and model, then provide its credential when prompted.
+    For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
+    With the OpenShell Docker driver, stock Hermes onboarding normally uses the release's exact managed-image digest.
+    If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
+    Invalid or inconsistent catalog evidence fails closed before sandbox creation.
+    An explicit `nemohermes onboard --from <Dockerfile>` remains a separate custom-image path.
+  </Step>
+
+  <Step title="Confirm the Sandbox Is Ready">
+    Wait for the ready summary, then check the sandbox state.
+
+    ```bash
+    nemohermes my-hermes status
+    ```
+  </Step>
+
+  <Step title="Send Your First Prompt">
+    Open the Hermes dashboard from the host.
+
+    ```bash
+    nemohermes my-hermes dashboard-url --quiet
+    ```
+
+    Alternatively, start Hermes from the terminal.
+
+    ```bash
+    nemohermes launch my-hermes
+    ```
+
+    `nemohermes launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `hermes` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
+    To open a sandbox shell first and start Hermes yourself, run these commands instead.
+
+    ```bash
+    nemohermes my-hermes connect
+    hermes
+    ```
+  </Step>
+</Steps>
+
+## Installation and Runtime Details
+
+Use these details when your first-run path needs more control.
+
+<AccordionGroup>
+  <Accordion title="Choose inference and optional services">
+    The Hermes wizard supports the same inference provider choices as the OpenClaw quickstart.
+    Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider requirements, model choices, and local-server setup.
+
+    Hermes supports Tavily for web search, not the NemoClaw Brave Search path.
+    Select it during onboarding and provide `TAVILY_API_KEY` when prompted.
+    The wizard can also configure supported messaging channels and managed Nous tool gateways when you authenticate through Nous Portal OAuth.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
+  </Accordion>
+
+  <Accordion title="Add Langfuse observability">
+    Register Langfuse keys with OpenShell instead of writing them into the sandbox.
+    The checked-in `langfuse-hermes-v1` profile binds both keys to Langfuse Cloud and the managed Hermes Python runtime.
+
+    ```bash
+    export LANGFUSE_PUBLIC_KEY=pk-lf-...
+    export LANGFUSE_SECRET_KEY=sk-lf-...
+
+    nemohermes credentials add my-hermes-langfuse \
+      --type langfuse-hermes-v1 \
+      --credential LANGFUSE_PUBLIC_KEY \
+      --credential LANGFUSE_SECRET_KEY
+
+    unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    nemohermes my-hermes rebuild
+    ```
+
+    Connect to the rebuilt sandbox and enable the bundled plugin, then restart the managed Hermes gateway from the host.
+
+    ```bash
+    nemohermes my-hermes connect
+    hermes plugins enable observability/langfuse
+    exit
+    nemohermes my-hermes gateway restart
+    ```
+
+    Hermes receives OpenShell credential-handle `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
+    The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
+    Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
+    A copied revision can shadow the current provider value after rotation or rebuild.
+
+    For a self-hosted Langfuse deployment, copy `nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml` to a new profile, change its `id` and exact `endpoints[0].host`, and import that reviewed profile before running `credentials add` with the new type.
+    When `HERMES_LANGFUSE_BASE_URL` uses a non-default HTTPS port, change `endpoints[0].port` to that exact port too.
+    Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
+    Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+    Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.
+    Use the same exact-host profile process when a hosted Langfuse project uses an origin other than `cloud.langfuse.com`.
+  </Accordion>
+
+  <Accordion title="Automate or repeat onboarding">
+    The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
+    For a scripted installation, provide the required values before running the installer.
+
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_NON_INTERACTIVE=1
+    export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export NVIDIA_INFERENCE_API_KEY=<your-key>
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+
+    If NemoClaw is already installed, run `nemohermes onboard`.
+    Use `nemohermes onboard --resume` to continue an interrupted onboarding session or `nemohermes onboard --fresh` to discard it and start again.
+    Refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed) for recovery details.
+  </Accordion>
+
   <Accordion title="Use Portable Ollama">
     On Linux x86_64, fresh Hermes Portable onboarding can run the selected Ollama model in a current-user rootless Podman container.
     Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
