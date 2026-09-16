@@ -350,7 +350,7 @@ function selectContractReviews(
   const fallback = reviewerLogin
     ? candidates.filter(({ reviewer }) => reviewer === reviewerLogin)
     : candidates;
-  const latest = fallback.at(-1);
+  const latest = fallback.at(-1) ?? candidates.at(-1);
   return latest ? [latest] : [];
 }
 
@@ -358,16 +358,34 @@ function combinedReviewBody(reviews: readonly TrustedReview[]): string | undefin
   const withBodies = reviews.filter(({ body }) => body !== undefined);
   if (withBodies.length === 0) return undefined;
   if (withBodies.length === 1) return withBodies[0]!.body;
-  return boundedText(
-    withBodies
-      .map(
-        ({ id, reviewer, reviewedHeadSha, body }) =>
-          `Review ${id} by ${reviewer} on ${reviewedHeadSha}:\n${body}`,
-      )
-      .join("\n\n"),
-    BODY_CHARACTER_LIMIT,
-    "combined review body",
+  const labels = withBodies.map(
+    ({ id, reviewer, reviewedHeadSha }) => `Review ${id} by ${reviewer} on ${reviewedHeadSha}:\n`,
   );
+  const separatorsLength = 2 * (withBodies.length - 1);
+  let remaining =
+    BODY_CHARACTER_LIMIT -
+    separatorsLength -
+    labels.reduce((total, label) => total + label.length, 0);
+  if (remaining < withBodies.length) {
+    throw new Error("Combined review metadata exceeds the review body limit");
+  }
+  let bodiesRemaining = withBodies.length;
+  return withBodies
+    .map(({ body }, index) => {
+      const allocation = Math.floor(remaining / bodiesRemaining);
+      remaining -= allocation;
+      bodiesRemaining -= 1;
+      return labels[index]! + boundedReviewExcerpt(body!, allocation);
+    })
+    .join("\n\n");
+}
+
+function boundedReviewExcerpt(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  if (limit === 1) return "…";
+  const retained = limit - 1;
+  const headLength = Math.ceil(retained / 2);
+  return `${value.slice(0, headLength)}…${value.slice(value.length - (retained - headLength))}`;
 }
 
 function summarizePullRequest(value: unknown): unknown {
