@@ -137,6 +137,10 @@ fi
   echo "v22.19.0"
 elif [ "\${1:-}" = "${repo}/bin/nemoclaw.js" ] && [ "\${2:-}" = "onboard" ]; then
   echo "runtime onboard"
+elif [[ "\${1:-}" == */scripts/lib/openshell-sdk-install.mts ]]; then
+  if [ "\${2:-}" = "check" ] && [ "\${FAKE_OPEN_SHELL_SDK_MISSING:-}" = "1" ]; then exit 1; fi
+  if [ "\${2:-}" = "prepare" ] && [ "\${FAKE_OPEN_SHELL_SDK_PREPARE_FAIL:-}" = "1" ]; then exit 1; fi
+  exit 0
 else
   exit 1
 fi`,
@@ -317,6 +321,27 @@ afterEach(() => {
 });
 
 describe("contributor environment doctor", () => {
+  it.each([
+    ["FAKE_OPEN_SHELL_SDK_PREPARE_FAIL", "Prepare the required OpenShell SDK"],
+    ["FAKE_OPEN_SHELL_SDK_MISSING", "Verify the required OpenShell SDK"],
+  ])("stops setup before building when %s is set", (failure, step) => {
+    const fixture = createFixture();
+    const result = runSetup(fixture, [], { [failure]: "1" });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(`Setup stopped while attempting: ${step}`);
+    expect(readCommandLog(fixture)).not.toContain("npm run build:cli");
+    expect(readCommandLog(fixture)).not.toContain("npm-link-or-shim");
+  });
+
+  it("rejects readiness when the required OpenShell SDK is missing", () => {
+    const fixture = createFixture();
+    const result = runDoctor(fixture, { FAKE_OPEN_SHELL_SDK_MISSING: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("OpenShell SDK");
+    expect(result.output).toContain("npm run dev:setup");
+  });
+
   it("reports a ready environment without mutating the fixture", () => {
     const fixture = createFixture();
     const before = fs.readdirSync(fixture.repo, { recursive: true }).sort();

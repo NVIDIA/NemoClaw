@@ -134,6 +134,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -208,6 +209,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -396,6 +398,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -465,6 +468,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -530,6 +534,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -623,6 +628,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -751,6 +757,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -803,6 +810,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-cache.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts

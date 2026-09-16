@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { createPackageFixture } from "./helpers/package-fixture";
+
+const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+const sdkName = "@nvidia/openshell-sdk";
+const publicDependencies = [
+  "@bufbuild/protobuf",
+  "@connectrpc/connect",
+  "@connectrpc/connect-node",
+];
+const roots: string[] = [];
+
+function fixture() {
+  const root = createPackageFixture({
+    prefix: "nemoclaw-sdk-install-",
+    entries: [
+      "scripts/lib/openshell-sdk-install.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/reviewed-npm-cache.mts",
+      "scripts/vendor/openshell-sdk",
+      "dist/lib/adapters/openshell/sdk-import.mjs",
+    ],
+  });
+  roots.push(root);
+  const env = {
+    PATH: process.env.PATH,
+    HOME: root,
+    NPM_CONFIG_CACHE: path.join(root, "cache"),
+    NPM_CONFIG_USERCONFIG: path.join(root, "empty.npmrc"),
+    NPM_CONFIG_GLOBALCONFIG: path.join(root, "empty-global.npmrc"),
+    NPM_CONFIG_OFFLINE: "true",
+    NPM_CONFIG_AUDIT: "false",
+    NPM_CONFIG_FUND: "false",
+  };
+  writeFileSync(env.NPM_CONFIG_USERCONFIG, "");
+  writeFileSync(env.NPM_CONFIG_GLOBALCONFIG, "");
+  const run = (command: string, args: string[]) =>
+    spawnSync(command, args, { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+  const probe = (mode: string) =>
+    run(process.execPath, ["scripts/lib/openshell-sdk-install.mts", mode]);
+  const lock = JSON.parse(readFileSync(path.join(repositoryRoot, "package-lock.json"), "utf8"));
+  const sourceManifest = JSON.parse(
+    readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+  );
+  const manifest = {
+    name: "nemoclaw-sdk-install-contract",
+    version: "1.0.0",
+    files: ["dist/", "scripts/"],
+    bundleDependencies: sourceManifest.bundleDependencies.filter(
+      (name: string) => name === sdkName,
+    ),
+    dependencies: Object.fromEntries(
+      [sdkName, ...publicDependencies].map((name) => [name, sourceManifest.dependencies[name]]),
+    ),
+    scripts: { postinstall: "node -e \"require('fs').writeFileSync('lifecycle-ran', 'yes')\"" },
+  };
+  const packages: Record<string, unknown> = { "": manifest };
+  for (const name of [sdkName, ...publicDependencies]) {
+    packages[`node_modules/${name}`] = lock.packages[`node_modules/${name}`];
+  }
+  // Public packages come from the test runner's installed dependencies. Repack
+  // them locally so this contract needs neither a warm cache nor network access.
+  for (const name of publicDependencies) {
+    const source = path.join(root, "public-packages", name);
+    mkdirSync(path.dirname(source), { recursive: true });
+    cpSync(path.join(repositoryRoot, "node_modules", name), source, { recursive: true });
+    const result = run("npm", ["pack", source, "--ignore-scripts", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    const [packed] = JSON.parse(result.stdout);
+    packages[`node_modules/${name}`] = {
+      ...lock.packages[`node_modules/${name}`],
+      resolved: `file:${path.join(root, packed.filename)}`,
+      integrity: packed.integrity,
+    };
+  }
+  writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+  writeFileSync(
+    path.join(root, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 3, packages }),
+  );
+  rmSync(env.NPM_CONFIG_CACHE, { recursive: true, force: true });
+  return { root, probe, run };
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("required OpenShell SDK installation", () => {
+  it("installs offline without credentials and loads both compiled CLI SDK imports", () => {
+    const { root, probe, run } = fixture();
+    const before = readFileSync(path.join(root, "package-lock.json"), "utf8");
+    const args = ["ci", "--ignore-scripts", "--prefer-offline", "--omit=optional"];
+    expect(run("npm", args).status).not.toBe(0);
+    const prepared = probe("prepare");
+    expect(prepared.status, prepared.stderr).toBe(0);
+    const installed = run("npm", args);
+    expect(installed.status, installed.stderr).toBe(0);
+    const checked = probe("check");
+    expect(checked.status, checked.stderr).toBe(0);
+    const loaded = run(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `import { importOpenShellSdk, importOpenShellRawSdk } from './dist/lib/adapters/openshell/sdk-import.mjs';
+const sdk = await importOpenShellSdk();
+const raw = await importOpenShellRawSdk();
+console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolicySchema.typeName]));`,
+    ]);
+    expect(loaded.status, loaded.stderr).toBe(0);
+    expect(JSON.parse(loaded.stdout)).toEqual(["function", "openshell.sandbox.v1.SandboxPolicy"]);
+    expect(readFileSync(path.join(root, "package-lock.json"), "utf8")).toBe(before);
+    rmSync(path.join(root, "node_modules"), { recursive: true });
+    const setupInstall = run("npm", ["install", ...args.slice(1)]);
+    expect(setupInstall.status, setupInstall.stderr).toBe(0);
+    const setupCheck = probe("check");
+    expect(setupCheck.status, setupCheck.stderr).toBe(0);
+    expect(existsSync(path.join(root, "lifecycle-ran"))).toBe(false);
+    const packed = run("npm", ["pack", "--ignore-scripts", "--json"]);
+    expect(packed.status, packed.stderr).toBe(0);
+    const [contents] = JSON.parse(packed.stdout);
+    expect(contents.bundled).toEqual(expect.arrayContaining([sdkName, ...publicDependencies]));
+    rmSync(path.join(root, "node_modules", "@connectrpc", "connect-node"), { recursive: true });
+    const broken = probe("check");
+    expect(broken.status).toBe(1);
+    expect(broken.stderr).toContain("npm run dev:setup");
+  }, 60_000);
+
+  it("rejects a changed archive before creating an npm cache", () => {
+    const { root, probe } = fixture();
+    const archive = path.join(
+      root,
+      "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.0.116.tgz",
+    );
+    writeFileSync(archive, "corrupted archive");
+    const result = probe("prepare");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("integrity");
+    expect(existsSync(path.join(root, "cache"))).toBe(false);
+  });
+});

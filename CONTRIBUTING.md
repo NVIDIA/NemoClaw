@@ -59,6 +59,10 @@ host, Docker, GitHub authentication, contributor identity, and commit-signing pr
 changing them. Follow its remediation and rerun the doctor until it
 passes.
 
+Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
+SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.
+See the [SDK archive guidance](scripts/vendor/openshell-sdk/README.md) for direct dependency installation and SDK updates.
+
 Use `./scripts/dev-setup.sh --with-runtime` only when the change needs runtime validation. Use
 `./scripts/dev-setup.sh --expose-cli` only when you need a development `nemoclaw` command. Run
 `npm run agent` to launch the repository-pinned coding agent.
