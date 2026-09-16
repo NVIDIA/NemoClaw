@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
+import { createSdkOpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -37,18 +38,9 @@ import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
 } from "./podman-preflight";
-import {
-  PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
-  recoverPodmanSandbox,
-  startPodmanSandbox,
-  stopPodmanSandbox,
-} from "./podman-lifecycle";
+import { PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS } from "./podman-lifecycle";
 import { createPodmanPrivilegedSandboxControl } from "./podman-privileged-sandbox-control";
-import {
-  inspectPodmanHost,
-  type PodmanHostPreflightOptions,
-  qualifyPodmanHost,
-} from "./podman-preflight";
+import { inspectPodmanHost, type PodmanHostPreflightOptions } from "./podman-preflight";
 import {
   createCurrentPodmanOperationEngine,
   capturePodmanDestroyIdentity,
@@ -91,6 +83,13 @@ export interface PodmanHostLocalInferenceOptions {
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly captureSandboxLifecycle?: (
+    args: string[],
+    environment: NodeJS.ProcessEnv,
+    timeoutMs: number,
+  ) =>
+    | { readonly status: number; readonly output: string; readonly error?: Error }
+    | Promise<{ readonly status: number; readonly output: string; readonly error?: Error }>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly gatewaySocketPath?: string;
   readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
@@ -169,19 +168,38 @@ function requireEngine(
 }
 
 function preflightLifecycle(
-  input: RuntimeProviderLifecycleInput,
-  engine: PodmanContainerEngine,
-  options: PodmanHostPreflightOptions,
+  _input: RuntimeProviderLifecycleInput,
+  _engine: PodmanContainerEngine,
+  _options: PodmanHostPreflightOptions,
 ): RuntimeProviderLifecycleResult | null {
-  try {
-    qualifyPodmanHost(engine, options);
-    return null;
-  } catch (error) {
+  return null;
+}
+
+async function runOpenShellLifecycle(
+  action: "start" | "stop",
+  input: RuntimeProviderLifecycleInput,
+  capture: NonNullable<PodmanRuntimeProviderOptions["captureSandboxLifecycle"]>,
+): Promise<RuntimeProviderLifecycleResult> {
+  const result = await capture(
+    ["sandbox", action, "-g", input.sandbox.gatewayName ?? "nemoclaw", input.sandboxName],
+    input.environment,
+    PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+  );
+  if (result.status !== 0 || result.error) {
+    const detail = (result.output || result.error?.message || "unknown failure")
+      .replace(/\s+/gu, " ")
+      .trim();
     return {
       exitCode: 1,
-      message: `  ${error instanceof Error ? error.message : String(error)}`,
+      message:
+        `  OpenShell could not ${action} sandbox '${input.sandboxName}'` +
+        ` (exit ${String(result.status)}): ${detail}.`,
     };
   }
+  input.log(
+    `  Sandbox '${input.sandboxName}' ${action === "start" ? "started" : "stopped"} through OpenShell.`,
+  );
+  return { exitCode: 0 };
 }
 
 /** Construct the Podman provider from explicitly scoped operation authorities. */
@@ -198,6 +216,25 @@ export function createPodmanRuntimeProviderBundle(
     workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
+  const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle();
+  const captureSandboxLifecycle =
+    options.captureSandboxLifecycle ??
+    (async (args: string[]) => {
+      const request = {
+        sandboxName: String(args[4]),
+        target: { kind: "named" as const, gatewayName: String(args[3]) },
+      };
+      const result =
+        args[1] === "start"
+          ? await sdkLifecycle.startSandbox(request)
+          : await sdkLifecycle.stopSandbox(request);
+      if (result.kind === "accepted") return { status: 0, output: "" };
+      return {
+        status: 1,
+        output: result.error.message,
+        error: new Error(result.error.message),
+      };
+    });
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
   const containerEngineOperations = new Map([
     ["host-doctor", hostDoctor],
@@ -245,7 +282,6 @@ export function createPodmanRuntimeProviderBundle(
     }
   }
   const preflight = options.preflight ?? {};
-  const environment = Object.freeze({ ...(options.environment ?? process.env) });
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
   const projectGatewayHostRuntime = (
     input: Parameters<RuntimeProviderBundle["gateway"]["prepareHostRuntime"]>[0],
@@ -371,9 +407,13 @@ export function createPodmanRuntimeProviderBundle(
         sandboxLifecycle,
         workloadCleanup,
       ),
-      start: (input) => startPodmanSandbox(input, sandboxLifecycle),
+      start: (input) => runOpenShellLifecycle("start", input, captureSandboxLifecycle),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: (input, hooks) => stopPodmanSandbox(input, hooks, sandboxLifecycle),
+      stop: async (input, hooks) => {
+        hooks.beforeStop();
+        const result = await runOpenShellLifecycle("stop", input, captureSandboxLifecycle);
+        return result.exitCode === 0 ? { ...result, state: "stopped" as const } : result;
+      },
     },
     mutationAuthority: {
       providerId,
@@ -391,16 +431,10 @@ export function createPodmanRuntimeProviderBundle(
     recovery: {
       providerId,
       supported: true,
-      recover: (sandbox) =>
-        recoverPodmanSandbox(
-          {
-            environment,
-            log: () => undefined,
-            sandbox,
-            sandboxName: sandbox.name,
-          },
-          sandboxLifecycle,
-        ),
+      recover: (sandbox) => ({
+        exitCode: 1,
+        message: `OpenShell owns lifecycle recovery for sandbox '${sandbox.name}'.`,
+      }),
     },
     cleanup:
       workloadCleanup === undefined

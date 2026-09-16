@@ -430,9 +430,9 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     expect(beforeStop).toHaveBeenCalledOnce();
   });
 
-  it("keeps an already-stopped sandbox idempotent without calling OpenShell (#11251)", async () => {
-    const captureSandboxLifecycle = vi.fn(poison);
-    const beforeStop = vi.fn(poison);
+  it("delegates stop to OpenShell without trusting container state (#11905)", async () => {
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "stopped" }));
+    const beforeStop = vi.fn();
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
       findLabeledSandboxContainers: () => [
@@ -446,10 +446,10 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
       await supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop }),
     ).toEqual({
       exitCode: 0,
-      state: "already-stopped",
+      state: "stopped",
     });
-    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
-    expect(beforeStop).not.toHaveBeenCalled();
+    expect(captureSandboxLifecycle).toHaveBeenCalledOnce();
+    expect(beforeStop).toHaveBeenCalledOnce();
   });
 });
 
@@ -490,28 +490,24 @@ describe("Docker provider start with a running container", () => {
     });
   });
 
-  it("still reports a Ready sandbox as already running (#11790)", async () => {
+  it("delegates start to OpenShell when the prior phase was Ready (#11905)", async () => {
     const { captureSandboxLifecycle, provider, sandboxNeedsLifecycleStart } =
       startWithPhase("Ready");
 
     expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 0,
     });
-    expect(sandboxNeedsLifecycleStart).toHaveBeenCalledWith(
-      "alpha",
-      "nemoclaw",
-      expect.any(Object),
-    );
-    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(sandboxNeedsLifecycleStart).not.toHaveBeenCalled();
+    expect(captureSandboxLifecycle).toHaveBeenCalledOnce();
   });
 
-  it("does not start the sandbox when the phase cannot be observed", async () => {
+  it("delegates start to OpenShell when the prior phase cannot be observed (#11905)", async () => {
     const { captureSandboxLifecycle, provider } = startWithPhase(null);
 
     expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 0,
     });
-    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(captureSandboxLifecycle).toHaveBeenCalledOnce();
   });
 
   it("starts a running Stopped sandbox even when a GPU backup sibling exists", async () => {
