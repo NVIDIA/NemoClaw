@@ -203,14 +203,11 @@ describe("Docker daemon outage classification (#4428)", () => {
   });
 
   it("start reports Docker permission failures without daemon-start guidance (#11715)", () => {
-    const { callLog, home, env } = setupDockerOutageEnv(
-      "nemoclaw-cli-11715-start-permission-",
-      {
-        dockerInfoOk: false,
-        dockerInfoError: "permission denied while connecting to the Docker socket",
-        logCalls: true,
-      },
-    );
+    const { callLog, home, env } = setupDockerOutageEnv("nemoclaw-cli-11715-start-permission-", {
+      dockerInfoOk: false,
+      dockerInfoError: "permission denied while connecting to the Docker socket",
+      logCalls: true,
+    });
     try {
       const r = runWithEnv("v053-baseline start", env);
       expect(r.code).toBe(1);

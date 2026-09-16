@@ -9,9 +9,9 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { isDockerInfoResultReachable } from "../../domain/docker-host";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
+import { redactOnboardCommandDiagnosticText } from "../../onboard/diagnostics/redaction";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
 import type { RuntimeProviderSnapshotLifecycleState } from "../../onboard/runtime-provider/contract";
-import { redactFull } from "../../security/redact";
 import {
   inspectPortableRuntimeReceiptReadiness,
   type PortableRuntimeReceiptReadinessDeps,
@@ -32,9 +32,7 @@ type DockerRuntimeFailure = {
   detail: string;
 };
 
-type DockerRuntimeProbeResult =
-  | { reachable: true }
-  | ({ reachable: false } & DockerRuntimeFailure);
+type DockerRuntimeProbeResult = { reachable: true } | ({ reachable: false } & DockerRuntimeFailure);
 
 const dockerRuntimeFailures = new Map<string, DockerRuntimeFailure>();
 
@@ -77,7 +75,7 @@ export type SandboxContainerFailureRunners = {
 
 function dockerDiagnosticText(value: unknown): string {
   const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value ?? "");
-  return redactFull(raw).trim().replace(/\s+/gu, " ");
+  return redactOnboardCommandDiagnosticText(raw).trim().replace(/\s+/gu, " ");
 }
 
 function probeDockerRuntime(): DockerRuntimeProbeResult {
