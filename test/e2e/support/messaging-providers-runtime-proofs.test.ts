@@ -1087,12 +1087,22 @@ describe("messaging provider installed-runtime proofs", () => {
     ).toBe(false);
   });
 
-  it("loads Slack through its native extension root and nested OpenClaw symlink", () => {
+  it("loads Slack through the native root reported by OpenClaw inspection", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-root-"));
     const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
     const openclawPackageRoot = path.join(installRoot, "openclaw");
-    const slackPackageRoot = path.join(dir, "state", "extensions", "slack");
+    const slackPackageRoot = path.join(
+      dir,
+      "state",
+      "npm",
+      "projects",
+      "openclaw-slack-0123456789",
+      "node_modules",
+      "@openclaw",
+      "slack",
+    );
     const globalNodeModules = path.join(dir, "lib", "node_modules");
+    const binDir = path.join(dir, "bin");
     try {
       fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
       fs.writeFileSync(
@@ -1140,8 +1150,19 @@ describe("messaging provider installed-runtime proofs", () => {
         path.join(installRoot, "fast-uri", "package.json"),
         JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
       );
-      fs.mkdirSync(path.join(globalNodeModules, "@openclaw"), { recursive: true });
-      fs.symlinkSync(slackPackageRoot, path.join(globalNodeModules, "@openclaw", "slack"), "dir");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(binDir, "openclaw"),
+        [
+          "#!/usr/bin/env node",
+          'process.stdout.write("[proxy] inspected native plugin\\n");',
+          "process.stdout.write(JSON.stringify({",
+          '  plugin: { id: "slack", rootDir: process.env.NEMOCLAW_TEST_SLACK_ROOT },',
+          "}, null, 2));",
+          'process.stdout.write("\\n");',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
       const source = [
         'import { execFileSync } from "node:child_process";',
@@ -1165,7 +1186,9 @@ describe("messaging provider installed-runtime proofs", () => {
         env: {
           ...process.env,
           OPENCLAW_PACKAGE_ROOT: path.join(globalNodeModules, "openclaw"),
-          OPENCLAW_STATE_DIR: path.join(dir, "state"),
+          OPENCLAW_STATE_DIR: path.join(dir, "empty-state"),
+          NEMOCLAW_TEST_SLACK_ROOT: slackPackageRoot,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
         input: source,
       });

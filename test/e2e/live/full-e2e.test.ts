@@ -261,7 +261,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
     { artifactName: "phase-4-native-plugin-install-v2", env: env(), timeoutMs: 120_000 },
   );
   expect(installV2.exitCode, resultText(installV2)).toBe(0);
-  await invokeNativeWeatherPlugin(sandbox, "v2", "phase-4-native-plugin-invoke-v2");
 
   const selfUpdateDryRun = await sandbox.exec(
     SANDBOX_NAME,

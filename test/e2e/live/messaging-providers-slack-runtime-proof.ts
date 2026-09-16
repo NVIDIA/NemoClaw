@@ -86,6 +86,18 @@ function resolveOpenClawSlackApiLocation() {
     addCoreCandidate(path.join(globalRoot, "openclaw"));
   } catch {}
   try {
+    const inspectArgs = ["plugins", "inspect", "slack", "--json"];
+    const inspectOutput = execFileSync(
+      "openclaw",
+      inspectArgs,
+      {
+        encoding: "utf8",
+        env: { ...process.env, HOME: "/sandbox" },
+      },
+    );
+    addExternalCandidate(
+      JSON.parse(inspectOutput.slice(inspectOutput.indexOf("{")).trim()).plugin.rootDir,
+    );
     const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw || true"], {
       encoding: "utf8",
     }).trim();
