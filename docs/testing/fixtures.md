@@ -177,6 +177,8 @@ The bundle fixture is `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_re
 
 ## Hermes Native API Lifecycle
 
+This section tests the default local Hermes adapter, with Relay tracing omitted.
+
 Build a fresh Hermes image using the [runtime procedure](../agents.md#runtime-lifecycle).
 From the repository root, test native authentication and shutdown without networking:
 
@@ -218,3 +220,23 @@ It does not qualify browser rendering, interactive terminal behavior, or live Op
 Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with a verified bundle to check retained interface intent through SDK apply, CLI export, reapply, drift rejection, and destroy.
 
 [Recorded Hermes results](../validation/rust-hermes-native-interfaces-linux-arm64.json) identify the pinned sources, tested local image, and separate bundle-fixture limits.
+
+## Hermes Relay Tracing Fixture
+
+Use the [inference fixture prerequisites](#inference-api-fixtures) and a Hermes image built from the current recipe.
+From the repository root, replace the image placeholder with that local image:
+
+```sh
+python3 tools/fabric-adapter-experiment.py --harness hermes --hermes-relay --inference-api openai-completions --image YOUR_BUILT_IMAGE
+```
+
+The parser requires an explicit API with `--hermes-relay`; do not add `--interfaces`, which conflicts with this adapter mode.
+The test runs disposable containers with networking disabled and a local model-protocol fixture.
+It invokes the real adapter twice and checks nonempty ATOF events and ATIF trajectories plus absence of the fixture credential string.
+That narrow credential assertion does not establish general redaction or production privacy.
+
+Expect a successful exit and `relay` evidence in the printed directory's `proof.json`.
+The host retains logs, request records, proof, and a copy of `/sandbox/artifacts` under the evidence directory's `artifacts/` folder, including Relay traces and native runtime-home data.
+Inspect those retained files privately before sharing, and remove only your test's evidence directory when it is no longer needed.
+On failure, inspect the retained diagnostics, correct the fixture/image mismatch, and rerun with an owned test image.
+This is an offline tracing check, not live Hermes/Relay or OpenShell qualification.

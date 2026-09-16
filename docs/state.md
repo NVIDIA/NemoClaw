@@ -34,8 +34,10 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
 | First OpenClaw agent's working files | `/sandbox/workspace` |
 | Additional declared OpenClaw agents' working files | `/sandbox/workspaces/<agent-name>` |
-| Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
-| Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
+| Default local Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
+| Default local Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
+| Experimental Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
+| Experimental Hermes Relay native home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
 | Pi conversation | Held in the running Pi process; changing its model or restarting the runtime loses the in-memory conversation |
 
 The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) and [interface guide](interfaces.md) define these locations.

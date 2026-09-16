@@ -299,7 +299,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 120-second wait |
 | Apply's API probe | Fixed 90-second sandbox execution; non-Pi HTTP probes abort after 80 seconds |
-| Managed vLLM apply's native reply probe | OpenClaw: 300-second native turn; Hermes: 280-second HTTP request within a 300-second Fabric probe; both have a 360-second sandbox-execution bound |
+| Managed vLLM apply's native reply probe | OpenClaw: 300-second native turn; local Hermes: 280-second HTTP request within a 300-second Fabric probe; Relay Hermes: 300-second Fabric probe; all have a 360-second sandbox-execution bound |
 
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.

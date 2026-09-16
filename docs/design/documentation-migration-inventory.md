@@ -246,7 +246,7 @@ These additions are required even when no old page maps to them directly.
 | Ten Fabric harnesses with differing API/management support | `agents.md`, `inference.md` | D05, D06 | Written: [matrix](../reference/fabric-harnesses.md), [APIs](../inference.md#choose-the-request-api), [native access](../agents.md#choose-native-access); parser/adapter tests. Other first-message interfaces and release matrix require implementation/qualification. |
 | Declarative OpenClaw roster, read-only tools, disclosure, execution, and interface settings | `agents.md`, `interfaces.md` | D06 | Written: [roster/tools](../agents.md#multiple-openclaw-agents-and-tool-restrictions), [execution](../agents.md#openclaw-execution-settings), [interfaces](../interfaces.md#openclaw-dashboard); schema/native fixtures. Browser/live-forward rehearsal remains open. |
 | Hermes API/dashboard/TUI session separation and credentials | `interfaces.md`, `security.md` | D06, D08 | Written: [session and interface boundary](../interfaces.md#hermes-api-dashboard-and-browser-tui), [credentials](../security.md#credentials-and-authentication); native HTTP/WebSocket fixtures. Browser rendering/live access requires rehearsal. |
-
+| Experimental Hermes Relay tracing and its adapter/control boundary | `agents.md`, `state.md`, `security.md`, `testing/fixtures.md` | D06, D08 | Written: [Relay mode](../agents.md#hermes-relay-tracing), [state paths](../state.md#native-agent-files), [privacy/control limits](../security.md#retained-data-and-telemetry), [offline fixture](../testing/fixtures.md#hermes-relay-tracing-fixture); Fabric configuration and observability tests from `2dbf4b809f`. General interactive access, production compatibility tuple, security and live qualification remain gates. |
 
 ## Remaining Gates and Sequence
 
@@ -262,9 +262,10 @@ Use these gates to schedule the remaining work; do not create a new how-to from 
 | Distribution and support — release owner + SDK/provider maintainer | Candidate versions/artifacts and support policy are selected | Published installation path, version compatibility, provider direct-use contract, client skill discovery, approved platform matrix and release notes |
 | Publication cutover — docs tooling/release owners | Candidate content and main publisher coordination are ready | Reviewed main snapshot, full hosted legacy route/anchor sweep, version-scoped search/MCP if offered, staging checks and public rollback rehearsal; keep public cutover disabled until then |
 
-The main delta through `3723c7ad1d24931310fd4cf80bcb1671d392b2f1` changes six existing inventory topics and adds no non-changelog MDX sources.
+The main delta through `4c4de3abbda81fea3e85d2471a323d10f5f60739` changes six existing inventory topics and adds no non-changelog MDX sources.
 Those changes clarify Portable AMD64 restrictions and earlier `start`/`recover`/`destroy` behavior; their v1 owners already separate platform qualification, explicit reconciliation, and retention.
 They do not introduce v1 commands or support claims.
+The v1 reconciliation includes the concurrent Hermes Relay addition at `2dbf4b809f429e880a10c276aa3e4d2a115c6ba1`, with its own new-surface row and qualified default-adapter claims.
 The imported main snapshot remains pinned independently by `fern/main-source.json`; refresh it only under the publication procedure.
 
 ## Evidence References
