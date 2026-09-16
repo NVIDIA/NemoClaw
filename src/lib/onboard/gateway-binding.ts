@@ -222,7 +222,12 @@ export interface DynamicGatewayRuntimeDeps {
   getGatewayName(): string;
   getGatewayPort(): number;
   getDockerDriverGatewayEndpoint: typeof import("./docker-driver-gateway-env").getDockerDriverGatewayEndpoint;
-  getGatewayClusterImageDrift: typeof import("../adapters/openshell/gateway-drift").getGatewayClusterImageDrift;
+  getGatewayClusterImageDrift: (
+    options?: import("../adapters/openshell/gateway-drift").GatewayDriftOptions,
+  ) =>
+    | import("../adapters/openshell/gateway-drift").GatewayClusterImageDrift
+    | null
+    | Promise<import("../adapters/openshell/gateway-drift").GatewayClusterImageDrift | null>;
   probeGatewayHttpReady: typeof import("./gateway-http-readiness").isGatewayHttpReady;
   probeDockerDriverGatewayHttpReady: typeof import("./gateway-http-readiness").isDockerDriverGatewayHttpReady;
   waitForGatewayHttpReadyBase: typeof import("./gateway-http-readiness").waitForGatewayHttpReady;

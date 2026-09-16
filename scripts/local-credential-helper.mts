@@ -23,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 =
-  "5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8"; // gitleaks:allow -- checked-in SHA-256 integrity pin
+  "cdd85dc6a0b31a8b9773e7ddaacb38a4e8162b0a13b70bebef3dc297ae7a6c44"; // gitleaks:allow -- checked-in SHA-256 integrity pin
 
 export const LOCAL_CREDENTIAL_HELPER_HOST = "127.0.0.1";
 export const LOCAL_CREDENTIAL_FORM_PATH = "/local-credential-form.html";
@@ -110,6 +110,7 @@ const FORBIDDEN_CHILD_ENV_NAMES = new Set([
   "NO_PROXY",
   "NETRC",
   "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+  "NEMOCLAW_BOOTSTRAP_FETCH_REF",
   "NEMOCLAW_BOOTSTRAP_PAYLOAD",
   "NEMOCLAW_INSTALL_REF",
   "NEMOCLAW_INSTALL_TAG",

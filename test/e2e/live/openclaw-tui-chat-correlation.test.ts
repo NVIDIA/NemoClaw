@@ -48,9 +48,8 @@ import {
   normalizeIssue2603Trace,
 } from "./openclaw-tui-run-classification.ts";
 
-// Reuses the standard ubuntu-repo-docker environment with the
-// `cloud-openclaw` onboarding profile (already in
-// `runtime-support.ts:SUPPORTED_ONBOARDING`). We don't route through the
+// Reuses the standard Ubuntu environment with the `cloud-openclaw`
+// onboarding profile. We don't route through the
 // target registry because the registry is keyed on steady-state
 // expected-state probes; this test's regression-target probes are bespoke
 // websocket-trace assertions that don't fit the

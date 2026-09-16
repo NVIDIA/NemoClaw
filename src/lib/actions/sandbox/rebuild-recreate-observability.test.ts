@@ -399,10 +399,7 @@ describe("runRebuildRecreatePhase handoff", () => {
       expect(observedRestoreSentinel).toBeUndefined();
       expect(process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE).toBe("1");
     } finally {
-      restoreEnv(
-        "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
-        previousRestoreLatestBackup,
-      );
+      restoreEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", previousRestoreLatestBackup);
     }
   });
 

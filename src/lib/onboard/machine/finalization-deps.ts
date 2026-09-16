@@ -351,14 +351,26 @@ export function ordinaryOpenClawPairingIncompleteMessage(
 }
 
 export const finalizationHandlerDeps = {
-  waitForSandboxControlPlaneReady(name: string): boolean {
+  async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime
       .loadProcessRecovery()
       .waitForRecreatedSandboxOpenShellReady(name);
   },
-  checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
+  async checkAndRecoverSandboxProcesses(
+    name: string,
+    options: { quiet: boolean },
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv,
+  ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    processRecovery.checkAndRecoverSandboxProcesses(name, options);
+    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
+      ...options,
+      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+    });
+    return (
+      result.checked === true &&
+      (result.wasRunning !== false || result.recovered === true) &&
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
+    );
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

@@ -43,19 +43,19 @@ describe("local model installer gate", () => {
     expect(output).toContain("non_interactive=1 source=the --local-model-runtime flag");
   });
 
-  it.each([
-    "llama-cpp",
-    "unknown",
-  ])("rejects the unsupported %s local model runtime before installer work", (runtime) => {
-    const result = runInstallerMain([`--local-model-runtime=${runtime}`]);
-    const output = `${result.stdout}${result.stderr}`;
+  it.each(["llama-cpp", "unknown"])(
+    "rejects the unsupported %s local model runtime before installer work",
+    (runtime) => {
+      const result = runInstallerMain([`--local-model-runtime=${runtime}`]);
+      const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status).not.toBe(0);
-    expect(output).toContain(
-      "--local-model-runtime must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER",
-    );
-    expect(output).not.toContain("HARNESS_REACHED");
-  });
+      expect(result.status).not.toBe(0);
+      expect(output).toContain(
+        "--local-model-runtime must be vllm; select install-llama-cpp with NEMOCLAW_PROVIDER",
+      );
+      expect(output).not.toContain("HARNESS_REACHED");
+    },
+  );
 
   it.each([
     ["provider", { NEMOCLAW_PROVIDER: "install-vllm" }],

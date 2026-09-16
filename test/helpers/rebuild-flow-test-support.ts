@@ -12,7 +12,7 @@ import type {
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
-import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import type { SandboxEntry, SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
   (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
@@ -35,6 +35,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  useRealPortableRetirementBoundary?: boolean;
   agentName?: string;
   sessionAgentName?: string | null;
   entryUpdatesAfterVersionCheck?: Record<string, unknown>;
@@ -110,6 +111,11 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
+    runtimeSelection?: {
+      gatewayName: string;
+      workspace: "default";
+      localTlsDir?: string;
+    };
     policyHandoff?: string;
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
@@ -188,6 +194,7 @@ export type RebuildFlowHarness = {
   prepareManagedDcodeRebuildImageSpy: MockInstance;
   preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   registryUpdateSpy: MockInstance;
+  getSandboxEntry: () => SandboxEntry;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;
   registerSandboxEntry: (name: string) => void;

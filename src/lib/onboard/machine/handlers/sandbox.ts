@@ -113,7 +113,6 @@ import {
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
-  mcpRegistryRemovalBlockReason,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -187,6 +186,8 @@ export interface SandboxStateOptions<
   hermesPortableLifecycle?: boolean;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   apfInterceptorRequested?: boolean;
+  /** A validated external component limits this run to one new sandbox. */
+  externalComponentRegistered?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Explicit Deferred N1x managed-vLLM choice admitted by preflight. */
@@ -761,7 +762,7 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
-    const dcodeResumeSignals = dcodeResume.resolveSignals(
+    const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
       sandboxReuseState,
@@ -2372,16 +2373,6 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
-    const mcpBlockReason = mcpRegistryRemovalBlockReason(
-      decision,
-      state.sandboxName,
-      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
-      this.deps.getSandboxRegistryEntry,
-    );
-    if (mcpBlockReason) {
-      this.deps.error(mcpBlockReason);
-      return this.deps.exitProcess(1);
-    }
     this.assertExistingMessagingPlanTargetsSandbox(state);
     let nextState = state.sandboxName
       ? this.checkpointSandboxName(state, state.sandboxName)
@@ -2536,7 +2527,7 @@ class SandboxStateFlow<
       webSearchSupported: state.webSearchSupported,
       session: state.session,
       stateResult:
-        this.options.apfInterceptorRequested === true
+        this.options.apfInterceptorRequested === true && !this.options.externalComponentRegistered
           ? completeOnboardMachine({}, metadata)
           : branchTo(this.options.agent ? "agent_setup" : "openclaw", { metadata }),
     };
@@ -2556,6 +2547,14 @@ class SandboxStateFlow<
       this.applyObservabilityRequest(this.prepareWebSearchSupport()),
     );
     const decision = await this.resolveResumeDecision(initialState);
+    if (
+      this.options.externalComponentRegistered === true &&
+      (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create")
+    ) {
+      throw new Error(
+        "External component onboarding requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
+      );
+    }
     const completedState =
       decision.kind === "reuse"
         ? await this.reuseSandbox(initialState)

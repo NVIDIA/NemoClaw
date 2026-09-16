@@ -67,7 +67,9 @@ describe("sandbox BuildKit prebuild", () => {
   ] as const)("classifies an explicit %s context without invoking Docker", (context, expected) => {
     const showContext = vi.fn(() => "default");
 
-    expect(dockerContextIsDefaultFromBuild({ DOCKER_CONTEXT: context }, showContext)).toBe(expected);
+    expect(dockerContextIsDefaultFromBuild({ DOCKER_CONTEXT: context }, showContext)).toBe(
+      expected,
+    );
     expect(showContext).not.toHaveBeenCalled();
   });
 

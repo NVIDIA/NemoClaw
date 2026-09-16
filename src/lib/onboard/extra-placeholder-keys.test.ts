@@ -191,9 +191,7 @@ describe("registerExtraPlaceholderProviders", () => {
             envKey: "SLACK_BOT_TOKEN",
             token: "slack-token",
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "SLACK_BOT_TOKEN_AGENT_B", token: "slack-token-B" },
-            ],
+            additionalCredentials: [{ envKey: "SLACK_BOT_TOKEN_AGENT_B", token: "slack-token-B" }],
           },
         ]);
       },
@@ -223,9 +221,7 @@ describe("registerExtraPlaceholderProviders", () => {
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", token: null },
-            ],
+            additionalCredentials: [{ envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", token: null }],
           },
         ]);
       },
@@ -271,7 +267,6 @@ describe("registerExtraPlaceholderProviders", () => {
       },
     );
   });
-
 });
 
 describe("appendExtraPlaceholderKeysEnvArg", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
@@ -104,6 +105,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   provider: string;
   model: string;
   runOpenshell: CompatibleEndpointSmokeRun;
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
   redact: (value: string) => string;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -129,6 +131,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
+  const target = { kind: "selected" } as const;
   const adapter = createCliOpenShellProviderAdapter({
     run: (command, runOptions) => {
       const result = options.runOpenshell(command, runOptions);
@@ -146,7 +149,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     },
   });
   const providerResult = await adapter.getProvider({
-    target: { kind: "selected" },
+    target,
     providerName: options.provider,
   });
 
@@ -176,27 +179,18 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
         options.hostLocalInferenceProofAuthority,
       )
     : buildCompatibleEndpointSandboxSmokeCommand(options.model);
-  const smokeResult = options.runOpenshell(
-    forceCanonicalRoute
-      ? ["sandbox", "exec", "-n", options.sandboxName, "--", "python3", "-c", script]
-      : ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: forceCanonicalRoute
-        ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
-        : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
-    },
-  );
-  const smokeOutput = [
-    spawnOutputToString(smokeResult.stdout),
-    spawnOutputToString(smokeResult.stderr),
-  ]
-    .join("\n")
-    .trim();
+  const smokeResult = await options.sandboxCommandExecutor.runBuffered({
+    sandboxName: options.sandboxName,
+    target,
+    command: forceCanonicalRoute ? ["python3", "-c", script] : ["sh", "-lc", script],
+    timeoutMilliseconds: forceCanonicalRoute
+      ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
+      : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
+  });
+  const smokeOutput = [smokeResult.stdout, smokeResult.stderr].join("\n").trim();
+  const smokeStatus = smokeResult.outcome.kind === "completed" ? smokeResult.outcome.exitCode : 1;
 
-  if (smokeResult.status !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
+  if (smokeStatus !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
     console.error(
       options.forceCanonicalRoute
         ? "  Provider-neutral sandbox inference smoke check failed."
@@ -208,7 +202,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
-    process.exit(smokeResult.status || 1);
+    process.exit(smokeStatus || 1);
   }
 
   options.beforeSuccess?.();

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-analyze-ci-performance
-description: Analyze retained NemoClaw CI timing evidence for slow CLI tests or base-image publication latency. Use for CI performance, slow tests, Vitest timing artifacts, base-image publication timing, runner queue latency, or publication-gate analysis.
+description: "Analyze retained NemoClaw CI timings for slow CLI tests, runner queues, or base-image publication."
 user_invocable: true
 ---
 

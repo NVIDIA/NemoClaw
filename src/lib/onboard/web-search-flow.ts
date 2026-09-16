@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createCurlAuthConfig } from "../adapters/http/auth-config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { AgentDefinition } from "../agent/defs";
@@ -67,7 +68,7 @@ export interface WebSearchFlowDeps {
   note(message: string): void;
   isNonInteractive(): boolean;
   cliName(): string;
-  runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   env?: NodeJS.ProcessEnv;
   getCredential?: (envKey: string) => string | null;
   saveCredential?: (envKey: string, value: string) => void;
@@ -105,7 +106,7 @@ export interface WebSearchFlowHelpers {
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
     provider: WebSearchProvider,
-  ): boolean;
+  ): Promise<boolean>;
 }
 
 export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFlowHelpers {
@@ -478,13 +479,13 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
   }
 
-  function verifyWebSearchInsideSandbox(
+  async function verifyWebSearchInsideSandbox(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
     provider: WebSearchProvider,
-  ): boolean {
-    return verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, provider, {
-      runCaptureOpenshell: deps.runCaptureOpenshell,
+  ): Promise<boolean> {
+    return await verifyWebSearchInsideSandboxWithDeps(sandboxName, agent, provider, {
+      commandExecutor: deps.commandExecutor,
       cliName: deps.cliName,
       webSearchEnvFor,
       webSearchLabelFor,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as onboardSession from "../../state/onboard-session";
 
 const phaseMocks = vi.hoisted(() => ({
   clearHermesHandoff: vi.fn(),
@@ -11,6 +12,7 @@ const phaseMocks = vi.hoisted(() => ({
   findRecoveryBackup: vi.fn(),
   isRecoveryCleanupOnly: vi.fn(),
   markRecoveryCleanupOnly: vi.fn(),
+  observeMcpStateForRebuild: vi.fn(() => ({ entries: [] })),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -21,6 +23,12 @@ const phaseMocks = vi.hoisted(() => ({
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runRestore: vi.fn(),
+  recordSandboxStopIntent: vi.fn(),
+}));
+
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
+  recordSandboxStopIntent: phaseMocks.recordSandboxStopIntent,
 }));
 
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
@@ -88,6 +96,11 @@ vi.mock("./rebuild-restore-phase", () => ({
   runRebuildRestorePhase: phaseMocks.runRestore,
 }));
 
+vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
+  observeMcpStateForRebuild: phaseMocks.observeMcpStateForRebuild,
+}));
+
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-post-restore-phase")>()),
   recoverHermesCronRestore: phaseMocks.recoverCronRestore,
@@ -128,6 +141,7 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.isRecoveryCleanupOnly.mockReturnValue(false);
     phaseMocks.markRecoveryCleanupOnly.mockImplementation(() => undefined);
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
+    phaseMocks.recordSandboxStopIntent.mockReturnValue(true);
     phaseMocks.runPostRestore.mockResolvedValue({ mutableConfigPermissionsVerified: true });
     phaseMocks.retireRemovedImmutabilityStateRecord.mockReturnValue(true);
     phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
@@ -250,10 +264,75 @@ describe("Hermes accepted replacement recovery", () => {
       "alpha",
       "mutable-rebuild",
     );
+    expect(phaseMocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "alpha",
+      false,
+      expect.any(Function),
+    );
     expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledTimes(2);
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+  });
+
+  it("observes current MCP sources when another sandbox owns the recovery transaction", async () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      checkpoint: { sandboxRecreate: { sandboxName: "beta" } },
+    } as never);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.observeMcpStateForRebuild).toHaveBeenCalledWith(
+      { name: "alpha" },
+      undefined,
+      true,
+    );
+  });
+
+  it("uses prepared recovery state without executing a stopped source sandbox", async () => {
+    const preflight = await phaseMocks.runPreflight();
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...preflight,
+      recoveryManifest: {
+        backupPath: recoveryBackupPath,
+        timestamp: "2026-08-28T00-00-00-000Z",
+        rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+        rebuildMcpHandoff: {
+          entries: [],
+          runtimeSelection: { gatewayName: gatewayAuthority.gatewayName, workspace: "default" },
+        },
+      },
+    });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+  });
+
+  it("retries intentional-stop cleanup before accepting recovered replacement", async () => {
+    phaseMocks.recordSandboxStopIntent.mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(bail).toHaveBeenCalledWith(
+      "Sandbox 'alpha' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw alpha rebuild --yes' before another lifecycle command.",
+    );
+    expect(phaseMocks.runRestore).not.toHaveBeenCalled();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.recordSandboxStopIntent).toHaveBeenCalledTimes(2);
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
   });
 
   it("retains removed Shields state when the rebuilt Hermes mutable posture is unverified", async () => {

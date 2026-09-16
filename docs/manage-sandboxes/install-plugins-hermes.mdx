@@ -36,7 +36,7 @@ The gateway target depends on the container process topology.
 | Topology | Gateway process | Gateway lazy-install target | Access and replacement boundary |
 |---|---|---|---|
 | Direct root-entrypoint topology | Root PID 1 launches the gateway under the separate `gateway` UID. | `/run/nemoclaw/hermes-gateway-lazy-packages` | The directory is gateway-owned with mode `0700`, so the `sandbox` UID cannot read or modify it. A rebuild or replacement container receives a newly created private directory, and Hindsight startup reinstalls the supported client. |
-| OpenShell-managed same-UID topology | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds and transactional container replacements. |
+| OpenShell-managed same-UID topology | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds. |
 
 Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
 
@@ -83,7 +83,7 @@ Verify the provider and dependency after the restart:
 
 ```bash
 nemohermes <name> exec -- hermes memory status
-nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; print(hindsight_client.__version__)'
+nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; from importlib.metadata import version; print(version("hindsight-client"))'
 nemohermes <name> status
 ```
 
@@ -155,10 +155,19 @@ my-hermes-plugin-sandbox/
 If you start from the stock NemoClaw Hermes Dockerfile, keep the NemoClaw Hermes image contract intact.
 The image must still include the generated Hermes config, NemoClaw Hermes plugin, blueprint files, `nemoclaw-start` entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library.
 
+Start a standalone custom Dockerfile from the published complete image, which already carries every managed Hermes layer:
+
+```dockerfile
+FROM ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:<digest>
+```
+
+Releases publish `ghcr.io/nvidia/nemoclaw/hermes-sandbox:<release>` and its digest alongside `openclaw-sandbox`.
+Pin the digest rather than a tag so rebuilds stay reproducible.
+
 <Warning>
   A custom `--from` Dockerfile replaces the normal NemoClaw Hermes Dockerfile.
-  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough.
-  Your Dockerfile must also preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile`.
+  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough: the platform base does not include the managed Hermes layers.
+  Extend the complete `ghcr.io/nvidia/nemoclaw/hermes-sandbox` image, or preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile` yourself.
 </Warning>
 
 If `gateway restart` or `recover` reports `privileged control unavailable` for an older custom image, update the Dockerfile to the current Hermes image contract and rebuild it with `nemohermes <name> rebuild --yes`.

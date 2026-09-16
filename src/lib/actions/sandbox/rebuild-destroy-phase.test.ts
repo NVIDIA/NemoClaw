@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   reattachMcpAfterDeleteFailure: vi.fn(),
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
+  waitUntilAsync: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
@@ -48,6 +49,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../core/wait", () => ({
   waitUntil: mocks.waitUntil,
+  waitUntilAsync: mocks.waitUntilAsync,
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -202,7 +204,40 @@ describe("rebuild destroy phase", () => {
     expectNoSandboxDelete(mocks.runOpenshell);
   });
 
-  it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
+  it("refuses deletion when the registry target changes during asynchronous validation", async () => {
+    let finishValidation!: () => void;
+    const validateAtDeleteEdge = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishValidation = resolve;
+      });
+      return { ok: true as const };
+    });
+    const journal = stubRecreateJournal();
+    const pending = runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      recreateJournal: journal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      validateAtDeleteEdge,
+      onDeleted: vi.fn(),
+    });
+    await vi.waitFor(() => expect(validateAtDeleteEdge).toHaveBeenCalledOnce());
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "openclaw", gatewayName: "other" });
+    finishValidation();
+    await expect(pending).rejects.toThrow(
+      "Sandbox delete target changed during rebuild preparation.",
+    );
+    expect(journal.beginDelete).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+  });
+
+  it("prepares MCP state independently of the generic force flag (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -223,9 +258,9 @@ describe("rebuild destroy phase", () => {
     expect(mocks.prepareMcpForRebuild).toHaveBeenCalledWith(
       "alpha",
       false,
-      true,
       expect.any(Function),
       undefined,
+      [],
     );
   });
 
@@ -483,12 +518,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
   });
@@ -528,12 +558,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
@@ -563,7 +588,7 @@ describe("rebuild destroy phase", () => {
       .mockReturnValueOnce({
         status: 1,
         stdout: "",
-        stderr: 'status: Internal, message: "sandbox has no spec"',
+        stderr: "sandbox alpha not found",
       });
     const onDeleted = vi.fn();
 
@@ -588,6 +613,18 @@ describe("rebuild destroy phase", () => {
   });
 
   it.each([
+    [
+      "retained legacy sandbox without a readable spec",
+      { status: 1, stdout: "", stderr: 'status: Internal, message: "sandbox has no spec"' },
+    ],
+    [
+      "current OpenShell legacy config failure",
+      {
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      },
+    ],
     [
       "bare NotFound output",
       {

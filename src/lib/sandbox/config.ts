@@ -107,7 +107,7 @@ interface ConfigUrlValidationOptions {
   allowPrivateUrls?: boolean;
 }
 
-type ManagedGatewayRestart = (sandboxName: string) => { ok: boolean };
+type ManagedGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
 
 export class SandboxConfigError extends Error {
   readonly lines: readonly string[];
@@ -126,15 +126,15 @@ function configFail(lines: string | readonly string[], exitCode = 1): never {
   throw new SandboxConfigError(lines, exitCode);
 }
 
-function restartSandboxAgentAfterConfigSet(
+async function restartSandboxAgentAfterConfigSet(
   sandboxName: string,
   agentName: string,
   restartImpl?: ManagedGatewayRestart,
-): void {
+): Promise<void> {
   const restart =
     restartImpl ??
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
-  const result = restart(sandboxName);
+  const result = await restart(sandboxName);
   if (!result.ok) {
     // The config was already written to disk (the CAS write above succeeded),
     // but the running agent was not reloaded. Say so plainly and point at the
@@ -1417,7 +1417,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Restart if requested
   if (opts.restart) {
-    restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+    await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
   } else {
     console.log("");
     for (const line of buildConfigSetRestartGuidance(sandboxName, target.agentName)) {

@@ -8,7 +8,7 @@ import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
@@ -82,7 +82,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 async function cleanup(
   host: HostCliClient,
-  sandbox: SandboxClient,
   options: { verify: boolean; label: string; home: string },
 ): Promise<void> {
   const args = [path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/cleanup.sh")];
@@ -96,16 +95,11 @@ async function cleanup(
     expect(cleanupResult.exitCode, resultText(cleanupResult)).toBe(0);
   }
 
-  const gatewayDestroy = await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-    artifactName: `${options.label}-openshell-gateway-destroy`,
+  await host.cleanupGatewayRegistration("nemoclaw", {
+    artifactName: `${options.label}-openshell-gateway`,
     env: env({ HOME: options.home }),
     timeoutMs: 60_000,
   });
-  if (options.verify && gatewayDestroy.exitCode !== 0) {
-    expect(resultText(gatewayDestroy)).toMatch(
-      /unrecognized subcommand|not found|No active gateway/i,
-    );
-  }
 }
 
 function publicInstallRef(): string {
@@ -193,9 +187,9 @@ test(
     });
 
     cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
-      cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
+      cleanup(host, { home: testHome, label: "cleanup", verify: true }),
     );
-    await cleanup(host, sandbox, { home: testHome, label: "pre-cleanup", verify: false });
+    await cleanup(host, { home: testHome, label: "pre-cleanup", verify: false });
 
     progress.phase("stage legacy plaintext credential");
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
@@ -364,7 +358,7 @@ test(
     }
 
     progress.phase("remove cloud sandbox");
-    await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
+    await cleanup(host, { home: testHome, label: "final-cleanup", verify: true });
     await artifacts.target.complete({
       id: "cloud-onboard",
       status: "passed",

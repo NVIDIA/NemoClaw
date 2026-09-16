@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as wait from "../core/wait";
+import * as gatewayService from "./docker-driver-gateway-service";
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
 import {
   GATEWAY_MANAGEMENT_ENV_VAR,
@@ -46,6 +50,7 @@ const OCCUPIED_PORT: PortProbeResult = { ok: false } as PortProbeResult;
 
 function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHostRuntimeDeps {
   return {
+    ...gatewayAdaptersForTest(),
     applyOverlayfsAutoFix: () => null,
     checkGatewayPortAvailable: async () => OCCUPIED_PORT,
     gatewayName: () => "nemoclaw",
@@ -55,9 +60,7 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     // the raw enumeration.
     getGatewayPortListenerRawScan: () => ({ pids: [SYSTEMD_GATEWAY_PID], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.72",
-    isGatewayHealthy: () => true,
-    runCaptureOpenshell: () => "healthy",
-    runOpenshell: () => ({ status: 0 }),
+    restartPackagedGatewayAfterTrustedInstall: () => undefined,
     resolveOpenShellGatewayBinary: () => SYSTEMD_GATEWAY_EXEC,
     spawnSyncImpl: (() => ({ status: 0, stdout: "active\n", stderr: "" })) as never,
     probeGatewayHttpReady: async () => true,
@@ -97,6 +100,41 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => createGatewayHostRuntime(createDeps()).assertGatewayStartAllowed(false)).toThrow(
       /openshell-gateway\.service/,
+    );
+  });
+
+  it.each([8080, 18080])(
+    "rejects gateway startup on port %s when the host declaration selector is missing (#11347)",
+    (gatewayPort) => {
+      delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+      const entry = fs.lstatSync(process.cwd());
+      vi.spyOn(fs, "lstatSync").mockReturnValue(entry);
+      const { lifecycle } = gatewayAdaptersForTest();
+      const runtime = createGatewayHostRuntime(createDeps({ lifecycle }));
+
+      expect(() =>
+        runtime.assertGatewayStartAllowed(false, {
+          gatewayName: gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`,
+          gatewayPort,
+        }),
+      ).toThrow(GatewayManagementDeclarationError);
+      expect(lifecycle.registerGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks startup when a host declaration appears after self-management was bound (#11347)", () => {
+    delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+    const entry = fs.lstatSync(process.cwd());
+    const inspect = vi.spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("no host declaration"), { code: "ENOENT" });
+    });
+    const runtime = createGatewayHostRuntime(createDeps());
+    expect(runtime.getGatewayOwner()).toMatchObject({ mode: "nemoclaw-managed" });
+
+    inspect.mockReturnValue(entry);
+
+    expect(() => runtime.assertGatewayStartAllowed(false)).toThrow(
+      /set NEMOCLAW_GATEWAY_MANAGEMENT=/,
     );
   });
 
@@ -206,23 +244,98 @@ describe("gateway host runtime ownership", () => {
     });
   });
 
+  it("restarts an already-bound packaged service after a trusted binary replacement", () => {
+    const start = vi.spyOn(gatewayService, "startOpenShellGatewayUserService").mockReturnValue({
+      attempted: true,
+      started: true,
+    });
+    const portReady = vi.spyOn(wait, "waitForPort").mockReturnValue(true);
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall: undefined,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(start).toHaveBeenCalledBefore(portReady);
+    expect(portReady).toHaveBeenCalledExactlyOnceWith(owner.gatewayPort, 30);
+  });
+
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
     let hasPackagedService = false;
+    const events: string[] = [];
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn(() => events.push("restart"));
     const runtime = createGatewayHostRuntime(
-      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+      createDeps({
+        hasOpenShellGatewayUserService: () => hasPackagedService,
+        restartPackagedGatewayAfterTrustedInstall,
+      }),
     );
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "standalone" });
 
     hasPackagedService = true;
 
-    const persistOwner = vi.fn();
+    const persistOwner = vi.fn(() => events.push("persist"));
     expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall(persistOwner)).toMatchObject({
       source: "packaged-service",
     });
     expect(persistOwner).toHaveBeenCalledWith(
       expect.objectContaining({ source: "packaged-service" }),
     );
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
+    expect(events).toEqual(["persist", "restart"]);
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "packaged-service" });
+  });
+
+  it("does not restart a standalone owner after a trusted CLI-only install", () => {
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("standalone");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a declared external supervisor after a trusted CLI install", () => {
+    declareExternalSupervision();
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("declared");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("fails the trusted install reconciliation when packaged restart fails", () => {
+    const start = vi.spyOn(gatewayService, "startOpenShellGatewayUserService").mockReturnValue({
+      attempted: true,
+      started: false,
+    });
+    const portReady = vi.spyOn(wait, "waitForPort").mockReturnValue(false);
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall: undefined,
+      }),
+    );
+    runtime.getGatewayOwner();
+
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      "OpenShell packaged gateway restart after install failed",
+    );
+    expect(portReady).not.toHaveBeenCalled();
+    start.mockReturnValue({ attempted: true, started: true });
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      "OpenShell packaged gateway did not bind its port after install.",
+    );
   });
 
   it("keeps the old binding when trusted-install persistence fails (#7411)", () => {
@@ -351,12 +464,12 @@ describe("gateway host runtime attachment probe", () => {
 
   it("rejects a same-named user unit when the system manager is declared (#6576)", async () => {
     declareExternalSupervision();
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const { lifecycle } = gatewayAdaptersForTest();
     const runtime = createGatewayHostRuntime(
       createDeps({
         readProcCgroup: () =>
           `0::/user.slice/user-1000.slice/user@1000.service/app.slice/${DECLARATION.supervisor.serviceName}\n`,
-        runOpenshell,
+        lifecycle,
       }),
     );
     const owner = runtime.getGatewayOwner();
@@ -366,7 +479,7 @@ describe("gateway host runtime attachment probe", () => {
     await expect(runtime.attachGateway(owner, probe)).rejects.toMatchObject({
       code: "identity_mismatch",
     });
-    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
   });
 
   it("rejects a same-named system unit when the user manager is declared (#6576)", async () => {
@@ -374,11 +487,11 @@ describe("gateway host runtime attachment probe", () => {
       ...DECLARATION,
       supervisor: { ...DECLARATION.supervisor, kind: "systemd-user" },
     });
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const { lifecycle } = gatewayAdaptersForTest();
     const runtime = createGatewayHostRuntime(
       createDeps({
         readProcCgroup: () => `0::/system.slice/${DECLARATION.supervisor.serviceName}\n`,
-        runOpenshell,
+        lifecycle,
       }),
     );
     const owner = runtime.getGatewayOwner();
@@ -388,7 +501,7 @@ describe("gateway host runtime attachment probe", () => {
     await expect(runtime.attachGateway(owner, probe)).rejects.toMatchObject({
       code: "identity_mismatch",
     });
-    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
   });
 
   it("rejects a listener whose executable differs from the arbitrary declared path (#6576)", async () => {
@@ -576,30 +689,36 @@ describe("gateway host runtime attachment probe", () => {
 
   it("reads the authoritative gateway port lazily, not at construction (#6576)", () => {
     let port = 8080;
-    const runtime = createGatewayHostRuntime(createDeps({ gatewayPort: () => port }));
+    const getGatewayStartNetworkEnv = vi.fn((gatewayPort: number) => ({
+      OPENSHELL_SERVER_PORT: String(gatewayPort),
+    }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({ gatewayPort: () => port, getGatewayStartNetworkEnv }),
+    );
 
     port = 9443;
 
     expect(runtime.getGatewayStartEnv()).toMatchObject({ OPENSHELL_SERVER_PORT: "9443" });
+    expect(getGatewayStartNetworkEnv).toHaveBeenCalledWith(9443);
   }, 15_000);
 
   it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {
     declareExternalSupervision();
     process.env.OPENSHELL_GATEWAY = "ambient-sibling";
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
-    const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
+    const { lifecycle } = gatewayAdaptersForTest();
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle }));
 
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
     await runtime.attachGateway(owner, expectedProbe);
 
-    expect(runOpenshell.mock.calls).toEqual([
-      [
-        ["gateway", "add", "http://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
-        { ignoreError: true, suppressOutput: true },
-      ],
-      [["gateway", "select", "nemoclaw"], { ignoreError: true, suppressOutput: true }],
-    ]);
+    expect(lifecycle.registerGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      endpoint: DECLARATION.endpoint,
+    });
+    expect(lifecycle.selectGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
   });
 
@@ -609,8 +728,8 @@ describe("gateway host runtime attachment probe", () => {
     vi.spyOn(require("node:fs") as typeof import("node:fs"), "readFileSync").mockImplementation(
       () => JSON.stringify(declaration) as never,
     );
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
-    const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
+    const { lifecycle } = gatewayAdaptersForTest();
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle }));
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
     declaration = {
@@ -624,44 +743,42 @@ describe("gateway host runtime attachment probe", () => {
     await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
       /authority changed during this run/,
     );
-    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(lifecycle.registerGateway).not.toHaveBeenCalled();
   });
 
-  it("replaces stale registration before selecting the declared endpoint (#6576)", async () => {
+  it("reobserves failed registration without replacing or retrying it (#11326)", async () => {
     declareExternalSupervision();
-    const statuses = [1, 0, 0];
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: statuses.shift() ?? 0 }));
-    const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
-
-    const owner = runtime.getGatewayOwner();
-    const expectedProbe = await runtime.probeGatewayAttachment(owner);
-    await runtime.attachGateway(owner, expectedProbe);
-
-    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["gateway", "add", "http://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
-      ["gateway", "remove", "nemoclaw"],
-      ["gateway", "add", "http://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
-      ["gateway", "select", "nemoclaw"],
-    ]);
-  });
-
-  it("removes the attempted registration when exact gateway selection is unhealthy (#6576)", async () => {
-    declareExternalSupervision();
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
-    const runtime = createGatewayHostRuntime(
-      createDeps({ isGatewayHealthy: () => false, runOpenshell }),
-    );
-
-    const owner = runtime.getGatewayOwner();
-    const expectedProbe = await runtime.probeGatewayAttachment(owner);
-
-    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
-      /Failed to register and select/,
-    );
-    expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
-      suppressOutput: true,
+    const { lifecycle, observer } = gatewayAdaptersForTest();
+    lifecycle.registerGateway.mockResolvedValue({
+      ok: false,
+      ambiguous: true,
+      unsupported: false,
+      error: { kind: "timeout", message: "Timed out." },
     });
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "gateway_registration_failed",
+    });
+    expect(lifecycle.registerGateway).toHaveBeenCalledOnce();
+    expect(observer.observeGatewayReuse).toHaveBeenCalled();
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
+    expect(lifecycle.selectGateway).not.toHaveBeenCalled();
+  });
+
+  it("retains registration evidence when exact gateway selection is unhealthy (#11326)", async () => {
+    declareExternalSupervision();
+    const { lifecycle, observer } = gatewayAdaptersForTest({ healthy: false });
+    const runtime = createGatewayHostRuntime(createDeps({ lifecycle, observer }));
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "gateway_registration_failed",
+    });
+    expect(lifecycle.removeGateway).not.toHaveBeenCalled();
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 
@@ -673,9 +790,9 @@ describe("gateway host runtime attachment probe", () => {
       .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
       .mockReturnValueOnce({ pids: [4343], complete: true })
       .mockReturnValueOnce({ pids: [4343], complete: true });
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const { lifecycle } = gatewayAdaptersForTest();
     const runtime = createGatewayHostRuntime(
-      createDeps({ getGatewayPortListenerRawScan, runOpenshell }),
+      createDeps({ getGatewayPortListenerRawScan, lifecycle }),
     );
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
@@ -683,10 +800,10 @@ describe("gateway host runtime attachment probe", () => {
     await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
       code: "identity_mismatch",
     });
-    expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
-      suppressOutput: true,
+    expect(lifecycle.removeGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 
@@ -702,18 +819,18 @@ describe("gateway host runtime attachment probe", () => {
       .mockReturnValueOnce("710025")
       .mockReturnValueOnce("710025")
       .mockReturnValueOnce("710025");
-    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
-    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime, runOpenshell }));
+    const { lifecycle } = gatewayAdaptersForTest();
+    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime, lifecycle }));
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
 
     await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
       code: "identity_mismatch",
     });
-    expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
-      ignoreError: true,
-      suppressOutput: true,
+    expect(lifecycle.removeGateway).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
+    expect(lifecycle.destroyGateway).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
   });
 });

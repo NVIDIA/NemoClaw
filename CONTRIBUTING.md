@@ -107,7 +107,14 @@ npm run test:changed
 
 Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
 changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
-changes with `origin/main`; it does not validate uncommitted changes.
+changes with `origin/main` and requires a clean worktree. It checks formatting without applying fixes.
+Complete formatting and generated-file updates before the final commit.
+When adding or renaming a hook, classify its read-only behavior in
+`scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
+
+Repository checks report per-check durations and select checks from the hook file list, including
+deletions. `npm run checks:repository` still runs every repository check. Compiler checks reuse a
+successful local result only while the recorded inputs and required generated outputs remain unchanged.
 
 Use the commands defined in [`package.json`](package.json) for component type-checking, builds,
 documentation validation, or focused test projects. Use repository-wide validation only when the

@@ -9,9 +9,10 @@ import {
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
+import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
-  return registry.getSandbox(sandboxName);
+  return findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
 }
 
 export function listPersistedSandboxTargets(): registry.SandboxEntry[] {

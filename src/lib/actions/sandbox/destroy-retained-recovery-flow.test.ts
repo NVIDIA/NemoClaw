@@ -343,21 +343,13 @@ describe("destroySandbox retained recovery flow", () => {
 
   it.each([
     ["present", undefined, "reports a sandbox present"],
-    [
-      "a failed list command",
-      { status: 1, stdout: "", stderr: "" },
-      "could not determine",
-    ],
+    ["a failed list command", { status: 1, stdout: "", stderr: "" }, "could not determine"],
     [
       "list diagnostics",
       { status: 0, stdout: "[]", stderr: "gateway unavailable" },
       "could not determine",
     ],
-    [
-      "malformed list output",
-      { status: 0, stdout: "not-json", stderr: "" },
-      "could not determine",
-    ],
+    ["malformed list output", { status: 0, stdout: "not-json", stderr: "" }, "could not determine"],
   ])(
     "preserves a recovery record without identity when OpenShell reports %s (#10863)",
     { timeout: 30_000 },
@@ -581,7 +573,8 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
         "alpha",
         matchingRecovery.gatewayName,
-        harness.runOpenshellSpy,
+        expect.objectContaining({ selectGateway: expect.any(Function) }),
+        undefined,
       );
       expect(harness.gatewayPinsAtSandboxList).toEqual([matchingRecovery.gatewayName]);
       expect(exitSpy).not.toHaveBeenCalled();

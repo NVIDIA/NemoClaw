@@ -3,210 +3,375 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  ObserveOpenShellForwardsRequest,
+  OpenShellForwardIdentity,
+  OpenShellForwardObservation,
+  RetireLegacyOpenShellForwardRequest,
+  StartOpenShellForwardRequest,
+  VerifyOpenShellForwardReleaseRequest,
+} from "../../adapters/openshell/forward";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+
 const mocks = vi.hoisted(() => ({
-  captureOpenshell: vi.fn(),
-  runOpenshell: vi.fn((_args: string[], _options?: unknown) => ({ status: 0 })),
+  createAdapter: vi.fn(),
+  getHermesDashboardRecoveryConfig: vi.fn(() => null),
+  getRegisteredAgent: vi.fn(),
   getSessionAgent: vi.fn(),
   getSandbox: vi.fn(),
-  getHermesDashboardRecoveryConfig: vi.fn(() => null),
-  isLocalForwardReachable: vi.fn(() => true),
-  isForwardServiceListenerOwner: vi.fn(() => true),
-  launchForwardService: vi.fn(),
+  observeForwards: vi.fn(),
+  resolveGatewayForwardAuthority: vi.fn(),
+  resolveGatewayForwardRuntimeAuthority: vi.fn(),
+  retireLegacyForward: vi.fn(),
+  startForward: vi.fn(),
+  verifyForwardRelease: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
-  isForwardServiceListenerOwner: mocks.isForwardServiceListenerOwner,
-  launchForwardService: mocks.launchForwardService,
+vi.mock("../../adapters/openshell/forward-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/forward-runtime")>()),
+  createOpenShellForwardAdapterForAuthority: mocks.createAdapter,
 }));
 
-vi.mock("../../adapters/openshell/resolve", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/openshell/resolve")>()),
-  resolveOpenshell: () => "/usr/local/bin/openshell",
+vi.mock("../../onboard/gateway-teardown-authority", () => ({
+  resolveGatewayForwardAuthority: mocks.resolveGatewayForwardAuthority,
 }));
 
-vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
-  captureOpenshell: mocks.captureOpenshell,
-  runOpenshell: mocks.runOpenshell,
-  isCommandTimeout: () => false,
+vi.mock("../../onboard/gateway-host-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-host-runtime")>()),
+  resolveGatewayForwardRuntimeAuthority: mocks.resolveGatewayForwardRuntimeAuthority,
 }));
 
-vi.mock("../../agent/runtime", () => ({
+vi.mock("../../agent/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agent/runtime")>()),
+  getRegisteredAgent: mocks.getRegisteredAgent,
   getSessionAgent: mocks.getSessionAgent,
-  hasGatewayRuntime: () => true,
+  hasGatewayRuntime: (agent: { runtime?: { kind?: string } } | null) =>
+    agent?.runtime?.kind !== "terminal",
 }));
 
-vi.mock("../../state/registry", () => ({
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: mocks.getSandbox,
 }));
 
-vi.mock("./hermes-dashboard-recovery", () => ({
+vi.mock("./hermes-dashboard-recovery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./hermes-dashboard-recovery")>()),
   getHermesDashboardRecoveryConfig: mocks.getHermesDashboardRecoveryConfig,
-  ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
 }));
 
-vi.mock("./forward-health", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./forward-health")>()),
-  isLocalForwardReachable: mocks.isLocalForwardReachable,
-}));
+const HERMES_AGENT = {
+  name: "hermes",
+  runtime: { kind: "gateway" },
+  forward_ports: [18_789, 8_642],
+  forwardPort: 18_789,
+};
 
-const HERMES_AGENT = { forward_ports: [18789, 8642], forwardPort: 18789 };
+const states = new Map<number, OpenShellForwardObservation["state"]>();
 
-function forwardList(rows: string[]): { status: number; output: string } {
+function observation(
+  forward: OpenShellForwardIdentity,
+  state: OpenShellForwardObservation["state"],
+): OpenShellForwardObservation {
+  return state === "indeterminate"
+    ? {
+        state,
+        forward,
+        error: {
+          kind: "ownership",
+          message: "NemoClaw could not prove OpenShell forward ownership.",
+        },
+      }
+    : { state, forward };
+}
+
+function managedGatewayOwner(gatewayName = "nemoclaw", gatewayPort = 8_080) {
   return {
-    status: 0,
-    output: ["SANDBOX BIND PORT PID STATUS", ...rows].join("\n"),
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "standalone" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  };
+}
+
+function sandboxEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "box",
+    agent: "openclaw",
+    dashboardPort: 18_789,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8_080,
+    ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
-  mocks.runOpenshell.mockReturnValue({ status: 0 });
-  mocks.isLocalForwardReachable.mockReturnValue(true);
-  mocks.isForwardServiceListenerOwner.mockReturnValue(true);
-  mocks.launchForwardService.mockImplementation(() => {
-    mocks.isLocalForwardReachable.mockReturnValue(true);
-  });
-  mocks.getHermesDashboardRecoveryConfig.mockReturnValue(null);
+  states.clear();
+  mocks.getSandbox.mockReturnValue(sandboxEntry());
   mocks.getSessionAgent.mockReturnValue(HERMES_AGENT);
+  mocks.getRegisteredAgent.mockReturnValue(HERMES_AGENT);
+  mocks.getHermesDashboardRecoveryConfig.mockReturnValue(null);
+  mocks.resolveGatewayForwardAuthority.mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) =>
+      managedGatewayOwner(gatewayName, gatewayPort),
+  );
+  mocks.resolveGatewayForwardRuntimeAuthority.mockImplementation(
+    (owner: { endpoint?: string | null; gatewayName: string; gatewayPort: number }) => ({
+      gatewayEndpoint: owner.endpoint ?? `https://127.0.0.1:${String(owner.gatewayPort)}`,
+      gatewayName: owner.gatewayName,
+      workspace: "default",
+    }),
+  );
+  mocks.observeForwards.mockImplementation(async (request: ObserveOpenShellForwardsRequest) => {
+    await request.assertCurrent?.();
+    const result = request.forwards.map((forward) =>
+      observation(forward, states.get(forward.port) ?? "owned"),
+    );
+    await request.assertCurrent?.();
+    return result;
+  });
+  mocks.startForward.mockImplementation(async (request: StartOpenShellForwardRequest) => {
+    await request.assertCurrent?.();
+    states.set(request.forward.port, "owned");
+    await request.assertCurrent?.();
+    return {
+      state: "started",
+      forward: request.forward,
+      cleanup: vi.fn(async () => ({ state: "released" as const })),
+    };
+  });
+  mocks.retireLegacyForward.mockImplementation(
+    async (request: RetireLegacyOpenShellForwardRequest) => {
+      await request.assertCurrent?.();
+      await request.authorize(request.forward);
+      states.set(request.forward.port, "absent");
+      await request.assertCurrent?.();
+      return { state: "retired", forward: request.forward };
+    },
+  );
+  mocks.verifyForwardRelease.mockImplementation(
+    async (request: VerifyOpenShellForwardReleaseRequest) => {
+      await request.assertCurrent?.();
+      return { state: "released" };
+    },
+  );
+  mocks.createAdapter.mockReturnValue({
+    observeForwards: mocks.observeForwards,
+    retireLegacyForward: mocks.retireLegacyForward,
+    startForward: mocks.startForward,
+    verifyForwardRelease: mocks.verifyForwardRelease,
+  });
 });
 
-describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
-  it("accepts an already-reachable remote direct service during gateway recovery", async () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    mocks.getSandbox.mockReturnValue({
-      agent: "openclaw",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    mocks.captureOpenshell.mockReturnValue(forwardList([]));
-    const { ensureSandboxPortForward } = await import("./forward-recovery");
-
-    expect(ensureSandboxPortForward("remote-box")).toBe(true);
-    expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledWith({
-      executable: "/usr/local/bin/openshell",
+describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => {
+  it("binds every requested forward to the exact executable and gateway authority", async () => {
+    const { createHermesPortableForwardRecoveryInput } = await import("./forward-recovery");
+    const input = createHermesPortableForwardRecoveryInput({
+      assertCurrent: vi.fn(),
+      assertRollbackCurrent: vi.fn(),
+      commandAuthority: {
+        env: { HOME: "/portable/home", OPENSHELL_TOKEN: "ambient-secret" },
+        executablePath: "/usr/local/bin/openshell",
+      },
       gatewayName: "nemoclaw",
-      workspace: "default",
-      sandboxName: "remote-box",
-      localHost: "0.0.0.0",
-      localPort: 18_789,
-      targetHost: "127.0.0.1",
-      targetPort: 18_789,
+      intent: "connect-probe-only",
+      onTiming: vi.fn(),
+      ports: [18_789, 8_642],
+      sandboxName: "hermes-box",
     });
-    expect(mocks.launchForwardService).not.toHaveBeenCalled();
-  });
 
-  it("fails closed when reachable direct service ownership cannot be proved", async () => {
-    mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18_789 });
-    mocks.captureOpenshell.mockReturnValue(forwardList([]));
-    mocks.isForwardServiceListenerOwner.mockReturnValue(false);
-    mocks.launchForwardService.mockImplementation(() => {
-      throw new Error("host port is occupied");
-    });
-    const { ensureSandboxPortForward } = await import("./forward-recovery");
-
-    expect(ensureSandboxPortForward("foreign-listener")).toBe(false);
-    expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
-    expect(mocks.launchForwardService).toHaveBeenCalledOnce();
-  });
-
-  it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {
-    mocks.getSandbox.mockReturnValue({
-      agent: "hermes",
-      dashboardPort: 18790,
-      hermesApiPort: 8643,
-    });
-    mocks.captureOpenshell.mockReturnValue(
-      forwardList(["alpha 127.0.0.1 18789 101 running", "alpha 127.0.0.1 8642 102 running"]),
-    );
-    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
-    expect(mocks.runOpenshell).not.toHaveBeenCalled();
-  });
-
-  it("recovers the sandbox's own API port rather than the sibling sandbox's (#8543)", async () => {
-    mocks.isLocalForwardReachable.mockReturnValue(false);
-    mocks.getSandbox.mockReturnValue({
-      agent: "hermes",
-      dashboardPort: 18790,
-      hermesApiPort: 8643,
-    });
-    mocks.captureOpenshell.mockReturnValue(
-      forwardList(["alpha 127.0.0.1 18789 101 running", "alpha 127.0.0.1 8642 102 running"]),
-    );
-    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
-    expect(mocks.launchForwardService).toHaveBeenCalledWith(
-      expect.objectContaining({ localPort: 8643, targetPort: 8643 }),
-      {},
-    );
-  });
-
-  it("pins declared forward inspection and recovery to the selected OpenShell target (#10514)", async () => {
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
-    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
-    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
-    mocks.isLocalForwardReachable.mockReturnValue(false);
-    mocks.getSandbox.mockReturnValue({
-      agent: "hermes",
-      dashboardPort: 18790,
-      hermesApiPort: 8643,
-    });
-    mocks.captureOpenshell.mockReturnValue(forwardList([]));
-    const runtimeSelection = {
-      gatewayName: "nemoclaw-19080",
-      workspace: "review-workspace",
-      localTlsDir: "/authority/tls",
-    };
-    const selectedOptions = expect.objectContaining({
-      env: expect.objectContaining({
-        OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
-        OPENSHELL_WORKSPACE: runtimeSelection.workspace,
-        OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
-      }),
-      replaceEnv: true,
-    });
-    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790, runtimeSelection)).toBe(true);
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["forward", "list", "--gateway", runtimeSelection.gatewayName],
-      selectedOptions,
-    );
-    expect(mocks.launchForwardService).toHaveBeenCalledWith(
-      expect.objectContaining({
-        gatewayName: runtimeSelection.gatewayName,
-        localPort: 8643,
-        sandboxName: "beta",
-        targetPort: 8643,
-        workspace: runtimeSelection.workspace,
-      }),
+    expect(input.forwards).toEqual([
+      expect.objectContaining({ sandboxName: "hermes-box", port: 18_789 }),
+      expect.objectContaining({ sandboxName: "hermes-box", port: 8_642 }),
+    ]);
+    expect(input.operationTimeoutMs).toBe(OPENSHELL_HEAVY_TIMEOUT_MS);
+    expect(mocks.createAdapter).toHaveBeenCalledWith(
       {
-        sourceEnvironment: expect.objectContaining({
-          OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
-          OPENSHELL_WORKSPACE: runtimeSelection.workspace,
-          OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
-        }),
+        gatewayEndpoint: "https://127.0.0.1:8080",
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
+      {
+        environment: expect.objectContaining({ HOME: "/portable/home" }),
+        executable: "/usr/local/bin/openshell",
       },
     );
-    const captureEnv = mocks.captureOpenshell.mock.calls[0]?.[1]?.env;
-    expect(captureEnv).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(captureEnv).not.toHaveProperty("OPENSHELL_TOKEN");
-    const sourceEnvironment = mocks.launchForwardService.mock.calls[0]?.[1]?.sourceEnvironment;
-    expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(input.deps.adapter).toEqual(mocks.createAdapter.mock.results[0]?.value);
   });
 
-  it("keeps the default API port for a sandbox registered without one (#8543)", async () => {
-    mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18789 });
-    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+  it("rejects gateway owner drift after composition", async () => {
+    const { createHermesPortableForwardRecoveryInput } = await import("./forward-recovery");
+    const assertCurrent = vi.fn();
+    const input = createHermesPortableForwardRecoveryInput({
+      assertCurrent,
+      assertRollbackCurrent: vi.fn(),
+      commandAuthority: { env: {}, executablePath: "/usr/local/bin/openshell" },
+      gatewayName: "nemoclaw",
+      intent: "connect-probe-only",
+      onTiming: vi.fn(),
+      ports: [18_789],
+      sandboxName: "hermes-box",
+    });
+    mocks.resolveGatewayForwardAuthority.mockReturnValue(managedGatewayOwner("nemoclaw", 19_080));
+
+    expect(() => input.deps.assertCurrent()).toThrow(/gateway authority changed/u);
+    expect(assertCurrent).toHaveBeenCalled();
+  });
+});
+
+describe("forward recovery through the typed adapter", () => {
+  it("reuses an exact owned dashboard forward", async () => {
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box", { isWsl: false })).resolves.toBe(true);
+    expect(mocks.observeForwards).toHaveBeenCalledOnce();
+    expect(mocks.startForward).not.toHaveBeenCalled();
+  });
+
+  it.each(["foreign", "indeterminate"] as const)(
+    "refuses a %s dashboard listener with zero mutation attempts",
+    async (state) => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      states.set(18_789, state);
+      const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+      await expect(ensureSandboxPortForward("box", { isWsl: false })).resolves.toBe(false);
+      expect(mocks.startForward).not.toHaveBeenCalled();
+      expect(mocks.retireLegacyForward).not.toHaveBeenCalled();
+    },
+  );
+
+  it("starts exactly once when the dashboard forward is absent", async () => {
+    states.set(18_789, "absent");
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box", { isWsl: false })).resolves.toBe(true);
+    expect(mocks.startForward).toHaveBeenCalledOnce();
+    expect(mocks.retireLegacyForward).not.toHaveBeenCalled();
+  });
+
+  it("retires one exact stale legacy forward before one replacement start", async () => {
+    states.set(18_789, "stale");
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box", { isWsl: false })).resolves.toBe(true);
+    expect(mocks.retireLegacyForward).toHaveBeenCalledOnce();
+    expect(mocks.startForward).toHaveBeenCalledOnce();
+    expect(mocks.retireLegacyForward.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.startForward.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("returns the adapter's explicit observation state", async () => {
+    states.set(18_789, "stale");
+    const { describeSandboxForwardListener } = await import("./forward-recovery");
+
+    await expect(describeSandboxForwardListener("box", { isWsl: false })).resolves.toBe("stale");
+  });
+
+  it("preserves an all-interface identity for a prepared remote dashboard", async () => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ dashboardRemoteBindPrepared: true }));
+    states.set(18_789, "absent");
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box")).resolves.toBe(true);
+    expect(mocks.startForward.mock.calls[0]?.[0].forward).toMatchObject({
+      localHost: "0.0.0.0",
+      port: 18_789,
+    });
+  });
+
+  it("refuses remote exposure when onboarding did not prepare it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box")).resolves.toBe(false);
+    expect(mocks.observeForwards).not.toHaveBeenCalled();
+    expect(mocks.startForward).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when gateway authority cannot be resolved", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.resolveGatewayForwardAuthority.mockImplementation(() => {
+      throw new Error("authority unavailable");
+    });
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    await expect(ensureSandboxPortForward("box", { isWsl: false })).resolves.toBe(false);
+    expect(mocks.startForward).not.toHaveBeenCalled();
+  });
+});
+
+describe("declared and cleanup forward sets", () => {
+  it("recovers the sandbox's own Hermes API port instead of a manifest default", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: "hermes",
+        dashboardPort: 18_790,
+        hermesApiPort: 8_643,
+      }),
+    );
+    states.set(8_643, "absent");
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
-    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+
+    await expect(ensureDeclaredAgentForwardPortsHealthy("box", 18_790)).resolves.toBe(true);
+    expect(mocks.startForward).toHaveBeenCalledOnce();
+    expect(mocks.startForward.mock.calls[0]?.[0].forward.port).toBe(8_643);
+  });
+
+  it("pins declared recovery to the selected gateway and workspace", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: "hermes",
+        dashboardPort: 18_790,
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19_080,
+        hermesApiPort: 8_643,
+      }),
+    );
+    states.set(8_643, "absent");
+    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
+
+    await expect(
+      ensureDeclaredAgentForwardPortsHealthy("box", 18_790, {
+        gatewayName: "nemoclaw-19080",
+        workspace: "review-workspace",
+      }),
+    ).resolves.toBe(true);
+    expect(mocks.startForward.mock.calls[0]?.[0].forward).toMatchObject({
+      gatewayEndpoint: "https://127.0.0.1:19080",
+      gatewayName: "nemoclaw-19080",
+      workspace: "review-workspace",
+      port: 8_643,
+    });
+  });
+
+  it("verifies release for the complete registered forward set", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: "hermes",
+        dashboardPort: 18_790,
+        hermesApiPort: 8_643,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 3_001,
+        dashboardRemoteBindPrepared: true,
+      }),
+    );
+    mocks.getRegisteredAgent.mockReturnValue(HERMES_AGENT);
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(teardownSandboxDashboardForward("box")).resolves.toBe(true);
+    expect(
+      mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards.map(
+        (forward: OpenShellForwardIdentity) => forward.port,
+      ),
+    ).toEqual([18_790, 3_001, 8_643]);
+    expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]?.localHost).toBe("0.0.0.0");
   });
 });

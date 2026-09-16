@@ -491,14 +491,12 @@ function buildDiscoveryPlan(
   ) {
     throw new Error("Pretrusted discovery target is not one of the reciprocal peer rail addresses");
   }
-  const rails = matched.map(
-    (entry): DualStationRailIdentity => ({
-      localAddress: entry.local.address,
-      localMac: entry.local.rail.macAddress,
-      peerAddress: entry.peer.address,
-      peerMac: entry.peer.rail.macAddress,
-    }),
-  );
+  const rails = matched.map((entry): DualStationRailIdentity => ({
+    localAddress: entry.local.address,
+    localMac: entry.local.rail.macAddress,
+    peerAddress: entry.peer.address,
+    peerMac: entry.peer.rail.macAddress,
+  }));
   return {
     identity: {
       peerTarget: binding.sshTarget,
@@ -834,9 +832,9 @@ export function prepareDualStationPair(
   if ("kind" in selected) return selected;
   const strict = Boolean(
     resume ||
-      options.explicitPeer?.trim() ||
-      options.reuseExistingManagedPair ||
-      options.migrateLegacySingleStationHead,
+    options.explicitPeer?.trim() ||
+    options.reuseExistingManagedPair ||
+    options.migrateLegacySingleStationHead,
   );
   const { binding, automatic } = selected;
 

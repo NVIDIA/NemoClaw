@@ -2180,14 +2180,10 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
 }
 
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
-  const patch = spawnSync(
-    options.nodeExecutable,
-    [options.patchScript, options.dist],
-    {
-      encoding: "utf8",
-      timeout: options.timeoutMs,
-    },
-  );
+  const patch = spawnSync(options.nodeExecutable, [options.patchScript, options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(patch, "apply bounded device self-approval patch");
   requireIncludes(
     patch.stdout,
@@ -2195,14 +2191,10 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "device self-approval patch output",
   );
 
-  const audit = spawnSync(
-    options.nodeExecutable,
-    [options.patchScript, "--audit", options.dist],
-    {
-      encoding: "utf8",
-      timeout: options.timeoutMs,
-    },
-  );
+  const audit = spawnSync(options.nodeExecutable, [options.patchScript, "--audit", options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(audit, "audit bounded device self-approval patch");
   for (const marker of [
     "gateway call device-identity runtime:",

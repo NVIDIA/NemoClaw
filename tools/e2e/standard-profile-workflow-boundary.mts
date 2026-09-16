@@ -9,6 +9,10 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -117,6 +121,21 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
+  const sdkPackage = record(jobs["package-openshell-sdk"]);
+  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
+    errors.push(
+      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+    );
+  }
+  const sdkPackageStep = namedStep(
+    steps(sdkPackage.steps),
+    "Download and verify reviewed OpenShell SDK packages",
+  );
+  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+    errors.push(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
+    );
+  }
   for (const profile of E2E_EXECUTION_PROFILES) {
     const contract = PROFILE_JOBS[profile];
     const job = record(jobs[contract.job]);
@@ -125,11 +144,15 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       continue;
     }
     if (
-      !isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"]) ||
+      !isDeepStrictEqual(job.needs, [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ]) ||
       job.uses !== PROFILE_WORKFLOW
     ) {
       errors.push(
-        `${contract.job} must call the standard E2E profile after matrix generation and base-image publication`,
+        `${contract.job} must call the standard E2E profile after matrix generation, base-image publication, and SDK packaging`,
       );
     }
     if (job.name !== "${{ matrix.display_name }} (${{ matrix.runtime_provider }})") {
@@ -161,6 +184,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      openshell_sdk_artifact_name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
       managed_image_catalog: "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
       managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
       managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
@@ -215,6 +239,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    openshell_sdk_artifact_name: "string",
     managed_image_catalog: "string",
     managed_image_revision: "string",
     managed_image_receipt: "string",
@@ -313,6 +338,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Authenticate to Docker Hub",
     "Install target host dependencies",
     "Prepare E2E workspace",
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK archive without package credentials",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
@@ -466,6 +493,25 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must prepare once without rebuilding the CLI");
   }
+  const sdkDownload = requireStep(errors, workflowSteps, "Download reviewed OpenShell SDK archive");
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ inputs.openshell_sdk_artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push(
+      "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
+    );
+  }
   const restore = requireStep(errors, workflowSteps, "Restore exact-commit CLI artifact");
   if (
     restore?.if !== "${{ inputs.restore_cli }}" ||
@@ -500,7 +546,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(stoppedStateHelper.env), {
       CLEANUP_IMAGE:
-        "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
       RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
     }) ||
     !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||

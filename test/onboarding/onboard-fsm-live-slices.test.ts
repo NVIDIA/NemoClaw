@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeAll, describe, it } from "vitest";
+import { beforeAll, describe, it, type TestContext, vi } from "vitest";
+import {
+  type OnboardProcessResult,
+  runOnboardProcessAsync,
+} from "../helpers/onboard-child-process-harness";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const probeTimeoutMs = 60_000;
+
+vi.setConfig({ maxConcurrency: 4, testTimeout: probeTimeoutMs });
 
 type SliceName = "initial" | "core" | "final";
 type ProbeMode =
@@ -22,16 +27,21 @@ type ProbeMode =
   | "authoritative-core-gateway"
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
+  | "dashboard-spawn-failure"
   | "ordinary-policy-tier"
+  | "providerless-external-component"
   | "providerless-staged-messaging"
   | "stale-recovery-admission"
   | "stale-session-decision"
+  | "active-cancellation"
   | "ahead-core";
 
 interface ProbeOptions {
+  launchMarkerPath?: string;
   slice: SliceName;
   mode?: ProbeMode;
   policyTier?: "balanced" | "restricted";
+  workspaceRoot?: string;
 }
 
 interface DistArtifact {
@@ -127,7 +137,15 @@ function writeSuccessfulOpenShell(tmpDir: string): string {
   const openshellPath = path.join(tmpDir, "openshell");
   fs.writeFileSync(
     openshellPath,
-    `#!${process.execPath}\nif (process.argv[2] === "policy" && process.argv[3] === "list" && process.argv.includes("--global")) process.stderr.write("No global policy history found\\n");\nprocess.exit(0);\n`,
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[0] === "policy" && args[1] === "list" && args.includes("--global")) process.stderr.write("No global policy history found\\n");
+if (args[0] === "-V" || args[0] === "--version") process.stdout.write("openshell 0.0.116\\n");
+if (args[0] === "status") { process.stderr.write("No active gateway\\n"); process.exit(1); }
+if (args[0] === "gateway" && args[1] === "info") { process.stderr.write("No gateway metadata found\\n"); process.exit(1); }
+if (args[0] === "gateway" && args[1] === "list") process.stdout.write("[]\\n");
+process.exit(0);
+`,
     { mode: 0o755 },
   );
   return openshellPath;
@@ -160,7 +178,7 @@ function redactProbeOutput(value: string): string {
     .slice(0, 4000);
 }
 
-function probeFailureMessage(result: SpawnSyncReturns<string>): string {
+function probeFailureMessage(result: OnboardProcessResult): string {
   const details = [
     `slice probe exited with status ${result.status ?? "null"}${result.signal ? ` and signal ${result.signal}` : ""}`,
     result.error ? `error: ${redactProbeOutput(result.error.message)}` : null,
@@ -170,59 +188,103 @@ function probeFailureMessage(result: SpawnSyncReturns<string>): string {
   return details.join("\n\n");
 }
 
-function runSliceProbe(options: ProbeOptions) {
-  const scenario = { mode: options.mode ?? "fresh", slice: options.slice };
+async function runSliceProbe(
+  options: ProbeOptions,
+  context: Pick<TestContext, "signal" | "onTestFinished">,
+) {
+  const scenario = {
+    launchMarkerPath: options.launchMarkerPath,
+    mode: options.mode ?? "fresh",
+    slice: options.slice,
+  };
   const tmpDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`),
+    path.join(
+      options.workspaceRoot ?? os.tmpdir(),
+      `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`,
+    ),
   );
-  const scriptPath = path.join(tmpDir, `probe-${scenario.mode}-${scenario.slice}.js`);
-  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-  const flowSlicesPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
-  );
-  const resultPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
-  );
-  const sessionPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-  );
-  const entryOptionsPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
-  );
-  const lockedRuntimePath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
-  );
-  const preflightHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
-  );
-  const providerHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
-  );
-  const gatewayHandlerPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
-  );
-  const coreFlowPhasesPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
-  );
-  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-  const onboardDashboardPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "dashboard.ts"),
-  );
-  const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
-  const agentSelectionPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "agent-selection.ts"),
-  );
-  const dashboardUrlCommandPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
-  );
-  const finalizationDepsPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
-  );
+  try {
+    const scriptPath = path.join(tmpDir, `probe-${scenario.mode}-${scenario.slice}.js`);
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const flowSlicesPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
+    );
+    const resultPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
+    );
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
+    const entryOptionsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
+    );
+    const lockedRuntimePath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
+    );
+    const preflightHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
+    );
+    const providerHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
+    );
+    const gatewayHandlerPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
+    );
+    const coreFlowPhasesPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
+    );
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const onboardDashboardPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "dashboard.ts"),
+    );
+    const agentOnboardPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "agent", "onboard.ts"),
+    );
+    const agentSelectionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "agent-selection.ts"),
+    );
+    const dashboardUrlCommandPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
+    );
+    const finalizationDepsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
+    );
+    const externalComponentPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
+    );
+    const gatewayServicePath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "docker-driver-gateway-service.ts"),
+    );
 
-  fs.writeFileSync(
-    scriptPath,
-    `
+    fs.writeFileSync(
+      scriptPath,
+      `
 const scenario = ${JSON.stringify(scenario)};
+scenario.launchMarkerPath && require("node:fs").writeFileSync(scenario.launchMarkerPath, "launched");
+if (scenario.mode === "active-cancellation") {
+  const activeCloseReadyPath = require("node:path").join(process.env.HOME, "active-close-hold.ready");
+  const activeCloseReleasePath = require("node:path").join(process.env.HOME, "active-close-hold.release");
+  const activeCloseHolder = require("node:child_process").spawn(
+    process.execPath,
+    [
+      "-e",
+      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); const parentPid = process.ppid; let orphanedAt = null; fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } if (process.ppid !== parentPid) { orphanedAt ??= Date.now(); if (Date.now() - orphanedAt >= 500) { clearInterval(poll); process.exit(0); } } }, 10);',
+      activeCloseReadyPath,
+      activeCloseReleasePath,
+    ],
+    { stdio: ["ignore", "inherit", "inherit"] },
+  );
+  activeCloseHolder.unref();
+  require("node:fs").writeFileSync(
+    require("node:path").join(process.env.HOME, "active-child.pid"),
+    String(process.pid),
+  );
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+}
+if (scenario.mode === "dashboard-spawn-failure") {
+  require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
+}
+const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
@@ -237,14 +299,56 @@ const called = [];
 const sentinel = new Error("slice-called");
 const staleAdmissionExit = new Error("stale recovery admission refused");
 
-if (scenario.mode === "dashboard-port-composition") {
+if (scenario.mode === "providerless-external-component") {
+  require(${externalComponentPath}).loadExternalComponentDeclaration = () => {
+    called.push("component-validated");
+    return {
+      declaration: { schemaVersion: 1, componentId: "policy-governance", interceptorSocketPath: "/run/component/interceptor.sock", activationSocketPath: "/run/component/activation.sock" },
+      revalidateBeforeGateway() {},
+      revalidateBeforeActivation() {},
+    };
+  };
+}
+
+if (dashboardScenario) {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
-  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
+  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = async () => true;
   finalizationHandlerDeps.settleOrdinaryOpenClawPairing = async () => ({ kind: "settled" });
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      const { createCliOpenShellForwardAdapter } = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-cli.ts"))});
+      return createOnboardDashboardHelpers({
+        ...deps,
+        getGatewayForwardRuntimeAuthority: () => ({
+          gatewayEndpoint: "https://127.0.0.1:8080",
+          gatewayName: "nemoclaw",
+          workspace: "default",
+        }),
+        resolveForwardGatewayName: () => "nemoclaw",
+        forwardAdapterForAuthority: (authority) => {
+          const adapter = createCliOpenShellForwardAdapter({
+            executable: ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
+            gatewayEndpoint: authority.gatewayEndpoint,
+            inspect: async () => ({ state: "unbound" }),
+            probePort: async () => ({ state: "unbound" }),
+            run: async () => ({ status: 0, stdout: "No active forwards.", stderr: "" }),
+            runtimeSelection: authority,
+          });
+          return {
+            ...adapter,
+            observeForwards: async ({ forwards }) =>
+              forwards.map((forward) => ({ state: "absent", forward })),
+            startForward: (request) => {
+            called.push("forward-launch");
+              return adapter.startForward({ ...request, timeoutMs: 1000 });
+            },
+          };
+        },
+      });
+    }
     const nextDashboardForward = () => {
       const port = dashboardForwardCalls === 0 ? 18791 : 18792;
       dashboardForwardCalls += 1;
@@ -257,10 +361,23 @@ if (scenario.mode === "dashboard-port-composition") {
       ensureFinalizationAgentDashboardForward: nextDashboardForward,
     };
   };
-  require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
+  require(${agentOnboardPath}).handleAgentSetup = async (
+    _sandboxName,
+    _model,
+    _provider,
+    _agent,
+    _resume,
+    _preparedSandbox,
+    context,
+  ) => {
+    called.push("agent-executor:" + typeof context.sandboxCommandExecutor?.runBuffered);
+  };
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
     name: "hermes",
     displayName: "Hermes Agent",
+    ...(scenario.mode === "dashboard-spawn-failure"
+      ? { dashboard: { kind: "api", port: 8642 } }
+      : {}),
   });
 }
 
@@ -331,6 +448,21 @@ function baseContext(context, overrides = {}) {
 }
 
 preflightHandlers.handlePreflightState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("preflight-effect");
+    return {
+      gpu: null,
+      sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
+      resumePreflight: false,
+      resumeHasResolvedGpuIntent: false,
+      requestedGpuPassthrough: false,
+      gpuPassthrough: false,
+      effectiveSandboxGpuFlag: "disable",
+      effectiveSandboxGpuDevice: null,
+      session: options.session,
+      stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
+    };
+  }
   if (scenario.mode.includes("core-gateway")) {
     return {
       gpu: null,
@@ -349,6 +481,10 @@ preflightHandlers.handlePreflightState = async (options) => {
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("gateway-effect");
+    return { gatewayReuseState: "healthy", session: options.session, stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }) };
+  }
   if (!scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected gateway compatibility handler");
   }
@@ -370,23 +506,29 @@ providerHandlers.handleProviderInferenceState = async (options) => {
   throw sentinel;
 };
 
-flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
-  const initialSession = await runtime.session();
-  called.push("initial:" + initialSession.machine.state);
-  if (scenario.slice === "initial") throw sentinel;
-  if (initialSession.machine?.state === "init") {
-    await runtime.applyResult(advanceTo("preflight"));
-  }
-  await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
-  await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
-  if (scenario.mode === "ahead-core") {
-    await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
-  }
-  const session = await runtime.session();
-  return { context: baseContext(context, { session }), session };
-};
+if (scenario.mode !== "providerless-external-component") {
+  flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
+    const initialSession = await runtime.session();
+    called.push("initial:" + initialSession.machine.state);
+    if (scenario.slice === "initial") throw sentinel;
+    if (initialSession.machine?.state === "init") {
+      await runtime.applyResult(advanceTo("preflight"));
+    }
+    await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
+    if (scenario.mode === "ahead-core") {
+      await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
+    }
+    const session = await runtime.session();
+    return { context: baseContext(context, { session }), session };
+  };
+}
 
 flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("sandbox-effect");
+    throw sentinel;
+  }
   called.push("core");
   if (scenario.mode === "ahead-core") {
     throw new Error("strict core runner should not run after an ahead-state handoff");
@@ -395,7 +537,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
   await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
   await runtime.applyResult(advanceTo("sandbox", { metadata: { state: "inference" } }));
   await runtime.applyResult(
-    branchTo(scenario.mode === "dashboard-port-composition" ? "agent_setup" : "openclaw", {
+    branchTo(dashboardScenario ? "agent_setup" : "openclaw", {
       metadata: { state: "sandbox" },
     }),
   );
@@ -404,7 +546,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
 };
 
 flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
-  if (scenario.mode === "dashboard-port-composition") {
+  if (dashboardScenario) {
     registry.registerSandbox({
       name: "fsm-sandbox",
       agent: "hermes",
@@ -519,13 +661,25 @@ const { onboard } = require(${onboardPath});
 
 (async () => {
   try {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      await require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/onboard.ts"))}).runOnboardAction({
+        "non-interactive": true,
+        yes: true,
+        "yes-i-accept-third-party-software": true,
+        "no-gpu": true,
+        name: "fsm-sandbox",
+      });
+      throw new Error("onboarding unexpectedly succeeded");
+    }
     await onboard({
       nonInteractive: true,
       autoYes: true,
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
-      apfInterceptorRequested: scenario.mode === "providerless-staged-messaging",
+      apfInterceptorRequested:
+        scenario.mode === "providerless-staged-messaging" ||
+        scenario.mode === "providerless-external-component",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
@@ -540,6 +694,11 @@ const { onboard } = require(${onboardPath});
     throw new Error("expected slice sentinel");
   } catch (error) {
     if (ownsAuthoritativeOnboardLock) onboardSession.releaseOnboardLock();
+    if (scenario.mode === "dashboard-spawn-failure") {
+      called.push("failure:" + String(error?.message));
+      console.log("__RESULT__" + JSON.stringify({ called }));
+      return;
+    }
     if (
       error === sentinel ||
       error?.message === sentinel.message ||
@@ -550,7 +709,7 @@ const { onboard } = require(${onboardPath});
         /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
       const payload = "__RESULT__" + JSON.stringify({ called });
-      if (scenario.mode === "dashboard-port-composition") {
+      if (dashboardScenario) {
         process.stdout.write(payload + "\\n", () => process.exit(0));
         return;
       }
@@ -562,38 +721,36 @@ const { onboard } = require(${onboardPath});
   }
 })();
 `,
-  );
+    );
 
-  const result = spawnSync(
-    process.execPath,
-    ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
-    {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...probeEnvironment(tmpDir),
-        ...(scenario.mode === "endpoint-override"
-          ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
-          : {}),
-        ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
-        ...(scenario.mode === "providerless-staged-messaging"
-          ? {
-              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
-                JSON.stringify({
-                  schemaVersion: 1,
-                  sandboxName: "fsm-sandbox",
-                  agent: "openclaw",
-                  workflow: "onboard",
-                  channels: [{ channelId: "telegram", active: true }],
-                }),
-              ).toString("base64"),
-            }
-          : {}),
+    const result = await runOnboardProcessAsync(
+      ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
+      {
+        cwd: repoRoot,
+        env: {
+          ...probeEnvironment(tmpDir),
+          ...(scenario.mode === "endpoint-override"
+            ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
+            : {}),
+          ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
+          ...(scenario.mode === "providerless-staged-messaging"
+            ? {
+                NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                  JSON.stringify({
+                    schemaVersion: 1,
+                    sandboxName: "fsm-sandbox",
+                    agent: "openclaw",
+                    workflow: "onboard",
+                    channels: [{ channelId: "telegram", active: true }],
+                  }),
+                ).toString("base64"),
+              }
+            : {}),
+        },
+        timeoutMs: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
+        context,
       },
-      timeout: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
-    },
-  );
-  try {
+    );
     assert.equal(result.status, 0, probeFailureMessage(result));
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
     const resultLine = [...lines].reverse().find((line) => line.startsWith("__RESULT__"));
@@ -610,7 +767,7 @@ const { onboard } = require(${onboardPath});
   }
 }
 
-describe("live onboard FSM slice boundaries", () => {
+describe.concurrent("live onboard FSM slice boundaries", () => {
   /*
    * The live dispatcher is still loaded from compiled CommonJS:
    * src/lib/onboard.ts captures these helpers through require-time bindings,
@@ -623,79 +780,215 @@ describe("live onboard FSM slice boundaries", () => {
     assertFreshDistArtifacts();
   });
 
-  it("enters the initial slice on fresh onboard runs", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial:init"]);
+  it("removes its workspace when cancelled before child launch", async (context) => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-cleanup-"));
+    const launchMarkerPath = path.join(workspaceRoot, "child-launched");
+    const controller = new AbortController();
+    const reason = new Error("fixture test cancelled");
+    controller.abort(reason);
+    try {
+      await assert.rejects(
+        runSliceProbe(
+          { launchMarkerPath, slice: "initial", workspaceRoot },
+          { signal: controller.signal, onTestFinished: context.onTestFinished },
+        ),
+        (error: unknown) => error === reason,
+      );
+      assert.equal(fs.existsSync(launchMarkerPath), false);
+      assert.deepEqual(fs.readdirSync(workspaceRoot), []);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
-  it("rejects an ambient gateway endpoint before entering the initial slice", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
+  it("waits for an actively cancelled child to close before removing its workspace", async (context) => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fsm-active-"));
+    const controller = new AbortController();
+    const probe = runSliceProbe(
+      { slice: "initial", mode: "active-cancellation", workspaceRoot },
+      { signal: controller.signal, onTestFinished: context.onTestFinished },
+    );
+    let childWorkspace = path.join(workspaceRoot, "pending");
+    let childPid = 0;
+    let closeHolderPid = 0;
+    let probeSettled = false;
+    void probe.then(
+      () => {
+        probeSettled = true;
+      },
+      () => {
+        probeSettled = true;
+      },
+    );
+    try {
+      await vi.waitFor(
+        () => {
+          const [workspace] = fs.readdirSync(workspaceRoot);
+          assert.ok(workspace);
+          childWorkspace = path.join(workspaceRoot, workspace);
+          const pidPath = path.join(childWorkspace, "active-child.pid");
+          const closeHolderPath = path.join(childWorkspace, "active-close-hold.ready");
+          assert.ok(fs.existsSync(pidPath));
+          assert.ok(fs.existsSync(closeHolderPath));
+          childPid = Number(fs.readFileSync(pidPath, "utf8"));
+          closeHolderPid = Number(fs.readFileSync(closeHolderPath, "utf8"));
+          assert.ok(Number.isSafeInteger(childPid) && childPid > 0);
+          assert.ok(Number.isSafeInteger(closeHolderPid) && closeHolderPid > 0);
+          process.kill(childPid, 0);
+          process.kill(closeHolderPid, 0);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+
+      controller.abort(new Error("fixture test cancelled after launch"));
+      await vi.waitFor(
+        () => {
+          assert.throws(
+            () => process.kill(childPid, 0),
+            (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+          );
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      assert.equal(probeSettled, false);
+      assert.ok(fs.existsSync(childWorkspace));
+      process.kill(closeHolderPid, 0);
+      await vi.waitFor(() => assert.equal(probeSettled, true), {
+        timeout: 5_000,
+        interval: 10,
+      });
+      await assert.rejects(probe, /slice probe exited with status null and signal SIGKILL/u);
+      assert.throws(
+        () => process.kill(closeHolderPid, 0),
+        (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+      );
+      assert.deepEqual(fs.readdirSync(workspaceRoot), []);
+    } finally {
+      controller.abort();
+      try {
+        fs.writeFileSync(path.join(childWorkspace, "active-close-hold.release"), "");
+      } catch {
+        // The workspace may already be gone after a successful close and cleanup.
+      }
+      await probe.catch(() => undefined);
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
-  it("rejects staged messaging before entering the onboarding state machine (#9833)", () => {
+  it("enters the initial slice on fresh onboard runs", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "initial" }, context), ["initial:init"]);
+  });
+
+  it("rejects an ambient gateway endpoint before entering the initial slice", async (context) => {
     assert.deepEqual(
-      runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
+      await runSliceProbe({ slice: "initial", mode: "endpoint-override" }, context),
       [],
     );
   });
 
-  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
+  it("rejects staged messaging before entering the onboarding state machine (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }, context),
+      [],
+    );
   });
 
-  it("uses the session decision read after acquiring the onboarding lock (#9833)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-session-decision" }), [
-      "locked-resume:true",
-    ]);
+  it(
+    "validates the registered component before providerless onboarding effects (#11486)",
+    async (context) => {
+      assert.deepEqual(
+        await runSliceProbe({ slice: "initial", mode: "providerless-external-component" }, context),
+        ["component-validated", "preflight-effect", "gateway-effect", "sandbox-effect"],
+      );
+    },
+    probeTimeoutMs,
+  );
+
+  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }, context),
+      [],
+    );
   });
 
-  it("enters the core slice after the initial slice reaches provider selection", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial:init", "core"]);
+  it("uses the session decision read after acquiring the onboarding lock (#9833)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "initial", mode: "stale-session-decision" }, context),
+      ["locked-resume:true"],
+    );
   });
 
-  it("enters the final slice after the core slice reaches the branch state", () => {
-    assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
+  it("enters the core slice after the initial slice reaches provider selection", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core" }, context), ["initial:init", "core"]);
   });
 
-  it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
+  it("enters the final slice after the core slice reaches the branch state", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "final" }, context), [
       "initial:init",
       "core",
-      "forward-port:18791",
-      "registry-port:18791",
-      "dashboard-url:http://127.0.0.1:18791/",
+      "final",
     ]);
+  });
+
+  it("reports a sanitized adapter failure for a missing forward executable (#9808, #11648)", async (context) => {
+    const called = await runSliceProbe(
+      { slice: "final", mode: "dashboard-spawn-failure" },
+      context,
+    );
+    assert.ok(called.includes("forward-launch"), JSON.stringify(called));
+    assert.match(called.at(-1) ?? "", /failure:.*could not prove the forward state/i);
+    assert.doesNotMatch(called.at(-1) ?? "", /ENOENT|missing-openshell/);
+    assert.ok(!called.includes("terminate-process-tree"));
+    assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
   }, 60_000);
 
-  it("enters the strict initial runner at preflight on an exact-state resume", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [
+  it("keeps the single dashboard port established during agent onboarding (#8214)", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }, context),
+      [
+        "initial:init",
+        "core",
+        "agent-executor:function",
+        "forward-port:18791",
+        "registry-port:18791",
+        "dashboard-url:http://127.0.0.1:18791/",
+      ],
+    );
+  }, 60_000);
+
+  it("enters the strict initial runner at preflight on an exact-state resume", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "initial", mode: "resume-initial" }, context), [
       "initial:preflight",
     ]);
   });
 
-  it("bypasses the strict core runner when fresh state is already past the core entry", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "ahead-core" }), [
+  it("bypasses the strict core runner when fresh state is already past the core entry", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core", mode: "ahead-core" }, context), [
       "initial:init",
       "provider-compat",
     ]);
   });
 
-  it("routes ordinary resume through the sandbox's recorded gateway", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-core-gateway" }), [
+  it("routes ordinary resume through the sandbox's recorded gateway", async (context) => {
+    assert.deepEqual(await runSliceProbe({ slice: "core", mode: "resume-core-gateway" }, context), [
       "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
   });
 
-  it("routes an incomplete registered resume through its requested sandbox gateway", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }), [
-      "gateway:nemoclaw-9090:nemoclaw-9090",
-      "provider-compat:nemoclaw-9090",
-    ]);
-  });
-
-  it("wires the live sandbox registry resolver into core provenance", () => {
+  it("routes an incomplete registered resume through its requested sandbox gateway", async (context) => {
     assert.deepEqual(
-      runSliceProbe({ slice: "core", mode: "resume-core-gateway-provenance-resolver" }),
+      await runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }, context),
+      ["gateway:nemoclaw-9090:nemoclaw-9090", "provider-compat:nemoclaw-9090"],
+    );
+  });
+
+  it("wires the live sandbox registry resolver into core provenance", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe(
+        { slice: "core", mode: "resume-core-gateway-provenance-resolver" },
+        context,
+      ),
       [
         "gateway:nemoclaw-9090:nemoclaw-9090",
         "registry-provenance:openai-api:https://persisted.example.test/v1:onboard",
@@ -703,28 +996,31 @@ describe("live onboard FSM slice boundaries", () => {
     );
   });
 
-  it("keeps an authoritative rebuild gateway after the registry row is removed", () => {
-    assert.deepEqual(runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }), [
-      "gateway:nemoclaw-9090:nemoclaw-9090",
-      "provider-compat:nemoclaw-9090",
-    ]);
+  it("keeps an authoritative rebuild gateway after the registry row is removed", async (context) => {
+    assert.deepEqual(
+      await runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }, context),
+      ["gateway:nemoclaw-9090:nemoclaw-9090", "provider-compat:nemoclaw-9090"],
+    );
   });
 
-  it.each(["balanced", "restricted"] as const)(
+  it.for(["balanced", "restricted"] as const)(
     "leaves ordinary policy tiers non-authoritative in the runOnboard machine [case %#]",
-    (policyTier) => {
-      assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
-        "initial:init",
-        "authoritative-policy-tier:undefined",
-      ]);
+    async (policyTier, context) => {
+      assert.deepEqual(
+        await runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }, context),
+        ["initial:init", "authoritative-policy-tier:undefined"],
+      );
     },
   );
 
-  it("does not carry a policy tier through authoritative rebuild state", () => {
-    const called = runSliceProbe({
-      slice: "core",
-      mode: "authoritative-core-gateway-policy-tier",
-    });
+  it("does not carry a policy tier through authoritative rebuild state", async (context) => {
+    const called = await runSliceProbe(
+      {
+        slice: "core",
+        mode: "authoritative-core-gateway-policy-tier",
+      },
+      context,
+    );
     assert.equal(called.at(-1), "authoritative-policy-tier:undefined");
   });
 });

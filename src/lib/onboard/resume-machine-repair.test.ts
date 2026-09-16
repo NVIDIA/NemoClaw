@@ -337,29 +337,29 @@ describe("resume machine repair", () => {
     });
   });
 
-  it.each([
-    "gateway",
-    "policies",
-  ] as const)("lets resume complete from a reopened complete snapshot after %s", async (completedStep) => {
-    const session = createSession({
-      resumable: true,
-      status: "in_progress",
-      lastCompletedStep: completedStep,
-      machine: {
-        version: MACHINE_SNAPSHOT_VERSION,
-        state: "complete",
-        stateEnteredAt: "2026-06-01T00:00:00.000Z",
-        revision: 7,
-      },
-    });
-    session.steps[completedStep].status = "complete";
+  it.each(["gateway", "policies"] as const)(
+    "lets resume complete from a reopened complete snapshot after %s",
+    async (completedStep) => {
+      const session = createSession({
+        resumable: true,
+        status: "in_progress",
+        lastCompletedStep: completedStep,
+        machine: {
+          version: MACHINE_SNAPSHOT_VERSION,
+          state: "complete",
+          stateEnteredAt: "2026-06-01T00:00:00.000Z",
+          revision: 7,
+        },
+      });
+      session.steps[completedStep].status = "complete";
 
-    const completed = await runResumeSequence(session);
+      const completed = await runResumeSequence(session);
 
-    expect(completed).toMatchObject({
-      status: "complete",
-      failure: null,
-      machine: { state: "complete" },
-    });
-  });
+      expect(completed).toMatchObject({
+        status: "complete",
+        failure: null,
+        machine: { state: "complete" },
+      });
+    },
+  );
 });

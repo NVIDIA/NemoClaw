@@ -8,20 +8,37 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenShellForwardAdapter } from "../../src/lib/adapters/openshell/forward";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
-const forwardService = requireSource(
-  "../../src/lib/adapters/openshell/forward-service.ts",
-) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
+const forwardRuntime = requireSource(
+  "../../src/lib/adapters/openshell/forward-runtime.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-runtime.js");
+
+function mockForwardOwned(): void {
+  vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
+    observeForwards: vi.fn<OpenShellForwardAdapter["observeForwards"]>(async ({ forwards }) =>
+      forwards.map((forward) => ({ state: "owned" as const, forward })),
+    ),
+    startForward: vi.fn(),
+    retireLegacyForward: vi.fn(),
+    verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
+  });
+}
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
 ) {
-  return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, {
+    ensureSandboxPortForwardImpl: async () => true,
+    isWsl: false,
+    withLifecycleLock: async (_name, operation) => await operation(),
+    ...options,
+  });
 }
 
 afterEach(() => {
@@ -31,18 +48,18 @@ afterEach(() => {
 function getSandboxExecShellCommand(rawArgs: unknown): string {
   const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
   const payload = String(args.at(-1) ?? "");
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+\/=]+)' \| base64 -d \| sh/);
+  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+async function withFakeOpenshellBinary<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
   fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     previous === undefined
       ? delete process.env.NEMOCLAW_OPENSHELL_BIN
@@ -356,8 +373,7 @@ describe("managed gateway recovery controller", () => {
     },
   ])(
     "enforces managed recovery for $label",
-    ({
-      label,
+    async ({
       recoverResults,
       expectedResult,
       expectedActions,
@@ -367,7 +383,6 @@ describe("managed gateway recovery controller", () => {
     }) => {
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
       const registry = requireSource("../../src/lib/state/registry.js");
       const childProcess = requireSource("node:child_process");
       const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
@@ -377,11 +392,7 @@ describe("managed gateway recovery controller", () => {
       let recoveryActionCalls = 0;
       let managedProbeCalls = 0;
       const requestGatewaySupervisorAction = vi.fn(
-        (
-          _sandboxName: string,
-          action: "restart" | "recover" | "probe",
-          _timeoutMs?: number,
-        ) => {
+        (_sandboxName: string, action: "restart" | "recover" | "probe", _timeoutMs?: number) => {
           const isProbe = action === "probe";
           const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
           const result = isProbe
@@ -417,23 +428,26 @@ describe("managed gateway recovery controller", () => {
           },
         );
         vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-        vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-        vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
+        mockForwardOwned();
         vi.spyOn(registry, "getSandbox").mockReturnValue({
           name: "beta",
           agent: "openclaw",
           dashboardPort: 18789,
-          ...(label === "PID 1 supervisor" ? { openshellDriver: "podman" } : {}),
         });
         vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
           status: 0,
           output: runningForward,
         });
 
-        const result = withFakeOpenshellBinary(() =>
+        const result = await withFakeOpenshellBinary(() =>
           checkAndRecoverSandboxProcesses("beta", {
             quiet: true,
             requestGatewaySupervisorAction,
+            isSandboxGatewayRunningImpl: async () => {
+              healthProbeCalls += 1;
+              return false;
+            },
+            waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
           }),
         );
         expect(result).toEqual(expectedResult);
@@ -446,8 +460,8 @@ describe("managed gateway recovery controller", () => {
         expect(
           requestGatewaySupervisorAction.mock.calls
             .filter(([, action]) => action === "recover")
-            .every(([, , timeout]) =>
-              typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
+            .every(
+              ([, , timeout]) => typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
             ),
         ).toBe(true);
         expect(healthProbeCalls).toBe(1);

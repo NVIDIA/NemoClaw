@@ -28,8 +28,15 @@ export const enableDockerDesktopWslIntegration: AdvisoryCheck<HostAssessment> = 
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** WSL guidance yields to a diagnosed authority conflict, which names the real remedy (#10622). */
   check(host) {
-    if (host.dockerHostInvalid || !wslDockerBlocksRemainingChecks(host)) return null;
+    if (
+      host.dockerHostInvalid ||
+      host.dockerAuthorityConflict !== undefined ||
+      !wslDockerBlocksRemainingChecks(host)
+    ) {
+      return null;
+    }
     const dockerMissing = !host.dockerInstalled;
     return hostAdvisory(enableDockerDesktopWslIntegration, {
       title: "Enable Docker Desktop WSL integration",
@@ -123,15 +130,62 @@ export const retryDockerProbe: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+/** Quote a socket value for the manual POSIX-shell recovery command. */
+function shellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
+  id: "docker_authority_conflict",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  /** Name both engines and the DOCKER_HOST remedy when detection declined to choose (#10622). */
+  check(host) {
+    const conflict = host.dockerAuthorityConflict;
+    if (
+      conflict === undefined ||
+      !host.dockerInstalled ||
+      host.dockerHostInvalid ||
+      host.dockerReachable
+    ) {
+      return null;
+    }
+    const [first, second] = conflict.candidates;
+    const docker = first.identity === "docker" ? first : second;
+    return hostAdvisory(chooseDockerAuthority, {
+      title: "Choose the Docker authority",
+      kind: "manual",
+      reason:
+        "The default Docker authority did not answer, and two engines answered on discovered sockets: " +
+        `${first.identity} at ${first.socketPath} and ${second.identity} at ${second.socketPath}. ` +
+        "NemoClaw did not choose between them and kept the default authority. " +
+        "It did not diagnose why that authority is unreachable, and it withholds the docker-group and start-Docker remedies while two other engines answer. " +
+        "Set DOCKER_HOST to the Docker socket below, or repair the default authority. " +
+        "A Podman compatibility socket cannot satisfy the Docker runtime requirement." +
+        (host.platform === "linux"
+          ? " To use native rootless Podman on a qualified Linux host, set NEMOCLAW_GATEWAY_RUNTIME=podman before onboarding. " +
+            "Review the requirements at https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/reference/platform-support#deployment-paths."
+          : ""),
+      commands: [
+        `export DOCKER_HOST=${shellSingleQuoted(`unix://${docker.socketPath}`)}`,
+        "nemoclaw onboard",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Silent while an authority conflict is observed: group membership is not the diagnosed cause (#10622). */
   check(host) {
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
+      host.dockerAuthorityConflict !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -164,11 +218,13 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Silent while an authority conflict is observed: two engines already answer (#10622). */
   check(host) {
     const likelyGroupIssue = host.platform === "linux" && host.dockerServiceActive === true;
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
+      host.dockerAuthorityConflict !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -230,6 +286,7 @@ export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   installDocker,
   invalidDockerHost,
   retryDockerProbe,
+  chooseDockerAuthority,
   addUserToDockerGroup,
   startDocker,
   dockerDesktopCredentialStoreHeadless,

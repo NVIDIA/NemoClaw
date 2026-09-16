@@ -305,10 +305,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       );
 
       try {
-        const script = WARMUP_SCRIPT.replace(
-          `timeout=${WARMUP_PROBE_TIMEOUT_S},`,
-          "timeout=0.1,",
-        );
+        const script = WARMUP_SCRIPT.replace(`timeout=${WARMUP_PROBE_TIMEOUT_S},`, "timeout=0.1,");
         expect(script).not.toBe(WARMUP_SCRIPT);
         const result = spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
@@ -429,5 +426,4 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
-
 });

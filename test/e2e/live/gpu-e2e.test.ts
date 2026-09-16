@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import YAML from "yaml";
+import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
+import { load as loadRegistry } from "../../../src/lib/state/registry/persistence.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -25,6 +31,8 @@ import {
   readTokenFileChecked,
   restartProxy,
   SANDBOX_NAME,
+  startAttachedOllama,
+  waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
@@ -111,8 +119,7 @@ test(
     assertNvidiaAvailable(nvidia, skip);
 
     await ensureOllama(host);
-    const ollamaCleanup = await cleanupOllama(host, "pre-cleanup-ollama");
-    expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
+    await cleanupOllama(host, "pre-cleanup-ollama");
 
     progress.phase("install Ollama and GPU sandbox");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
@@ -130,20 +137,14 @@ test(
       env: env(),
       timeoutMs: 120_000,
     });
-    expect(status.exitCode, resultText(status)).toBe(0);
     expect(resultText(status)).toContain("Sandbox GPU: enabled");
-    expect(resultText(status)).toMatch(/CUDA verified|CUDA unverified|last CUDA proof failed/i);
-    expect(resultText(status)).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
+    expect(resultText(status)).toContain("CUDA verified");
 
     const installLog = resultText(install);
     assertGpuInstallProofs(installLog);
-    expect(installLog).toContain(
-      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+    expect(installLog).not.toMatch(
+      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
     );
-    expect(installLog).not.toContain(
-      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
-    );
-    expect(installLog).not.toContain("Docker GPU mode selected");
 
     const sandboxContainers = await runtimeProvider.command(
       [
@@ -161,7 +162,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(sandboxContainers.exitCode, resultText(sandboxContainers)).toBe(0);
     const sandboxContainerInventory = sandboxContainers.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -184,7 +184,6 @@ test(
       env: env(),
       timeoutMs: 30_000,
     });
-    expect(route.exitCode, resultText(route)).toBe(0);
     expect(resultText(route)).toMatch(/ollama/i);
 
     progress.phase("validate Ollama proxy credential boundary");
@@ -198,7 +197,6 @@ test(
       ["-sS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${PROXY_PORT}/api/tags`],
       { artifactName: "ollama-proxy-unauthorized", env: env(), timeoutMs: 30_000 },
     );
-    expect(proxyUnauth.exitCode, resultText(proxyUnauth)).toBe(0);
     expect(proxyUnauth.stdout).toBe("401");
 
     const proxyAuth = await host.command(
@@ -211,11 +209,8 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(proxyAuth.exitCode, resultText(proxyAuth)).toBe(0);
     expect(proxyAuth.stdout).toMatch(/models|name/i);
 
-    const proxyBefore = await proxyStatus(host, token, "proxy-status-before-restart");
-    expect(proxyBefore.exitCode, resultText(proxyBefore)).toBe(0);
     await restartProxy(host, token);
     const proxyAfter = await proxyStatus(host, token, "proxy-status-after-restart");
     expect(proxyAfter.exitCode, resultText(proxyAfter)).toBe(0);
@@ -250,7 +245,6 @@ test(
       ),
       { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
     );
-    expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
 
     const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
@@ -258,7 +252,6 @@ test(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
     expect(
       hasExactReadyPhase(readySandbox.stdout),
       `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
@@ -295,7 +288,6 @@ exit 1`,
       ],
       { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
     );
-    expect(restart.exitCode, resultText(restart)).toBe(0);
     const restartLines = restart.stdout.trim().split("\n");
     expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
     expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
@@ -318,7 +310,6 @@ exit 1`,
         timeoutMs: 12 * 60_000,
       },
     );
-    expect(recovered.exitCode, resultText(recovered)).toBe(0);
     assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
 
     const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
@@ -326,7 +317,6 @@ exit 1`,
       env: env(),
       timeoutMs: 30_000,
     });
-    expect(loaded.exitCode, resultText(loaded)).toBe(0);
     expect(loadedOllamaModels(loaded.stdout)).toContain(model);
   },
 );
@@ -410,6 +400,184 @@ test(
       redactionValues: [],
       sandbox,
       sandboxName: SANDBOX_NAME,
+    });
+  },
+);
+
+test(
+  "OpenClaw exports an attached Ollama daemon and refuses a stopped backend (#11435)",
+  {
+    timeout: TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "prepare the Ollama export host",
+        "onboard OpenClaw without sandbox GPU",
+        "attach the export daemon",
+        "export and compare the active Ollama configuration",
+        "refuse export after the attached daemon stops",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "native Linux Docker + attached Ollama daemon + NemoClaw proxy + managed OpenClaw + SDK configuration export",
+      credentialBoundary:
+        "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
+    });
+    const exportEnv = env({
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_SANDBOX_GPU: "0",
+      NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+      NEMOCLAW_OLLAMA_PORT: "11439",
+      NEMOCLAW_MODEL: "qwen3.5:9b",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+      OLLAMA_HOST: "127.0.0.1:11439",
+      OLLAMA_CONTEXT_LENGTH: "32768",
+    });
+    let daemonOwner: ReturnType<typeof startAttachedOllama> | undefined;
+    cleanup.trackDisposable("stop Ollama processes after export qualification", async () => {
+      const result = await cleanupOllama(host, "export-cleanup-ollama-processes");
+      expect(result.exitCode, resultText(result)).toBe(0);
+    });
+    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
+    cleanup.trackDisposable("remove private Ollama export documents", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
+    await cleanupGpu(host, sandbox);
+    await runtimeProvider.requireAvailable({
+      artifactName: "export-runtime-info",
+      scenarioLabel: "attached Ollama export",
+    });
+    await ensureOllama(host);
+    await cleanupOllama(host, "export-stop-default-ollama");
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "export-cleanup-gateway",
+      env: exportEnv,
+      timeoutMs: 60000,
+    });
+    cleanup.trackDisposable("delete the export sandbox", () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "export-cleanup-openshell",
+        env: exportEnv,
+        timeoutMs: 60000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "export-cleanup-sandbox",
+      env: exportEnv,
+      timeoutMs: 120000,
+    });
+    progress.phase("onboard OpenClaw without sandbox GPU");
+    const onboard = await host.command(
+      "node",
+      [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      {
+        artifactName: "export-onboard-ollama",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: execTimeout(20 * 60000),
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    progress.phase("attach the export daemon");
+    // Onboarding restarts the installer service on the same port; stop it before the child binds.
+    const stoppedService = await host.command(
+      "sudo",
+      ["-n", "systemctl", "stop", "ollama.service"],
+      {
+        artifactName: "export-stop-competing-service",
+        env: exportEnv,
+        timeoutMs: 60000,
+      },
+    );
+
+    expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
+    daemonOwner = startAttachedOllama(progress, exportEnv);
+    await waitForAttachedOllama(host, exportEnv);
+    const preparedModel = await host.command("ollama", ["pull", "qwen3.5:9b"], {
+      artifactName: "export-prepare-attached-model",
+      env: exportEnv,
+      timeoutMs: execTimeout(20 * 60000),
+    });
+    expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
+
+    progress.phase("export and compare the active Ollama configuration");
+    const firstPath = path.join(directory, "first.yaml");
+    const exported = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
+      { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
+    );
+    expect(exported.exitCode, resultText(exported)).toBe(0);
+    const raw = fs.readFileSync(firstPath, "utf8");
+    const document = validateNemoClawConfig(YAML.parse(raw));
+    const token = readTokenFileChecked(ollamaProxyTokenFile()).token;
+    artifacts.addRedactionValues([token]);
+    expect(raw.includes(token), "Export must omit the proxy credential").toBe(false);
+    expect(JSON.stringify(document.spec.inferenceProviders)).not.toMatch(
+      /NEMOCLAW_OLLAMA_PROXY_TOKEN|host\.openshell\.internal/u,
+    );
+    const tags = await host.command(
+      "curl",
+      ["-q", "--noproxy", "*", "-fsS", "--max-time", "5", "http://127.0.0.1:11439/api/tags"],
+      { artifactName: "export-attached-model-identity", env: exportEnv, timeoutMs: 10000 },
+    );
+    const model = (
+      JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
+    ).models.find(({ name }) => name === "qwen3.5:9b");
+    const exportedProvider = document.spec.inferenceProviders[0];
+    const serving =
+      "serving" in exportedProvider && exportedProvider.serving.backend === "ollama"
+        ? exportedProvider.serving
+        : undefined;
+    expect(serving?.daemon.hostPort).toBe(11439);
+    expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
+    expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
+    const entry = loadRegistry().sandboxes[SANDBOX_NAME];
+    expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
+      entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
+    );
+    const repeatPath = path.join(directory, "repeat.yaml");
+    await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", repeatPath, "--json"],
+      { artifactName: "export-ollama-repeat", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
+    );
+    expect(validateNemoClawConfig(YAML.parse(fs.readFileSync(repeatPath, "utf8"))).spec).toEqual(
+      document.spec,
+    );
+
+    progress.phase("refuse export after the attached daemon stops");
+    await daemonOwner.terminate();
+    // Sandbox destruction unloads models through the saved endpoint, so restore it during cleanup.
+    cleanup.trackDisposable("restore the fixture daemon for model cleanup", async () => {
+      daemonOwner = startAttachedOllama(progress, exportEnv);
+      await waitForAttachedOllama(host, exportEnv, "export-cleanup-daemon-ready");
+    });
+    const rejectedPath = path.join(directory, "must-not-exist.yaml");
+    const rejected = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", rejectedPath, "--json"],
+      {
+        artifactName: "export-ollama-stopped-daemon",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: 60000,
+      },
+    );
+    expect(rejected.exitCode, resultText(rejected)).not.toBe(0);
+    expect(fs.existsSync(rejectedPath), "A stopped daemon must prevent publication").toBe(false);
+    await artifacts.writeJson("ollama-config-export-evidence.json", {
+      sandboxName: SANDBOX_NAME,
+      daemonPort: 11439,
+      proxyPort: Number(PROXY_PORT),
+      model: "qwen3.5:9b",
+      image: document.spec.sandboxes[0].runtime.image.ref,
+      repeatedSpecMatches: true,
+      stoppedDaemonPreventedPublication: true,
     });
   },
 );

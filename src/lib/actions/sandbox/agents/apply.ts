@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-
+import { createCliOpenShellSandboxCommandExecutor } from "../../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../../../adapters/openshell/sandbox-observer";
 import { loadAgentsManifest } from "../../../onboard/agents-manifest";
 import { isOpenclawAgent } from "../../../onboard/openclaw-otel-policy-presets";
 import * as registry from "../../../state/registry";
-import { buildOpenshellExecArgs } from "../exec";
 
 // Lazy-require `ensureLiveSandboxOrExit` because its import chain pulls in
 // `runner`/`./platform`, which the Vitest TS loader cannot resolve at module
@@ -218,9 +218,10 @@ export interface RunAgentsApplyOptions {
 export interface RunAgentsApplyDeps {
   ensureLive?: EnsureLive;
   getSandboxAgent?: (sandboxName: string) => string | null;
-  listAgents?: (sandboxName: string) => OpenClawAgentEntry[];
-  addAgent?: (sandboxName: string, id: string, workspace: string | undefined) => void;
-  deleteAgent?: (sandboxName: string, id: string) => void;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  listAgents?: (sandboxName: string) => Promise<OpenClawAgentEntry[]>;
+  addAgent?: (sandboxName: string, id: string, workspace: string | undefined) => Promise<void>;
+  deleteAgent?: (sandboxName: string, id: string) => Promise<void>;
   log?: (message: string) => void;
   exit?: (code: number) => never;
 }
@@ -272,21 +273,38 @@ export function parseOpenClawAgentsList(output: string): OpenClawAgentEntry[] {
   });
 }
 
-function defaultListAgents(sandboxName: string): OpenClawAgentEntry[] {
-  const { getOpenshellBinary } =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
-  const result = spawnSync(
-    getOpenshellBinary(),
-    buildOpenshellExecArgs(sandboxName, ["openclaw", "agents", "list", "--json"]),
-    { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
-  );
-  if (result.status !== 0) {
-    const stderr = String(result.stderr || "").trim();
+async function executeAgentCommand(
+  executor: OpenShellSandboxBufferedCommandExecutor,
+  sandboxName: string,
+  command: readonly string[],
+) {
+  return executor.runBuffered({
+    sandboxName,
+    target: selectedOpenShellGateway(),
+    command,
+  });
+}
+
+async function defaultListAgents(
+  executor: OpenShellSandboxBufferedCommandExecutor,
+  sandboxName: string,
+): Promise<OpenClawAgentEntry[]> {
+  const result = await executeAgentCommand(executor, sandboxName, [
+    "openclaw",
+    "agents",
+    "list",
+    "--json",
+  ]);
+  if (result.outcome.kind === "failed") {
+    throw new Error(`openclaw agents list --json failed: ${result.outcome.error.message}`);
+  }
+  if (result.outcome.exitCode !== 0) {
+    const stderr = result.stderr.trim();
     throw new Error(
-      `openclaw agents list --json failed (exit ${result.status ?? "?"})${stderr ? `: ${stderr}` : ""}`,
+      `openclaw agents list --json failed (exit ${result.outcome.exitCode})${stderr ? `: ${stderr}` : ""}`,
     );
   }
-  return parseOpenClawAgentsList(String(result.stdout || "[]"));
+  return parseOpenClawAgentsList(result.stdout || "[]");
 }
 
 // OpenClaw flag contract differs by agents verb:
@@ -307,29 +325,40 @@ export function buildOpenclawAgentDeleteArgs(id: string): string[] {
   return ["openclaw", "agents", "delete", id, "--force"];
 }
 
-function defaultAddAgent(sandboxName: string, id: string, workspace: string | undefined): void {
-  const { getOpenshellBinary } =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
-  const result = spawnSync(
-    getOpenshellBinary(),
-    buildOpenshellExecArgs(sandboxName, buildOpenclawAgentAddArgs(id, workspace)),
-    { stdio: "inherit" },
+async function defaultAddAgent(
+  executor: OpenShellSandboxBufferedCommandExecutor,
+  sandboxName: string,
+  id: string,
+  workspace: string | undefined,
+): Promise<void> {
+  const result = await executeAgentCommand(
+    executor,
+    sandboxName,
+    buildOpenclawAgentAddArgs(id, workspace),
   );
-  if (result.status !== 0) {
-    throw new Error(`openclaw agents add ${id} failed (exit ${result.status ?? "?"})`);
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  if (result.outcome.kind === "failed") {
+    throw new Error(`openclaw agents add ${id} failed: ${result.outcome.error.message}`);
+  }
+  if (result.outcome.exitCode !== 0) {
+    throw new Error(`openclaw agents add ${id} failed (exit ${result.outcome.exitCode})`);
   }
 }
 
-function defaultDeleteAgent(sandboxName: string, id: string): void {
-  const { getOpenshellBinary } =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
-  const result = spawnSync(
-    getOpenshellBinary(),
-    buildOpenshellExecArgs(sandboxName, buildOpenclawAgentDeleteArgs(id)),
-    { stdio: "inherit" },
-  );
-  if (result.status !== 0) {
-    throw new Error(`openclaw agents delete ${id} failed (exit ${result.status ?? "?"})`);
+async function defaultDeleteAgent(
+  executor: OpenShellSandboxBufferedCommandExecutor,
+  sandboxName: string,
+  id: string,
+): Promise<void> {
+  const result = await executeAgentCommand(executor, sandboxName, buildOpenclawAgentDeleteArgs(id));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  if (result.outcome.kind === "failed") {
+    throw new Error(`openclaw agents delete ${id} failed: ${result.outcome.error.message}`);
+  }
+  if (result.outcome.exitCode !== 0) {
+    throw new Error(`openclaw agents delete ${id} failed (exit ${result.outcome.exitCode})`);
   }
 }
 
@@ -341,9 +370,13 @@ export async function runAgentsApply(
   const exit = deps.exit ?? ((code: number) => process.exit(code));
   const ensureLive = deps.ensureLive ?? lazyEnsureLive();
   const getSandboxAgent = deps.getSandboxAgent ?? defaultGetSandboxAgent;
-  const listAgents = deps.listAgents ?? defaultListAgents;
-  const addAgent = deps.addAgent ?? defaultAddAgent;
-  const deleteAgent = deps.deleteAgent ?? defaultDeleteAgent;
+  const commandExecutor = deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor();
+  const listAgents = deps.listAgents ?? ((name) => defaultListAgents(commandExecutor, name));
+  const addAgent =
+    deps.addAgent ??
+    ((name, id, workspace) => defaultAddAgent(commandExecutor, name, id, workspace));
+  const deleteAgent =
+    deps.deleteAgent ?? ((name, id) => defaultDeleteAgent(commandExecutor, name, id));
 
   await ensureLive(options.sandboxName, { allowNonReadyPhase: false });
 
@@ -363,7 +396,7 @@ export async function runAgentsApply(
     log(`  Manifest rejected before mutation: ${reason}`);
     exit(1);
   }
-  const currentList = listAgents(options.sandboxName);
+  const currentList = await listAgents(options.sandboxName);
   const diff = buildAgentsApplyDiff(currentList, manifest);
 
   log(`  Sandbox: ${options.sandboxName}`);
@@ -401,7 +434,7 @@ export async function runAgentsApply(
   const toolsAgentIds = findManifestToolsByAgentId(manifest.agents);
   for (const id of diff.toDelete) {
     log(`  Deleting agent: ${id}`);
-    deleteAgent(options.sandboxName, id);
+    await deleteAgent(options.sandboxName, id);
   }
   for (const entry of diff.toAdd) {
     if (toolsAgentIds.has(entry.id)) {
@@ -410,7 +443,7 @@ export async function runAgentsApply(
       );
     }
     log(`  Adding agent: ${entry.id}`);
-    addAgent(options.sandboxName, entry.id, entry.workspace);
+    await addAgent(options.sandboxName, entry.id, entry.workspace);
   }
   log("  Apply complete.");
 }

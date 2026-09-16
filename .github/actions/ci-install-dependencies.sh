@@ -4,6 +4,25 @@
 
 set -euo pipefail
 
+if [ "$#" -gt 2 ]; then
+  echo "Usage: ci-install-dependencies.sh [full|production|none] [auto|artifact|registry]" >&2
+  exit 1
+fi
+
+plugin_install_mode="${1:-full}"
+plugin_install_args=(--prefix nemoclaw ci)
+case "$plugin_install_mode" in
+  full) ;;
+  production)
+    plugin_install_args+=(--omit=dev)
+    ;;
+  none) ;;
+  *)
+    echo "Unsupported plugin dependency install mode: $plugin_install_mode" >&2
+    exit 1
+    ;;
+esac
+
 candidate_npmrc="$(find . -path './.git' -prune -o -name .npmrc -print -quit)"
 if [ -n "$candidate_npmrc" ]; then
   echo "Candidate repository npm configuration is not allowed during trusted dependency installation." >&2
@@ -17,14 +36,28 @@ for shrinkwrap in npm-shrinkwrap.json nemoclaw/npm-shrinkwrap.json; do
   fi
 done
 
-event_name="${GITHUB_EVENT_NAME:-local}"
-package_mode="registry"
-if [ "$event_name" = "pull_request" ]; then
-  package_mode="artifact"
+package_mode="${2:-auto}"
+case "$package_mode" in
+  auto)
+    if [ "${GITHUB_EVENT_NAME:-local}" = "pull_request" ]; then
+      package_mode="artifact"
+    else
+      package_mode="registry"
+    fi
+    ;;
+  artifact | registry) ;;
+  *)
+    echo "Unsupported package dependency source mode: $package_mode" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$package_mode" = "artifact" ]; then
   if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-    echo "Pull request dependency installation must not receive a package credential." >&2
+    echo "Artifact dependency installation must not receive a package credential." >&2
     exit 1
   fi
+  export NPM_CONFIG_USERCONFIG=/dev/null
 fi
 
 target_root="$(pwd -P)"
@@ -56,5 +89,8 @@ if [ "$package_mode" = "registry" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
   export NPM_CONFIG_USERCONFIG="$trusted_npmrc"
 fi
 
-npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
-npm --prefix nemoclaw ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+npm ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+if [ "$plugin_install_mode" != "none" ]; then
+  npm "${plugin_install_args[@]}" \
+    --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+fi

@@ -32,6 +32,7 @@ const policy = {
 };
 const source = {
   sandboxName: "alpha",
+  agent: "openclaw",
   runtime: {
     provider: "docker",
     imageRef: `nvcr.io/nvidia/nemoclaw@${digest}`,
@@ -54,6 +55,7 @@ describe("export config builder", () => {
       documentUid: firstUid,
     });
 
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
     expect(result).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/v1",
       kind: "NemoClawConfig",
@@ -98,6 +100,27 @@ describe("export config builder", () => {
     });
   });
 
+  it("emits a verified Brave integration without another inference provider (#10904)", () => {
+    const webSearch = {
+      provider: "brave",
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    } as const;
+    const document = buildExportConfig(
+      { ...source, webSearch },
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+    expect(document.spec.sandboxes[0]!.integrations).toEqual({ webSearch });
+    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(
+      buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
+        .sandboxes[0],
+    ).not.toHaveProperty("integrations");
+  });
+
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {
       documentName: alphaDocumentName,
@@ -115,6 +138,46 @@ describe("export config builder", () => {
     expect(second.spec.sandboxes[0]?.agents[0]?.inference.routes[0]?.providerRef).toBe(
       "hosted-openai-api",
     );
+  });
+
+  it("preserves the verified Hermes agent type (#11286)", () => {
+    const result = buildExportConfig(
+      { ...source, agent: "hermes", interfaces: undefined },
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+
+    expect(result.spec.sandboxes[0]?.agents[0]?.type).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
+  });
+
+  it("binds verified Hermes API-key authentication to its inference provider (#11432)", () => {
+    const result = buildExportConfig(
+      {
+        ...source,
+        agent: "hermes",
+        interfaces: undefined,
+        auth: { method: "api-key" },
+        inference: {
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+          api: "openai-completions",
+          endpoint: "https://inference-api.nousresearch.com/v1",
+          credentialEnv: "NOUS_API_KEY",
+        },
+      },
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+
+    expect(result.spec.sandboxes[0]?.agents[0]?.auth).toEqual({
+      method: "api-key",
+      providerRef: "hosted-hermes-provider",
+    });
   });
 
   it("omits an absent hosted credential reference (#10938)", () => {

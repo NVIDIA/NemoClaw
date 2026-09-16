@@ -138,7 +138,7 @@ describe("created sandbox identity gate", () => {
       await expect(
         options.observer.listSandboxes({ target: options.target }),
       ).resolves.toMatchObject({ ok: true });
-      expect(options.checkReadyIdentity?.()).toBe("ready");
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("ready");
       return { ready: true, reason: "ready", failurePhase: null };
     });
 
@@ -155,10 +155,13 @@ describe("created sandbox identity gate", () => {
       ["sandbox", "get", "-g", gatewayName, "alpha"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "exec", "-g", gatewayName, "--name", "alpha", "--", "true"],
-      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
-    );
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledWith({
+      command: ["true"],
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName },
+      timeoutKillSignal: "SIGKILL",
+      timeoutMilliseconds: expect.any(Number),
+    });
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
@@ -380,8 +383,8 @@ describe("created sandbox identity gate", () => {
           ? (sandboxGetResults.shift() ?? resumedIdentityResult)
           : { status: 0, stdout: "", stderr: "" },
       );
-      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation((options) => {
-        expect(options.checkReadyIdentity?.()).toBe(expectedCheck);
+      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(async (options) => {
+        await expect(options.checkReadyIdentity?.()).resolves.toBe(expectedCheck);
         return { ready: false, reason: expectedReason, failurePhase: null };
       });
 

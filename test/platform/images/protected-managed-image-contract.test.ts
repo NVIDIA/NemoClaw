@@ -56,8 +56,7 @@ const PLATFORM_DIGESTS = {
   hermes: `sha256:${"2".repeat(64)}`,
   dcode: `sha256:${"3".repeat(64)}`,
 } as const;
-const DCODE_BASE_REF =
-  `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`;
+const DCODE_BASE_REF = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`;
 const E2E_WORKFLOW = YAML.parse(
   readFileSync(path.join(ROOT, ".github", "workflows", "e2e.yaml"), "utf8"),
 ) as {
@@ -184,12 +183,17 @@ describe("protected managed-image build contract", () => {
   ])("%s keeps immutable DCode resolution separate from Hermes", (jobId, stepName) => {
     const { result, output } = runBaseResolution(jobId, stepName);
     expect(result.status, result.stderr).toBe(0);
-    expect(Object.fromEntries(output.trim().split("\n").map((line) => line.split("=")))).toEqual(
-      {
-        dcode: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`,
-        openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
-      },
-    );
+    expect(
+      Object.fromEntries(
+        output
+          .trim()
+          .split("\n")
+          .map((line) => line.split("=")),
+      ),
+    ).toEqual({
+      dcode: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`,
+      openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
+    });
   });
 
   it("accepts only the all-agent multiarch activation contract (#7744)", () => {
