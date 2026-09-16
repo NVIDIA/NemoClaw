@@ -26,7 +26,8 @@ describe("credential gateway endpoint diagnostics", () => {
 
     const output = reportFailure.mock.calls[0][0].join("\n");
     expect(output).toContain("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(output).toContain("Unset or correct");
+    expect(output).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(output).not.toContain("correct OPENSHELL_GATEWAY_ENDPOINT");
     expect(capture).not.toHaveBeenCalled();
   });
 });
