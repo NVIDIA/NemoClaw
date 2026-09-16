@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyLiveSandboxes,
-  getSandboxDeleteOutcome,
   hasRunningDockerSandboxContainer,
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,

@@ -8,11 +8,20 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import type { SandboxDestroyExecutionResult } from "./destroy-execution";
 
 const TERMINATING_ALPHA_LIST =
   "NAME              CREATED              PHASE\nalpha             now                  Terminating\n";
 const READY_BETA_LIST =
   "NAME              CREATED              PHASE\nbeta              now                  Ready\n";
+const SUCCESSFUL_DESTROY_RESULT: SandboxDestroyExecutionResult = {
+  ok: true,
+  alreadyGone: false,
+  deleteOutput: "",
+  deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
+  detachOutcome: { detached: [], failures: [] },
+  forcedLocalCleanup: false,
+};
 
 function warnOutput(harness: ReturnType<typeof createDestroyHarness>): string {
   return harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -34,7 +43,9 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
   });
 
   it("waits for the deleted sandbox to leave the live list before applying --cleanup-gateway", async () => {
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
     harness.captureOpenshellSpy
       .mockReturnValueOnce({ status: 0, output: TERMINATING_ALPHA_LIST })
       .mockReturnValue({ status: 0, output: "" });
@@ -53,7 +64,10 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
   });
 
   it("skips final live-sandbox probes when gateway cleanup is disabled", async () => {
-    const harness = createDestroyHarness({ liveListOutput: TERMINATING_ALPHA_LIST });
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+      liveListOutput: TERMINATING_ALPHA_LIST,
+    });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
@@ -68,7 +82,10 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
   });
 
   it("reports the live sandbox that blocks --cleanup-gateway after the last registered destroy", async () => {
-    const harness = createDestroyHarness({ liveListOutput: READY_BETA_LIST });
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+      liveListOutput: READY_BETA_LIST,
+    });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
@@ -87,7 +104,9 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
   });
 
   it("reports a failed live list when gateway cleanup is explicitly requested", async () => {
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
     harness.captureOpenshellSpy.mockReturnValue({ status: 1, output: "transport error" });
 
     await expect(
