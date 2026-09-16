@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  createCliOpenShellInferenceRouteObserver,
+  createCliOpenShellSandboxObserver,
+} from "../../adapters/openshell/observers-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
@@ -32,9 +35,7 @@ import { retryUntilAsync } from "../../core/retry";
 import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
-  buildGatewayInferenceGetArgs,
   formatInferenceRouteDriftForDisplay,
-  parseGatewayInference,
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
@@ -917,13 +918,14 @@ async function verifyHermesPortableInferenceRoute(
     commandAuthority
       ? captureHermesPortableReadinessObservation(commandAuthority, args, options)
       : captureHermesPortableOpenShell(sandboxName, args, options);
-  const liveResult = capture(buildGatewayInferenceGetArgs(authority.gatewayName), {
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  const liveResult = await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute({
+    target: namedOpenShellGateway(authority.gatewayName),
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  if (liveResult.status !== 0 || liveResult.error) {
+  if (!liveResult.ok) {
     refuseHermesPortableInferenceRoute("unreachable");
   }
-  const live = parseGatewayInference(liveResult.output);
+  const live = liveResult.value.state === "configured" ? liveResult.value.route : null;
   if (planInferenceRouteReconcile(live, inference).kind !== "aligned") {
     refuseHermesPortableInferenceRoute("different from its recorded provider or model");
   }
@@ -1621,12 +1623,16 @@ async function ensureSandboxInferenceRouteUnlocked(
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
-    const live = parseGatewayInference(
-      captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      }).output,
-    );
+    const liveResult = await createCliOpenShellInferenceRouteObserver(
+      captureOpenshell,
+    ).observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (!liveResult.ok) {
+      throw new Error("the gateway inference route observation did not return a trusted result");
+    }
+    const live = liveResult.value.state === "configured" ? liveResult.value.route : null;
     const plan = planInferenceRouteReconcile(live, { provider, model });
     if (plan.kind !== "aligned") {
       const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;

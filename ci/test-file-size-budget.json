@@ -9,6 +9,6 @@
     "test/installer-integration/install-preflight.test.ts": 3024,
     "test/agents/openclaw/runtime/nemoclaw-start.test.ts": 4348,
     "test/onboarding/onboard-messaging.test.ts": 1963,
-    "test/onboarding/onboard-selection.test.ts": 4131
+    "test/onboarding/onboard-selection.test.ts": 4126
   }
 }
