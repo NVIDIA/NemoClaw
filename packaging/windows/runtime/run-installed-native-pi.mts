@@ -217,7 +217,7 @@ function deepAgentDiagnosticFiles(root) {
   return matches;
 }
 
-function _piWorkloadSource() {
+export function piWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -382,7 +382,7 @@ try {
 `;
 }
 
-function _hermesWorkloadSource() {
+export function hermesWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -573,7 +573,7 @@ try {
 `;
 }
 
-function _deepAgentsWorkloadSource() {
+export function deepAgentsWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";

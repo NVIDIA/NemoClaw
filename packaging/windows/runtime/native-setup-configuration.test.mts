@@ -420,7 +420,7 @@ test("the generated dashboard preserves the required canonical Hermes Node envir
 test("Hermes turn-only worker also preserves the held canonical tool environment", () => {
   const owner = fs.readFileSync(new URL("./run-installed-native-pi.mts", import.meta.url), "utf8");
   const functionStart = owner.indexOf("function hermesWorkloadSource() {");
-  const functionEnd = owner.indexOf("function deepAgentsWorkloadSource() {", functionStart);
+  const functionEnd = owner.indexOf("export function deepAgentsWorkloadSource() {", functionStart);
   assert(functionStart >= 0 && functionEnd > functionStart);
   const source = runInNewContext(
     owner.slice(functionStart, functionEnd) + "\nhermesWorkloadSource()",
