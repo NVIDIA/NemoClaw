@@ -42,8 +42,8 @@ function fixture() {
   };
   writeFileSync(env.NPM_CONFIG_USERCONFIG, "");
   writeFileSync(env.NPM_CONFIG_GLOBALCONFIG, "");
-  const run = (command: string, args: string[]) =>
-    spawnSync(command, args, { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+  const run = (command: string, args: string[], cwd = root) =>
+    spawnSync(command, args, { cwd, env, encoding: "utf8", timeout: 30_000 });
   const probe = (mode: string) =>
     run(process.execPath, ["scripts/lib/openshell-sdk-install.mts", mode]);
   const lock = JSON.parse(readFileSync(path.join(repositoryRoot, "package-lock.json"), "utf8"));
@@ -53,6 +53,7 @@ function fixture() {
   const manifest = {
     name: "nemoclaw-sdk-install-contract",
     version: "1.0.0",
+    exports: { "./*": "./*" },
     files: ["dist/", "scripts/"],
     bundleDependencies: sourceManifest.bundleDependencies.filter(
       (name: string) => name === sdkName,
@@ -119,16 +120,6 @@ describe("required OpenShell SDK installation", () => {
     expect(installed.status, installed.stderr).toBe(0);
     const checked = probe("check");
     expect(checked.status, checked.stderr).toBe(0);
-    const loaded = run(process.execPath, [
-      "--input-type=module",
-      "-e",
-      `import { importOpenShellSdk, importOpenShellRawSdk } from './dist/lib/adapters/openshell/sdk-import.mjs';
-const sdk = await importOpenShellSdk();
-const raw = await importOpenShellRawSdk();
-console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolicySchema.typeName]));`,
-    ]);
-    expect(loaded.status, loaded.stderr).toBe(0);
-    expect(JSON.parse(loaded.stdout)).toEqual(["function", "openshell.sandbox.v1.SandboxPolicy"]);
     expect(readFileSync(path.join(root, "package-lock.json"), "utf8")).toBe(before);
     rmSync(path.join(root, "node_modules"), { recursive: true });
     const setupInstall = run("npm", ["install", ...args.slice(1)]);
@@ -138,11 +129,45 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
     expect(existsSync(path.join(root, "lifecycle-ran"))).toBe(false);
     const packed = run("npm", ["pack", "--ignore-scripts", "--json"]);
     expect(packed.status, packed.stderr).toBe(0);
+    const packedResult = parseSingleNpmPackResult(packed.stdout);
+    assert.ok(packedResult.filename, "npm pack did not report an archive filename");
     expect(npmPackFilePaths(packed.stdout)).toEqual(
       expect.arrayContaining(
         [sdkName, ...publicDependencies].map((name) => `node_modules/${name}/package.json`),
       ),
     );
+    const consumer = path.join(root, "packed-consumer");
+    mkdirSync(consumer);
+    writeFileSync(
+      path.join(consumer, "package.json"),
+      JSON.stringify({
+        name: "packed-consumer",
+        private: true,
+        dependencies: {
+          "nemoclaw-sdk-install-contract": `file:${path.join(root, packedResult.filename)}`,
+        },
+      }),
+    );
+    const packageInstall = run(
+      "npm",
+      ["install", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"],
+      consumer,
+    );
+    expect(packageInstall.status, packageInstall.stderr).toBe(0);
+    const loaded = run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { importOpenShellSdk, importOpenShellRawSdk } from 'nemoclaw-sdk-install-contract/dist/lib/adapters/openshell/sdk-import.mjs';
+const sdk = await importOpenShellSdk();
+const raw = await importOpenShellRawSdk();
+console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolicySchema.typeName]));`,
+      ],
+      consumer,
+    );
+    expect(loaded.status, loaded.stderr).toBe(0);
+    expect(JSON.parse(loaded.stdout)).toEqual(["function", "openshell.sandbox.v1.SandboxPolicy"]);
     rmSync(path.join(root, "node_modules", "@connectrpc", "connect-node"), { recursive: true });
     const broken = probe("check");
     expect(broken.status).toBe(1);
