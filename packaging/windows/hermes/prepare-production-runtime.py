@@ -266,11 +266,6 @@ def partition_copy(root, payload, diagnostics, protected=()):
                 "content": totals(rows),
             }
         )
-    # Check the complete set again before removing any bytes from the disposable copy.
-    for row in plan["files"]:
-        checked_bytes(root, row)
-    for row in plan["files"]:
-        (root / row["path"]).unlink()
     archived_license_paths = set(plan["archivedLicenseFiles"])
     license_rows = [row for row in plan["files"] if row["path"] in archived_license_paths]
     license_archive = root / "THIRD-PARTY-LICENSES.tar.gz"
@@ -278,11 +273,15 @@ def partition_copy(root, payload, diagnostics, protected=()):
         with gzip.GzipFile(fileobj=destination, mode="wb", filename="", mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as archive:
                 for row in license_rows:
-                    with tarfile.open(diagnostics / (row["group"] + ".tar.gz"), "r:gz") as prior:
-                        data = prior.extractfile(row["path"]).read()
+                    data = checked_bytes(root, row)
                     info = tarfile.TarInfo(row["path"])
                     info.size, info.mode, info.mtime = len(data), 0o644, 0
                     archive.addfile(info, io.BytesIO(data))
+    # Check the complete set again before removing any bytes from the disposable copy.
+    for row in plan["files"]:
+        checked_bytes(root, row)
+    for row in plan["files"]:
+        (root / row["path"]).unlink()
     removed_directories = []
     for name in sorted(
         payload.get("directories", []),

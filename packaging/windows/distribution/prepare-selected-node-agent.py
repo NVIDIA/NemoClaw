@@ -46,6 +46,9 @@ def digest(path):
 
 def files(root):
     result = []
+    info = Path(root).lstat()
+    if Path(root).is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+        raise ValueError("The selected Node runtime root is redirected.")
     for path in sorted(Path(root).rglob("*")):
         info = path.lstat()
         if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
@@ -62,7 +65,7 @@ def totals(root):
     return {"files": len(rows), "logicalBytes": sum(path.stat().st_size for path in rows)}
 
 
-def prepare(agent, source, node, npm, output):
+def prepare(agent, source, node, npm, output, tools):
     relative, package, version = AGENTS[agent]
     manifest_root = source / relative
     lock_sha = digest(manifest_root / "package-lock.json")
@@ -96,6 +99,35 @@ def prepare(agent, source, node, npm, output):
                     info = tarfile.TarInfo(path.relative_to(output).as_posix())
                     info.size, info.mode, info.mtime = len(data), 0o644, 0
                     tar.addfile(info, io.BytesIO(data))
+    compiled = output.with_name(output.name + "-compiled-sdks")
+    dependencies = output / "node_modules" / package / "node_modules"
+    subprocess.run(
+        [str(node), "--experimental-strip-types", "--no-warnings",
+         str(Path(__file__).with_name("compile-pi-sdks.mts")),
+         str(dependencies), str(compiled), str(tools)], check=True, timeout=600,
+    )
+    compiled_receipt = json.loads((compiled / "build.json").read_text())
+    expected_sdks = {"@mistralai/mistralai", "@aws-sdk/client-bedrock-runtime", "@aws-sdk/core", "@aws-sdk/nested-clients", "@smithy/core"}
+    if (compiled_receipt.get("classification") != "pi-compiled-sdk-paths"
+            or compiled_receipt.get("compilerVersion") != "0.27.4"
+            or {row["name"] for row in compiled_receipt["packages"]} != expected_sdks
+            or len(compiled_receipt["packages"]) != len(expected_sdks)):
+        raise ValueError("The compiled Pi SDK set differs.")
+    for sdk in compiled_receipt["packages"]:
+        target, replacement = dependencies / sdk["name"], compiled / sdk["name"]
+        if not target.resolve().is_relative_to(output.resolve()):
+            raise ValueError("Compiled SDK target escaped the owned runtime.")
+        files(target)
+        actual = {p.relative_to(replacement).as_posix(): digest(p) for p in files(replacement)}
+        if actual != {row["path"]: row["sha256"] for row in sdk["files"]}:
+            raise ValueError("Compiled SDK output differs from its receipt.")
+        if digest(target / "package.json") != sdk["sourcePackageSha256"]:
+            raise ValueError("Compiled SDK source identity differs.")
+        shutil.rmtree(target)
+        shutil.copytree(replacement, target)
+        if actual != {p.relative_to(target).as_posix(): digest(p) for p in files(target)}:
+            raise ValueError("Compiled SDK copy differs from its receipt.")
+    shutil.copy2(compiled / "build.json", output / "compiled-sdk-build.json")
     removed = []
     for path in reversed(files(output)):
         relative_path = path.relative_to(output)
@@ -117,6 +149,7 @@ def prepare(agent, source, node, npm, output):
         "sourceLockSha256": lock_sha,
         "nodeSha256": digest(node),
         "npmVersion": "10.9.8",
+        "compiledSdkBuildSha256": digest(output / "compiled-sdk-build.json"),
         "before": before,
         "after": after,
         "removedFiles": len(removed) + 1,
@@ -136,10 +169,11 @@ def main():
     parser.add_argument("--node", type=Path, required=True)
     parser.add_argument("--npm-cli", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tool-root", type=Path, required=True)
     args = parser.parse_args()
     if os.name != "nt" or os.environ.get("GITHUB_ACTIONS") != "true":
         raise ValueError("Selected Node agents are prepared only in Windows CI.")
-    print(json.dumps(prepare(args.agent, args.source_root, args.node, args.npm_cli, args.output)))
+    print(json.dumps(prepare(args.agent, args.source_root, args.node, args.npm_cli, args.output, args.tool_root)))
 
 
 if __name__ == "__main__":

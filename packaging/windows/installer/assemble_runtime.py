@@ -524,6 +524,7 @@ def prepare_agent(agent: str, root: Path):
             != "6267ec58e69fc6cd53d3c753f28b0e25c00f4befdcae63e8e4924bee2abf0712"
             or receipt.get("customerBuildRequired") is not False
             or receipt.get("runtimeLaunchCopiesRequired") is not False
+            or receipt.get("compiledSdkBuildSha256") != hash_file(root / "compiled-sdk-build.json")[1]
             or (root / "package-lock.json").exists()
         ):
             raise ValueError("Pi requires its exact finished CI dependency tree.")

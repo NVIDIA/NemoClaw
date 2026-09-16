@@ -125,7 +125,7 @@ jobs:
     needs: [windows-compiled-application, windows-bash-compatibility, windows-bash-compatibility-reuse]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && needs.windows-compiled-application.result == 'success' && (inputs.finished_windows_agent != 'hermes' || needs.windows-bash-compatibility-reuse.result == 'success') }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 120
+    timeout-minutes: ${{ inputs.finished_windows_agent == 'hermes' && 180 || 120 }}
     outputs:
       preview_id: ${{ steps.preview.outputs.artifact-id }}
       migration_inputs_id: ${{ steps.migration_inputs.outputs.artifact-id }}
@@ -286,11 +286,13 @@ jobs:
         shell: pwsh
         run: |
           $work = "$env:RUNNER_TEMP\finished-windows"
+          & python -m unittest discover -s "$env:GITHUB_WORKSPACE\candidate\packaging\windows\distribution" -p test_prepare_selected_node_agent.py
+          if ($LASTEXITCODE -ne 0) { throw 'Selected-agent preparation regression tests failed.' }
           & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\distribution\prepare-selected-node-agent.py" `
             --agent pi --source-root "$env:GITHUB_WORKSPACE\candidate" `
             --node "$work\application\node\node.exe" `
             --npm-cli "$work\application\node\node_modules\npm\bin\npm-cli.js" `
-            --output "$work\pi"
+            --output "$work\pi" --tool-root "$work\application\inputs\tools"
           if ($LASTEXITCODE -ne 0) { throw 'The locked Pi runtime could not be prepared.' }
       - name: Seal only the finished Pi runtime
         if: ${{ inputs.finished_windows_agent == 'pi' }}
@@ -718,6 +720,8 @@ jobs:
           }
           New-Item -ItemType Junction -Path "$env:GITHUB_WORKSPACE\node_modules" `
             -Target "$work\inputs\tools\node_modules" | Out-Null
+          & "$work\node\node.exe" --experimental-strip-types --no-warnings --test packaging/windows/distribution/compile-pi-sdks.test.mts
+          if ($LASTEXITCODE -ne 0) { throw 'Pi SDK compilation regression tests failed.' }
           & "$work\node\node.exe" --experimental-strip-types `
             packaging/windows/distribution/build-native-workers.mts "$work\workers"
           if ($LASTEXITCODE -ne 0) { throw 'Static application worker compilation failed.' }
@@ -755,6 +759,8 @@ jobs:
             ${{ runner.temp }}/compiled-windows-app/node/npm.cmd
             ${{ runner.temp }}/compiled-windows-app/node/node_modules/npm/
             ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/playwright-core/
+            ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/esbuild/
+            ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/@esbuild/win32-arm64/
             ${{ runner.temp }}/compiled-windows-app/inputs/materialization-receipt.json
           if-no-files-found: error
           include-hidden-files: true

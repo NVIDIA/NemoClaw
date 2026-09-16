@@ -93,7 +93,8 @@ class PartitionControls(unittest.TestCase):
         self.assertEqual(len(removed), 18)
         self.assertFalse((self.root / "hermes-agent/.github").exists())
         self.assertFalse((self.root / "hermes-agent/website").exists())
-        self.assertTrue((self.root / "THIRD-PARTY-LICENSES.tar.gz").is_file())
+        licenses = [r for r in result["files"] if r["path"] in result["archivedLicenseFiles"]]
+        MODULE.verify_archive(self.root / "THIRD-PARTY-LICENSES.tar.gz", licenses)
         self.assertFalse((self.root / "ffmpeg/bin/ffmpeg.exe").exists())
         self.assertFalse((self.root / "ffmpeg/bin/ffprobe.exe").exists())
         self.assertFalse((self.root / "ffmpeg/bin/ffplay.exe").exists())

@@ -100,6 +100,14 @@ settings later. Agent launch is an explicit completion action. Pi and NemoCUA
 remain experimental. `agent-support.json` records the authentic packaged
 implementations and their preview limitations.
 
+Pi packaging keeps the locked 0.84.1 agent and its original CLI and resources.
+Five dependency SDKs have ESM paths too long for the installed Windows namespace.
+The build compiles those ESM modules with pinned esbuild 0.27.4 into short names,
+preserving runtime exports and CommonJS files. SDK source and declarations are
+omitted; original licenses are archived before transformation. A hashed build
+receipt binds the transformed inputs, and the final payload still must pass the
+Windows path-length check. This packaging step is not installed qualification.
+
 Hermes uses the corrected pywinpty ARM64 wheel, including its matched `conpty.dll`
 and `OpenConsole.exe` beside the native Python extension. The Microsoft ConPTY
 notice is installed as `hermes/CONPTY-LICENSE.txt`. An early Windows check loads
