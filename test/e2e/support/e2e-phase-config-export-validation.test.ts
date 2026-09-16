@@ -289,7 +289,7 @@ afterEach(() => {
 });
 
 describe("automatic config export validation phase", () => {
-  it("publishes only the validated byte count and digest after cleanup passes (#11485)", async () => {
+  it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
     const independentDependencies = dependencies();
     independentDependencies.parseConfig = parseConfigExport;
@@ -306,10 +306,10 @@ describe("automatic config export validation phase", () => {
       passed: true,
       command: { exitCode: 0, signal: null, timedOut: false, outputPublished: true },
       cleanup: { registeredBeforeExport: true, succeeded: true },
-      export: { byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
+      export: { bytes: raw, byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) },
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
-    expect(evidence.export).not.toHaveProperty("bytes");
+    expect(sha256(evidence.export!.bytes)).toBe(evidence.export!.sha256);
     expect(evidence.verifications.every((entry) => entry.passed)).toBe(true);
     expect(evidence.producer).toEqual({
       sourceRevision: SOURCE_REVISION,
@@ -396,7 +396,7 @@ describe("automatic config export validation phase", () => {
         signal: "SIGTERM" as const,
         timedOut: true,
         stdout: "",
-        stderr: "",
+        stderr: "Config export failed (unsupported).",
       })),
     };
     const test = fixture({ host: host as unknown as ReturnType<typeof successfulHost> });
@@ -413,8 +413,8 @@ describe("automatic config export validation phase", () => {
         outputPublished: false,
       },
       expectedRefusalCategory: "unsupported",
-      observedRefusalCategory: "unclassified",
     });
+    expect(test.writes.at(-1)).not.toHaveProperty("observedRefusalCategory");
   });
 
   it("accepts an expected refusal only when no file is published (#11485)", async () => {

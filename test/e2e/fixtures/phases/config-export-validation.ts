@@ -94,6 +94,7 @@ export interface ConfigExportEvidenceEnvelope {
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
   export?: {
+    bytes: string;
     byteLength: number;
     sha256: string;
   };
@@ -593,6 +594,9 @@ export class ConfigExportValidationPhaseFixture {
         result.timedOut || result.signal !== null || result.exitCode === null
           ? "transport"
           : "export";
+      if (result.timedOut || result.signal !== null || result.exitCode === null) {
+        throw new Error("config export command did not complete");
+      }
       if (expectation === "expected-refusal") {
         observedRefusalCategory = refusalCategory(resultText(result)) ?? "unclassified";
         if (result.exitCode === 0 || outputExists) {
@@ -675,7 +679,13 @@ export class ConfigExportValidationPhaseFixture {
       verifications,
       ...(command ? { command } : {}),
       ...(passed && cleanupSucceeded && raw
-        ? { export: { byteLength: Buffer.byteLength(raw, "utf8"), sha256: sha256(raw) } }
+        ? {
+            export: {
+              bytes: raw,
+              byteLength: Buffer.byteLength(raw, "utf8"),
+              sha256: sha256(raw),
+            },
+          }
         : {}),
       security: { knownSecretsAbsent, internalTransportsAbsent },
       cleanup: {
