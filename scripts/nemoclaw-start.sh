@@ -75,21 +75,20 @@ nemoclaw_apply_startup_profile() {
   local runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
   local runtime_env="/run/nemoclaw/managed-startup-runtime.env"
   [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ] || return 0
-  [ "$(/usr/bin/id -u)" -eq 0 ] || {
+  if [ "$(/usr/bin/id -u)" -ne 0 ]; then
     printf '%s\n' '[SECURITY] Managed startup profile application requires root.' >&2
     return 1
-  }
-  [ -f "$runtime" ] && [ ! -L "$runtime" ] || {
+  fi
+  if [ ! -f "$runtime" ] || [ -L "$runtime" ]; then
     printf '%s\n' '[SECURITY] Managed startup runtime is missing or unsafe.' >&2
     return 1
-  }
+  fi
   /usr/local/bin/node "$runtime" --agent openclaw
-  [ -f "$runtime_env" ] && [ ! -L "$runtime_env" ] \
-    && [ "$(/usr/bin/stat -c '%u:%g:%a' "$runtime_env")" = '0:0:444' ] \
-    || {
-      printf '%s\n' '[SECURITY] Managed startup runtime environment is missing or unsafe.' >&2
-      return 1
-    }
+  if [ ! -f "$runtime_env" ] || [ -L "$runtime_env" ] \
+    || [ "$(/usr/bin/stat -c '%u:%g:%a' "$runtime_env")" != '0:0:444' ]; then
+    printf '%s\n' '[SECURITY] Managed startup runtime environment is missing or unsafe.' >&2
+    return 1
+  fi
   # shellcheck disable=SC1090
   source "$runtime_env"
   unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64

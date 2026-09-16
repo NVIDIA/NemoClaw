@@ -15,6 +15,7 @@ import {
 } from "../../../src/lib/adapters/podman";
 import { buildDockerDriverGatewayEnv } from "../../../src/lib/onboard/docker-driver-gateway-env";
 import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
+import { ensureManagedGatewayStateRoot } from "../../../src/lib/onboard/gateway/state-dir";
 import {
   installPortableDemoSandboxLifecycle,
   portableDemoLifecycleInternals,
@@ -223,6 +224,11 @@ exit 1
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
     const stateDir = path.join(root, "gateway-state");
+    ensureManagedGatewayStateRoot({
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      stateDir,
+    });
     const cliEnv: NodeJS.ProcessEnv = {
       ...buildAvailabilityProbeEnv(),
       OPENSHELL_GATEWAY: GATEWAY_NAME,
