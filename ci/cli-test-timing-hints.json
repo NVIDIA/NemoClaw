@@ -154,7 +154,6 @@
     "test/onboarding/onboard-inference-reconciliation.test.ts": 10281,
     "test/onboarding/onboard-installer-restore-intent.test.ts": 14131,
     "test/onboarding/onboard-lifecycle.test.ts": 6967,
-    "test/onboarding/onboard-managed-image-buildless-e2e.test.ts": 14383,
     "test/onboarding/onboard-messaging.test.ts": 72008,
     "test/onboarding/onboard-ollama-autostart.test.ts": 17749,
     "test/onboarding/onboard-ollama-context-floor.test.ts": 5807,

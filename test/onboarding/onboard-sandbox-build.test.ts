@@ -174,7 +174,9 @@ const { createSandbox } = require(${onboardPath});
         entry.command.includes("sandbox create"),
       );
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+      assert.match(createCommand.command, /NEMOCLAW_STARTUP_PROFILE_B64=/);
+      assert.match(createCommand.command, /\/usr\/local\/bin\/nemoclaw-start/);
+      assert.doesNotMatch(createCommand.command, /nemoclaw-managed-startup-hold/);
       assert.match(
         createCommand.command,
         /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,

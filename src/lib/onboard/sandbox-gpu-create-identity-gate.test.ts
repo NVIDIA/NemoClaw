@@ -220,7 +220,6 @@ describe("created sandbox identity gate", () => {
     );
     expect(events).toEqual([
       "verify-created",
-      "revalidate:activate managed sandbox network for 'alpha'",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
       "revalidate:apply runtime patch for sandbox 'alpha'",

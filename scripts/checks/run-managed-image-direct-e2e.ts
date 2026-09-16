@@ -139,8 +139,6 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       input.platform,
       "--network",
       "none",
-      "--user",
-      "sandbox",
       "--entrypoint",
       "/usr/bin/env",
       "--env",

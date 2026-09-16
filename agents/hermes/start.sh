@@ -58,9 +58,33 @@ if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then
 else
   set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"
 fi
+nemoclaw_apply_startup_profile() {
+  local runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
+  local runtime_env="/run/nemoclaw/managed-startup-runtime.env"
+  [ -n "${NEMOCLAW_STARTUP_PROFILE_B64:-}" ] || return 0
+  [ "$(/usr/bin/id -u)" -eq 0 ] || {
+    printf '%s\n' '[SECURITY] Managed startup profile application requires root.' >&2
+    return 1
+  }
+  [ -f "$runtime" ] && [ ! -L "$runtime" ] || {
+    printf '%s\n' '[SECURITY] Managed startup runtime is missing or unsafe.' >&2
+    return 1
+  }
+  /usr/local/bin/node "$runtime" --agent hermes
+  [ -f "$runtime_env" ] && [ ! -L "$runtime_env" ] \
+    && [ "$(/usr/bin/stat -c '%u:%g:%a' "$runtime_env")" = '0:0:444' ] \
+    || {
+      printf '%s\n' '[SECURITY] Managed startup runtime environment is missing or unsafe.' >&2
+      return 1
+    }
+  # shellcheck disable=SC1090
+  source "$runtime_env"
+  unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64
+}
+nemoclaw_apply_startup_profile hermes
 unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
   _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
-unset -f nemoclaw_normalize_entrypoint_env_wrapper
+unset -f nemoclaw_apply_startup_profile nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
 # ── Source shared sandbox initialisation library ─────────────────

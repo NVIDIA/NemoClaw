@@ -215,6 +215,10 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
+      expectedHash: "a76019b7db84e1aada095ea0cc028b684914ef54e04d6a84561c79918f3392c5",
+      relativePath: "managed-startup-direct-image-runtime.bundle",
+    },
+    {
       expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
       relativePath: "managed-startup-image-runtime.bundle",
     },
@@ -425,7 +429,7 @@ describe("MCP tool discovery image contract", () => {
         "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
       );
       expect(dockerfile).toContain(
-        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
       );
       expect(dockerfile).toContain(
         `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,

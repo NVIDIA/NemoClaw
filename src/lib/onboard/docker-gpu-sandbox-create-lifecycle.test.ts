@@ -240,7 +240,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     await patch.waitForSupervisorReconnectIfNeeded();
-    await patch.rollbackManagedStartupAfterCreateFailure();
+    await expect(patch.rollbackManagedStartupAfterCreateFailure()).rejects.toThrow(
+      "pre-patch container was not restored",
+    );
 
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledWith(

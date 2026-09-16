@@ -85,7 +85,7 @@ function snapshotDeps(recoveryResult: unknown) {
 }
 
 describe("collectSandboxStatusSnapshot Docker recovery", () => {
-  it("recovers the delivery chain when OpenShell already reports the restarted container (#7824)", async () => {
+  it("leaves agent delivery recovery to the native image runtime", async () => {
     const deps = {
       ...snapshotDeps({
         checked: true,
@@ -103,11 +103,11 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(deps.recoverSandboxProcesses).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
     expect(snapshot.lookup.state).toBe("present");
   });
 
-  it("fails closed when the visible restarted container cannot recover OpenClaw (#7824)", async () => {
+  it("does not reinterpret a ready sandbox when native recovery is unavailable", async () => {
     const deps = {
       ...snapshotDeps({
         checked: true,
@@ -125,11 +125,8 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(snapshot.lookup.state).toBe("sandbox_recovery_failed");
-    expect(snapshot.lookup.output).toContain(
-      "Sandbox 'alpha' is present, but its agent delivery chain could not be proven",
-    );
-    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
   });
 
   it.each(["Provisioning", "Failed"])(

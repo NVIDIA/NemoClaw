@@ -114,7 +114,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     });
   }
   for (const relativePath of [
-    "managed-startup-image-runtime.bundle",
+    "managed-startup-direct-image-runtime.bundle",
     path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
     path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
     path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
@@ -283,18 +283,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-startup-hold.sh"),
-    path.join(stagedScriptsDir, "managed-startup-hold.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-entrypoint.c"),
-    path.join(stagedScriptsDir, "managed-bootstrap-entrypoint.c"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
-    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
