@@ -42,6 +42,30 @@ function namedStep(name: string) {
 }
 
 describe("optional managed image security scans", () => {
+  const successfulOutcomes = {
+    MALWARE_SCAN_OUTCOME: "success",
+    OSS_SCAN_OUTCOME: "success",
+    PULSE_IMAGES_OUTCOME: "success",
+    SECRET_SCAN_OUTCOME: "success",
+  };
+  it.each([
+    { outcomes: successfulOutcomes, succeeds: true },
+    ...Object.keys(successfulOutcomes).flatMap((key) =>
+      ["failure", "cancelled", "skipped", "", undefined].map((outcome) => ({
+        outcomes: { ...successfulOutcomes, [key]: outcome },
+        succeeds: false,
+      })),
+    ),
+  ])("requires every scan outcome to succeed: %j", ({ outcomes, succeeds }) => {
+    const result = spawnSync(
+      "bash",
+      ["-c", namedStep("Enforce managed image security results").run!],
+      { encoding: "utf8", timeout: 10_000, env: { PATH: "/usr/bin:/bin", ...outcomes } },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(succeeds ? 0 : 1);
+  });
+
   it.each([
     [0, "normal", true],
     [185, "normal", true],
