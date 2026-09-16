@@ -519,6 +519,9 @@ export OPENCLAW_HOME="${_SANDBOX_HOME}"
 export OPENCLAW_STATE_DIR="${_OPENCLAW_STATE_DIR}"
 export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
 export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
+# NemoClaw's entrypoint owns the gateway process. This selects OpenClaw's
+# bounded in-process restart path instead of a host service manager.
+export OPENCLAW_SUPERVISOR_MODE="external"
 
 # ── Mutable config permission normalize (#2681) ─────────────────
 # The descriptor-safe owner selects native private modes for proven same-user
@@ -3634,7 +3637,7 @@ export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
-    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR OPENCLAW_SUPERVISOR_MODE; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"

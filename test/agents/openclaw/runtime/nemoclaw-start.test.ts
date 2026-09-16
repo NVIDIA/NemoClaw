@@ -330,7 +330,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
     const printDashboard = extractShellFunctionFromSource(src, "print_dashboard_urls");
     const runtimeEnv = runtimeShellEnvBlock(src).replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
-
     fs.writeFileSync(
       scriptPath,
       [
@@ -347,7 +346,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(initialToken)}`,
         `export OPENCLAW_GATEWAY_PORT=${JSON.stringify(port)}`,
         `export OPENCLAW_GATEWAY_URL=${JSON.stringify(`ws://127.0.0.1:${port}`)}`,
-        'export OPENCLAW_HOME="/sandbox"',
+        'export OPENCLAW_HOME="/sandbox"; export OPENCLAW_SUPERVISOR_MODE="external"',
         'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
         'export OPENCLAW_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"',
         'export OPENCLAW_OAUTH_DIR="/sandbox/.openclaw/credentials"',
@@ -435,7 +434,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(envFile).toContain("export OPENCLAW_HOME='/sandbox'");
+    expect(envFile).toMatch(/OPENCLAW_HOME='\/sandbox'[\s\S]*OPENCLAW_SUPERVISOR_MODE='external'/);
     expect(envFile).toContain("export OPENCLAW_STATE_DIR='/sandbox/.openclaw'");
     expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
     expect(envFile).toContain("export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'");

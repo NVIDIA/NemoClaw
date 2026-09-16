@@ -167,20 +167,24 @@ test(
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
     assert(apiKey, "managed llama.cpp API key is missing");
     artifacts.addRedactionValues([apiKey]);
+    const runtimeId = receipt.runtime.runtimeId;
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
-    const runtimeLogs = runtimeOperation.engine.capture(
-      ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
-      30_000,
-    );
-    await artifacts.writeJson("managed-runtime-logs.json", {
-      providerId: receipt.providerId,
-      runtimeId: receipt.runtime.runtimeId,
-      status: runtimeLogs.status,
-      error: runtimeLogs.error?.message ?? null,
-      stdout: runtimeLogs.stdout,
-      stderr: runtimeLogs.stderr,
-    });
+    const captureManagedRuntimeLogs = async () => {
+      const runtimeLogs = runtimeOperation.engine.capture(
+        ["container", "logs", "--tail", "20000", runtimeId],
+        30_000,
+      );
+      await artifacts.writeJson("managed-runtime-logs.json", {
+        providerId: receipt.providerId,
+        runtimeId,
+        status: runtimeLogs.status,
+        error: runtimeLogs.error?.message ?? null,
+        stdout: runtimeLogs.stdout,
+        stderr: runtimeLogs.stderr,
+      });
+    };
+    await captureManagedRuntimeLogs();
     const runtimeInspection = runtimeOperation.engine.capture(
       ["container", "inspect", receipt.runtime.runtimeId],
       30_000,
@@ -340,6 +344,7 @@ NODE`),
         timeoutMs: 12 * 60_000,
       },
     );
+    await captureManagedRuntimeLogs();
     expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);
 

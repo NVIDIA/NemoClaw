@@ -219,8 +219,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
 
   const recovery = await repoNemoclaw(
     input.host,
-    [SANDBOX_NAME, "status"],
-    "phase-4-status-recover-before-launch",
+    [SANDBOX_NAME, "start"],
+    "phase-4-start-recover-before-launch",
     {},
     120_000,
   );
