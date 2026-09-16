@@ -475,9 +475,88 @@ jobs:
           PR_REVIEW_ADVISOR_ARTIFACTS: ${{ runner.temp }}/pr-review-specialists
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/blocker-gate.mts" --attempt "$GITHUB_RUN_ATTEMPT"
 
+  coordinator-shadow:
+    name: Evaluate review coordinator shadow
+    needs: [require-green-checks, build-advisor-runtime, review-specialists, advisor-blockers]
+    if: >-
+      ${{
+      always() &&
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.require-green-checks.outputs.pr_number != '' &&
+      needs.build-advisor-runtime.result == 'success' &&
+      needs.review-specialists.result == 'success'
+      }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.head_sha }}
+      EXPECTED_BASE_SHA: ${{ needs.require-green-checks.outputs.base_sha }}
+      PR_NUMBER: ${{ needs.require-green-checks.outputs.pr_number }}
+      TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
+    steps:
+      - name: Checkout trusted coordinator (workflow revision)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node for trusted coordinator
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+      - name: Download trusted advisor runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor-runtime-${{ github.run_id }}
+          path: ${{ runner.temp }}/shared-pr-review-advisor-runtime
+
+      - name: Restore trusted advisor runtime
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_RUNTIME_SHA: ${{ needs.build-advisor-runtime.outputs.payload-sha }}
+        run: bash "$ADVISOR_DIR/scripts/restore-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/shared-pr-review-advisor-runtime"
+
+      - name: Download GitHub review context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor-context-${{ github.run_id }}
+          path: ${{ runner.temp }}/pr-review-context
+
+      - name: Download specialist reviews
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: pr-review-specialist-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pr-review-specialists
+
+      - name: Evaluate read-only coordinator decision
+        env:
+          PR_REVIEW_ADVISOR_ARTIFACTS: ${{ runner.temp }}/pr-review-specialists
+          PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/pr-review-context/github-context.json
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"
+
+      - name: Upload coordinator shadow decision
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-coordinator-shadow-${{ github.run_attempt }}
+          path: artifacts/pr-review-coordinator-shadow/decision.json
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish advisor link
-    needs: [require-green-checks, review-specialists, advisor-blockers]
+    needs: [require-green-checks, review-specialists, advisor-blockers, coordinator-shadow]
     if: ${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}
     # Publication is best-effort and still runs when the blocker gate is red.
     continue-on-error: true
