@@ -1331,7 +1331,7 @@ const {
   gatewayName: () => GATEWAY_NAME,
   gatewayPort: () => GATEWAY_PORT,
   getGatewayPortListenerRawScan,
-  getInstalledOpenshellVersion,
+  ...{ getDockerDriverGatewayEnv, getInstalledOpenshellVersion },
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });

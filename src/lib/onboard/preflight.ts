@@ -63,6 +63,24 @@ type ProbeRunOpts = { timeout?: number };
 
 const DOCKER_PREFLIGHT_TIMEOUT_MS = 15_000;
 
+/** The only endpoint scheme onboarding supports; see `isSupportedGatewayDockerHost`. */
+const DOCKER_UNIX_SCHEME = "unix://";
+
+type UnixSocketInspection = "socket" | "missing" | "unknown";
+
+/** Classify a selected endpoint without treating permission failures as absence. */
+function inspectUnixSocket(
+  socketPath: string,
+  statSyncImpl: (filePath: string) => { isSocket(): boolean } = fs.statSync,
+): UnixSocketInspection {
+  try {
+    return statSyncImpl(socketPath).isSocket() ? "socket" : "missing";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
+  }
+}
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface PortProbeResult {
@@ -132,6 +150,19 @@ export interface HostAssessment {
   dockerServiceActive?: boolean | null;
   dockerServiceEnabled?: boolean | null;
   dockerHostInvalid?: boolean;
+  /**
+   * The DOCKER_CONTEXT selector that still owns the endpoint choice, i.e. one
+   * authority detection could not reduce to a supported local socket. It makes
+   * `dockerHostInvalid` true, and names the variable the remedy must fix
+   * (#11719).
+   */
+  dockerContextInvalid?: string;
+  /**
+   * The explicitly selected `unix://` endpoint that has no Unix socket at its
+   * path while the daemon is unreachable. Nothing can be listening there, so
+   * the docker-group and start-Docker remedies both misdiagnose it (#11719).
+   */
+  dockerEndpointSocketMissing?: string;
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
@@ -206,6 +237,7 @@ export interface AssessHostOpts {
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
+  statSyncImpl?: (filePath: string) => { isSocket(): boolean };
   observeDockerAuthorityConflictImpl?: (opts: {
     env: NodeJS.ProcessEnv;
     platform: NodeJS.Platform;
@@ -586,7 +618,14 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
-  const dockerHostInvalid = !isSupportedGatewayDockerHost(env.DOCKER_HOST);
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. Authority detection
+  // reduces a context naming a supported local socket to DOCKER_HOST, so a
+  // selector that survives to here names an endpoint onboarding cannot use --
+  // and probing the default socket instead would certify a daemon the operator
+  // did not select (#11719).
+  const dockerContextInvalid = String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
+  const dockerHostInvalid =
+    !isSupportedGatewayDockerHost(env.DOCKER_HOST) || dockerContextInvalid !== undefined;
 
   let dockerInfoOutput = opts.dockerInfoOutput;
   let dockerProbeIssue: HostAssessment["dockerProbeIssue"];
@@ -615,6 +654,25 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerReachable = true;
     dockerRunning = true;
   }
+
+  // An endpoint the operator selected explicitly cannot be a docker-group or
+  // stopped-daemon problem when no Unix socket sits at its path: nothing is
+  // listening there, and both of those remedies -- one of them a root-level
+  // group grant -- would act on a false premise. The default endpoint is
+  // deliberately excluded, because a missing default socket is exactly the
+  // stopped-daemon case `start_docker` exists for (#11719).
+  const selectedDockerEndpoint = String(env.DOCKER_HOST ?? "").trim();
+  const selectedDockerSocketPath = selectedDockerEndpoint.startsWith(DOCKER_UNIX_SCHEME)
+    ? selectedDockerEndpoint.slice(DOCKER_UNIX_SCHEME.length)
+    : "";
+  const dockerEndpointSocketMissing =
+    dockerInstalled &&
+    !dockerReachable &&
+    !dockerHostInvalid &&
+    selectedDockerSocketPath &&
+    inspectUnixSocket(selectedDockerSocketPath, opts.statSyncImpl) === "missing"
+      ? selectedDockerEndpoint
+      : undefined;
 
   // An unreachable default authority with two reachable engines of different
   // identities is an authority conflict (#10622). It is observed only when
@@ -776,6 +834,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerServiceActive,
     dockerServiceEnabled,
     dockerHostInvalid,
+    dockerContextInvalid,
+    dockerEndpointSocketMissing,
     dockerInstalled,
     dockerRunning,
     dockerReachable,
