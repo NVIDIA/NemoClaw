@@ -29,15 +29,78 @@ const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
 const WAIT_FOR_INITIAL_OPENCLAW_PAIRING_PROGRAM = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 const deadline = Date.now() + Number(process.argv[1]);
 const stateDir = process.argv[2];
-function wait() {
+const databasePath = path.join(stateDir, "state/openclaw.sqlite");
+function sqlitePairingStatus() {
+  let metadata;
+  try {
+    metadata = fs.lstatSync(databasePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { present: false, ready: false };
+    return { present: true, ready: false };
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) return { present: true, ready: false };
+  let database;
+  try {
+    database = new DatabaseSync(databasePath, {
+      allowExtension: false,
+      open: true,
+      readOnly: true,
+      timeout: 2_000,
+    });
+    database.exec("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;");
+    const identity = database
+      .prepare("SELECT device_id AS deviceId FROM device_identities WHERE identity_key = 'primary'")
+      .get();
+    if (typeof identity?.deviceId !== "string" || identity.deviceId.length === 0) {
+      return { present: true, ready: false };
+    }
+    const auth = database
+      .prepare("SELECT token FROM device_auth_tokens WHERE device_id = ? AND role = 'operator'")
+      .get(identity.deviceId);
+    const paired = database
+      .prepare("SELECT client_id AS clientId, client_mode AS clientMode, tokens_json AS tokensJson FROM device_pairing_paired WHERE device_id = ?")
+      .get(identity.deviceId);
+    let pairedToken;
+    try {
+      pairedToken = JSON.parse(paired?.tokensJson ?? "null")?.operator?.token;
+    } catch {}
+    return {
+      present: true,
+      ready:
+        paired?.clientId === "cli" &&
+        paired.clientMode === "cli" &&
+        typeof auth?.token === "string" &&
+        auth.token.length > 0 &&
+        pairedToken === auth.token,
+    };
+  } catch {
+    return { present: true, ready: false };
+  } finally {
+    try { database?.close(); } catch {}
+  }
+}
+function legacyPairingReady() {
   try {
     const identity = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device.json"), "utf8"));
     const auth = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device-auth.json"), "utf8"));
     const paired = Object.values(JSON.parse(fs.readFileSync(path.join(stateDir, "devices/paired.json"), "utf8")));
-    if (paired.some((device) => device?.deviceId === identity.deviceId && device.clientId === "cli" && device.clientMode === "cli" && device.tokens?.operator?.token && device.tokens.operator.token === auth.tokens?.operator?.token)) process.exit(0);
-  } catch {}
+    const ready = paired.some((device) => device?.deviceId === identity.deviceId && device.clientId === "cli" && device.clientMode === "cli" && device.tokens?.operator?.token && device.tokens.operator.token === auth.tokens?.operator?.token);
+    try {
+      fs.lstatSync(databasePath);
+      return false;
+    } catch (error) {
+      return error?.code === "ENOENT" && ready;
+    }
+  } catch {
+    return false;
+  }
+}
+function wait() {
+  const sqlite = sqlitePairingStatus();
+  if (sqlite.ready || (!sqlite.present && legacyPairingReady())) process.exit(0);
   if (Date.now() >= deadline) process.exit(1);
   setTimeout(wait, 250);
 }

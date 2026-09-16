@@ -496,10 +496,16 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "start-log-messaging-providers",
       redactionValues,
     );
+    const acceptedExtrasLine = startLog
+      .split(/\r?\n/u)
+      .find((line) =>
+        /^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/u.test(line),
+      );
     check(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/.test(startLog) &&
-        startLog.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
-        !startLog.includes("GITHUB_TOKEN"),
+      Boolean(
+        acceptedExtrasLine?.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        !acceptedExtrasLine.includes("GITHUB_TOKEN"),
+      ),
       "X5: accepted-extras breadcrumb proves extra keys reached in-container parser",
     );
 

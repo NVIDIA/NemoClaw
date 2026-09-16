@@ -191,6 +191,28 @@ function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function prepareSqliteTmpdir() {
+  const sqliteTmpdir = "/sandbox/.openclaw/tmp";
+  let metadata;
+  try {
+    metadata = fs.lstatSync(sqliteTmpdir);
+  } catch (error) {
+    invariant(error?.code === "ENOENT", "unable to inspect OpenClaw SQLite temporary directory");
+    fs.mkdirSync(sqliteTmpdir, { mode: 0o700 });
+    metadata = fs.lstatSync(sqliteTmpdir);
+  }
+  invariant(
+    metadata.isDirectory() &&
+      !metadata.isSymbolicLink() &&
+      (typeof process.getuid !== "function" || metadata.uid === process.getuid()),
+    "unsafe OpenClaw SQLite temporary directory",
+  );
+  fs.chmodSync(sqliteTmpdir, 0o700);
+  process.env.SQLITE_TMPDIR = sqliteTmpdir;
+}
+
+prepareSqliteTmpdir();
+
 function postForm(pathname, fields, authorization) {
   const body = new URLSearchParams(fields).toString();
   return new Promise((resolve, reject) => {

@@ -235,6 +235,20 @@ function summary(value) {
   return JSON.stringify(value).slice(0, 2000);
 }
 
+function errorChainDetail(error) {
+  const details = [];
+  const seen = new Set();
+  let current = error;
+  for (let depth = 0; depth < 8 && current !== undefined && !seen.has(current); depth += 1) {
+    const detail =
+      current && (current.stack || current.message) ? current.stack || current.message : current;
+    details.push(String(detail));
+    seen.add(current);
+    current = current && typeof current === "object" ? current.cause : undefined;
+  }
+  return details.join("\nCaused by: ");
+}
+
 const approved = await webFetch.execute("e2e-approved-host-gateway", {
   url: approvedUrl,
   extractMode: "text",
@@ -258,7 +272,7 @@ try {
   }
   fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
 } catch (error) {
-  const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+  const detail = errorChainDetail(error);
   if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
     throw error;
   }

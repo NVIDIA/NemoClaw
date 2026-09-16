@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 
@@ -715,7 +716,7 @@ describe("E2E fixture clients", () => {
         "--",
         "node",
         "-e",
-        expect.stringContaining("identity/device-auth.json"),
+        expect.stringContaining("state/openclaw.sqlite"),
         "60000",
         "/sandbox/.openclaw",
       ],
@@ -724,6 +725,57 @@ describe("E2E fixture clients", () => {
         timeoutMs: 70_000,
       },
     });
+  });
+
+  it("initial pairing wait accepts the canonical OpenClaw SQLite pairing state", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-wait-sqlite-"));
+    const databasePath = path.join(stateDir, "state", "openclaw.sqlite");
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`
+        CREATE TABLE device_identities (
+          identity_key TEXT PRIMARY KEY,
+          device_id TEXT NOT NULL
+        );
+        CREATE TABLE device_auth_tokens (
+          device_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          token TEXT NOT NULL,
+          PRIMARY KEY (device_id, role)
+        );
+        CREATE TABLE device_pairing_paired (
+          device_id TEXT PRIMARY KEY,
+          client_id TEXT,
+          client_mode TEXT,
+          tokens_json TEXT
+        );
+      `);
+      database
+        .prepare("INSERT INTO device_identities (identity_key, device_id) VALUES ('primary', ?)")
+        .run(LOCAL_CLI_DEVICE.deviceId);
+      database
+        .prepare(
+          "INSERT INTO device_auth_tokens (device_id, role, token) VALUES (?, 'operator', ?)",
+        )
+        .run(LOCAL_CLI_DEVICE.deviceId, LOCAL_CLI_DEVICE.tokens.operator.token);
+      database
+        .prepare(
+          "INSERT INTO device_pairing_paired (device_id, client_id, client_mode, tokens_json) VALUES (?, 'cli', 'cli', ?)",
+        )
+        .run(LOCAL_CLI_DEVICE.deviceId, JSON.stringify(LOCAL_CLI_DEVICE.tokens));
+    } finally {
+      database.close();
+    }
+
+    try {
+      const [command, ...args] = await recordedPairingWait();
+      const result = spawnSync(command, [...args, "1000", stateDir], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("initial pairing wait exits 0 once the local CLI device is paired with the stored token (#11085)", async () => {

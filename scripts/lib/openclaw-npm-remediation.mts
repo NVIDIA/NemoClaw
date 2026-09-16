@@ -76,6 +76,15 @@ const TAR_VERSION = "7.5.21";
 const TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
+const LEGACY_BAILEYS_VERSION = "7.0.0-rc.9";
+const LEGACY_BAILEYS_INTEGRITY =
+  "sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==";
+const LEGACY_BAILEYS_TARBALL =
+  "https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz";
+const LEGACY_LIBSIGNAL_VERSION = "6.0.0";
+const LEGACY_LIBSIGNAL_INTEGRITY =
+  "sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==";
+const LEGACY_LIBSIGNAL_TARBALL = "https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz";
 const FS_SAFE_VERSION = "0.3.0";
 const FS_SAFE_INTEGRITY =
   "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
@@ -180,7 +189,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.3.11": {
     kind: "legacy-core",
     expectedPatchedMetadataIntegrity:
-      "sha512-Yz/7GyAgLSPtJkijdUsVzxnjhATMPLRSFFMhl2H565aW7tReHZmuPeExBq0K4EEFkvg7zM2sFm2CP3f2oNw32Q==",
+      "sha512-kuoMP4afOUId6SrExT5xaSjSigSovFwaXflirtJFZqqlREqAoVj7QHl1i/1LS5Jk3kq5x85jQCqy2R/4rSPSLQ==",
     version: "2026.3.11",
   },
 });
@@ -312,6 +321,12 @@ function hashPatchedMetadata(packageDirectory: string): string {
     const bundledTarPackageJson = readJson(
       join(packageDirectory, "node_modules", "tar", "package.json"),
     );
+    const bundledBaileysPackageJson = readJson(
+      join(packageDirectory, "node_modules", "@whiskeysockets", "baileys", "package.json"),
+    );
+    const bundledLibsignalPackageJson = readJson(
+      join(packageDirectory, "node_modules", "libsignal", "package.json"),
+    );
     return hashMetadataEntries([
       [
         "legacy-openclaw-remediation.json",
@@ -323,7 +338,19 @@ function hashPatchedMetadata(packageDirectory: string): string {
                 name: bundledTarPackageJson.name,
                 version: bundledTarPackageJson.version,
               },
+              bundledBaileys: {
+                dependencies: bundledBaileysPackageJson.dependencies,
+                name: bundledBaileysPackageJson.name,
+                version: bundledBaileysPackageJson.version,
+              },
+              bundledLibsignal: {
+                dependencies: bundledLibsignalPackageJson.dependencies,
+                name: bundledLibsignalPackageJson.name,
+                version: bundledLibsignalPackageJson.version,
+              },
               name: packageJson.name,
+              baileysDependency: packageJson.dependencies?.["@whiskeysockets/baileys"],
+              libsignalDependency: packageJson.dependencies?.libsignal,
               tarDependency: packageJson.dependencies?.tar,
               version: packageJson.version,
             },
@@ -787,10 +814,31 @@ export function patchOpenClawDiscordPackageGraph(packageDirectory: string): void
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
+  const bundledBaileysPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "@whiskeysockets",
+    "baileys",
+    "package.json",
+  );
+  const bundledLibsignalPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "libsignal",
+    "package.json",
+  );
   const packageJson = readJson(packageJsonPath);
   requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
   if (packageJson.dependencies?.tar !== "7.5.11") {
     throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.dependencies?.["@whiskeysockets/baileys"] !== LEGACY_BAILEYS_VERSION) {
+    throw new Error(
+      `openclaw@2026.3.11 must declare reviewed @whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} before remediation`,
+    );
+  }
+  if (packageJson.dependencies?.libsignal !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares libsignal before remediation");
   }
   if (packageJson.bundledDependencies !== undefined) {
     throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
@@ -801,15 +849,56 @@ export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): v
   if (!existsSync(bundledTarPackageJsonPath)) {
     throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
   }
+  if (!existsSync(bundledBaileysPackageJsonPath) || !existsSync(bundledLibsignalPackageJsonPath)) {
+    throw new Error(
+      "openclaw@2026.3.11 remediation requires the reviewed bundled Baileys and libsignal packages",
+    );
+  }
   requirePackageIdentity(
     readJson(bundledTarPackageJsonPath),
     "tar",
     TAR_VERSION,
     "Legacy OpenClaw bundled tar remediation",
   );
+  const bundledBaileysPackageJson = readJson(bundledBaileysPackageJsonPath);
+  requirePackageIdentity(
+    bundledBaileysPackageJson,
+    "@whiskeysockets/baileys",
+    LEGACY_BAILEYS_VERSION,
+    "Legacy OpenClaw bundled Baileys remediation",
+  );
+  requireDependencyShape(
+    bundledBaileysPackageJson,
+    {
+      "@cacheable/node-cache": "^1.4.0",
+      "@hapi/boom": "^9.1.3",
+      "async-mutex": "^0.5.0",
+      libsignal: LEGACY_LIBSIGNAL_VERSION,
+      "lru-cache": "^11.1.0",
+      "music-metadata": "^11.7.0",
+      "p-queue": "^9.0.0",
+      pino: "^9.6",
+      protobufjs: "^7.2.4",
+      ws: "^8.13.0",
+    },
+    `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+  );
+  const bundledLibsignalPackageJson = readJson(bundledLibsignalPackageJsonPath);
+  requirePackageIdentity(
+    bundledLibsignalPackageJson,
+    "libsignal",
+    LEGACY_LIBSIGNAL_VERSION,
+    "Legacy OpenClaw bundled libsignal remediation",
+  );
+  requireDependencyShape(
+    bundledLibsignalPackageJson,
+    { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+    `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+  );
 
   packageJson.dependencies.tar = TAR_VERSION;
-  packageJson.bundledDependencies = ["tar"];
+  packageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
+  packageJson.bundledDependencies = ["tar", "@whiskeysockets/baileys", "libsignal"];
   writeJson(packageJsonPath, packageJson);
 }
 
@@ -1200,13 +1289,35 @@ export function buildRemediatedOpenClawPluginArchive(
     copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
   } else if (remediation.kind === "legacy-core") {
     const bundledTarPath = join(sourcePackage, "node_modules", "tar");
-    if (existsSync(bundledTarPath)) {
-      throw new Error("openclaw@2026.3.11 unexpectedly bundles tar before remediation");
+    const bundledBaileysPath = join(sourcePackage, "node_modules", "@whiskeysockets", "baileys");
+    const bundledLibsignalPath = join(sourcePackage, "node_modules", "libsignal");
+    if (
+      existsSync(bundledTarPath) ||
+      existsSync(bundledBaileysPath) ||
+      existsSync(bundledLibsignalPath)
+    ) {
+      throw new Error(
+        "openclaw@2026.3.11 unexpectedly bundles a legacy remediation package before remediation",
+      );
     }
     const tarArchive = packReplacement(
       `tar@${TAR_VERSION}`,
       TAR_INTEGRITY,
       TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const baileysArchive = packReplacement(
+      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+      LEGACY_BAILEYS_INTEGRITY,
+      LEGACY_BAILEYS_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const libsignalArchive = packReplacement(
+      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+      LEGACY_LIBSIGNAL_INTEGRITY,
+      LEGACY_LIBSIGNAL_TARBALL,
       remediationRoot,
       env,
     );
@@ -1216,13 +1327,87 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
+    const baileysPackage = extractArchive(
+      baileysArchive.archivePath,
+      join(remediationRoot, "baileys"),
+      remediationRoot,
+      env,
+    );
+    const libsignalPackage = extractArchive(
+      libsignalArchive.archivePath,
+      join(remediationRoot, "libsignal"),
+      remediationRoot,
+      env,
+    );
     requirePackageIdentity(
       readJson(join(tarPackage, "package.json")),
       "tar",
       TAR_VERSION,
       "Legacy OpenClaw tar remediation package",
     );
+    const baileysPackageJsonPath = join(baileysPackage, "package.json");
+    const baileysPackageJson = readJson(baileysPackageJsonPath);
+    requirePackageIdentity(
+      baileysPackageJson,
+      "@whiskeysockets/baileys",
+      LEGACY_BAILEYS_VERSION,
+      "Legacy OpenClaw Baileys remediation package",
+    );
+    requireDependencyShape(
+      baileysPackageJson,
+      {
+        "@cacheable/node-cache": "^1.4.0",
+        "@hapi/boom": "^9.1.3",
+        "async-mutex": "^0.5.0",
+        libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
+        "lru-cache": "^11.1.0",
+        "music-metadata": "^11.7.0",
+        "p-queue": "^9.0.0",
+        pino: "^9.6",
+        protobufjs: "^7.2.4",
+        ws: "^8.13.0",
+      },
+      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
+    );
+    if (
+      baileysPackageJson.engines?.node !== ">=20.0.0" ||
+      baileysPackageJson.license !== "MIT" ||
+      JSON.stringify(sortedObject(baileysPackageJson.peerDependencies ?? {})) !==
+        JSON.stringify(
+          sortedObject({
+            "audio-decode": "^2.1.3",
+            jimp: "^1.6.0",
+            "link-preview-js": "^3.0.0",
+            sharp: "*",
+          }),
+        )
+    ) {
+      throw new Error(
+        `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} package contract changed; review the remediation before updating it`,
+      );
+    }
+    const libsignalPackageJson = readJson(join(libsignalPackage, "package.json"));
+    requirePackageIdentity(
+      libsignalPackageJson,
+      "libsignal",
+      LEGACY_LIBSIGNAL_VERSION,
+      "Legacy OpenClaw libsignal remediation package",
+    );
+    requireDependencyShape(
+      libsignalPackageJson,
+      { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
+    );
+    if (libsignalPackageJson.license !== "GPL-3.0") {
+      throw new Error(
+        `libsignal@${LEGACY_LIBSIGNAL_VERSION} package contract changed; review the remediation before updating it`,
+      );
+    }
+    baileysPackageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
+    writeJson(baileysPackageJsonPath, baileysPackageJson);
     copyReplacementPackage(tarPackage, bundledTarPath);
+    copyReplacementPackage(baileysPackage, bundledBaileysPath);
+    copyReplacementPackage(libsignalPackage, bundledLibsignalPath);
     patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "axios") {
     const axiosArchive = packReplacement(

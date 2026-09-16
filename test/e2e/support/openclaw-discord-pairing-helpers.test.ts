@@ -21,6 +21,7 @@ import {
   listenOnLoopback,
 } from "./fixtures/slack-forward-proxy.ts";
 import {
+  buildPairingAllowFromCommand,
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
@@ -183,12 +184,16 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     const user = "user`touch /tmp/e2e-should-not-run`";
 
     const pendingCommand = buildPairingPendingCommand("discord", code, user);
+    const allowFromCommand = buildPairingAllowFromCommand("discord", user);
     const approveCommand = buildPairingApproveCommand("discord", code);
 
-    expect(pendingCommand).toContain("'abc$(touch /tmp/e2e-should-not-run)'");
-    expect(pendingCommand).toContain("'user`touch /tmp/e2e-should-not-run`'");
+    expect(pendingCommand).toContain(`'${JSON.stringify(["discord", code, user])}'`);
+    expect(pendingCommand).toContain("channel_pairing_requests");
+    expect(allowFromCommand).toContain("channel_pairing_allow_entries");
+    expect(allowFromCommand).toContain(`'${JSON.stringify(["discord", user])}'`);
     expect(approveCommand).toContain("'abc$(touch /tmp/e2e-should-not-run)'");
-    expect(pendingCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
+    expect(pendingCommand).not.toContain("pairing.json");
+    expect(allowFromCommand).not.toContain("allowFrom.json");
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 

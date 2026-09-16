@@ -583,12 +583,47 @@ export async function issuePairingRequest(options: {
   });
 }
 
+const PAIRING_STATE_PROBE_SOURCE = String.raw`
+import json
+import sqlite3
+import sys
+
+query = sys.argv[1]
+parameters = json.loads(sys.argv[2])
+database = sqlite3.connect(
+    "file:/sandbox/.openclaw/state/openclaw.sqlite?mode=ro",
+    uri=True,
+    timeout=5,
+)
+try:
+    database.execute("PRAGMA query_only = ON")
+    database.execute("PRAGMA trusted_schema = OFF")
+    row = database.execute(query, parameters).fetchone()
+finally:
+    database.close()
+sys.exit(row is None)
+`;
+
+function buildPairingStateCommand(
+  mode: "pending" | "allowed",
+  channel: PairingChannel,
+  code: string,
+  user: string,
+): string {
+  const query =
+    mode === "pending"
+      ? "SELECT 1 FROM channel_pairing_requests WHERE channel_key = ? AND code = ? AND request_id = ?"
+      : "SELECT 1 FROM channel_pairing_allow_entries WHERE channel_key = ? AND entry = ?";
+  const parameters = mode === "pending" ? [channel, code, user] : [channel, user];
+  return `python3 -c ${shellQuote(PAIRING_STATE_PROBE_SOURCE)} ${shellQuote(query)} ${shellQuote(JSON.stringify(parameters))}`;
+}
+
 export function buildPairingPendingCommand(
   channel: PairingChannel,
   code: string,
   user: string,
 ): string {
-  return `test -f /sandbox/.openclaw/credentials/${channel}-pairing.json && grep -F ${shellQuote(code)} /sandbox/.openclaw/credentials/${channel}-pairing.json && grep -F ${shellQuote(user)} /sandbox/.openclaw/credentials/${channel}-pairing.json`;
+  return buildPairingStateCommand("pending", channel, code, user);
 }
 
 export function buildPairingApproveCommand(channel: PairingChannel, code: string): string {
@@ -596,7 +631,7 @@ export function buildPairingApproveCommand(channel: PairingChannel, code: string
 }
 
 export function buildPairingAllowFromCommand(channel: PairingChannel, user: string): string {
-  return `test -f /sandbox/.openclaw/credentials/${channel}-default-allowFrom.json && grep -F ${shellQuote(user)} /sandbox/.openclaw/credentials/${channel}-default-allowFrom.json`;
+  return buildPairingStateCommand("allowed", channel, "", user);
 }
 
 export async function approveAndAssertPairing(options: {
@@ -611,9 +646,12 @@ export async function approveAndAssertPairing(options: {
     options.sandbox,
     options.sandboxName,
     buildPairingPendingCommand(options.channel, options.code, user),
-    { artifactName: `${options.channel}-pending-file`, redactionValues: options.redactions },
+    {
+      artifactName: `${options.channel}-pending-sqlite-state`,
+      redactionValues: options.redactions,
+    },
   );
-  expectExitZero(pending, `${options.channel} pending file`);
+  expectExitZero(pending, `${options.channel} pending SQLite state`);
 
   const list = await sandboxSh(
     options.sandbox,
@@ -658,9 +696,12 @@ export async function approveAndAssertPairing(options: {
     options.sandbox,
     options.sandboxName,
     buildPairingAllowFromCommand(options.channel, user),
-    { artifactName: `${options.channel}-allow-from`, redactionValues: options.redactions },
+    {
+      artifactName: `${options.channel}-allow-from-sqlite-state`,
+      redactionValues: options.redactions,
+    },
   );
-  expectExitZero(allow, `${options.channel} allowFrom file`);
+  expectExitZero(allow, `${options.channel} allowFrom SQLite state`);
 
   const repeat = await sandboxSh(
     options.sandbox,
