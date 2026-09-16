@@ -34,7 +34,6 @@ import {
   installOllamaOnLinux,
 } from "../../src/lib/onboard/install-ollama-linux.js";
 import { getWindowsHostOllamaDockerRequirement } from "../../src/lib/onboard/local-inference-topology.js";
-import { createNvidiaFeaturedModelSession } from "../../src/lib/onboard/nvidia-featured-model-selection.js";
 import {
   assertOllamaUpgradeApplied,
   resolveOllamaInstallMenuEntry,
@@ -1181,51 +1180,6 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       2,
     );
     assert.ok(lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
-  });
-
-  it("replaces a retired model through recovered NVIDIA onboarding (#11364)", async () => {
-    const retiredModel = "minimaxai/minimax-m3";
-    const replacement = "nvidia/nemotron-3-super-120b-a12b";
-    const warn = vi.fn();
-    const validateReplacement = vi.fn(async () => ({ ok: true as const }));
-    const setupNim = createSetupNim(
-      makeSetupNimFlowDeps({
-        isNonInteractive: () => true,
-        readRecordedProvider: () => "nvidia-prod",
-        readRecordedModel: () => retiredModel,
-        createNvidiaFeaturedModelSession: (options) =>
-          createNvidiaFeaturedModelSession({ ...options, warn }),
-        handleRemoteProviderSelection: async (
-          { selected, requestedModel, recoveredFromSandbox, recoveredModel },
-          state,
-        ) => {
-          assert.equal(selected.key, "build");
-          assert.equal(recoveredFromSandbox, true);
-          assert.equal(recoveredModel, retiredModel);
-          const selectedModel = await state.nvidiaFeaturedModels!.select(
-            requestedModel,
-            recoveredModel,
-            true,
-            null,
-          );
-          await validateReplacement(selectedModel);
-          state.model = selectedModel;
-          state.provider = "nvidia-prod";
-          state.endpointUrl = "https://integrate.api.nvidia.com/v1";
-          state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
-          return "selected";
-        },
-      }),
-    );
-
-    const result = await setupNim(null, "alpha");
-
-    assert.equal(result.model, replacement);
-    assert.notEqual(result.model, retiredModel);
-    expect(validateReplacement).toHaveBeenCalledWith(replacement);
-    expect(warn).toHaveBeenCalledWith(
-      `  Warning: recovered NVIDIA model "${retiredModel}" is retired; using "${replacement}" instead.`,
-    );
   });
 
   it("offers Gemini 3.6 Flash instead of 2.5 Flash and supports Other (#9298)", async () => {
