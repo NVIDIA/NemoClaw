@@ -148,7 +148,7 @@ sudo usermod -aG docker $USER
 newgrp docker
 ```
 
-Then retry `$$nemoclaw onboard`. If the installer stopped after printing `newgrp docker`, run that command and then re-run the installer:
+Then retry the command that reported the error. For an existing sandbox, run `$$nemoclaw <name> start`. If onboarding was interrupted, retry `$$nemoclaw onboard`. If the installer stopped after printing `newgrp docker`, run that command and then re-run the installer:
 
 ```bash
 newgrp docker
