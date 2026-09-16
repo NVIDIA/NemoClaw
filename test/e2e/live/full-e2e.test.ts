@@ -679,8 +679,8 @@ test(
         "check full E2E prerequisites",
         "install and onboard OpenClaw sandbox",
         "validate CLI sandbox and policy state",
-        "exercise native plugin package and update lifecycle",
         "exercise hosted, sandbox, and post-recovery launch inference",
+        "exercise native plugin package and update lifecycle",
         "inspect runtime logs and security posture",
         "remove full-E2E sandbox",
       ],
@@ -915,9 +915,6 @@ test(
       resultText(policy),
     ).toBe(true);
 
-    progress.phase("exercise native plugin package and update lifecycle");
-    await exerciseNativeOpenClawPluginLifecycle(host, sandbox);
-
     progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
     const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
     const direct = await host.command(directProbe.command, directProbe.args, {
@@ -968,6 +965,9 @@ test(
     await (process.platform === "linux"
       ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
       : Promise.resolve());
+
+    progress.phase("exercise native plugin package and update lifecycle");
+    await exerciseNativeOpenClawPluginLifecycle(host, sandbox);
 
     progress.phase("inspect runtime logs and security posture");
     const logs = await repoNemoclaw(
