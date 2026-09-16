@@ -28,6 +28,21 @@ const llamaCppProfile: ServingProfileProvenance = {
   estimatedModelDownloadBytes: 1024,
 };
 
+const vllmProfile: ServingProfileProvenance = {
+  ...llamaCppProfile,
+  preset: {
+    ...llamaCppProfile.preset,
+    id: "local-model-profile.vllm.spark.v1",
+    displayName: "DGX Spark vLLM",
+  },
+  recipe: {
+    ...llamaCppProfile.recipe,
+    id: "vllm.spark.v1",
+    backend: "vllm",
+  },
+  runtimeImage: "example.invalid/vllm@sha256:fixture",
+};
+
 describe("handleProviderInferenceState managed llama.cpp resume", () => {
   it.each([
     { label: "normal resume", authoritativeResumeConfig: false },
@@ -113,6 +128,61 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     );
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: llamaCppProfile,
+    });
+  });
+
+  it("preserves installer vLLM profile provenance when provider setup omits it (#11896)", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "vllm",
+          servingProfileProvenance: vllmProfile,
+        }),
+      ]),
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: vllmProfile,
+    });
+  });
+
+  it("clears installer vLLM profile provenance when a different provider is selected", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "cloud-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: null,
     });
   });
 });

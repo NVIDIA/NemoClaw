@@ -116,6 +116,16 @@ export interface ProviderSelectionResult {
   vllmModelIdentity?: string;
 }
 
+function resolveSelectedServingProfileProvenance(
+  selection: ProviderSelectionResult,
+  current: ServingProfileProvenance | null,
+): ServingProfileProvenance | null {
+  if (selection.servingProfileProvenance !== undefined) {
+    return selection.servingProfileProvenance;
+  }
+  return selection.provider === "vllm" && current?.recipe.backend === "vllm" ? current : null;
+}
+
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   gatewayName: string;
   resume: boolean;
@@ -1494,7 +1504,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
       compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
-      servingProfileProvenance = selection.servingProfileProvenance ?? null;
+      servingProfileProvenance = resolveSelectedServingProfileProvenance(
+        selection,
+        servingProfileProvenance,
+      );
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
       reuseGatewayCredentialWithoutLocalKey =
