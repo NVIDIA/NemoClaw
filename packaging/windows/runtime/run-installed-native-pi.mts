@@ -217,7 +217,7 @@ function deepAgentDiagnosticFiles(root) {
   return matches;
 }
 
-function piWorkloadSource() {
+function _piWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -382,7 +382,7 @@ try {
 `;
 }
 
-function hermesWorkloadSource() {
+function _hermesWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -573,7 +573,7 @@ try {
 `;
 }
 
-function deepAgentsWorkloadSource() {
+function _deepAgentsWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -853,11 +853,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
   runtimeLease.assertHeld();
-  const node = installedNode;
+  const _node = installedNode;
   const stagedAgentRoot = installedAgentRoot;
   let agentEnvironment;
   if (isHermes || isDeepAgents) {
-    const stagedPythonRoot = installedPythonRoot;
+    const _stagedPythonRoot = installedPythonRoot;
     if (isDeepAgents) {
       agentEnvironment = {
         DEEPAGENTS_CODE_DEBUG: "1",

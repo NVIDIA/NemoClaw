@@ -19,6 +19,27 @@ import {
   startNativeUiTunnel,
 } from "../../packaging/windows/runtime/native-ui-tunnel.mts";
 
+async function probeNativeUiRegistry(output: string, code: number) {
+  const directory = await mkdtemp(path.join(tmpdir(), "native-create-registry-"));
+  try {
+    const script = path.join(directory, "registry.mjs");
+    const executable = path.join(directory, "openshell-fixture");
+    const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
+    await writeFile(
+      script,
+      `if (JSON.stringify(process.argv.slice(2)) !== '["sandbox","list","-o","json"]') process.exit(2); process.stdout.write(${JSON.stringify(output)}); process.exitCode = ${code};`,
+    );
+    await writeFile(
+      executable,
+      `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+    );
+    await chmod(executable, 0o700);
+    return await confirmNativeUiRegistryEmpty(executable, { PATH: "/usr/bin:/bin" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 describe("contained native UI relay failures", () => {
   it.each(["EACCES", "EPERM"])("rejects a %s connection denial before readiness", async (code) => {
     const directory = await mkdtemp(path.join(tmpdir(), "native-ui-denial-"));
@@ -215,7 +236,7 @@ describe("native OpenClaw session lifecycle", () => {
       await expect(creation.failure).rejects.toThrow("sandbox creation failed");
       expect(creation.wasRejected()).toBe(false);
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill();
+      child.kill();
     }
   });
 
@@ -249,35 +270,22 @@ describe("native OpenClaw session lifecycle", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "accepts a successful empty registry before skipping rejected-creation cleanup",
+    async () => {
+      await expect(probeNativeUiRegistry("[]", 0)).resolves.toBeUndefined();
+    },
+  );
+
   it.skipIf(process.platform === "win32").each([
-    { output: "[]", code: 0, empty: true },
-    { output: '[{"name":"owned"}]', code: 0, empty: false },
-    { output: '{"sandboxes":[]}', code: 0, empty: false },
-    { output: "invalid-json", code: 0, empty: false },
-    { output: "[]", code: 1, empty: false },
+    { output: '[{"name":"owned"}]', code: 0 },
+    { output: '{"sandboxes":[]}', code: 0 },
+    { output: "invalid-json", code: 0 },
+    { output: "[]", code: 1 },
   ])(
     "requires a successful empty registry before skipping rejected-creation cleanup: $output/$code",
-    async ({ output, code, empty }) => {
-      const directory = await mkdtemp(path.join(tmpdir(), "native-create-registry-"));
-      try {
-        const script = path.join(directory, "registry.mjs");
-        const executable = path.join(directory, "openshell-fixture");
-        const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
-        await writeFile(
-          script,
-          `if (JSON.stringify(process.argv.slice(2)) !== '["sandbox","list","-o","json"]') process.exit(2); process.stdout.write(${JSON.stringify(output)}); process.exitCode = ${code};`,
-        );
-        await writeFile(
-          executable,
-          `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
-        );
-        await chmod(executable, 0o700);
-        const result = confirmNativeUiRegistryEmpty(executable, { PATH: "/usr/bin:/bin" });
-        if (empty) await expect(result).resolves.toBeUndefined();
-        else await expect(result).rejects.toThrow();
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
+    async ({ output, code }) => {
+      await expect(probeNativeUiRegistry(output, code)).rejects.toThrow();
     },
   );
 

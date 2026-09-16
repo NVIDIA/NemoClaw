@@ -118,7 +118,7 @@ test("ordinary component argv quoting stays unchanged", () => {
 for (const [name, invalid] of [
   ["foreign root", "C:\\temp\\git"],
   ["path traversal", "C:\\NemoClawHermesProbe-0123456789ab\\..\\git"],
-  ["extra raw switch", `${destination}\" -y -oC:\\other`],
+  ["extra raw switch", `${destination}" -y -oC:\\other`],
   ["trailing newline", `${destination}\n`],
   ["wrong child", "C:\\NemoClawHermesProbe-0123456789ab\\other"],
 ] as const) {

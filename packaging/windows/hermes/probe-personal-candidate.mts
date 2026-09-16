@@ -1975,7 +1975,7 @@ async function main() {
     throw new Error("The Personal candidate probe requires disposable Windows ARM64 CI.");
   const runtime = fs.realpathSync(argument("--runtime-root"));
   const mxc = argument("--mxc");
-  const stockMxc = argument("--stock-mxc");
+  const _stockMxc = argument("--stock-mxc");
   const hostControllerPython = argument("--host-controller-python");
   const wprPowershell = argument("--wpr-powershell");
   const rendererContextBuildFile = process.argv.includes("--renderer-context-build")

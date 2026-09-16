@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+declare const requestAnimationFrame: typeof globalThis.requestAnimationFrame;
 // CI-only acceptance of the real installed Hermes dashboard and native Stop owner.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";

@@ -4,7 +4,6 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { openNativeWebSession } from "./native-web-session.mts";
 import { runNativeConsoleAgent } from "./run-installed-native-console-agent.mts";
 

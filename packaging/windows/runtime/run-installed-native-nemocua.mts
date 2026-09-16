@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+declare const document: Document;
+declare const HTMLInputElement: typeof globalThis.HTMLInputElement;
+
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets } from "./native-assets.mts";
@@ -13,7 +16,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
-import { startFileTcpTargetRelay, relayWorkloadSource } from "./native-nemocua-relay.mts";
+import { startFileTcpTargetRelay } from "./native-nemocua-relay.mts";
 import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 
 import {

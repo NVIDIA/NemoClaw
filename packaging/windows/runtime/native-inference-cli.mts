@@ -4,7 +4,6 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   ensureNativeInference,

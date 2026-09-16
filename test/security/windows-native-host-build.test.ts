@@ -13,6 +13,17 @@ const owner = path.resolve("packaging/windows/installer/prepare-finished-host.py
 const python = process.platform === "win32" ? "python" : "python3";
 const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 const names = ["openshell.exe", "openshell-gateway.exe"];
+type FileIdentity = { file: string; bytes: number; sha256: string };
+const fileIdentityMutations: readonly {
+  name: string;
+  apply: (files: FileIdentity[]) => void;
+}[] = [
+  { name: "missing", apply: (files) => void files.pop() },
+  { name: "duplicate", apply: (files) => (files[1] = { ...files[0]! }) },
+  { name: "traversal", apply: (files) => (files[0]!.file = "../openshell.exe") },
+  { name: "hash", apply: (files) => (files[0]!.sha256 = "b".repeat(64)) },
+  { name: "size", apply: (files) => void files[0]!.bytes++ },
+];
 const invoke = `
 import importlib.util, pathlib, sys
 spec = importlib.util.spec_from_file_location("host", sys.argv[1])
@@ -59,7 +70,7 @@ describe("current OpenShell installer build evidence", () => {
       encoding: "utf8",
       timeout: 10_000,
     });
-    if (result.error) throw result.error;
+    expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
     return result;
   }
@@ -85,18 +96,10 @@ describe("current OpenShell installer build evidence", () => {
     expect(verify().status).not.toBe(0);
   });
 
-  it.each(["missing", "duplicate", "traversal", "hash", "size"])(
-    "rejects a %s file identity",
-    (mutation) => {
-      const files = receipt.files as { file: string; bytes: number; sha256: string }[];
-      if (mutation === "missing") files.pop();
-      if (mutation === "duplicate") files[1] = { ...files[0] };
-      if (mutation === "traversal") files[0].file = "../openshell.exe";
-      if (mutation === "hash") files[0].sha256 = "b".repeat(64);
-      if (mutation === "size") files[0].bytes++;
-      expect(verify().status).not.toBe(0);
-    },
-  );
+  it.each(fileIdentityMutations)("rejects a $name file identity", ({ apply }) => {
+    apply(receipt.files as FileIdentity[]);
+    expect(verify().status).not.toBe(0);
+  });
 
   it("rejects changed bytes even with an otherwise valid receipt", () => {
     fs.appendFileSync(path.join(root, names[0]), "changed");

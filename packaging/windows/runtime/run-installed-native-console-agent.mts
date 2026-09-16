@@ -9,7 +9,6 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import {
   withNativeRuntimeSession,
   bindNativeRuntimeGuard,
@@ -718,7 +717,7 @@ async function runNativeConsoleAgentInternal(
     runtimeLease.agentRoot,
     `${adapter.displayName} sealed runtime`,
   );
-  const installedPython =
+  const _installedPython =
     runtimeLease.python === null
       ? null
       : requiredDirectory(path.dirname(runtimeLease.python), "sealed Python directory");
