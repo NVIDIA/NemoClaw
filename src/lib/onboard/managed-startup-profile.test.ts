@@ -16,6 +16,7 @@ import {
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
   MANAGED_STARTUP_PROFILE_CAPABILITIES,
   MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS,
+  MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
   MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
@@ -276,6 +277,22 @@ function encodeUnknown(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
+function canonicalizeUnknown(value: unknown): unknown {
+  return Array.isArray(value)
+    ? value.map((item) => canonicalizeUnknown(item))
+    : value === null || typeof value !== "object"
+      ? value
+      : Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, canonicalizeUnknown((value as Record<string, unknown>)[key])]),
+        );
+}
+
+function encodeCanonicalUnknown(value: unknown): string {
+  return Buffer.from(JSON.stringify(canonicalizeUnknown(value)), "utf8").toString("base64url");
+}
+
 const STOCK_RUNTIME_INPUT_AGENTS = {
   CHAT_UI_URL: ["openclaw", "hermes"],
   HTTPS_PROXY: MANAGED_STARTUP_AGENTS,
@@ -327,6 +344,22 @@ describe("managed startup profile", () => {
       expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
     },
   );
+  it("migrates a canonical prior-version OpenClaw profile without retired device-auth state", () => {
+    const encoded = encodeCanonicalUnknown({
+      ...OPENCLAW_PROFILE,
+      schemaVersion: 1,
+      agentConfig: {
+        ...OPENCLAW_PROFILE.agentConfig,
+        deviceAuth: { disabled: true, optOutSource: "operator" },
+      },
+    });
+
+    const decoded = decodeManagedStartupProfile(encoded);
+
+    expect(decoded).toEqual(validateManagedStartupProfile(OPENCLAW_PROFILE));
+    expect(decoded.agentConfig).not.toHaveProperty("deviceAuth");
+    expect(serializeManagedStartupProfile(decoded)).not.toContain("deviceAuth");
+  });
   it("round-trips all OpenClaw-only startup settings", () => {
     const profile = decodeManagedStartupProfile(encodeManagedStartupProfile(OPENCLAW_PROFILE));
     expect(profile).toMatchObject({
@@ -455,6 +488,20 @@ describe("managed startup profile", () => {
     expect(
       MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"].inputModalities,
     ).toEqual([]);
+  });
+
+  it("tracks the active OpenClaw release pins outside runtime startup intent", () => {
+    expect(MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS.openclaw).toEqual(
+      expect.arrayContaining([
+        { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+        { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
+        { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+        { input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+      ]),
+    );
+    expect(
+      MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS.openclaw.map(({ input }) => input),
+    ).not.toEqual(expect.arrayContaining([expect.stringContaining("2026_7_1")]));
   });
 
   it("keeps exported capabilities deeply frozen and validation authority private", () => {
@@ -1158,7 +1205,10 @@ describe("managed startup profile", () => {
   });
 
   it.each([
-    ["bad schema", { ...OPENCLAW_PROFILE, schemaVersion: 2 }],
+    [
+      "bad schema",
+      { ...OPENCLAW_PROFILE, schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION + 1 },
+    ],
     [
       "invalid langchain-deepagents-code approval mode",
       {

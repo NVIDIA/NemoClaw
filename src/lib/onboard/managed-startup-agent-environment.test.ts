@@ -304,7 +304,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "6e2",
     });
 
-    expect(result.schemaVersion).toBe(1);
+    expect(result.schemaVersion).toBe(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION);
     expect(result.agent).toBe("openclaw");
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "https://dashboard.example.test:18789",

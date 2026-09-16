@@ -13,7 +13,8 @@ import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
  * Versioned, bounded schema for managed-image startup intent.
  * Runtime-specific construction and activation stay outside this module.
  */
-export const MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 1 as const;
+const LEGACY_MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 1 as const;
+export const MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 2 as const;
 
 /** Profiles are configuration, not a general-purpose transport. */
 export const MANAGED_STARTUP_PROFILE_MAX_BYTES = 64 * 1024;
@@ -803,10 +804,10 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
   openclaw: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "OPENCLAW_VERSION", reason: "release-composition" },
-    { input: "OPENCLAW_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_2026_7_1_TARBALL", reason: "release-composition" },
-    { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
+    { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY", reason: "integrity-pin" },
     { input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW", reason: "release-composition" },
     { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
     { input: "OPENCLAW_2026_3_11_INTEGRITY", reason: "integrity-pin" },
@@ -951,6 +952,9 @@ const OPENCLAW_CONFIG_KEYS = new Set([
   "extraAgents",
   "minimalBootstrap",
 ]);
+const LEGACY_OPENCLAW_CONFIG_KEYS = new Set([...OPENCLAW_CONFIG_KEYS, "deviceAuth"]);
+const LEGACY_DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
+const LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
@@ -2173,6 +2177,58 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   };
 }
 
+interface ManagedStartupProfileDecodeMigration {
+  readonly value: unknown;
+  readonly migratedLegacyProfile: boolean;
+  readonly legacyDeviceAuthDisabled: boolean | null;
+}
+
+function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProfileDecodeMigration {
+  const profile = requireRecord(value, "profile");
+  if (profile.schemaVersion !== LEGACY_MANAGED_STARTUP_PROFILE_SCHEMA_VERSION) {
+    return {
+      value,
+      migratedLegacyProfile: false,
+      legacyDeviceAuthDisabled: null,
+    };
+  }
+
+  rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
+  if (profile.agent !== "openclaw") {
+    return {
+      value: { ...profile, schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION },
+      migratedLegacyProfile: true,
+      legacyDeviceAuthDisabled: null,
+    };
+  }
+
+  const agentConfig = requireRecord(profile.agentConfig, "agentConfig");
+  rejectUnknownKeys(agentConfig, LEGACY_OPENCLAW_CONFIG_KEYS, "agentConfig");
+  const deviceAuth = requireRecord(agentConfig.deviceAuth, "agentConfig.deviceAuth");
+  rejectUnknownKeys(deviceAuth, LEGACY_DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
+  const legacyDeviceAuthDisabled = requireBoolean(
+    deviceAuth.disabled,
+    "agentConfig.deviceAuth.disabled",
+  );
+  requireStringEnum(
+    deviceAuth.optOutSource,
+    LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES,
+    "agentConfig.deviceAuth.optOutSource",
+  );
+
+  const migratedAgentConfig = { ...agentConfig };
+  Reflect.deleteProperty(migratedAgentConfig, "deviceAuth");
+  return {
+    value: {
+      ...profile,
+      schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+      agentConfig: migratedAgentConfig,
+    },
+    migratedLegacyProfile: true,
+    legacyDeviceAuthDisabled,
+  };
+}
+
 function canonicalizeJson(value: unknown): unknown {
   if (Array.isArray(value)) return mapArrayByIndex(value, (item) => canonicalizeJson(item));
   if (!isPlainObject(value)) return value;
@@ -2205,7 +2261,7 @@ export function encodeManagedStartupProfile(profile: ManagedStartupProfile): str
   return Buffer.from(serializeManagedStartupProfile(profile), "utf8").toString("base64url");
 }
 
-/** Decode only the canonical representation produced by encodeManagedStartupProfile. */
+/** Decode the current canonical representation or migrate one canonical prior-version profile. */
 export function decodeManagedStartupProfile(encoded: string): ManagedStartupProfile {
   if (
     typeof encoded !== "string" ||
@@ -2237,8 +2293,21 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
   } catch {
     invalid("payload is not valid JSON");
   }
-  const profile = validateManagedStartupProfile(parsed);
-  if (serializeManagedStartupProfile(profile) !== raw) {
+  const migration = migrateDecodedManagedStartupProfile(parsed);
+  const profile = validateManagedStartupProfile(migration.value);
+  if (
+    migration.migratedLegacyProfile &&
+    profile.agent === "openclaw" &&
+    profile.dashboard.agent === "openclaw" &&
+    profile.dashboard.mode === "remote" &&
+    !migration.legacyDeviceAuthDisabled
+  ) {
+    invalid("remote OpenClaw dashboard exposure requires device auth to be disabled");
+  }
+  const canonicalPayload = migration.migratedLegacyProfile
+    ? JSON.stringify(canonicalizeJson(parsed))
+    : serializeManagedStartupProfile(profile);
+  if (canonicalPayload !== raw) {
     invalid("payload is not in canonical form");
   }
   return profile;

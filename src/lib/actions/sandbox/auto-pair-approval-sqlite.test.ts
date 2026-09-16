@@ -25,11 +25,23 @@ describe("auto-pair approval SQLite compatibility", () => {
     const adapter = readOpenClawPairingStateModule();
     expect(policy).toBeTruthy();
     expect(adapter).toContain("ADAPTER_VERSION = 1");
-    expect(
-      buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
-        localDeviceOnly: true,
-      }),
-    ).toContain(adapter);
+    const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
+      localDeviceOnly: true,
+    });
+    expect(script).toContain(adapter);
+    expect(script).toContain("clone_state_dir_fd = _open_state_root(state_dir)");
+    expect(script).toContain(
+      "clone_database_dir_fd = _open_state_directory(state_dir, clone_state_dir_fd)",
+    );
+    expect(script).toContain("'openclaw.sqlite', _file_flags()");
+    expect(script).toContain("sqlite_snapshot_is_current(");
+    expect(script).not.toContain("clone_directory_flags =");
+    expect(script).not.toContain("clone_path_flags =");
+    expect(script).not.toContain("clone_file_flags =");
+    expect(script).not.toContain("def open_clone_state_root");
+    expect(script).not.toContain("def clone_state_root_is_current");
+    expect(script).not.toContain("open_clone_directory('state')");
+    expect(script).not.toContain("clone_directory_is_current('state'");
   });
 
   function expectUnsafeCanonicalState(

@@ -411,24 +411,6 @@ ${pairingStateModule ?? "raise RuntimeError('canonical pairing-state adapter is 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
     ${exitWithReceipt("list-state-path-invalid")}
-for required_flag in ('O_DIRECTORY', 'O_NOFOLLOW'):
-    if not hasattr(os, required_flag):
-        ${exitWithReceipt("list-platform-unsupported")}
-clone_directory_flags = (
-    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
-)
-clone_path_flags = (
-    getattr(os, 'O_PATH', os.O_RDONLY)
-    | os.O_DIRECTORY
-    | os.O_NOFOLLOW
-    | getattr(os, 'O_CLOEXEC', 0)
-)
-clone_file_flags = (
-    os.O_RDONLY
-    | os.O_NOFOLLOW
-    | getattr(os, 'O_CLOEXEC', 0)
-    | getattr(os, 'O_NONBLOCK', 0)
-)
 PENDING_READ_ATTEMPTS = ${CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS}
 PENDING_READ_POLL_S = ${CONNECT_AUTO_PAIR_PENDING_READ_POLL_S}
 class CloneStateEntryRotated(OSError):
@@ -443,45 +425,16 @@ def validate_clone_json_descriptor(fd):
     if metadata.st_nlink == 0:
         raise CloneStateEntryRotated('clone state entry was replaced after open')
 
-def open_clone_state_root():
-    # Ancestors such as / are traversal boundaries, not state directories.
-    # OpenShell's restored-clone policy permits path traversal but intentionally
-    # denies a read-directory handle for the whole filesystem root.
-    root_fd = os.open(os.sep, clone_path_flags)
-    try:
-        for component in (part for part in state_dir.split(os.sep) if part):
-            if component in ('.', '..'):
-                raise OSError('unsafe clone state root')
-            next_fd = os.open(
-                component,
-                clone_path_flags,
-                dir_fd=root_fd,
-            )
-            os.close(root_fd)
-            root_fd = next_fd
-        return root_fd
-    except Exception:
-        os.close(root_fd)
-        raise
-
 try:
-    clone_state_dir_fd = open_clone_state_root()
+    clone_state_dir_fd = _open_state_root(state_dir)
 except OSError:
     ${exitWithReceipt("list-state-root-failed")}
 
-def clone_state_root_is_current():
-    try:
-        current = os.stat(state_dir, follow_symlinks=False)
-        pinned = os.fstat(clone_state_dir_fd)
-    except OSError:
-        return False
-    return (
-        stat.S_ISDIR(current.st_mode)
-        and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
-    )
-
-def clone_directory_is_current(directory_name, directory_fd):
-    if directory_name not in ('devices', 'identity', 'state') or not clone_state_root_is_current():
+def clone_legacy_directory_is_current(directory_name, directory_fd):
+    if (
+        directory_name not in ('devices', 'identity')
+        or not _state_root_is_current(state_dir, clone_state_dir_fd)
+    ):
         return False
     try:
         current = os.stat(
@@ -498,34 +451,34 @@ def clone_directory_is_current(directory_name, directory_fd):
         and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
     )
 
-def open_clone_directory(directory_name):
-    if directory_name not in ('devices', 'identity', 'state'):
+def open_clone_legacy_directory(directory_name):
+    if directory_name not in ('devices', 'identity'):
         raise OSError('unsupported clone state directory')
     directory_fd = os.open(
         directory_name,
-        clone_directory_flags,
+        _directory_flags(),
         dir_fd=clone_state_dir_fd,
     )
-    if not clone_directory_is_current(directory_name, directory_fd):
+    if not clone_legacy_directory_is_current(directory_name, directory_fd):
         os.close(directory_fd)
         raise OSError('clone state directory changed')
     return directory_fd
 
 def open_clone_json_descriptor(directory_fd, directory_name, entry_name):
     if (
-        not clone_directory_is_current(directory_name, directory_fd)
+        not clone_legacy_directory_is_current(directory_name, directory_fd)
         or entry_name in ('', '.', '..')
         or os.sep in entry_name
     ):
         raise OSError('unsafe clone state entry')
-    fd = os.open(entry_name, clone_file_flags, dir_fd=directory_fd)
+    fd = os.open(entry_name, _file_flags(), dir_fd=directory_fd)
     try:
         validate_clone_json_descriptor(fd)
         with os.fdopen(os.dup(fd), encoding='utf-8') as handle:
             parsed = json.load(handle)
         validate_clone_json_descriptor(fd)
         os.lseek(fd, 0, os.SEEK_SET)
-        if not clone_directory_is_current(directory_name, directory_fd):
+        if not clone_legacy_directory_is_current(directory_name, directory_fd):
             raise OSError('clone state directory changed')
         return parsed, fd
     except Exception:
@@ -538,7 +491,7 @@ def read_clone_json(directory_fd, directory_name, entry_name):
     return parsed
 
 def clone_database_is_current():
-    if clone_state_layout != 'sqlite' or not clone_directory_is_current('state', clone_database_dir_fd):
+    if clone_state_layout != 'sqlite':
         return False
     try:
         database_metadata = sqlite_database_metadata(clone_database_fd)
@@ -553,25 +506,25 @@ def clone_database_is_current():
         return False
 
 def clone_database_is_absent():
-    if not clone_state_root_is_current():
+    if not _state_root_is_current(state_dir, clone_state_dir_fd):
         return False
     database_directory_fd = -1
     try:
         try:
-            database_directory_fd = open_clone_directory('state')
+            database_directory_fd = _open_state_directory(state_dir, clone_state_dir_fd)
         except FileNotFoundError:
             # Recheck through the pinned root so a concurrently published state
             # directory cannot be mistaken for authoritative SQLite absence.
             try:
                 os.stat('state', dir_fd=clone_state_dir_fd, follow_symlinks=False)
             except FileNotFoundError:
-                return clone_state_root_is_current()
+                return _state_root_is_current(state_dir, clone_state_dir_fd)
             except OSError:
                 return False
             return False
         try:
             appeared_fd = os.open(
-                'openclaw.sqlite', clone_file_flags, dir_fd=database_directory_fd,
+                'openclaw.sqlite', _file_flags(), dir_fd=database_directory_fd,
             )
         except FileNotFoundError:
             try:
@@ -581,7 +534,11 @@ def clone_database_is_absent():
                     follow_symlinks=False,
                 )
             except FileNotFoundError:
-                return clone_directory_is_current('state', database_directory_fd)
+                return _directory_is_current(
+                    state_dir,
+                    clone_state_dir_fd,
+                    database_directory_fd,
+                )
             except OSError:
                 return False
             return False
@@ -599,8 +556,8 @@ def clone_state_snapshot_is_current():
         return clone_database_is_current()
     return (
         clone_database_is_absent()
-        and clone_directory_is_current('devices', clone_devices_dir_fd)
-        and clone_directory_is_current('identity', clone_identity_dir_fd)
+        and clone_legacy_directory_is_current('devices', clone_devices_dir_fd)
+        and clone_legacy_directory_is_current('identity', clone_identity_dir_fd)
     )
 
 def clone_state_selection_is_current():
@@ -608,7 +565,7 @@ def clone_state_selection_is_current():
         return clone_database_is_current()
     return (
         clone_database_is_absent()
-        and clone_directory_is_current('devices', clone_devices_dir_fd)
+        and clone_legacy_directory_is_current('devices', clone_devices_dir_fd)
     )
 
 def read_clone_sqlite_state():
@@ -639,16 +596,16 @@ clone_devices_dir_fd = -1
 clone_identity_dir_fd = -1
 clone_state_layout = 'legacy'
 try:
-    clone_database_dir_fd = open_clone_directory('state')
+    clone_database_dir_fd = _open_state_directory(state_dir, clone_state_dir_fd)
     try:
         clone_database_fd = os.open(
-            'openclaw.sqlite', clone_file_flags, dir_fd=clone_database_dir_fd,
+            'openclaw.sqlite', _file_flags(), dir_fd=clone_database_dir_fd,
         )
     except FileNotFoundError:
         os.close(clone_database_dir_fd)
         clone_database_dir_fd = -1
     else:
-        validate_clone_json_descriptor(clone_database_fd)
+        sqlite_database_metadata(clone_database_fd)
         clone_state_layout = 'sqlite'
 except FileNotFoundError:
     pass
@@ -702,7 +659,7 @@ if clone_state_layout == 'sqlite':
     pending = list(local_pending_by_id.values())
 else:
     try:
-        clone_devices_dir_fd = open_clone_directory('devices')
+        clone_devices_dir_fd = open_clone_legacy_directory('devices')
     except OSError:
         ${exitWithReceipt("list-devices-directory-failed")}
 # The gateway can publish pending.json immediately after the warm-up. Retry only
@@ -916,7 +873,7 @@ def client_auth_matches_paired(token, scopes):
 
 if clone_state_layout == 'legacy':
     try:
-        clone_identity_dir_fd = open_clone_directory('identity')
+        clone_identity_dir_fd = open_clone_legacy_directory('identity')
         local_identity, clone_identity_snapshot_fd = open_clone_json_descriptor(
             clone_identity_dir_fd,
             'identity',
@@ -1125,7 +1082,7 @@ def sync_approved_clone_device_auth(request, previous_token):
         )
     temp_name = ''
     try:
-        if not clone_directory_is_current('identity', clone_identity_dir_fd):
+        if not clone_legacy_directory_is_current('identity', clone_identity_dir_fd):
             return False
         try:
             auth_stat = os.stat(
@@ -1177,7 +1134,7 @@ def sync_approved_clone_device_auth(request, previous_token):
             )
             temp_name = ''
             os.fsync(clone_identity_dir_fd)
-            if not clone_directory_is_current('identity', clone_identity_dir_fd):
+            if not clone_legacy_directory_is_current('identity', clone_identity_dir_fd):
                 return False
         finally:
             if fd >= 0:
