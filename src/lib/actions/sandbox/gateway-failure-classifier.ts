@@ -6,6 +6,7 @@ import net from "node:net";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
+import { parseDockerDaemonObservation } from "../../domain/docker-host";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
@@ -63,13 +64,13 @@ export type SandboxContainerFailureRunners = {
 };
 
 function defaultDockerInfo(): boolean {
-  return (
-    dockerRun(["info"], {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_TIMEOUT_MS,
-    }).status === 0
-  );
+  const result = dockerRun(["info", "--format", "{{json .}}"], {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+  const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
+  return result.status === 0 && parseDockerDaemonObservation(stdout).reachable;
 }
 
 export function isDockerDaemonReachable(): boolean {
