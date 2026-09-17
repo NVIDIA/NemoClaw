@@ -24,7 +24,7 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
         V1RuntimeBindings {
             gateway_engine: "unix:///var/run/docker.sock".into(),
-            gateway_image: "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a".into(),
+            gateway_image: nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE.into(),
             gateway_network_cidr: "172.30.111.0/24".into(),
             sandbox_image: "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd".into(),
             process_principal: V1ProcessPrincipalBinding {
