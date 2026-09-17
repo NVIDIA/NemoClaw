@@ -267,7 +267,6 @@ function dependencies(
       const bytesRead = fs.readSync(file, buffer, 0, buffer.length, null);
       return buffer.subarray(0, bytesRead).toString("utf8");
     },
-    readPolicy: async () => ({ ok: true, value: { document: JSON.stringify(POLICY) } }),
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
@@ -276,11 +275,19 @@ function dependencies(
 
 function successfulHost(raw: string) {
   return {
+    command: vi.fn(async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+      stderr: "",
+    })),
     nemoclaw: vi.fn(async (args: string[]) => {
       const outputPath = args.at(args.indexOf("--output") + 1)!;
       fs.writeFileSync(outputPath, raw, "utf8");
       return { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
     }),
+    openshellCommandPath: "openshell",
   };
 }
 
@@ -288,6 +295,13 @@ function refusalHost(
   message = "Config export failed (unsupported).\nV1 export requires OpenClaw or Hermes.",
 ) {
   return {
+    command: vi.fn(async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+      stderr: "",
+    })),
     nemoclaw: vi.fn(async () => ({
       exitCode: 1,
       signal: null,
@@ -295,6 +309,7 @@ function refusalHost(
       stdout: "",
       stderr: message,
     })),
+    openshellCommandPath: "openshell",
   };
 }
 
@@ -385,18 +400,20 @@ describe("automatic config export validation phase", () => {
     expect((await test.cleanup.runAll()).failures).toEqual([]);
   });
 
-  it("observes the effective policy through the injected policy reader (#11485)", async () => {
-    const livePolicyDependencies = dependencies();
-    const readPolicy = vi.fn(async () => ({
-      ok: true,
-      value: { document: JSON.stringify(POLICY) },
-    }));
-    livePolicyDependencies.readPolicy = readPolicy;
-    const test = fixture({ dependencies: livePolicyDependencies });
+  it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
+    const test = fixture();
 
     const evidence = await test.phase.from(target("required"), instance());
 
-    expect(readPolicy).toHaveBeenCalledWith("nemoclaw", "sandbox");
+    expect(test.host.command).toHaveBeenCalledWith(
+      "openshell",
+      ["policy", "get", "-g", "nemoclaw", "--full", "sandbox"],
+      expect.objectContaining({
+        captureLimitBytes: 1024 * 1024,
+        persistArtifacts: false,
+        timeoutMs: 60_000,
+      }),
+    );
     expect(evidence.verifications).toContainEqual(
       expect.objectContaining({ id: "policySha256", passed: true }),
     );
@@ -404,10 +421,15 @@ describe("automatic config export validation phase", () => {
   });
 
   it("fails before export when the effective policy cannot be observed (#11485)", async () => {
-    const livePolicyDependencies = dependencies();
-    livePolicyDependencies.readPolicy = async () => ({ ok: false });
     const host = successfulHost(JSON.stringify(document()));
-    const test = fixture({ dependencies: livePolicyDependencies, host });
+    host.command.mockResolvedValueOnce({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "policy unavailable",
+    });
+    const test = fixture({ host });
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
@@ -418,6 +440,37 @@ describe("automatic config export validation phase", () => {
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe registry endpoints without retaining credential material (#11485)", async () => {
+    const credentialCanary = "credential-canary-value";
+    const unsafeDependencies = dependencies();
+    const loadRegistry = unsafeDependencies.loadRegistry;
+    unsafeDependencies.loadRegistry = () => {
+      const registry = loadRegistry();
+      return {
+        ...registry,
+        sandboxes: {
+          ...registry.sandboxes,
+          sandbox: {
+            ...registry.sandboxes.sandbox!,
+            endpointUrl: `https://user:${credentialCanary}@inference.example/v1`,
+          },
+        },
+      };
+    };
+    const test = fixture({ dependencies: unsafeDependencies });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "observation",
+      diagnostic: "the live inference endpoint is unsafe",
+    });
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(credentialCanary);
+    expect(test.host.command).not.toHaveBeenCalled();
+    expect(test.host.nemoclaw).not.toHaveBeenCalled();
   });
 
   it("fails when export omits an enabled scenario feature (#11485)", async () => {
@@ -448,6 +501,7 @@ describe("automatic config export validation phase", () => {
     const mutatedDocument = document({ model: "nvidia/mutated-model" });
     mutableDependencies.parseConfig = () => mutatedDocument;
     const host = {
+      ...successfulHost(JSON.stringify(mutatedDocument)),
       nemoclaw: vi.fn(async (args: string[]) => {
         registryModel = "nvidia/mutated-model";
         const outputPath = args.at(args.indexOf("--output") + 1)!;
@@ -738,6 +792,7 @@ describe("automatic config export validation phase", () => {
 
   it("rejects an expected refusal that publishes a file (#11485)", async () => {
     const host = {
+      ...successfulHost("unexpected"),
       nemoclaw: vi.fn(async (args: string[]) => {
         const outputPath = args.at(args.indexOf("--output") + 1)!;
         fs.writeFileSync(outputPath, "unexpected", "utf8");

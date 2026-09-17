@@ -14,6 +14,7 @@ import type {
   ValidatedNemoClawConfig,
 } from "../../../../src/lib/config/model.ts";
 import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
+import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
@@ -124,11 +125,6 @@ export interface ConfigExportEvidenceEnvelope {
   diagnostic?: string;
 }
 
-export interface PolicyReadResult {
-  ok: boolean;
-  value?: { document: string };
-}
-
 export type ConfigExportRegistryEntry = Pick<
   SandboxEntry,
   | "name"
@@ -162,7 +158,6 @@ export interface ConfigExportValidationDependencies {
   parseConfig(raw: string): ConfigExportDocument;
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
-  readPolicy(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
   removeDirectory(directory: string): void;
 }
 
@@ -194,16 +189,6 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
       offset += bytesRead;
     }
     return buffer.subarray(0, offset).toString("utf8");
-  },
-  readPolicy: async (gatewayName, sandboxName) => {
-    const { cliOpenShellSandboxPolicyReader, namedOpenShellGateway } =
-      await import("../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts");
-    return cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-      target: namedOpenShellGateway(gatewayName),
-      sandboxName,
-      scope: "effective",
-      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
-    });
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
@@ -288,6 +273,37 @@ function observedFeatures(
   return features.sort();
 }
 
+async function readEffectivePolicyDocument(
+  host: HostCliClient,
+  secrets: SecretStore,
+  gatewayName: string,
+  sandboxName: string,
+): Promise<string> {
+  const result = await host.command(
+    host.openshellCommandPath,
+    ["policy", "get", "-g", gatewayName, "--full", sandboxName],
+    {
+      artifactName: "config-export-effective-policy",
+      captureLimitBytes: CONFIG_EXPORT_FILE_LIMIT_BYTES,
+      persistArtifacts: false,
+      redactionValues: secrets.redactionValues(),
+      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+    },
+  );
+  if (result.timedOut || result.signal !== null || result.exitCode !== 0) {
+    throw new Error("the effective sandbox policy could not be read");
+  }
+  if (Buffer.byteLength(result.stdout, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+    throw new Error("the effective sandbox policy exceeds the observation limit");
+  }
+  const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(result.stdout);
+  const document = (
+    separator ? result.stdout.slice(separator.index + separator[0].length) : result.stdout
+  ).trim();
+  requiredRecord(YAML.parse(document), "effective policy");
+  return document;
+}
+
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
   const agent = sandbox?.agents[0];
@@ -317,6 +333,8 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
 async function expectedSemantics(
   target: TargetDefinition,
   instance: NemoClawInstance,
+  host: HostCliClient,
+  secrets: SecretStore,
   dependencies: ConfigExportValidationDependencies,
 ): Promise<ConfigExportSemantics> {
   const manifest = dependencies.loadManifest(path.join(REPO_ROOT, target.manifestPath));
@@ -327,10 +345,15 @@ async function expectedSemantics(
   }
   const imageRef = requiredString(entry.workload.reference, "registry workload reference");
   if (!entry.gatewayName) throw new Error("the live sandbox is missing its gateway binding");
-  const policy = await dependencies.readPolicy(entry.gatewayName, instance.sandboxName);
-  if (!policy.ok || !policy.value) {
-    throw new Error("the effective sandbox policy could not be read");
+  if (unsafeEndpointUrlViolation(entry.endpointUrl)) {
+    throw new Error("the live inference endpoint is unsafe");
   }
+  const policyDocument = await readEffectivePolicyDocument(
+    host,
+    secrets,
+    entry.gatewayName,
+    instance.sandboxName,
+  );
   const credentialReference = entry.credentialEnv ?? null;
   const declaredCredentialReferences = manifest.document.spec.state?.credentialRefs ?? [];
   if (credentialReference && !declaredCredentialReferences.includes(credentialReference)) {
@@ -349,7 +372,7 @@ async function expectedSemantics(
     credentialReference,
     routeName: "primary",
     routeProviderReference: null,
-    policySha256: sha256(canonicalJson(YAML.parse(policy.value.document))),
+    policySha256: sha256(canonicalJson(YAML.parse(policyDocument))),
     enabledFeatures: enabledManifestFeatures(manifest),
   };
 }
@@ -543,7 +566,13 @@ export class ConfigExportValidationPhaseFixture {
 
     try {
       if (expectation === "required") {
-        expected = await expectedSemantics(target, instance, this.dependencies);
+        expected = await expectedSemantics(
+          target,
+          instance,
+          this.host,
+          this.secrets,
+          this.dependencies,
+        );
       }
       const result = await this.host.nemoclaw(
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
