@@ -633,6 +633,9 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let mut bob = document.spec.sandboxes[0].agents[0].clone();
+    bob.name = "bob".into();
+    document.spec.sandboxes[0].agents.push(bob);
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
@@ -659,6 +662,15 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(intent["pending"], false);
     assert_eq!(intent["succeeded"], false);
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ControlSupervisorExited"), "{error}");
+    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }

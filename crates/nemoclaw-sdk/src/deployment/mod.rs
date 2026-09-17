@@ -379,6 +379,11 @@ impl Deployment {
             let mut expected = target.values.clone();
             if let Some(binding) = bindings.get(&target.address) {
                 expected.insert("id".into(), binding.id.clone());
+                if target.kind == "sandbox" {
+                    // A terminal sandbox cannot answer native configuration
+                    // checks. Report its verified lifecycle failure first.
+                    client.check_sandbox_phase(&expected).await?;
+                }
             }
             let observed = if crate::ollama::proxy::supports(&target.kind) {
                 let config = document

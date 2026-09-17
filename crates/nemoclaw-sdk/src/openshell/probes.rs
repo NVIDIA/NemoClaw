@@ -132,6 +132,15 @@ impl OpenShell {
         )?;
         Ok(sandbox)
     }
+    pub(crate) async fn check_sandbox_phase(&self, binding: &Row) -> Result<(), Error> {
+        startup_phase(
+            self.bound_sandbox(binding)
+                .await?
+                .status
+                .ok_or(ObservationError::Incomplete)?,
+        )?;
+        Ok(())
+    }
     pub async fn exec_bound(
         &self,
         binding: &Row,
