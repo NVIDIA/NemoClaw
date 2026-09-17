@@ -48,6 +48,7 @@ export type GitHubReviewContext = {
   prNumber: number;
   fetchError?: string;
   pullRequest?: unknown;
+  commitsVerified?: boolean;
   issueReferenceLines?: string[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
@@ -170,7 +171,7 @@ export async function collectGitHubReviewContext(
   const signal = options.signal ?? AbortSignal.timeout(GITHUB_CONTEXT_DEADLINE_MS);
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [rawPullRequest, openPulls, reviews] = await Promise.all([
+    const [rawPullRequest, openPulls, reviews, commits] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token, signal),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
@@ -184,10 +185,17 @@ export async function collectGitHubReviewContext(
         undefined,
         signal,
       ),
+      githubRestPaginated<unknown>(
+        `repos/${repo}/pulls/${prNumber}/commits`,
+        token,
+        undefined,
+        signal,
+      ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
     const currentHeadSha =
       stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "";
+    context.commitsVerified = allPullRequestCommitsVerified(commits, currentHeadSha);
     const selectedReviewIds = selectContractReviews(
       reviews,
       currentHeadSha,
@@ -244,6 +252,21 @@ export async function collectGitHubReviewContext(
         : String(error);
   }
   return context;
+}
+
+export function allPullRequestCommitsVerified(commits: unknown[], currentHeadSha: string): boolean {
+  if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return false;
+  const records = recordItems(commits);
+  if (records.length === 0) return false;
+  const lastSha = stringOrUndefined(records.at(-1)?.sha);
+  return (
+    lastSha === currentHeadSha &&
+    records.every(
+      (commit) =>
+        /^[0-9a-f]{40}$/u.test(stringOrDefault(commit.sha, "")) &&
+        getPath<unknown>(commit, ["commit", "verification", "verified"]) === true,
+    )
+  );
 }
 
 export function selectFollowUpReview(
@@ -314,7 +337,6 @@ function selectContractReviews(
           authorAssociation !== "COLLABORATOR") ||
         !reviewedHeadSha ||
         !/^[0-9a-f]{40}$/u.test(reviewedHeadSha) ||
-        reviewedHeadSha === currentHeadSha ||
         !submittedAt ||
         !reviewer ||
         userType === "Bot" ||
@@ -344,13 +366,18 @@ function selectContractReviews(
   }
   const unresolved = [...byReviewer.values()]
     .flat()
+    .filter(({ reviewedHeadSha }) => reviewedHeadSha !== currentHeadSha)
     .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
   if (unresolved.length > 0) return unresolved;
+  if (candidates.some(({ reviewedHeadSha }) => reviewedHeadSha === currentHeadSha)) return [];
 
+  const priorHeadCandidates = candidates.filter(
+    ({ reviewedHeadSha }) => reviewedHeadSha !== currentHeadSha,
+  );
   const fallback = reviewerLogin
-    ? candidates.filter(({ reviewer }) => reviewer === reviewerLogin)
-    : candidates;
-  const latest = fallback.at(-1) ?? candidates.at(-1);
+    ? priorHeadCandidates.filter(({ reviewer }) => reviewer === reviewerLogin)
+    : priorHeadCandidates;
+  const latest = fallback.at(-1) ?? priorHeadCandidates.at(-1);
   return latest ? [latest] : [];
 }
 

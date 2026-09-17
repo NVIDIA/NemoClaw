@@ -109,6 +109,13 @@ export function decideReviewAction(snapshot: CoordinatorSnapshot): CoordinatorDe
       "A coordinator review already exists for this exact head.",
     );
   }
+  if (snapshot.readiness.requiredChecks !== "pass") {
+    return quiet(
+      snapshot,
+      "prerequisites-not-ready",
+      "Required checks are not complete for this exact head.",
+    );
+  }
 
   if (snapshot.advisor.status === "blocked") {
     const validated = snapshot.advisor.findings.filter(
@@ -160,7 +167,7 @@ export function decideReviewAction(snapshot: CoordinatorSnapshot): CoordinatorDe
     return quiet(
       snapshot,
       "prerequisites-not-ready",
-      "Advisor is clear, but required checks, mergeability, verification, or product scope is not ready.",
+      "Advisor is clear, but mergeability, verification, or product scope is not ready.",
     );
   }
   return action(

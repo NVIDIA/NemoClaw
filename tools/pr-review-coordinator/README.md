@@ -19,9 +19,14 @@ App key. This makes it safe to exercise the policy directly.
 
 The checked-in Advisor workflow runs `shadow.mts` after every complete exact-head specialist run.
 That adapter verifies the shared exact-head artifacts and emits a retained decision artifact and job
-summary. It has read-only repository permissions. Model findings remain ambiguous in shadow mode,
-and commit-verification and product-scope gates remain closed, so the adapter cannot propose a
-review write or approval from evidence it does not yet own.
+summary. It has read-only repository permissions. It evaluates the same P0/P1 ledger, successful CI
+trigger, mergeability, commit verification, and product-scope evidence that a later writer would use,
+but it never performs the proposed review action.
+
+Automatic runs inherit a passing required-check state only from the successful exact-head CI trigger;
+manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
+exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the
+approval gate closed; otherwise shadow mode records that no missing-scope defect was reported.
 
 The policy preserves the maintainer review loop's important behavior. Its input is reconciled
 Advisor evidence: the adapter must retain only P0/P1 ledger findings and label whether each finding

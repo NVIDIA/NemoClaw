@@ -11,6 +11,7 @@ import {
   collectStaticTestInventory,
 } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 import {
+  allPullRequestCommitsVerified,
   collectGitHubReviewContext,
   declaresReplacement,
   extractIssueRefs,
@@ -103,6 +104,15 @@ describe("PR review advisor", () => {
       ],
       ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews?page=1", olderReviews],
       ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews?page=2", [selectedReview]],
+      [
+        "/repos/NVIDIA/NemoClaw/pulls/7542/commits?page=1",
+        [
+          {
+            sha: currentHead,
+            commit: { verification: { verified: true } },
+          },
+        ],
+      ],
       ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews/101/comments?page=1", firstCommentPage],
       ["/repos/NVIDIA/NemoClaw/pulls/7542/reviews/101/comments?page=2", [finalComment]],
     ]);
@@ -127,6 +137,7 @@ describe("PR review advisor", () => {
       reviewedHeadSha: "b".repeat(40),
       body: "Newest frozen contract",
     });
+    expect(context?.commitsVerified).toBe(true);
     expect(context?.followUpReview?.inlineComments).toHaveLength(101);
     expect(context?.followUpReview?.inlineComments.at(-1)).toEqual({
       path: "src/final.ts",
@@ -138,6 +149,24 @@ describe("PR review advisor", () => {
       true,
     );
     expect(requests.some((url) => /pulls\/7542\/comments/u.test(url))).toBe(false);
+  });
+
+  it("requires every PR commit to be verified and the final commit to match the current head", () => {
+    const currentHead = "c".repeat(40);
+    const commits = [
+      { sha: "a".repeat(40), commit: { verification: { verified: true } } },
+      { sha: currentHead, commit: { verification: { verified: true } } },
+    ];
+
+    expect(allPullRequestCommitsVerified(commits, currentHead)).toBe(true);
+    expect(
+      allPullRequestCommitsVerified(
+        [commits[0], { ...commits[1], commit: { verification: { verified: false } } }],
+        currentHead,
+      ),
+    ).toBe(false);
+    expect(allPullRequestCommitsVerified(commits, "d".repeat(40))).toBe(false);
+    expect(allPullRequestCommitsVerified([], currentHead)).toBe(false);
   });
 
   it("cancels a delayed pagination request at the shared context deadline", async () => {
