@@ -7,16 +7,10 @@
 diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
 --- a/hermes_cli/web_server.py
 +++ b/hermes_cli/web_server.py
-@@ -436,5 +436,6 @@ _LOOPBACK_HOST_VALUES: frozenset = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
+@@ -728,1 +728,2 @@
 +_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"
  def _dashboard_public_hosts() -> frozenset[str]:
-     """Return the exact hostname declared by ``dashboard.public_url``.
-
-@@ -556,5 +557,14 @@ def _is_accepted_host(
-         return True
-     bound_lc = bound_host.lower()
+@@ -858,2 +859,11 @@ def _is_accepted_host(
      if bound_lc in _LOOPBACK_HOST_VALUES:
 +        # NemoClaw keeps its managed dashboard loopback-bound while an external
 +        # reverse proxy preserves the configured browser Host header. Accept
@@ -28,4 +22,3 @@ diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
 +        if external_host and host_only == external_host:
 +            return True
          return host_only in _LOOPBACK_HOST_VALUES
-     return host_only == bound_lc

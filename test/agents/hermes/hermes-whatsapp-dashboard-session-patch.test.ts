@@ -9,6 +9,68 @@ import { expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const PATCH = path.join(ROOT, "agents", "hermes", "whatsapp-proxy.patch");
+const DASHBOARD_PATCH = path.join(ROOT, "agents", "hermes", "dashboard-external-host.patch");
+
+const dashboardSourceVariants = [
+  {
+    label: "published 0.20.6 base layout",
+    loopbackDeclaration:
+      '_LOOPBACK_HOST_VALUES: frozenset = frozenset({\n    "localhost", "127.0.0.1", "::1",\n})',
+  },
+  {
+    label: "active 0.21.3 source layout",
+    loopbackDeclaration:
+      '_LOOPBACK_HOST_VALUES: frozenset = frozenset({"localhost", "127.0.0.1", "::1"})',
+  },
+] as const;
+
+it.each(dashboardSourceVariants)(
+  "applies the dashboard external Host guard to the $label",
+  ({ loopbackDeclaration }) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-host-"));
+    const source = path.join(tmp, "hermes_cli", "web_server.py");
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(
+      source,
+      [
+        "import os",
+        "",
+        loopbackDeclaration,
+        "",
+        "",
+        "def _dashboard_public_hosts() -> frozenset[str]:",
+        "    return frozenset()",
+        "",
+        "",
+        "def _is_accepted_host(host_only: str, bound_host: str) -> bool:",
+        "    bound_lc = bound_host.lower()",
+        "    if bound_lc in _LOOPBACK_HOST_VALUES:",
+        "        return host_only in _LOOPBACK_HOST_VALUES",
+        "    return host_only == bound_lc",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const applied = spawnSync(
+        "git",
+        ["apply", "--include=hermes_cli/web_server.py", DASHBOARD_PATCH],
+        {
+          cwd: tmp,
+          encoding: "utf8",
+        },
+      );
+      expect(applied.status, applied.stderr).toBe(0);
+      const patched = fs.readFileSync(source, "utf8");
+      expect(patched).toContain(
+        '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"',
+      );
+      expect(patched).toContain("if external_host and host_only == external_host:");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
 
 it("stores Hermes dashboard pairing state in the gateway session directory (#8184)", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-dashboard-"));
