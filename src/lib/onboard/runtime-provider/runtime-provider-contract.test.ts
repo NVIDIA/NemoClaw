@@ -1122,7 +1122,20 @@ describe("socket-free MXC action contract", () => {
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      let deleteConvergenceMs = 0;
+      const runOpenshell = vi.fn((args: string[]) => {
+        switch (`${String(args[0])}:${String(args[1])}`) {
+          case "sandbox:get":
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
 
       await expect(
         startSandbox(sandboxName, {
@@ -1149,6 +1162,7 @@ describe("socket-free MXC action contract", () => {
       await expect(
         executeSandboxDestroy({
           force: false,
+          deleteGatewayName: "nemoclaw",
           runOpenshell,
           sandbox: entry,
           sandboxConfirmedAbsent: false,
@@ -1157,6 +1171,12 @@ describe("socket-free MXC action contract", () => {
           runtimeProviders: providers,
           deps: {
             wipeSandboxState: vi.fn(),
+            deleteConvergence: {
+              now: () => deleteConvergenceMs,
+              sleep: (milliseconds) => {
+                deleteConvergenceMs += milliseconds;
+              },
+            },
           },
         }),
       ).resolves.toMatchObject({ ok: true });
@@ -1174,12 +1194,18 @@ describe("socket-free MXC action contract", () => {
       });
 
       expect(registerSandbox).toHaveBeenCalledWith(entry);
-      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        killSignal: "SIGKILL",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      });
+      expect(runOpenshell).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", sandboxName],
+        {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          killSignal: "SIGKILL",
+          maxBuffer: 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        },
+      );
       const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
       expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
       expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(

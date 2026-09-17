@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -163,7 +164,50 @@ describe("prepareTargetPr", () => {
         },
         options,
       ),
-    ).toThrow(/Fetched pull ref does not match/u);
+    ).toThrow(/Review superseded: fetched pull ref .* does not match the triggering PR head SHA/u);
+  });
+
+  it("exports the superseded classification at the CLI boundary", () => {
+    const root = tempDir();
+    const bin = path.join(root, "bin");
+    const output = path.join(root, "github-output");
+    const actualHead = "d".repeat(40);
+    fs.mkdirSync(bin);
+    fs.writeFileSync(
+      path.join(bin, "git"),
+      `#!/bin/sh
+case "$*" in
+  *"rev-parse refs/remotes/target/base") printf '%s\\n' '${BASE_SHA}' ;;
+  *"rev-parse HEAD") printf '%s\\n' '${actualHead}' ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve("tools/pr-review-advisor/prepare-target-pr.mts")],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          EXPECTED_HEAD_SHA: HEAD_SHA,
+          GITHUB_OUTPUT: output,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          PR_BASE_SHA: BASE_SHA,
+          TARGET_BASE: "main",
+          TARGET_DIR: path.join(root, "pr-workdir"),
+          TARGET_PR: "42",
+          TARGET_REPO: REPO,
+        },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `Review superseded: fetched pull ref ${actualHead} does not match the triggering PR head SHA ${HEAD_SHA}`,
+    );
+    expect(fs.readFileSync(output, "utf8")).toBe("classification=superseded\n");
   });
 
   it("validates before touching git", () => {

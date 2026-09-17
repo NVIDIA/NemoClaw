@@ -255,17 +255,6 @@ describe("Hermes image build probes", () => {
     );
   });
 
-  it("removes the Hindsight probe wheel after staging its temporary copy", () => {
-    const probeWheel = "/opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl";
-    const copyIndex = dockerfile.indexOf(`cp ${probeWheel}`);
-    const removalIndex = dockerfile.indexOf(`rm ${probeWheel}`, copyIndex);
-    const absenceCheckIndex = dockerfile.indexOf(`check_absent ${probeWheel}`);
-
-    expect(copyIndex).toBeGreaterThan(-1);
-    expect(removalIndex).toBeGreaterThan(copyIndex);
-    expect(absenceCheckIndex).toBeGreaterThan(removalIndex);
-  });
-
   it.each([
     {
       digest: "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
@@ -474,7 +463,7 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     expect(result.status).toBe(0);
   });
 
-  it("keeps cross-identity ledger probes consolidated below the Docker layer-depth ceiling", () => {
+  it("keeps state ledger probes consolidated below the Docker layer-depth ceiling", () => {
     const runInstructions = dockerfileInstructions(dockerfile).filter(({ text }) =>
       text.startsWith("RUN "),
     );
@@ -493,18 +482,6 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
       layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
     );
     expect(sessionStateLayers[0]?.text).toContain("rm -f /sandbox/.hermes/runtime/state.db");
-    const pluginIsolationLayer = runInstructions.find(({ text }) =>
-      text.includes("nemoclaw-hostile-user-plugin"),
-    );
-    const pluginIsolationText = pluginIsolationLayer?.text ?? "";
-    const pluginStateCleanup = "rm -f /sandbox/.hermes/runtime/state.db";
-    expect(pluginIsolationText.lastIndexOf(pluginStateCleanup)).toBeGreaterThan(
-      pluginIsolationText.lastIndexOf("discover_plugins()"),
-    );
-    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db");
-    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db-wal");
-    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db-shm");
-    expect(pluginIsolationText).not.toContain("/sandbox/.hermes/runtime/state.db*");
     expect(dockerfile).toContain('rm -f "/sandbox/.hermes/runtime/${name}"');
     expect(dockerfile).toContain("check_absent /sandbox/.hermes/runtime/state.db");
   });

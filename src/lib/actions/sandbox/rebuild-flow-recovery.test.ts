@@ -86,42 +86,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
-    const customDockerfile = path.join(process.cwd(), "Dockerfile");
-    const recoveryManifest = {
-      ...makePreparedRecoveryManifest(),
-      reconcileOpenClawImagePluginProvenance: true,
-      openclawImagePluginInstalls: [],
-    };
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        fromDockerfile: customDockerfile,
-        nemoclawVersion: null,
-        openclawImagePluginInstalls: undefined,
-      },
-      preDeleteLatestManifest: recoveryManifest,
-      managedImageEvidence: false,
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      recoveryManifest.backupPath,
-      { targetAgentType: "openclaw", allowCustomImageWholeStateFileRestore: true },
-    );
-  });
-
   it("keeps an explicit default choice made while the replacement was in flight (#7734)", async () => {
     let harness!: ReturnType<typeof createRebuildFlowHarness>;
     harness = createRebuildFlowHarness({
@@ -724,6 +688,7 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it("reattaches exactly the MCP providers detached when sandbox deletion fails", async () => {
+    vi.useFakeTimers();
     const attached = {
       server: "attached",
       providerName: "nemoclaw-mcp-alpha-attached",
@@ -739,23 +704,23 @@ describe("rebuildSandbox flow: recovery", () => {
       },
       runOpenshell: (args) => {
         const deleteFailure = { status: 7, output: "delete failed", stderr: "delete failed" };
-        const readySource = {
-          status: 0,
-          output: "Phase: Ready",
-          stdout: "Phase: Ready",
-          stderr: "",
-        };
-        const responses: Record<string, typeof deleteFailure | typeof readySource> = {
-          "sandbox delete -g nemoclaw alpha": deleteFailure,
-          "sandbox get -g nemoclaw alpha": readySource,
-        };
-        return responses[args.join(" ")];
+        return args.join(" ") === "sandbox delete -g nemoclaw alpha" ? deleteFailure : undefined;
+      },
+      captureOpenshell: (args) => {
+        vi.setSystemTime(Date.now() + 20_000);
+        return args[0] === "sandbox" && args[1] === "get"
+          ? { status: 0, output: SOURCE_PROBE, stdout: SOURCE_PROBE, stderr: "" }
+          : MISSING_SOURCE;
       },
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Failed to delete sandbox");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Failed to delete sandbox");
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",

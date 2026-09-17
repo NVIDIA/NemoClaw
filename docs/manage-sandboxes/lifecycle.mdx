@@ -52,11 +52,6 @@ For messaging agents, the command also reports messaging-channel overlap warning
 $$nemoclaw my-assistant status
 ```
 
-<AgentOnly variant="hermes">
-For Portable Hermes, text status reports the saved lifecycle phase and `Runtime and agent health: not probed`.
-The saved phase does not establish live runtime or agent health.
-</AgentOnly>
-
 For local Ollama and vLLM routes, sandbox status and doctor compare the selected model with the provider inventory without issuing a completion or consuming tokens.
 An invalid or empty inventory, or an inventory that does not contain the configured model, reports unhealthy provider status.
 
@@ -102,15 +97,7 @@ Use `--quick` for a smaller local summary:
 $$nemoclaw debug --quick --sandbox my-assistant
 ```
 
-For non-Portable sandboxes, the debug command gathers system information, Docker state, sandbox logs, and sandbox status.
-
-<AgentOnly variant="hermes">
-For Portable Hermes, an explicitly selected sandbox produces a redacted offline lifecycle report, even when the registry and runtime are unavailable.
-The archive contains only `portable-lifecycle.json`, with the report schema version, sandbox name, agent, saved lifecycle phase, and unprobed health values.
-It excludes raw receipts, credentials, environment data, private paths, and runtime logs.
-`--quick` produces the same minimal report.
-Refer to the [debug command reference](../../reference/commands#$$nemoclaw-debug) for selection and refusal behavior.
-</AgentOnly>
+The debug command gathers system information, Docker state, sandbox logs, and sandbox status.
 
 ## Related Topics
 

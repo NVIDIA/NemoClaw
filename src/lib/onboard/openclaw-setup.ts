@@ -80,6 +80,15 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
+  shouldRestartNativeGateway(provider: string): boolean;
+  restartNativeGateway(sandboxName: string): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        failureLayer: string;
+        detail: string;
+      }
+  >;
   configureOpenclawSandbox(
     sandboxName: string,
     model: string,
@@ -106,6 +115,15 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       webSearchConfig,
       revalidateSandboxIdentity,
     );
+    if (deps.shouldRestartNativeGateway(provider)) {
+      revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
+      const restart = await deps.restartNativeGateway(sandboxName);
+      if (!restart.ok) {
+        throw new Error(
+          `OpenClaw native gateway restart failed during setup (${restart.failureLayer}): ${restart.detail}`,
+        );
+      }
+    }
     revalidateSandboxIdentity?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };
