@@ -69,12 +69,56 @@ For an external Ollama digest mismatch, use [the proxy guide](inference.md#use-e
 | Dashboard cannot connect | Native service, forwarding, authentication, or browser pairing may be incomplete | Follow [interface diagnosis](interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
-Terminal startup errors report the OpenShell sandbox phase and the main process exit code, or `unknown` when OpenShell supplied no code.
+Terminal sandbox errors report the OpenShell phase, a recognized failure reason, and the main process exit code, or `unknown` when unavailable.
+Recognized reasons are `ControlSupervisorExited` and `ContainerExited`; other backend reasons appear as `unknown`.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
-The SDK excludes raw backend condition text from these diagnostics because it may contain credentials.
+The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+The CLI points to OpenShell inspection and log collection; use the procedure below before cleanup.
 The [current main-process environment blocker](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) can stop startup before native log files exist.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
+
+## Inspect an OpenShell Sandbox Failure
+
+Use the original deployment's gateway and workspace, following [interface selection](interfaces.md#select-the-gateway-and-workspace).
+The temporary directories below are private to the collecting user.
+Raw status and logs may contain credentials or agent content; inspect and redact them before sharing, and remove diagnostic copies when the investigation ends.
+From any directory on the client host, replace `assistant` with the declared sandbox name:
+
+```sh
+diagnostic_dir=$(mktemp -d)
+openshell sandbox get assistant -o json > "$diagnostic_dir/sandbox.json"
+```
+
+Inspect the phase, exit code, and readiness conditions in the result.
+`ControlSupervisorExited` identifies failure of the OpenShell supervisor; it does not establish that the agent or model failed.
+Read the condition message privately: it can include backend log excerpts and values excluded from NemoClaw's diagnostics.
+A successful earlier apply establishes readiness at that time, not continuous health or a successful model response.
+An unsupported Fabric health check provides no health assurance.
+
+For a managed gateway and Docker sandbox on the same local engine, run these read-only commands on that engine host with the deployment workspace selected:
+
+```sh
+engine_diagnostic_dir=$(mktemp -d)
+model_engine=unix:///var/run/docker.sock
+docker --host "$model_engine" ps -a --filter "name=$OPENSHELL_WORKSPACE" --format 'table {{.Names}}\t{{.Status}}'
+docker --host "$model_engine" logs --timestamps --since 1h "$OPENSHELL_WORKSPACE-gateway" > "$engine_diagnostic_dir/gateway.log" 2>&1
+```
+
+Use the deployment's actual engine socket and a time range covering the failure.
+For a remote engine, collect on that host; for an external gateway or another driver, ask its operator for the matching logs.
+The Docker listing includes stopped containers.
+Copy the exact sandbox or supervisor container name from it to collect that component's output:
+
+```sh
+sandbox_container=REPLACE_WITH_CONTAINER_NAME
+docker --host "$model_engine" logs --timestamps --since 1h "$sandbox_container" > "$engine_diagnostic_dir/component.log" 2>&1
+```
+
+OpenShell can remove the supervisor container after failure; the gateway may retain a tail of its logs.
+For a controlled reproduction, start `docker logs --follow` collection while the supervisor exists so its full output survives container removal.
+Keep the YAML, bundle, state directory, and sandbox files until the cause and recovery path are understood.
+NemoClaw does not reconnect OpenShell's internal transport or automatically replace the failed sandbox.
 
 ## Read Native Service Logs
 
