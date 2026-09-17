@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   beginOpenClawPostRestoreDoctor: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
   finishOpenClawPostRestoreDoctor: vi.fn(),
-  releaseOpenClawPostRestoreDoctorForDelete: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -33,12 +33,12 @@ vi.mock("./runtime/openclaw-lifecycle", () => ({
   abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
   beginOpenClawPostRestoreDoctor: mocks.beginOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
-  releaseOpenClawPostRestoreDoctorForDelete: mocks.releaseOpenClawPostRestoreDoctorForDelete,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
 }));
 
 import {
-  releaseRebuildSourceOpenClawWindowForDelete,
   type RebuildBackupPhaseInput,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
@@ -55,7 +55,7 @@ beforeEach(() => {
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
   mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
-  mocks.releaseOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -87,14 +87,14 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
-  it("releases the retained source window at the delete edge without stopping it", async () => {
+  it("retires the retained source window before the delete edge", async () => {
     const window = { sandboxName: "alpha" };
 
-    await expect(releaseRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
       ok: true,
     });
 
-    expect(mocks.releaseOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
     expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
