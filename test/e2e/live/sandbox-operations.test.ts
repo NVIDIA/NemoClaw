@@ -5,6 +5,7 @@ import { testTimeout } from "../../helpers/timeouts.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
 import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
   expectSandboxReady,
@@ -89,6 +90,7 @@ test(
       redactions,
       "sandbox-operations-survivor-preclean",
     );
+    let finalGatewayRemovalVerified = false;
     cleanup.trackDisposable(`remove OpenShell gateway ${gatewayName}`, () =>
       host.cleanupGatewayRegistration(gatewayName, {
         artifactName: "sandbox-operations-cleanup-gateway",
@@ -98,20 +100,24 @@ test(
       }),
     );
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "sandbox-operations-cleanup-openshell-delete",
-        env,
-        redactionValues: redactions,
-        timeoutMs: 120_000,
-      }),
+      cleanupUnlessVerified(finalGatewayRemovalVerified, () =>
+        sandbox.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "sandbox-operations-cleanup-openshell-delete",
+          env,
+          redactionValues: redactions,
+          timeoutMs: 120_000,
+        }),
+      ),
     );
     cleanup.trackDisposable(`delete OpenShell sandbox ${SURVIVOR_SANDBOX_NAME}`, () =>
-      sandbox.cleanupSandbox(SURVIVOR_SANDBOX_NAME, {
-        artifactName: "sandbox-operations-survivor-cleanup-openshell-delete",
-        env: survivorEnv,
-        redactionValues: redactions,
-        timeoutMs: 120_000,
-      }),
+      cleanupUnlessVerified(finalGatewayRemovalVerified, () =>
+        sandbox.cleanupSandbox(SURVIVOR_SANDBOX_NAME, {
+          artifactName: "sandbox-operations-survivor-cleanup-openshell-delete",
+          env: survivorEnv,
+          redactionValues: redactions,
+          timeoutMs: 120_000,
+        }),
+      ),
     );
 
     progress.phase("onboard and prove native readiness");
@@ -241,6 +247,7 @@ test(
       env,
       redactionValues: redactions,
     });
+    finalGatewayRemovalVerified = true;
 
     await artifacts.target.complete({
       id: "sandbox-operations",
