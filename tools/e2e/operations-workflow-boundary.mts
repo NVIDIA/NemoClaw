@@ -11,6 +11,10 @@ import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -33,6 +37,8 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const CONFIG_EXPORT_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -865,8 +871,44 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
-  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
-    errors.push("live E2E must wait for matrix generation and base-image publication");
+  if (
+    !sameMembers(needs(live), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
+    );
+  }
+  const sdkSteps = live.steps ?? [];
+  const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
+  const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
+  const downloadIndex = sdkSteps.indexOf(sdkDownload);
+  const installIndex = sdkSteps.indexOf(sdkInstall);
+  const runIndex = sdkSteps.indexOf(findStep(live, "Run live E2E tests"));
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: DOWNLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !(
+      prepareIndex >= 0 &&
+      prepareIndex < downloadIndex &&
+      downloadIndex < installIndex &&
+      installIndex < runIndex
+    )
+  ) {
+    errors.push(
+      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
+    );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
@@ -959,6 +1001,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const requireConfigExportEvidence = findStep(live, "Require automatic config export evidence");
   const upload = findStep(live, "Upload E2E artifacts");
   const uploadPaths = String(upload.with?.path ?? "")
     .split("\n")
@@ -980,6 +1023,22 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");
+  }
+  if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload automatic config export evidence");
+  }
+  if (
+    requireConfigExportEvidence.if !== "${{ success() }}" ||
+    requireConfigExportEvidence.shell !== "bash" ||
+    String(requireConfigExportEvidence.run ?? "").trim() !==
+      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+    (requireConfigExportEvidence["continue-on-error"] !== undefined &&
+      requireConfigExportEvidence["continue-on-error"] !== false) ||
+    liveSteps.indexOf(requireConfigExportEvidence) <=
+      liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)
+  ) {
+    errors.push("live E2E must require automatic config export evidence before upload");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
