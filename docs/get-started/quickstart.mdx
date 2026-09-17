@@ -293,7 +293,7 @@ Use these details when your first-run path needs more control.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
-    A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance.
+    A custom OpenClaw sandbox uses the same validated state backup boundary; OpenClaw's native plugin and package state is restored with the rest of its declared state.
     If a backup is skipped or fails, or automatic rebuild fails or is blocked, the installer exits nonzero before generic onboarding begins.
 
     The inference prompt presents these choices.
