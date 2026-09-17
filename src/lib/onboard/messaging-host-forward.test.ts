@@ -113,13 +113,20 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     });
 
     await expect(options.checkPortAvailable?.(3978)).resolves.toMatchObject({ ok: false });
-    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw-8090", 3978)).resolves.toBe(
-      true,
+    await expect(
+      options.isCurrentSandboxForward?.("demo", "nemoclaw-8090", 3978, 1234),
+    ).resolves.toBe(true);
+    expect(describeForwardListener).toHaveBeenCalledWith(
+      "demo",
+      3978,
+      "127.0.0.1",
+      {
+        gatewayName: "nemoclaw-8090",
+        workspace: "review",
+      },
+      undefined,
+      1234,
     );
-    expect(describeForwardListener).toHaveBeenCalledWith("demo", 3978, "127.0.0.1", {
-      gatewayName: "nemoclaw-8090",
-      workspace: "review",
-    });
   });
 
   it("targets the hook gateway and default workspace without a runtime selection", async () => {
@@ -128,11 +135,20 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
       describeForwardListener,
     });
 
-    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978)).resolves.toBe(true);
-    expect(describeForwardListener).toHaveBeenCalledWith("demo", 3978, "127.0.0.1", {
-      gatewayName: "nemoclaw",
-      workspace: "default",
-    });
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
+      true,
+    );
+    expect(describeForwardListener).toHaveBeenCalledWith(
+      "demo",
+      3978,
+      "127.0.0.1",
+      {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
+      undefined,
+      1234,
+    );
   });
 
   it.each([null, "nemoclaw-8090"])(
@@ -144,7 +160,9 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
         runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
       });
 
-      await expect(options.isCurrentSandboxForward?.("demo", gateway, 3978)).resolves.toBe(false);
+      await expect(options.isCurrentSandboxForward?.("demo", gateway, 3978, 1234)).resolves.toBe(
+        false,
+      );
       expect(describeForwardListener).not.toHaveBeenCalled();
     },
   );
@@ -156,7 +174,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
         describeForwardListener: async () => state,
       });
 
-      await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978)).resolves.toBe(
+      await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
         false,
       );
     },
@@ -169,7 +187,22 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
       },
     });
 
-    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978)).resolves.toBe(false);
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
+      false,
+    );
+  });
+
+  it("rejects listener ownership when the observed PID differs", async () => {
+    const describeForwardListener = vi.fn<
+      typeof import("../actions/sandbox/forward-recovery").describeSandboxPortForwardListener
+    >(async (...args) => (args[5] === 1234 ? ("owned" as const) : ("foreign" as const)));
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      describeForwardListener,
+    });
+
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 9876)).resolves.toBe(
+      false,
+    );
   });
 
   it("resolves compact persisted messaging host forwards", () => {

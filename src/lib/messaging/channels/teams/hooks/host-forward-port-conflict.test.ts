@@ -211,7 +211,30 @@ describe("teams.hostForwardPortConflict hook", () => {
         },
       }),
     ).resolves.toMatchObject({ outputs: {} });
-    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978);
+    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978, 1234);
+  });
+
+  it("rejects an occupied port when listener PID evidence is missing", async () => {
+    const isCurrentSandboxForward = vi.fn(async () => true);
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({ ok: false, process: "openshell", pid: null }),
+        isCurrentSandboxForward,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "3978",
+        },
+      }),
+    ).rejects.toThrow("Microsoft Teams webhook port 3978 is already in use");
+    expect(isCurrentSandboxForward).not.toHaveBeenCalled();
   });
 
   it("accepts serialized applier inputs for registry-scoped checks", async () => {

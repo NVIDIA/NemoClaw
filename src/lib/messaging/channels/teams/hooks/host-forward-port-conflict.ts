@@ -45,6 +45,7 @@ export interface TeamsHostForwardPortConflictHookOptions {
     currentSandbox: string,
     currentGatewayName: string | null,
     port: number,
+    listenerPid: number,
   ) => boolean | Promise<boolean>;
   readonly findConflicts?: (
     currentSandbox: string | null,
@@ -103,9 +104,17 @@ export function createTeamsHostForwardPortConflictHook(
     }
 
     const currentGatewayName = resolveCurrentGatewayName(context, options);
+    const listenerPid = availability.pid;
     if (
       currentSandbox &&
-      (await options.isCurrentSandboxForward?.(currentSandbox, currentGatewayName, port))
+      Number.isSafeInteger(listenerPid) &&
+      Number(listenerPid) > 1 &&
+      (await options.isCurrentSandboxForward?.(
+        currentSandbox,
+        currentGatewayName,
+        port,
+        Number(listenerPid),
+      ))
     ) {
       return {};
     }

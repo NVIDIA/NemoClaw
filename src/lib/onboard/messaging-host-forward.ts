@@ -63,7 +63,7 @@ export function createMessagingHostForwardPortConflictHookOptions(
 ): TeamsHostForwardPortConflictHookOptions {
   return {
     checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
-    isCurrentSandboxForward: async (sandboxName, gatewayName, port) => {
+    isCurrentSandboxForward: async (sandboxName, gatewayName, port, listenerPid) => {
       if (
         !gatewayName ||
         (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName)
@@ -79,6 +79,8 @@ export function createMessagingHostForwardPortConflictHookOptions(
           port,
           "127.0.0.1",
           deps.runtimeSelection ?? { gatewayName, workspace: "default" },
+          undefined,
+          listenerPid,
         );
         return state === "owned";
       } catch {
