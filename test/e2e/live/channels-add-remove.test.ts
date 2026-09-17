@@ -14,9 +14,9 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { startFakeTelegramApi } from "../fixtures/fake-telegram-api.ts";
+import { startFakeDockerApi } from "../fixtures/fake-docker-api.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
@@ -369,46 +369,6 @@ function scanArtifactCredentialLeak(root: string): void {
   }
 }
 
-async function applyTelegramFixturePolicy(
-  host: HostCliClient,
-  port: string,
-  redactionValues: string[],
-): Promise<void> {
-  const env = channelEnv();
-  const policy = await host.command(
-    "openshell",
-    [
-      "policy",
-      "update",
-      SANDBOX_NAME,
-      "--add-endpoint",
-      `host.openshell.internal:${port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${port}:POST:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--wait",
-    ],
-    {
-      artifactName: "phase-4-apply-fake-telegram-policy",
-      env,
-      redactionValues,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-    },
-  );
-  assertExitZero(policy, "apply fake Telegram REST policy");
-  await rebindFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
-    artifactName: "phase-4-bind-fake-telegram-credential",
-    credentialEnv: "TELEGRAM_BOT_TOKEN",
-    endpoint: { host: "host.openshell.internal", port, protocol: "rest" },
-    env,
-    providerName: PROVIDER_NAME,
-    redactionValues,
-  });
-}
-
 test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   {
@@ -603,9 +563,28 @@ test(
     expectHostTelegramConfig("after add+rebuild");
     expectHostTelegramPlan("active", "after add+rebuild");
 
-    const fakeTelegram = await startFakeTelegramApi(TELEGRAM_TOKEN);
-    cleanup.add("close fake Telegram API", () => fakeTelegram.close());
-    await applyTelegramFixturePolicy(host, fakeTelegram.port, secretsToRedact);
+    const fakeTelegram = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "telegram",
+      imageScript: "fake-telegram-api.cjs",
+      containerPrefix: "nemoclaw-fake-telegram-add-remove",
+      portEnv: "FAKE_TELEGRAM_API_PORT",
+      captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+      expectedEnv: {
+        FAKE_TELEGRAM_API_EXPECTED_TOKEN: TELEGRAM_TOKEN,
+      },
+      env: channelEnv(),
+      redactionValues: secretsToRedact,
+    });
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      artifactName: "phase-4-apply-fake-telegram-policy",
+      endpoint: { port: fakeTelegram.port },
+      env: channelEnv(),
+      protocol: "rest",
+      providerName: PROVIDER_NAME,
+      redactionValues: secretsToRedact,
+      restMethods: ["POST"],
+      rewrite: "request-body-credential-rewrite",
+    });
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw Telegram add/remove credential-resolution proof";
     await sendWithInstalledTelegramRuntime(
@@ -615,16 +594,22 @@ test(
       telegramMockText,
       secretsToRedact,
     );
-    const telegramRuntimeCapture = fakeTelegram
-      .requests()
-      .find((row) => row.event === "request" && row.endpoint === "sendMessage");
+    const telegramCaptureText = fs.readFileSync(fakeTelegram.captureFile, "utf8");
+    const telegramCaptureRows = telegramCaptureText
+      .trim()
+      .split(/\n+/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const telegramRuntimeCapture = telegramCaptureRows
+      .filter((row) => row.event === "request" && row.endpoint === "sendMessage")
+      .at(-1);
     expect(telegramRuntimeCapture).toMatchObject({
       tokenMatchesExpected: true,
       tokenLooksPlaceholder: false,
       chatId: telegramMockTarget,
       text: telegramMockText,
     });
-    await artifacts.writeJson("phase-4-fake-telegram-requests.json", fakeTelegram.requests());
+    await artifacts.writeJson("phase-4-fake-telegram-requests.json", telegramCaptureRows);
     scanArtifactCredentialLeak(artifacts.rootDir);
 
     progress.phase("remove Telegram and rebuild sandbox");

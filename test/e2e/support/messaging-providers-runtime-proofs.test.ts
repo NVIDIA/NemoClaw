@@ -579,6 +579,50 @@ describe("messaging provider installed-runtime proofs", () => {
     ]);
   });
 
+  it("limits a fake REST proof to its required methods", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-telegram-telegram-bridge";
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(
+                fakeEndpointPolicy(43_119, "rest", ["/usr/local/bin/node", "/usr/bin/node"]),
+              )
+            : successfulCommand();
+      },
+    } as unknown as HostCliClient;
+
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
+      endpoint: { port: "43119" },
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName,
+      env: { TELEGRAM_BOT_TOKEN: "test-fixture-token" },
+      redactionValues: ["test-fixture-token"],
+      artifactName: "apply-fake-telegram-policy",
+      restMethods: ["POST"],
+    });
+
+    expect(commands[1]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-telegram",
+      "--add-endpoint",
+      "host.openshell.internal:43119:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43119:POST:/**",
+      "--binary",
+      "/usr/local/bin/node",
+      "--binary",
+      "/usr/bin/node",
+      "--wait",
+    ]);
+  });
+
   it("rejects fake endpoint policy mutation when the provider is not attached", async () => {
     const commands: Array<{ command: string; args: string[] }> = [];
     const host = {
