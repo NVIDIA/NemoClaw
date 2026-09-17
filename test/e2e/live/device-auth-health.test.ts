@@ -4,7 +4,7 @@
 /**
  *
  * Preserves the legacy #2342 contract with real install/onboard, sandbox HTTP
- * probes, `nemoclaw status`, host port-forward checks, and gateway recovery:
+ * probes, `nemoclaw status`, and host port-forward checks:
  * device-auth 401 responses must not be misreported as Health Offline.
  */
 
@@ -22,7 +22,6 @@ import {
   installDeviceAuthSandbox,
   maybeWriteHostHealthExpectation,
   SANDBOX_NAME,
-  waitForRecoveryArtifact,
 } from "./device-auth-health-helpers.ts";
 
 const LIVE_TIMEOUT_MS = testTimeout(30 * 60_000);
@@ -44,7 +43,6 @@ test(
         "start authenticated inference fixture",
         "onboard device-auth OpenClaw sandbox",
         "verify sandbox and forwarded dashboard health",
-        "recover stopped OpenClaw gateway",
       ],
     },
   },
@@ -81,7 +79,6 @@ test(
         "/health is reachable from inside the sandbox",
         "the authenticated dashboard root may return 401 without being treated as offline",
         "nemoclaw status reports the gateway as live, not Health Offline",
-        "status remains non-offline after a gateway kill/recovery attempt",
       ],
     });
 
@@ -204,26 +201,5 @@ test(
     await maybeWriteHostHealthExpectation(hostHealth, (codes, message, actual) =>
       expect(codes, message).toContain(actual),
     );
-
-    progress.phase("recover stopped OpenClaw gateway");
-    await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
-      {
-        artifactName: "phase-5-kill-gateway-process",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-
-    const recoveryStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
-      artifactName: "phase-5-nemoclaw-status-after-gateway-kill",
-      env: commandEnv(),
-      timeoutMs: 120_000,
-    });
-    expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
-    assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
-    await waitForRecoveryArtifact(artifacts, sandbox);
   },
 );

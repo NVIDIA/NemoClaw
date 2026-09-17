@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
   preclean,
@@ -11,6 +12,15 @@ import {
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
+  it("installs activation proof plugins through native OpenClaw ownership", () => {
+    const script = managedActivationOpenClawPluginScript();
+
+    expect(script).toContain('openclaw plugins install "$source_dir" --force');
+    expect(script).toContain("/sandbox/managed-activation-native-plugin");
+    expect(script).not.toContain("plugins.allow");
+    expect(script).not.toContain("openclawImagePluginInstalls");
+  });
+
   it("prepares the Hermes restart refusal through the native .env boundary", () => {
     const command = managedHermesBoundaryPoisonCommand();
     expect(command).toContain("/sandbox/.hermes/.env");
