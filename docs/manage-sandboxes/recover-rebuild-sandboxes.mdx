@@ -379,7 +379,7 @@ A journal whose replacement never took therefore stops blocking `rebuild` for th
 
 The journal binds the durable source registry row and normally does not resume after a command rewrites that row.
 For an older N1x Docker managed-vLLM journal, recovery can continue only while the row contains the matching active route reservation.
-Every other durable source-row change remains fail-closed.
+Other changes to the fingerprinted source row remain fail-closed.
 Messaging channel state is exempt: `channels add`, `channels stop`, `channels start`, and `channels remove` rewrite the recorded messaging plan, and the journal ignores that field.
 
 <Warning title="Recover an Unsafe Retained Policy Handoff">
