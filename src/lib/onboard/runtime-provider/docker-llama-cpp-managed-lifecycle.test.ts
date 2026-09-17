@@ -9,11 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
-
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  spawnSync: subprocess.spawnSync,
-}));
+vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
@@ -586,18 +582,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     });
 
     const receipt = lifecycle.start(receiptWriter());
-
-    expect(receipt.runtime).toMatchObject({
-      kind: "container",
-      runtimeId: RUNTIME_ID,
-    });
+    expect(receipt.runtime).toMatchObject({ kind: "container", runtimeId: RUNTIME_ID });
+    const probeScript = expect.stringMatching(
+      /docker-llama-cpp-private-bridge-probe-process\.js$/u,
+    );
     expect(subprocess.spawnSync).toHaveBeenCalledExactlyOnceWith(
       process.execPath,
-      [
-        expect.stringMatching(/docker-llama-cpp-private-bridge-probe-process\.js$/u),
-        "http://127.0.0.1:8081/health",
-        "86400",
-      ],
+      [probeScript, "http://127.0.0.1:8081/health", "86400"],
       { timeout: 86_415_000 },
     );
     expect(hostNetworkRuns(fixture)).toEqual([]);
