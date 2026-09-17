@@ -118,8 +118,10 @@ The host does not start the in-sandbox processes independently. Refer to [`$$nem
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
-Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
-If the native supervisor remains absent after bounded recovery, NemoClaw leaves the container unchanged and directs you to rebuild or re-onboard.
+Recovery repairs supported agent processes and host forwards inside the registered sandbox. When the
+sandbox itself is stopped, `start` submits that lifecycle mutation to OpenShell; recovery does not
+take independent ownership of the provider container. If the native supervisor remains absent after
+bounded recovery, NemoClaw leaves the sandbox unchanged and directs you to rebuild or re-onboard.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control). If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.
 

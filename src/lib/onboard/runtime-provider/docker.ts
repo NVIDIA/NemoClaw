@@ -68,45 +68,17 @@ export interface DockerRuntimeProviderDependencies {
   ) =>
     | { readonly status: number; readonly output: string; readonly error?: Error }
     | Promise<{ readonly status: number; readonly output: string; readonly error?: Error }>;
-  /** @deprecated Standard lifecycle does not inspect provider containers. */
-  readonly sandboxNeedsLifecycleStart: (
-    sandboxName: string,
-    gatewayName: string,
-    environment: NodeJS.ProcessEnv,
-  ) => boolean;
   readonly captureHostCommand: (
     command: string,
     args: string[],
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
-  /** @deprecated Standard lifecycle does not inspect provider containers. */
-  readonly findLabeledSandboxContainers: typeof import("../docker-driver-sandbox-recovery").findLabeledSandboxContainers;
   readonly hasPortableLifecycleReceipt: typeof hasPortableAgentSandboxLifecycleReceipt;
-  /** @deprecated Standard lifecycle does not inspect provider runtime state. */
-  readonly isRuntimeDown: typeof import("../../actions/sandbox/gateway-failure-classifier").isDockerRuntimeDown;
-  /** @deprecated Standard lifecycle does not print provider-owned lifecycle guidance. */
-  readonly printRuntimeDownGuidance: typeof import("../../actions/sandbox/gateway-failure-classifier").printDockerRuntimeDownGuidance;
-  /** @deprecated Standard lifecycle does not recover provider containers. */
-  readonly recoverSandbox: typeof import("../docker-driver-sandbox-recovery").recoverDockerDriverSandbox;
   readonly recoverPortableSandbox: typeof recoverPortableAgentSandboxLifecycle;
   readonly requalifyPortableSandbox: typeof requalifyPortableAgentSandboxAuthority;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
-  /** @deprecated Standard lifecycle does not stop provider containers. */
-  readonly stopContainer: (
-    name: string,
-    options?: Record<string, unknown>,
-  ) => {
-    status?: number | null;
-  };
   readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
-  /** @deprecated Standard lifecycle does not unpause provider containers. */
-  readonly unpauseContainer: (
-    name: string,
-    options?: Record<string, unknown>,
-  ) => {
-    status?: number | null;
-  };
   readonly withLifecycleLock: typeof withMcpLifecycleLock;
 }
 
@@ -264,22 +236,11 @@ function resolveDependencies(
           error: new Error(result.error.message),
         };
       }),
-    sandboxNeedsLifecycleStart: overrides.sandboxNeedsLifecycleStart ?? (() => false),
     captureHostCommand:
       overrides.captureHostCommand ??
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
-    findLabeledSandboxContainers: overrides.findLabeledSandboxContainers ?? (() => []),
     hasPortableLifecycleReceipt:
       overrides.hasPortableLifecycleReceipt ?? hasPortableAgentSandboxLifecycleReceipt,
-    isRuntimeDown: overrides.isRuntimeDown ?? (() => false),
-    printRuntimeDownGuidance: overrides.printRuntimeDownGuidance ?? (() => undefined),
-    recoverSandbox:
-      overrides.recoverSandbox ??
-      (() => ({
-        recovered: false,
-        via: null,
-        detail: "Standard lifecycle recovery is owned by OpenShell.",
-      })),
     recoverPortableSandbox:
       overrides.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle,
     requalifyPortableSandbox:
@@ -289,9 +250,7 @@ function resolveDependencies(
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
-    stopContainer: overrides.stopContainer ?? (() => ({ status: 1 })),
     stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
-    unpauseContainer: overrides.unpauseContainer ?? (() => ({ status: 1 })),
     withLifecycleLock: overrides.withLifecycleLock ?? withMcpLifecycleLock,
   };
 }

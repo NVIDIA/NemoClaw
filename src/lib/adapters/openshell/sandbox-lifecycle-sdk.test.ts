@@ -103,4 +103,23 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       error: { kind: "timeout", message: "OpenShell timed out." },
     });
   });
+
+  it("bounds a connected lifecycle RPC that never settles", async () => {
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => ({
+        raw: {
+          startSandbox: () => new Promise(() => undefined),
+          stopSandbox: async () => ({}),
+        },
+        sandbox: { waitReady: async () => ({}) },
+      }),
+    });
+
+    await expect(
+      lifecycle.startSandbox({ sandboxName: "alpha", target, timeoutMs: 5 }),
+    ).resolves.toEqual({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
+  });
 });

@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -12,10 +13,13 @@ import {
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
+import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
+import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
-  MANAGED_STARTUP_CA_ENV,
-  MANAGED_STARTUP_PROFILE_ENV,
-} from "../../src/lib/onboard/managed-startup/transport.ts";
+  applyDockerManagedStartupRootRequest,
+  finalizeDockerManagedStartupSharedState,
+  releaseDockerManagedStartupHold,
+} from "../../src/lib/onboard/managed-workload/onboard-orchestration.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -126,12 +130,12 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     managedStartupE2eProfile(input.agent, false, true, true),
   );
   const corporateCa = Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM, "utf8").toString("base64");
-  const finalCommand = [
-    `/usr/local/bin/node /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs --agent ${input.agent}`,
-    ". /tmp/nemoclaw-managed-startup-runtime.env",
-    "unset NEMOCLAW_STARTUP_PROFILE_B64 NEMOCLAW_CORPORATE_CA_B64",
-    "exec /usr/local/bin/nemoclaw-start /bin/sh -c 'id -u > /tmp/nemoclaw-native-startup-uid; exec /usr/bin/tail -f /dev/null'",
-  ].join("\n");
+  const rootApplyRequest = createManagedStartupRootApplyRequest({
+    agent: input.agent,
+    encodedProfile,
+    corporateCaB64: corporateCa,
+  });
+  const bootstrapIdentity = randomBytes(32).toString("hex");
   let containerId = "";
   try {
     containerId = docker([
@@ -142,20 +146,43 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "--network",
       "none",
       "--user",
-      "root",
+      "sandbox",
       "--entrypoint",
-      "/bin/bash",
-      "--env",
-      `${MANAGED_STARTUP_PROFILE_ENV}=${encodedProfile}`,
-      "--env",
-      `${MANAGED_STARTUP_CA_ENV}=${corporateCa}`,
+      MANAGED_STARTUP_HOLD_EXECUTABLE,
       input.image,
+      "--agent",
+      input.agent,
+      "--profile-fingerprint",
+      rootApplyRequest.profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+      "--",
+      "/bin/sh",
       "-c",
-      finalCommand,
+      "id -u > /tmp/nemoclaw-native-startup-uid; exec /usr/bin/tail -f /dev/null",
     ]).stdout.trim();
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker run did not return one exact container identity");
     }
+    const transaction = applyDockerManagedStartupRootRequest({
+      bootstrapIdentity,
+      containerId,
+      request: rootApplyRequest,
+    });
+    if (!transaction) {
+      throw new Error("direct managed startup did not create one fresh shared-state transaction");
+    }
+    const committed = finalizeDockerManagedStartupSharedState({
+      transaction,
+      supervisorReady: true,
+    });
+    if (!committed.supervisorReady || committed.failure) {
+      throw committed.failure ?? new Error("direct managed startup shared-state commit failed");
+    }
+    releaseDockerManagedStartupHold({
+      transaction,
+      profileFingerprint: rootApplyRequest.profileFingerprint,
+    });
     waitForNativeStartup(containerId);
     const inspected = JSON.parse(docker(["inspect", "--type", "container", containerId]).stdout) as
       | Array<{ Id?: string; Image?: string; State?: { Running?: boolean } }>
@@ -192,7 +219,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       throw new Error("managed agent configuration does not contain the requested model");
     }
     process.stdout.write(
-      `Direct exact-image native startup passed for ${input.agent} on ${input.platform}.\n`,
+      `Direct exact-image authenticated startup hold passed for ${input.agent} on ${input.platform}.\n`,
     );
   } finally {
     if (CONTAINER_ID_RE.test(containerId)) docker(["rm", "-f", containerId], true);

@@ -115,16 +115,19 @@ async function mutate(
   try {
     const client = await Promise.race([connect(request.target), aborted]);
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
-    await operation(
-      { name: request.sandboxName, workspace: "default" },
-      { signal: controller.signal },
-    );
+    await Promise.race([
+      operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
+      aborted,
+    ]);
     if (action === "start") {
-      await client.sandbox.waitReady(
-        request.sandboxName,
-        Math.max(1, Math.ceil((request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS) / 1000)),
-        { signal: controller.signal },
-      );
+      await Promise.race([
+        client.sandbox.waitReady(
+          request.sandboxName,
+          Math.max(1, Math.ceil((request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS) / 1000)),
+          { signal: controller.signal },
+        ),
+        aborted,
+      ]);
     }
     return { kind: "accepted" };
   } catch (error) {
