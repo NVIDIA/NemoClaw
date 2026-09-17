@@ -203,10 +203,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable-identity",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
-const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
-  "device-auth-health",
-  "model-router-provider-routed-inference",
-]);
+const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set(["model-router-provider-routed-inference"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "external-gateway-health",
   "staging-brev-launchable",
