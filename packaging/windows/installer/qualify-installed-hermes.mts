@@ -150,8 +150,7 @@ export function createHermesPtyState() {
   let channel: string | null = null,
     sessionId: string | null = null,
     storedSessionId: string | null = null;
-  let ptyOpen = false,
-    receivedPtyData = false,
+  let receivedPtyData = false,
     lastSeq = 0,
     completeSeq = 0,
     settledSeq = 0;
@@ -160,7 +159,9 @@ export function createHermesPtyState() {
     idle = false,
     observing = true;
   const openEventFeeds = new Map<string, number>();
+  const openPtyFeeds = new Map<string, number>();
   const eventFeedOpen = () => channel !== null && (openEventFeeds.get(channel) ?? 0) > 0;
+  const ptyFeedOpen = () => channel !== null && (openPtyFeeds.get(channel) ?? 0) > 0;
   const pending: { channel: string; value: any }[] = [];
   const events: { type: string; seq: number; sessionId: string }[] = [];
   const receive = (eventChannel: string, value: any) => {
@@ -259,7 +260,7 @@ export function createHermesPtyState() {
         return;
       }
       channel = value;
-      ptyOpen = true;
+      openPtyFeeds.set(value, (openPtyFeeds.get(value) ?? 0) + 1);
       for (const item of pending.splice(0)) receive(item.channel, item.value);
     },
     receive,
@@ -276,29 +277,34 @@ export function createHermesPtyState() {
     ptyData() {
       receivedPtyData = true;
     },
-    ptyClosed() {
-      ptyOpen = false;
-      if (observing) failure = "The actual PTY socket closed";
+    ptyClosed(value: string) {
+      openPtyFeeds.set(value, Math.max(0, (openPtyFeeds.get(value) ?? 0) - 1));
+      if (observing && value === channel && !ptyFeedOpen())
+        failure = "The actual PTY socket closed";
     },
     assertHealthy() {
       assert.equal(failure, null, failure ?? undefined);
-      assert(ptyOpen, "The actual PTY socket is not live");
+      assert(ptyFeedOpen(), "The actual PTY socket is not live");
       assert(eventFeedOpen(), "The actual PTY event feed is not live");
     },
     usable() {
       return (
-        failure === null && ptyOpen && eventFeedOpen() && receivedPtyData && readyInfo !== null
+        failure === null &&
+        ptyFeedOpen() &&
+        eventFeedOpen() &&
+        receivedPtyData &&
+        readyInfo !== null
       );
     },
     markTurn() {
-      assert(failure === null && ptyOpen && readyInfo);
+      assert(failure === null && ptyFeedOpen() && readyInfo);
       idle = false;
       return lastSeq;
     },
     settledAfter(mark: number) {
       return (
         failure === null &&
-        ptyOpen &&
+        ptyFeedOpen() &&
         eventFeedOpen() &&
         readyInfo !== null &&
         completeSeq > mark &&
@@ -625,7 +631,7 @@ async function main() {
       if (url.pathname === "/api/pty") {
         pty.bindPty(channel);
         socket.on("framereceived", () => pty.ptyData());
-        socket.on("close", () => pty.ptyClosed());
+        socket.on("close", () => pty.ptyClosed(channel));
       } else if (url.pathname === "/api/events") {
         pty.bindEvents(channel);
         socket.on("close", () => pty.eventsClosed(channel));

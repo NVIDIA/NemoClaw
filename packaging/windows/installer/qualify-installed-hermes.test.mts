@@ -189,6 +189,18 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
   assert.throws(() => state.assertHealthy(), /idle sample/u);
 });
 
+test("closing one same-channel PTY connection preserves the remaining live connection", () => {
+  const state = createHermesPtyState();
+  state.bindEvents("actual-pty");
+  state.bindPty("actual-pty");
+  state.bindPty("actual-pty");
+  state.ptyData();
+  state.ptyClosed("actual-pty");
+  state.assertHealthy();
+  state.ptyClosed("actual-pty");
+  assert.throws(() => state.assertHealthy(), /PTY socket closed/u);
+});
+
 test("settled conversation still needs a final saved assistant and a real execute_code kernel bootstrap", () => {
   const code = hermesInstalledCodeCommand("b".repeat(20));
   const sentinel = "NEMOCLAW_EXECUTE_CODE_" + "b".repeat(20);
