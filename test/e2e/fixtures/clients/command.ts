@@ -61,6 +61,21 @@ export function assertExitZero(result: CommandExitResult, label: string): void {
   throw new Error(`${label} failed: ${detail}`);
 }
 
+export function assertExitCode(
+  result: CommandExitResult,
+  expectedExitCode: number,
+  label: string,
+): void {
+  if (result.exitCode === expectedExitCode) return;
+  const observed = result.signal
+    ? `signal=${result.signal}`
+    : `exit=${result.exitCode ?? "unknown"}`;
+  const output = resultText(result).trim();
+  throw new Error(
+    `${label} expected exit=${expectedExitCode}, got ${observed}${output ? `: ${output}` : ""}`,
+  );
+}
+
 export function artifactLabel(raw: string): string {
   const label = raw
     .trim()
