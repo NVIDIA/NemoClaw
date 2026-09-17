@@ -157,6 +157,7 @@
       "live": "test/e2e/live/full-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
+        "test/e2e/live/full-e2e-credential-boundary.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
@@ -166,6 +167,7 @@
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/full-e2e-credential-boundary.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
@@ -418,15 +420,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/cloud-inference.test.ts",
-      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/retry-policy.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
         "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -468,14 +461,6 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/device-auth-health.test.ts",
-      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {

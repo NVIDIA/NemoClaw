@@ -55,13 +55,6 @@ const INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN =
   /^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/;
 const SUPPORTED_PROJECTS = new Set<CredentialFreeTestProject>(["e2e-live", "integration"]);
 const CREDENTIAL_FREE_TEST_COVERAGE = {
-  "onboard-managed-image-buildless-e2e": {
-    agentRuntime: "none",
-    observableOutcome: "Buildless onboarding selects exact managed images for every agent",
-    environmentOrInferenceEndpoint: "Mocked integration environment; no inference endpoint",
-    unresolvedReason: "",
-    gatewayRuntimes: ["docker"],
-  },
   "vllm-docker-storage": {
     agentRuntime: "none",
     observableOutcome: "vLLM storage gate accepts and rejects the intended host states",

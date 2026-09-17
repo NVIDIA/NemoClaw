@@ -17,7 +17,7 @@ const inventory: TrustedE2eRecommendationInventory = {
   workflow: "e2e.yaml",
   fanoutId: "e2e-all",
   selectorTypes: ["all", "job", "target"],
-  allowedJobIds: ["device-auth-health"],
+  allowedJobIds: ["full-e2e"],
   manualOnlyJobIds: ["hardware-check"],
   liveSupportedTargetIds: ["sample-target"],
 };
@@ -53,7 +53,7 @@ describe("Review queue context", () => {
         ...expected.riskPlan,
         requiredJobs: [
           {
-            id: "device-auth-health",
+            id: "full-e2e",
             tier: 1 as const,
             families: [],
             reasons: ["Check authentication."],
@@ -225,7 +225,7 @@ describe("Advisor E2E receipts", () => {
   it("deduplicates specialists without weakening a required recommendation (#11489)", () => {
     const item = {
       selectorType: "job",
-      id: "device-auth-health",
+      id: "full-e2e",
       reason: "Verify authentication.",
     };
     const receipts = [false, true].map((required, index) =>
@@ -242,7 +242,7 @@ describe("Advisor E2E receipts", () => {
 
   it.each([
     { selectorType: "job", id: "invented" },
-    { selectorType: "target", id: "device-auth-health" },
+    { selectorType: "target", id: "full-e2e" },
     { selectorType: "all", id: "" },
     { selectorType: "job", id: "$(command)" },
   ])("rejects an unsupported selector $selectorType:$id (#11489)", (selector) => {
@@ -261,7 +261,7 @@ describe("Advisor E2E receipts", () => {
   it("rejects duplicate recommendations and extra input fields (#11489)", () => {
     const item = {
       selectorType: "job",
-      id: "device-auth-health",
+      id: "full-e2e",
       required: true,
       reason: "Verify authentication.",
     };
@@ -312,7 +312,7 @@ describe("Advisor E2E receipts", () => {
     );
     expect(
       collectE2eRecommendations(receipts, input).recommendations.map((item) => item.id),
-    ).toContain("device-auth-health");
+    ).toContain("issue-4462-scope-upgrade-approval");
   });
 
   it("requires a successful recording and refuses a second recording (#11489)", async () => {

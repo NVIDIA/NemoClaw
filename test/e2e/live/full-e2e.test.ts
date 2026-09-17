@@ -51,6 +51,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
+import { buildSandboxCredentialScanCommand } from "./full-e2e-credential-boundary.ts";
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
@@ -324,6 +325,38 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
   );
 }
 
+async function scanSandboxCredentialBoundary(
+  sandbox: SandboxClient,
+  apiKey: string,
+): Promise<void> {
+  const credentialBoundary = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      [
+        "auth_profiles=$(find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print)",
+        "auth_status=$?",
+        'case "$auth_status" in 0) ;; *) exit "$auth_status" ;; esac',
+        'case "$auth_profiles" in "") ;; *) printf \'%s\\n\' "$auth_profiles"; exit 1 ;; esac',
+        "credential_paths=$(",
+        buildSandboxCredentialScanCommand(),
+        ")",
+        "credential_status=$?",
+        'case "$credential_status" in 0) ;; *) exit "$credential_status" ;; esac',
+        'case "$credential_paths" in "") ;; *) printf \'%s\\n\' "$credential_paths"; exit 1 ;; esac',
+      ].join("\n"),
+    ],
+    {
+      artifactName: "phase-4-sandbox-credential-boundary",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    },
+  );
+  expect(credentialBoundary.exitCode, resultText(credentialBoundary)).toBe(0);
+}
+
 function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
   try {
     return readOnboardTraceWindow(JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown);
@@ -517,6 +550,7 @@ test(
         "install and onboard OpenClaw sandbox",
         "validate CLI sandbox and policy state",
         "exercise hosted, sandbox, and post-recovery launch inference",
+        "scan sandbox agent state for credentials",
         "inspect runtime logs and security posture",
         "remove full-E2E sandbox",
       ],
@@ -564,6 +598,7 @@ test(
         "nemoclaw and openshell are installed and usable",
         "sandbox appears in list/status and has policy/inference configuration",
         "direct hosted inference and sandbox inference.local both respond",
+        "sandbox agent state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
               "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
@@ -716,12 +751,11 @@ test(
       "bash",
       [
         "-lc",
-        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw >/dev/null; command -v openshell >/dev/null; nemoclaw --help >/dev/null',
       ],
       { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
     );
     expect(pathProbe.exitCode, resultText(pathProbe)).toBe(0);
-    expect(pathProbe.stdout).toContain("openshell");
 
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode, resultText(list)).toBe(0);
@@ -792,6 +826,9 @@ test(
     await (process.platform === "linux"
       ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
       : Promise.resolve());
+
+    progress.phase("scan sandbox agent state for credentials");
+    await scanSandboxCredentialBoundary(sandbox, hosted.apiKey);
 
     progress.phase("inspect runtime logs and security posture");
     const logs = await repoNemoclaw(

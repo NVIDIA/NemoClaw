@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS } from "../../../nemoclaw/src/security/secret-scanner.ts";
-import { buildSandboxCredentialScanCommand } from "../live/cloud-inference-credential-boundary.ts";
+import { buildSandboxCredentialScanCommand } from "../live/full-e2e-credential-boundary.ts";
 
 const roots: string[] = [];
 
@@ -20,7 +20,7 @@ afterEach(() => {
 
 /** Create and track an isolated sandbox-state fixture root. */
 function createScanRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloud-credential-scan-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-full-e2e-credential-scan-"));
   roots.push(root);
   return root;
 }
@@ -40,14 +40,14 @@ function writeFixture(root: string, relativePath: string, body: string | Uint8Ar
   return file;
 }
 
-/** Run the exact live credential scan command against a fixture root. */
+/** Run the live credential scan command against a fixture root. */
 function scan(root: string): string {
   return execFileSync("sh", ["-lc", buildSandboxCredentialScanCommand([root])], {
     encoding: "utf8",
   });
 }
 
-describe("cloud inference sandbox credential scan", () => {
+describe("full E2E sandbox credential scan", () => {
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
 

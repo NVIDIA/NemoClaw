@@ -88,6 +88,16 @@ describe("isGatewayHttpReady abort handling", () => {
 
     await expect(probe).resolves.toBe(false);
   });
+
+  it("treats an HTTP 401 response as proof that the gateway is reachable (#11946)", async () => {
+    const { url } = await listen(
+      http.createServer((_req, res) => {
+        res.writeHead(401).end();
+      }),
+    );
+
+    await expect(isGatewayHttpReady(1_000, url)).resolves.toBe(true);
+  });
 });
 
 describe("isDockerDriverGatewayHttpReady TLS env", () => {
