@@ -79,7 +79,6 @@ ARG HERMES_TARBALL_SHA256=e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34
 ARG HERMES_NPM_INTEGRITY=sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG UV_VERSION=0.11.33
-ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670001bb9974ac8a5584901880982f6509747b8
 ARG NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256=ffae3271120cf53eb8a7f574f76758eac3ea172f9ddc22c1056277e37d8d392c
 ARG NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256=1c1a898226bc67b123ec72847d4dcda7abbab1e95958c9e019790d9425e15d69
 ARG NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256=130cf4e76d6f4f16b85517cf8d3d81dfe294aff63d6c561b979971c401f78761
@@ -436,7 +435,6 @@ COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
     /opt/nemoclaw-agent-browser-runtime/
-COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /tmp/hermes-secure-dir-skip-chmod.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
@@ -448,32 +446,22 @@ RUN mkdir -p /opt/hermes \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
     && printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch \
         "$NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256" /tmp/hermes-secure-dir-skip-chmod.patch \
         "$NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256" /opt/hermes/hermes_cli/config.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes secure-directory patch or source identity mismatch" >&2; exit 1; } \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
-    && git -C /opt/hermes apply --check /tmp/hermes-runtime-boundaries.patch \
-    && git -C /opt/hermes apply /tmp/hermes-runtime-boundaries.patch \
     && git -C /opt/hermes apply --check /tmp/hermes-secure-dir-skip-chmod.patch \
     && git -C /opt/hermes apply /tmp/hermes-secure-dir-skip-chmod.patch \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256" /opt/hermes/hermes_cli/config.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes secure-directory patched output identity mismatch" >&2; exit 1; } \
-    && grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py \
-    && grep -Fq 'nemoclaw_protected_process_control' /opt/hermes/hermes_cli/env_loader.py \
-    && grep -Fq 'nemoclaw_sanitized_installer_env' /opt/hermes/tools/lazy_deps.py \
-    && grep -Fq 'Managed gateway: user and project plugins disabled' /opt/hermes/hermes_cli/plugins.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-runtime-boundaries.patch \
+        /tmp/hermes-security-dependencies.patch \
         /tmp/hermes-secure-dir-skip-chmod.patch \
         /tmp/hermes-whatsapp-proxy.patch \
         /tmp/nemoclaw-download-hermes-source-archive.sh

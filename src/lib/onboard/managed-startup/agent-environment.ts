@@ -452,7 +452,6 @@ function mapHermesProfile(
 
   const runtimeEnvironment: MutableEnvironment = {
     ...configurationEnvironment,
-    HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
     HERMES_HOME: "/sandbox/.hermes",
     HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
   };
