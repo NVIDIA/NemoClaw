@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,8 +14,16 @@ vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
 }));
 
 import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../fixtures/shell-probe.ts";
 import {
   cloudExperimentalChecksForOnboarding,
   DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
@@ -25,9 +33,14 @@ import {
   buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
   cloudExperimentalCheckTimeoutMs,
+  runE2eCloudExperimentalChecks,
 } from "../live/cloud-experimental-checks.ts";
 
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
+const dcodeTuiSessionGuard = path.join(
+  process.cwd(),
+  "test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh",
+);
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
 const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -712,7 +725,7 @@ assert_status_mode disabled
     },
   );
 
-  it("gives the destructive fresh re-onboard check its onboarding budget", () => {
+  it("gives long-running Deep Agents checks their complete operation budgets", () => {
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
@@ -725,6 +738,11 @@ assert_status_mode disabled
     ).toBe(180_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      ),
+    ).toBe(20 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       ),
     ).toBe(8 * 60_000);
@@ -733,6 +751,173 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
       ),
     ).toBe(35 * 60_000);
+  });
+
+  it.each([
+    [
+      "caller timeout",
+      {
+        ...shellResult(0, ""),
+        exitCode: null,
+        signal: "SIGTERM" as const,
+        timedOut: true,
+      },
+    ],
+    ["nonzero TUI result", shellResult(1, "TUI cleanup did not reach baseline")],
+  ])("cleans up the identified DCode TUI session after a %s (#11847)", async (_case, tuiResult) => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-caller-timeout-"));
+    const cleanup = new CleanupRegistry();
+    const tuiCheck = "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
+    const responses: ShellProbeResult[] = [
+      shellResult(0, ""),
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\n"),
+      tuiResult,
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\nNEMOCLAW_TUI_CALLER_RECOVERY_OK:2\n"),
+    ];
+    let responseIndex = 0;
+    const run = vi.fn(
+      async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+        responses[responseIndex++]!,
+    );
+
+    try {
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "cloud-langchain-deepagents-code",
+          "deepagents-sandbox",
+          [tuiCheck],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup,
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
+        ),
+      ).rejects.toThrow();
+
+      expect(run).toHaveBeenCalledTimes(4);
+      const tuiCommand = run.mock.calls[2]?.[0];
+      const tuiOptions = run.mock.calls[2]?.[1];
+      const sessionId = tuiOptions?.env?.NEMOCLAW_TUI_SESSION_ID;
+      expect(tuiCommand).toMatchObject({
+        command: "bash",
+        args: [path.join(process.cwd(), tuiCheck)],
+      });
+      expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+
+      const recoveryCommand = run.mock.calls[3]?.[0];
+      expect(recoveryCommand).toMatchObject({
+        command: "bash",
+        args: expect.arrayContaining(["recover", "deepagents-sandbox", sessionId, "2"]),
+      });
+
+      await expect(cleanup.runAll()).resolves.toEqual({
+        passed: [expect.stringContaining("clean up failed DCode TUI session")],
+        failures: [],
+      });
+      expect(run).toHaveBeenCalledTimes(4);
+    } finally {
+      fs.rmSync(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("shares process classification across normal waits and failed-session cleanup (#11847)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-session-guard-"));
+    const binDir = path.join(testRoot, "bin");
+    const processRoot = path.join(testRoot, "proc");
+    const targetSession = "12345678-1234-1234-1234-123456789abc";
+    const otherSession = "87654321-4321-4321-4321-cba987654321";
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(processRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(binDir, "openshell"),
+      '#!/bin/bash\nset -euo pipefail\nshift 5\nexec "$@"\n',
+      { mode: 0o755 },
+    );
+    const controlledProcessProgram = [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const dir = path.join(process.env.NEMOCLAW_TEST_PROCESS_ROOT, String(process.pid));",
+      "fs.mkdirSync(dir, { recursive: true });",
+      'fs.writeFileSync(path.join(dir, "environ"), Buffer.from(`NEMOCLAW_TUI_SESSION_ID=${process.env.NEMOCLAW_TUI_SESSION_ID}\\0`));',
+      'fs.writeFileSync(path.join(dir, "cmdline"), Buffer.from("node\\0deepagents_code\\0"));',
+      'process.on("SIGTERM", () => { fs.rmSync(dir, { force: true, recursive: true }); process.exit(0); });',
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const startControlledProcess = (sessionId: string) =>
+      spawn(process.execPath, ["-e", controlledProcessProgram, "deepagents_code"], {
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_PROCESS_ROOT: processRoot,
+          NEMOCLAW_TUI_SESSION_ID: sessionId,
+        },
+        stdio: "ignore",
+      });
+    const target = startControlledProcess(targetSession);
+    const other = startControlledProcess(otherSession);
+    const targetExit = new Promise<number | null>((resolve) => target.once("exit", resolve));
+    const guardEnv = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    };
+
+    try {
+      await expect
+        .poll(() => fs.existsSync(path.join(processRoot, String(target.pid), "environ")))
+        .toBe(true);
+      await expect
+        .poll(() => fs.existsSync(path.join(processRoot, String(other.pid), "environ")))
+        .toBe(true);
+
+      const baseline = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "baseline", "deepagents-sandbox", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(baseline.status, baseline.stderr).toBe(0);
+      expect(baseline.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:2");
+
+      const waitFailure = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(waitFailure.status, waitFailure.stderr).toBe(4);
+      expect(waitFailure.stderr).toContain("did not return to baseline 1");
+
+      const recovery = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "1", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(recovery.status, recovery.stderr).toBe(0);
+      expect(recovery.stdout).toContain("NEMOCLAW_TUI_CALLER_RECOVERY_OK:1");
+      await expect(targetExit).resolves.toBe(0);
+      expect(() => process.kill(other.pid!, 0)).not.toThrow();
+
+      const waitSuccess = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(waitSuccess.status, waitSuccess.stderr).toBe(0);
+      expect(waitSuccess.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:1");
+
+      const baselineFailure = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "0", processRoot],
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
+      );
+      expect(baselineFailure.status, baselineFailure.stderr).toBe(4);
+      expect(baselineFailure.stderr).toContain("did not return to baseline 0");
+      expect(() => process.kill(other.pid!, 0)).not.toThrow();
+    } finally {
+      target.kill("SIGKILL");
+      other.kill("SIGKILL");
+      fs.rmSync(testRoot, { force: true, recursive: true });
+    }
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

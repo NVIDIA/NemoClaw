@@ -61,12 +61,12 @@ describe("live E2E target matrix", () => {
     ]);
   });
 
-  it("includes automatic config-export budgets in live target timeouts (#9622, #11485)", () => {
+  it("includes ordered Deep Agents and automatic config-export budgets", () => {
     expect(
       Object.fromEntries(buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes])),
     ).toEqual({
       "ubuntu-policy-custom-missing-presets-negative": 53,
-      "ubuntu-repo-cloud-langchain-deepagents-code": 72,
+      "ubuntu-repo-cloud-langchain-deepagents-code": 152,
       "ubuntu-repo-cloud-openclaw": 53,
     });
   });
