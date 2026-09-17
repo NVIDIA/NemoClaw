@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const directories: string[] = [];
 const disposables: (() => Promise<void>)[] = [];
@@ -59,7 +60,56 @@ function declaration(
   return { NEMOCLAW_GATEWAY_MANAGEMENT: file };
 }
 
+function probeResult(exitCode: number, stdout: string): ShellProbeResult {
+  return {
+    artifacts: { result: "", stderr: "", stdout: "" },
+    command: [],
+    exitCode,
+    signal: null,
+    stderr: "",
+    stdout,
+    timedOut: false,
+  };
+}
+
 describe("full E2E gateway ownership", () => {
+  it("stops the native gateway before starting recovery after observable failure", async () => {
+    vi.resetModules();
+    captured.test.mockClear();
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
+    const { recoverNativeGatewayAfterExit } = await import("../live/full-e2e.test.ts");
+    const calls: string[] = [];
+    const results = [
+      probeResult(0, "Phase: Ready"),
+      probeResult(1, "Phase: Error\nRun `nemoclaw e2e-full start`."),
+    ];
+
+    const outcome = await recoverNativeGatewayAfterExit({
+      sandboxName: "e2e-full",
+      pollDelayMs: 0,
+      stopGateway: async () => {
+        calls.push("stop");
+      },
+      readStatus: async (artifactName) => {
+        calls.push(artifactName);
+        return results.shift()!;
+      },
+      startSandbox: async () => {
+        calls.push("start");
+        return probeResult(0, "recovered");
+      },
+    });
+
+    expect(calls).toEqual([
+      "stop",
+      "phase-4-status-after-native-gateway-exit-attempt-01",
+      "phase-4-status-after-native-gateway-exit-attempt-02",
+      "start",
+    ]);
+    expect(outcome.stoppedStatus.exitCode).toBe(1);
+    expect(outcome.recovery).toMatchObject({ exitCode: 0, stdout: "recovered" });
+  });
+
   it.each([
     { preinstalled: true, targetId: "staging-brev-launchable", measuresColdOnboard: false },
     { preinstalled: false, targetId: "staging-brev-launchable", measuresColdOnboard: false },

@@ -336,6 +336,28 @@ console.log(JSON.stringify({
   );
 }
 
+export async function recoverNativeGatewayAfterExit(input: {
+  sandboxName: string;
+  stopGateway: () => Promise<unknown>;
+  readStatus: (artifactName: string) => Promise<ShellProbeResult>;
+  startSandbox: () => Promise<ShellProbeResult>;
+  pollDelayMs?: number;
+}): Promise<{ recovery: ShellProbeResult; stoppedStatus: ShellProbeResult }> {
+  await input.stopGateway();
+  const stoppedStatus = (
+    await pollUntil({
+      artifactPrefix: "phase-4-status-after-native-gateway-exit",
+      attempts: 10,
+      delayMs: input.pollDelayMs ?? 1_000,
+      probe: async (_attempt, artifactName) => await input.readStatus(artifactName),
+      accept: (result) =>
+        result.exitCode !== 0 && resultText(result).includes(`nemoclaw ${input.sandboxName} start`),
+    })
+  ).value;
+  const recovery = await input.startSandbox();
+  return { recovery, stoppedStatus };
+}
+
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   redactionValues: string[];
@@ -374,30 +396,26 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .join("\n"),
   ).toBe(true);
 
-  await input.sandbox.killGatewayTree(SANDBOX_NAME, {
-    artifactName: "phase-4-stop-native-gateway-before-recovery",
-    env: env(),
-    redactionValues: input.redactionValues,
-    timeoutMs: 30_000,
+  const { recovery, stoppedStatus } = await recoverNativeGatewayAfterExit({
+    sandboxName: SANDBOX_NAME,
+    stopGateway: async () =>
+      await input.sandbox.killGatewayTree(SANDBOX_NAME, {
+        artifactName: "phase-4-stop-native-gateway-before-recovery",
+        env: env(),
+        redactionValues: input.redactionValues,
+        timeoutMs: 30_000,
+      }),
+    readStatus: async (artifactName) =>
+      await repoNemoclaw(input.host, [SANDBOX_NAME, "status"], artifactName, {}, 60_000),
+    startSandbox: async () =>
+      await repoNemoclaw(
+        input.host,
+        [SANDBOX_NAME, "start"],
+        "phase-4-start-after-native-gateway-exit",
+        {},
+        180_000,
+      ),
   });
-  const stoppedStatus = (
-    await pollUntil({
-      artifactPrefix: "phase-4-status-after-native-gateway-exit",
-      attempts: 10,
-      delayMs: 1_000,
-      probe: async (_attempt, artifactName) =>
-        await repoNemoclaw(input.host, [SANDBOX_NAME, "status"], artifactName, {}, 60_000),
-      accept: (result) =>
-        result.exitCode !== 0 && resultText(result).includes(`nemoclaw ${SANDBOX_NAME} start`),
-    })
-  ).value;
-  const recovery = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "start"],
-    "phase-4-start-after-native-gateway-exit",
-    {},
-    180_000,
-  );
   const configEdit =
     !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
       ? await repoNemoclaw(
