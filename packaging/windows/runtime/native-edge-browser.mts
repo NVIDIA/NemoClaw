@@ -21,6 +21,10 @@ export function readNativeEdgeEndpoint(file: string) {
   return content === null ? null : parseDevToolsActivePort(content);
 }
 
+export function transientEdgeEndpointRead(error: unknown) {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EBUSY";
+}
+
 export function standardEdgeCandidates(environment: NodeJS.ProcessEnv) {
   const roots = [
     environment.ProgramFiles,
@@ -291,7 +295,12 @@ export async function startNativeEdgeBrowser(options: {
       options.signal?.throwIfAborted();
       if (child.exitCode !== null || child.signalCode !== null)
         throw new Error("Microsoft Edge exited before publishing its CDP endpoint.");
-      const published = readNativeEdgeEndpoint(active);
+      let published: ReturnType<typeof readNativeEdgeEndpoint> = null;
+      try {
+        published = readNativeEdgeEndpoint(active);
+      } catch (error) {
+        if (!transientEdgeEndpointRead(error)) throw error;
+      }
       if (published !== null) {
         endpoint = published;
         break;

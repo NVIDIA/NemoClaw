@@ -11,6 +11,7 @@ import {
   standardEdgeCandidates,
   validateEdgeMetadata,
   readNativeEdgeEndpoint,
+  transientEdgeEndpointRead,
 } from "./native-edge-browser.mts";
 
 test("Edge reads only a bounded ordinary endpoint file", (context) => {
@@ -27,6 +28,18 @@ test("Edge reads only a bounded ordinary endpoint file", (context) => {
   assert.throws(() => readNativeEdgeEndpoint(file), /exceeds its limit/u);
   fs.writeFileSync(file, "51234\nhttps://example.test/\n");
   assert.throws(() => readNativeEdgeEndpoint(file), /valid CDP endpoint/u);
+});
+
+test("only a transient Edge endpoint file lock is retryable", () => {
+  assert.equal(
+    transientEdgeEndpointRead(Object.assign(new Error("locked"), { code: "EBUSY" })),
+    true,
+  );
+  for (const code of ["EACCES", "ENOENT", "EPERM", undefined])
+    assert.equal(
+      transientEdgeEndpointRead(Object.assign(new Error("not transient"), { code })),
+      false,
+    );
 });
 
 test("only standard Edge installation roots are candidates", () => {
