@@ -9,6 +9,11 @@ import { readHermesOperatorConfigHandoff } from "../../state/sandbox";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import {
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./process-recovery";
+import {
   applyHermesOperatorConfigSnapshot,
   type HermesOperatorConfigRestoreReport,
   parseHermesOperatorConfigSnapshot,
@@ -29,6 +34,7 @@ export interface RebuildRestorePhaseInput {
 export interface RebuildRestorePhaseResult {
   restoreSucceeded: boolean;
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
+  openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
 }
 
 const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = {
@@ -107,23 +113,48 @@ export async function runRebuildRestorePhase(
     log,
   } = input;
   let restoreSucceeded = true;
+  let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | undefined;
   let hermesOperatorConfigRestore: {
     success: boolean;
     report: HermesOperatorConfigRestoreReport;
   } | null = null;
+  if (targetAgentType === "openclaw") {
+    log("Entering verified OpenClaw post-upgrade maintenance window before state restore");
+    const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, runtimeSelection);
+    log(
+      `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+    );
+    if (!doctorWindow.ok) {
+      console.error(
+        `  ${YW}OpenClaw state restore could not enter its gateway-down maintenance window.${R}`,
+      );
+      return { restoreSucceeded: false };
+    }
+    openClawDoctorWindow = doctorWindow.window;
+  }
   if (backupManifest) {
     console.log("");
     console.log("  Restoring workspace state...");
-    const restore = await snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
-      sandboxName,
-      backupManifest,
-      {
-        targetAgentType,
-        ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
-        ...(runtimeSelection ? { runtimeSelection } : {}),
-      },
-      { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
-    );
+    let restore: Awaited<
+      ReturnType<typeof snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority>
+    >;
+    try {
+      restore = await snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
+        sandboxName,
+        backupManifest,
+        {
+          targetAgentType,
+          ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+        { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
+      );
+    } catch (error) {
+      if (openClawDoctorWindow) {
+        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      }
+      throw error;
+    }
     log(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
@@ -150,6 +181,10 @@ export async function runRebuildRestorePhase(
       if (seeded === "failed") restoreSucceeded = false;
     }
     if (!restore.success) {
+      if (openClawDoctorWindow) {
+        await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
+        openClawDoctorWindow = undefined;
+      }
       if (restore.error) console.error(`  Restore blocked: ${restore.error}`);
       console.error(`  ${YW}Partial restore:${R} ${restore.restoredDirs.join(", ") || "none"}`);
       console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
@@ -167,6 +202,7 @@ export async function runRebuildRestorePhase(
   }
   return {
     restoreSucceeded,
+    ...(openClawDoctorWindow ? { openClawDoctorWindow } : {}),
     ...(hermesOperatorConfigRestore
       ? { hermesOperatorConfigRestore: hermesOperatorConfigRestore.report }
       : {}),

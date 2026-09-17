@@ -763,6 +763,43 @@ export async function finishOpenClawPostRestoreDoctor(
   };
 }
 
+const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
+  captureOpenshell,
+  executeSandboxExecCommand,
+  now: Date.now,
+  sleep: sleepSeconds,
+};
+
+/**
+ * Enter the same startup-owned maintenance window before a recreated sandbox
+ * has published its replacement registry row. The caller must independently
+ * revalidate its prepared-create identity around this operation; every
+ * in-sandbox command remains routed through OpenShell without a container
+ * fallback.
+ */
+export function beginUnregisteredOpenClawPostRestoreDoctor(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return beginOpenClawPostRestoreDoctor(
+    sandboxName,
+    runtimeSelection,
+    OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS,
+  );
+}
+
+export function finishUnregisteredOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  return finishOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
+}
+
+export function abortUnregisteredOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorAbortResult> {
+  return abortOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
+}
+
 function executeGatewaySupervisorActionPinned(
   sandboxName: string,
   action: "restart" | "recover" | "probe",

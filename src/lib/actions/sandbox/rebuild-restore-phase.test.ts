@@ -5,10 +5,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
+import * as processRecovery from "./process-recovery";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
@@ -19,6 +20,14 @@ const backupManifest = {
 } as never;
 
 describe("rebuild filesystem restore", () => {
+  beforeEach(() => {
+    vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha" },
+    });
+    vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -49,7 +58,17 @@ describe("rebuild filesystem restore", () => {
       { targetAgentType: "openclaw" },
       { getSandbox: expect.any(Function) },
     );
-    expect(result).toEqual({ restoreSucceeded: true });
+    expect(result).toEqual({
+      restoreSucceeded: true,
+      openClawDoctorWindow: { sandboxName: "alpha" },
+    });
+    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      undefined,
+    );
+    expect(
+      vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mock.invocationCallOrder[0],
+    ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
   });
 
   it("allows whole-state file restore only for an explicit custom image", async () => {

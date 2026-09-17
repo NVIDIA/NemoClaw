@@ -199,6 +199,28 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
+  it("reuses the maintenance window established before filesystem restore", async () => {
+    const window = { sandboxName: "alpha" };
+    vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mockClear();
+
+    await runRebuildPostRestorePhase({ ...input(), openClawDoctorWindow: window });
+
+    expect(processRecovery.beginOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishOpenClawPostRestoreDoctor).toHaveBeenCalledWith(window);
+    expect(order).toEqual([
+      "reconcile",
+      "messaging",
+      "permissions",
+      "mcp",
+      "permissions",
+      "doctor-finish",
+      "config-hash",
+      "config-hash-final",
+      "host-forward",
+      "config-hash-final",
+    ]);
+  });
+
   it("re-establishes mutable config permissions after MCP writers settle", async () => {
     let repairAttempt = 0;
     vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockImplementation(() => {

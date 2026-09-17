@@ -719,6 +719,7 @@ async function rebuildSandboxUnlocked(
             ? { mcpRuntimeSelection: recreateJournal.runtimeSelection }
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
+          openClawDoctorWindow: restored.openClawDoctorWindow,
           hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           preparedBackupRecovery: true,
           versionCheck,
@@ -1028,6 +1029,7 @@ async function rebuildSandboxUnlocked(
         mcpEntries: mcpPreparation.entries,
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
+        openClawDoctorWindow: restored.openClawDoctorWindow,
         hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         preparedBackupRecovery,

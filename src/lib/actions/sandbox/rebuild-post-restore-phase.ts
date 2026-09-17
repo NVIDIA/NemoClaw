@@ -96,6 +96,7 @@ export interface RebuildPostRestorePhaseInput {
   mcpEntries: McpRebuildPreparation["entries"];
   mcpRuntimeSelection?: McpRebuildPreparation["runtimeSelection"];
   restoreSucceeded: boolean;
+  openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
@@ -129,6 +130,28 @@ function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: s
   );
 }
 
+async function resolveOpenClawPostRestoreWindow(
+  sandboxName: string,
+  preparedWindow: OpenClawPostRestoreDoctorWindow | null,
+  runtimeSelection: McpRebuildPreparation["runtimeSelection"] | undefined,
+  log: RebuildLog,
+  bail: RebuildBail,
+): Promise<OpenClawPostRestoreDoctorWindow | null> {
+  if (preparedWindow) return preparedWindow;
+  // Retained accepted-target recovery records from older NemoClaw builds do
+  // not carry the pre-restore window. Preserve their established recovery
+  // path while every current restore supplies the window before mutation.
+  log("Entering verified OpenClaw post-upgrade maintenance window");
+  const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, runtimeSelection);
+  log(
+    `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+  );
+  if (doctorWindow.ok) return doctorWindow.window;
+  console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
+  bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+  return null;
+}
+
 /**
  * Repair agent state, restore MCP/forwarding, reconcile non-MCP registry state, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
@@ -146,6 +169,7 @@ export async function runRebuildPostRestorePhase(
     mcpEntries,
     mcpRuntimeSelection,
     restoreSucceeded,
+    openClawDoctorWindow: preparedOpenClawDoctorWindow,
     hermesOperatorConfigRestore,
     hermesCronRestoreIdentity,
     preparedBackupRecovery,
@@ -189,7 +213,8 @@ export async function runRebuildPostRestorePhase(
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
-  let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  let openClawDoctorWindow: OpenClawPostRestoreDoctorWindow | null =
+    preparedOpenClawDoctorWindow ?? null;
   let hermesGatewayRestartState: HermesPostRestoreGatewayRestartState = "not-applicable";
   let mcpBridgeRestoreUnverified = true;
   // Rebuild freezes the OpenShell target before deletion and revalidates the
@@ -232,22 +257,17 @@ export async function runRebuildPostRestorePhase(
 
   try {
     if (targetAgentName === "openclaw") {
-      // Recreate onboarding returns only after the replacement gateway is live.
-      // Enter a startup-owned maintenance gate first: startup stops the old
-      // process, runs doctor, and proves the gateway has not launched again.
-      // Every state/config writer below therefore runs inside one verified
-      // gateway-down window, and messaging is reapplied after doctor.
-      log("Entering verified OpenClaw post-upgrade maintenance window");
-      const doctorWindow = await beginOpenClawPostRestoreDoctor(sandboxName, mcpRuntimeSelection);
-      log(
-        `Post-upgrade doctor maintenance window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`,
+      // The restore phase enters this window before replacing any live state.
+      // Keep that exact window through every post-restore writer and release it
+      // only after the final config mutation.
+      openClawDoctorWindow = await resolveOpenClawPostRestoreWindow(
+        sandboxName,
+        openClawDoctorWindow,
+        mcpRuntimeSelection,
+        log,
+        bail,
       );
-      if (!doctorWindow.ok) {
-        console.log(`  ${D}Post-upgrade structure repair failed before offline restoration${R}`);
-        bail("OpenClaw post-upgrade structure repair failed during rebuild.");
-        return;
-      }
-      openClawDoctorWindow = doctorWindow.window;
+      if (!openClawDoctorWindow) return;
 
       // #7102: clear stale per-session pinned models left over from an
       // `inference set` before this rebuild. The maintenance receipt above proves
