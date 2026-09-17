@@ -65,7 +65,8 @@ const REPLACEMENT = `\tif (isContainerEnvironment() || (process.platform === "li
 \t\t${MARKER}
 \t\tif (process.platform === "linux" && process.env.OPENSHELL_SANDBOX === "1") {
 \t\t\tif (typeof process.execve !== "function") throw new Error("OpenClaw sandbox restart requires process.execve");
-\t\t\tprocess.execve(process.execPath, [process.execPath, ...process.execArgv, ...process.argv.slice(1)], { ...process.env, ..._opts.env });
+\t\t\t// OpenShell Node bootstrap arguments are single-use; replay only the application argv.
+\t\t\tprocess.execve(process.execPath, process.argv, { ...process.env, ..._opts.env });
 \t\t\tthrow new Error("OpenClaw sandbox process replacement unexpectedly returned");
 \t\t}
 \t\treturn {

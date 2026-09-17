@@ -119,11 +119,10 @@ describe("OpenClaw sandbox restart patch", () => {
     (container) => {
       const { restart, execve, processStub } = restartHarness({ container });
       expect(() => restart({ env: { RESTART_TRACE: "trace-id" } })).toThrow("replaced");
-      expect(execve).toHaveBeenCalledExactlyOnceWith(
-        processStub.execPath,
-        [processStub.execPath, ...processStub.execArgv, ...processStub.argv.slice(1)],
-        { ...processStub.env, RESTART_TRACE: "trace-id" },
-      );
+      expect(execve).toHaveBeenCalledExactlyOnceWith(processStub.execPath, processStub.argv, {
+        ...processStub.env,
+        RESTART_TRACE: "trace-id",
+      });
     },
   );
 
@@ -317,10 +316,20 @@ describe("OpenClaw sandbox restart patch", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "reloads changed ESM dependencies while preserving the gateway PID",
+    "reloads changed ESM dependencies without replaying one-shot Node bootstrap arguments",
     () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-restart-esm-"));
       try {
+        const preloadMarker = path.join(root, "preload-used");
+        const oneShotPreload = path.join(root, "one-shot-preload.cjs");
+        fs.writeFileSync(
+          oneShotPreload,
+          `const fs = require("node:fs");
+const marker = ${JSON.stringify(preloadMarker)};
+if (fs.existsSync(marker)) process.exit(97);
+fs.writeFileSync(marker, "used");
+`,
+        );
         fs.writeFileSync(path.join(root, "version.mjs"), 'export const version = "v1";');
         fs.writeFileSync(path.join(root, "plugin.mjs"), 'export { version } from "./version.mjs";');
         const child = path.join(root, "gateway.mjs");
@@ -340,7 +349,7 @@ if (process.env.RESTARTED !== "1") {
 }
 `,
         );
-        const result = spawnSync(process.execPath, [child], {
+        const result = spawnSync(process.execPath, ["--require", oneShotPreload, child], {
           encoding: "utf8",
           env: { PATH: process.env.PATH },
           timeout: 30_000,
