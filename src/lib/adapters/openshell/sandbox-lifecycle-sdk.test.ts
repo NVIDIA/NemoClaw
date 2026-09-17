@@ -10,14 +10,18 @@ const target = { kind: "named" as const, gatewayName: "nemoclaw" };
 function harness() {
   const startSandbox = vi.fn(async () => ({}));
   const stopSandbox = vi.fn(async () => ({}));
-  const connect = vi.fn(async () => ({ raw: { startSandbox, stopSandbox } }));
+  const waitReady = vi.fn(async () => ({}));
+  const connect = vi.fn(async () => ({
+    raw: { startSandbox, stopSandbox },
+    sandbox: { waitReady },
+  }));
   const lifecycle = createSdkOpenShellSandboxStateLifecycle({ connect });
-  return { connect, lifecycle, startSandbox, stopSandbox };
+  return { connect, lifecycle, startSandbox, stopSandbox, waitReady };
 }
 
 describe("OpenShell SDK sandbox lifecycle", () => {
   it("starts and stops the named sandbox through typed SDK RPCs", async () => {
-    const { connect, lifecycle, startSandbox, stopSandbox } = harness();
+    const { connect, lifecycle, startSandbox, stopSandbox, waitReady } = harness();
 
     await expect(lifecycle.startSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
       kind: "accepted",
@@ -35,6 +39,10 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       { name: "alpha", workspace: "default" },
       { signal: expect.any(AbortSignal) },
     );
+    expect(waitReady).toHaveBeenCalledOnce();
+    expect(waitReady).toHaveBeenCalledWith("alpha", 75, {
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("rejects an invalid name before it connects", async () => {
@@ -51,6 +59,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     const denied = Object.assign(new Error("token=secret"), { code: "auth" });
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => ({
+        sandbox: { waitReady: async () => ({}) },
         raw: {
           startSandbox: async () => Promise.reject(denied),
           stopSandbox: async () => ({}),

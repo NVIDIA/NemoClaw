@@ -21,6 +21,9 @@ export interface OpenShellSandboxStateLifecycle {
 
 type CallOptions = Readonly<{ signal: AbortSignal }>;
 type SdkClient = Readonly<{
+  sandbox: Readonly<{
+    waitReady(name: string, timeoutSecs: number, options: CallOptions): Promise<unknown>;
+  }>;
   raw: Readonly<{
     startSandbox(
       request: Readonly<{ name: string; workspace: string }>,
@@ -116,6 +119,13 @@ async function mutate(
       { name: request.sandboxName, workspace: "default" },
       { signal: controller.signal },
     );
+    if (action === "start") {
+      await client.sandbox.waitReady(
+        request.sandboxName,
+        Math.max(1, Math.ceil((request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS) / 1000)),
+        { signal: controller.signal },
+      );
+    }
     return { kind: "accepted" };
   } catch (error) {
     return { kind: "failed", error: lifecycleError(error, controller.signal.aborted) };
