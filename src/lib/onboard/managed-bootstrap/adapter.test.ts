@@ -959,6 +959,38 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.managedBootstrapRollbackError).toBe(rollbackFailure);
   });
 
+  it("retains a frozen primary failure when rollback also fails", async () => {
+    const fixture = adapterFor("hermes");
+    const primaryFailure = Object.freeze(new Error("bootstrap unavailable"));
+    const rollbackFailure = new Error("rollback unavailable");
+    vi.mocked(fixture.adapter.awaitBootstrap).mockRejectedValueOnce(primaryFailure);
+    vi.mocked(fixture.adapter.finalizeBootstrap).mockRejectedValueOnce(rollbackFailure);
+    const prepared = await prepareManagedBootstrapSequence(
+      fixture.adapter,
+      preparationInput("hermes"),
+    );
+    const failure = await captureFailure(
+      activateManagedBootstrapSequence(fixture.adapter, {
+        transaction: prepared,
+        authorityStore: authorityStore(fixture.order),
+        timeoutSecs: 30,
+      }),
+    );
+
+    expect(failure).toBe(primaryFailure);
+    expect(failure.message).toBe("bootstrap unavailable");
+    expect(Object.hasOwn(failure, "managedBootstrapRollbackError")).toBe(false);
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenLastCalledWith({
+      outcome: "rollback",
+      handle: prepared.handle,
+      snapshot: prepared.snapshot,
+      prepared: prepared.prepared,
+      durablePreparation: expect.objectContaining({ bootstrapIdentity: IDENTITY }),
+      replacement: expect.any(Object),
+      completion: null,
+    });
+  });
+
   it("binds rollback to the snapshot and commit to the activated transaction", async () => {
     const result = await prepareAndActivate("langchain-deepagents-code");
     vi.mocked(result.adapter.finalizeBootstrap).mockResolvedValueOnce({
