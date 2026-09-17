@@ -83,7 +83,26 @@ function writeBlockingOpenShell(home: string, descendantMarker: string): string 
   return executable;
 }
 
-function writeSiblingRegistry(home: string): void {
+function writeCredentialProbeOpenShell(home: string, marker: string): string {
+  const executable = path.join(home, "credential-probe-openshell.cjs");
+  fs.writeFileSync(
+    executable,
+    [
+      "#!/usr/bin/env node",
+      'const fs = require("node:fs");',
+      `fs.writeFileSync(${JSON.stringify(marker)}, String(process.ppid));`,
+      'process.on("SIGTERM", () => {});',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return executable;
+}
+
+function writeSiblingRegistry(
+  home: string,
+  entryOverrides: Readonly<Record<string, unknown>> = {},
+): void {
   const stateRoot = path.join(home, ".nemoclaw", "gateways", "9000");
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
@@ -99,6 +118,7 @@ function writeSiblingRegistry(home: string): void {
           dashboardPort: 18_789,
           gatewayName: "nemoclaw-9000",
           gatewayPort: 9000,
+          ...entryOverrides,
         },
       },
     })}\n`,
@@ -149,6 +169,64 @@ describe("compiled rebuild owning-registry worker", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it("rejects delegated worker startup on unsupported native Windows", () => {
+    expect(() => rebuildOwningRegistryDependencies.assertWorkerPlatformSupported("win32")).toThrow(
+      "Delegated owning-registry rebuild work is unsupported on native Windows. Run NemoClaw inside WSL.",
+    );
+  });
+
+  it.runIf(process.platform === "linux")(
+    "forwards only allowlisted credentials into the delegated rebuild consumer",
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-credential-"));
+      const marker = path.join(home, "credential-probe.json");
+      let worker: Promise<void> | undefined;
+      try {
+        const recoveryManifest = writeRecoveryFixture(home);
+        writeSiblingRegistry(home, {
+          provider: "build",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        });
+        vi.stubEnv("HOME", home);
+        vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeCredentialProbeOpenShell(home, marker));
+        vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "nvapi-worker-test-value");
+        vi.stubEnv("UNRELATED_REBUILD_SECRET", "must-not-cross-worker-boundary");
+
+        worker = rebuildOwningRegistryDependencies.runWorker(
+          {
+            operation: "rebuild",
+            sandboxName: "alpha",
+            options: { yes: true },
+            executionOptions: {
+              recoveryManifest,
+              allowLegacyManagedImageRecovery: true,
+            },
+          },
+          9000,
+          { timeoutMs: 3_000, terminationGraceMs: 100 },
+        );
+
+        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), { timeout: 2_000 });
+        const workerPid = Number(fs.readFileSync(marker, "utf8"));
+        const workerEnvironment = fs
+          .readFileSync(`/proc/${String(workerPid)}/environ`, "utf8")
+          .split("\0");
+
+        expect(workerEnvironment).toContain("NVIDIA_INFERENCE_API_KEY=nvapi-worker-test-value");
+        expect(workerEnvironment).not.toContain(
+          "UNRELATED_REBUILD_SECRET=must-not-cross-worker-boundary",
+        );
+        await expect(worker).rejects.toThrow(
+          "The worker was terminated, but the operation outcome is unknown.",
+        );
+      } finally {
+        await worker?.catch(() => undefined);
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("binds a valid rebuild descriptor to the selected sibling registry root", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-sibling-root-"));

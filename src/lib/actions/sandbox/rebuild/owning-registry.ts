@@ -46,7 +46,16 @@ export type OwningRegistryWorkerResult = Readonly<{
   message?: string;
 }>;
 
+function assertWorkerPlatformSupported(platform: NodeJS.Platform): void {
+  if (platform === "win32") {
+    throw new Error(
+      "Delegated owning-registry rebuild work is unsupported on native Windows. Run NemoClaw inside WSL.",
+    );
+  }
+}
+
 type RebuildOwningRegistryDependencies = {
+  assertWorkerPlatformSupported: typeof assertWorkerPlatformSupported;
   findSandbox: typeof findSandboxAcrossGatewayRoots;
   findRecoveryRoot: typeof findRebuildRecoveryStorageRoot;
   isHostFenceHeld: typeof isCurrentPortableHostFenceHeld;
@@ -194,7 +203,8 @@ async function runWorker(
   if (!Number.isInteger(terminationGraceMs) || terminationGraceMs <= 0) {
     throw new Error("Rebuild worker termination grace must be a positive integer.");
   }
-  const dedicatedProcessGroup = process.platform !== "win32";
+  assertWorkerPlatformSupported(process.platform);
+  const dedicatedProcessGroup = true;
   const child = spawn(process.execPath, [WORKER_PATH], {
     detached: dedicatedProcessGroup,
     env: rebuildWorkerEnv(gatewayPort),
@@ -289,6 +299,7 @@ async function runWorker(
 }
 
 export const rebuildOwningRegistryDependencies: RebuildOwningRegistryDependencies = {
+  assertWorkerPlatformSupported,
   findSandbox: findSandboxAcrossGatewayRoots,
   findRecoveryRoot: findRebuildRecoveryStorageRoot,
   isHostFenceHeld: isCurrentPortableHostFenceHeld,
