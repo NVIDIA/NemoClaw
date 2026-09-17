@@ -32,11 +32,7 @@ import type {
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
-import {
-  onboardSandboxOrSkipOnRateLimit,
-  precleanSandbox,
-  sandboxShWithArgs,
-} from "../live/phase6-messaging-helpers.ts";
+import { precleanSandbox, sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
   command: string;
@@ -182,43 +178,6 @@ describe("E2E fixture clients", () => {
           env: expect.objectContaining({
             PATH: expect.any(String),
           }),
-        },
-      },
-    ]);
-  });
-
-  it("skips onboarding when NVIDIA endpoint validation is rate-limited", async () => {
-    const runner = new FakeRunner();
-    runner.enqueue({
-      exitCode: 1,
-      stderr: "NVIDIA Endpoints endpoint validation failed: HTTP 429 too many requests",
-    });
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-    const skip = vi.fn((_note?: string): never => {
-      throw new Error("skipped");
-    });
-
-    await expect(
-      onboardSandboxOrSkipOnRateLimit(
-        host,
-        { NEMOCLAW_SANDBOX_NAME: "e2e-survivor" },
-        ["secret"],
-        "survivor-onboard",
-        123_000,
-        skip,
-        "rate limited",
-      ),
-    ).rejects.toThrow("skipped");
-    expect(skip).toHaveBeenCalledWith("rate limited");
-    expect(runner.calls).toEqual([
-      {
-        command: "nemoclaw",
-        args: ["onboard", "--non-interactive"],
-        options: {
-          artifactName: "survivor-onboard",
-          env: { NEMOCLAW_SANDBOX_NAME: "e2e-survivor" },
-          redactionValues: ["secret"],
-          timeoutMs: 123_000,
         },
       },
     ]);
@@ -738,6 +697,65 @@ describe("E2E fixture clients", () => {
       statusHost,
       new SandboxClient(statusRunner),
     ).expectOpenshellStatusConnected();
+  });
+
+  it("gateway client proves registration, listener, and host runtime are removed", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 0 });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await gateway.expectRemoved("nemoclaw", {
+      artifactName: "final-gateway",
+      gatewayPort: 18_080,
+    });
+
+    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+      ["openshell", ["status"]],
+      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+      ["sh", expect.any(Array)],
+      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+      ["true", []],
+    ]);
+    expect(runner.calls[0].options).toMatchObject({
+      artifactName: "final-gateway-status",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+    });
+    expect(runner.calls[1].options).toMatchObject({
+      artifactName: "final-gateway-listener",
+    });
+  });
+
+  it("gateway client rejects an inconclusive listener absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
+    runner.enqueue({ exitCode: 1, stderr: "lsof: command unavailable" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "gateway listener still exists or could not be disproved on port 8080",
+    );
+  });
+
+  it("gateway client rejects a gateway that still accepts status connections", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "openshell status did not prove gateway 'nemoclaw' disconnected",
+    );
   });
 
   it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {

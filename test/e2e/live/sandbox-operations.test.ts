@@ -9,12 +9,12 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
-  onboardSandboxOrSkipOnRateLimit,
   phase6Env,
   precleanSandbox,
   redactionValues,
   sandboxSh,
 } from "./phase6-messaging-helpers.ts";
+import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sb-ops";
 const SURVIVOR_SANDBOX_NAME = `${SANDBOX_NAME}-survivor`;
@@ -164,15 +164,15 @@ test(
     expect(read.stdout.trim(), resultText(read)).toBe(marker);
 
     progress.phase("preserve the gateway for an unregistered live sandbox");
-    await onboardSandboxOrSkipOnRateLimit(
-      host,
-      survivorEnv,
-      redactions,
-      "sandbox-operations-survivor-onboard",
-      FINAL_DESTROY_TIMEOUT_MS * 10,
-      skip,
-      "NVIDIA endpoint validation was rate-limited before final cleanup assertions ran",
-    );
+    const survivorOnboard = await host.nemoclaw(["onboard", "--non-interactive"], {
+      artifactName: "sandbox-operations-survivor-onboard",
+      env: survivorEnv,
+      redactionValues: redactions,
+      timeoutMs: FINAL_DESTROY_TIMEOUT_MS * 10,
+    });
+    survivorOnboard.exitCode !== 0 &&
+      isNvidiaEndpointRateLimitFailure(resultText(survivorOnboard)) &&
+      skip("NVIDIA endpoint validation was rate-limited before final cleanup assertions ran");
     await expectSandboxReady(
       host,
       SURVIVOR_SANDBOX_NAME,
@@ -236,8 +236,10 @@ test(
     );
     const finalDestroyElapsedMs = Date.now() - finalDestroyStartedAt;
     assertExitZero(finalDestroy, "final sandbox destroy with gateway cleanup");
-    await gateway.expectHostRuntimeStopped({
-      artifactName: "sandbox-operations-gateway-runtime-stopped",
+    await gateway.expectRemoved(gatewayName, {
+      artifactName: "sandbox-operations-gateway-removed",
+      env,
+      redactionValues: redactions,
     });
 
     await artifacts.target.complete({

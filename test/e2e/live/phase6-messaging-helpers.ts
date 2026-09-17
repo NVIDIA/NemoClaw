@@ -188,27 +188,6 @@ export async function installSandboxOrSkipOnRateLimit(
   }
 }
 
-export async function onboardSandboxOrSkipOnRateLimit(
-  host: HostCliClient,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  artifactName: string,
-  timeoutMs: number,
-  skip: (note?: string) => never,
-  skipMessage: string,
-): Promise<ShellProbeResult> {
-  const result = await host.nemoclaw(["onboard", "--non-interactive"], {
-    artifactName,
-    env,
-    redactionValues: redactions,
-    timeoutMs,
-  });
-  if (result.exitCode !== 0 && isNvidiaEndpointRateLimitFailure(resultText(result))) {
-    skip(skipMessage);
-  }
-  return result;
-}
-
 export async function expectSandboxReady(
   host: HostCliClient,
   sandboxName: string,
