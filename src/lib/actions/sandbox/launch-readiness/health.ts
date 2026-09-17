@@ -28,7 +28,10 @@ import {
   isDcodeOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
 } from "../inference-route-health";
-import { isSandboxGatewayRunningForStatus } from "../process-recovery";
+import {
+  isSandboxGatewayHttpReachableForStatus,
+  isSandboxGatewayRunningForStatus,
+} from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
   | "missing"
@@ -101,7 +104,7 @@ export function createBoundLaunchReadinessDeps(
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
-      isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
+      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
         commandExecutor,
       }),
     forwardsHealthy: (sandboxName, gatewayName) =>

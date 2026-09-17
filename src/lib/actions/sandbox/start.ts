@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { retryUntilAsync } from "../../core/retry";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -16,6 +19,7 @@ import {
 } from "./inference-invocation-probe";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -54,9 +58,39 @@ export interface SandboxStartDeps {
   updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   verifyGateway?: (sandboxName: string) => Promise<void>;
+  probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
+  delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
+}
+
+const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
+const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+
+/** Wait only for a definitively stopped Hermes gateway after this command started its sandbox. */
+async function waitForStartedHermesGatewayProcess(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  deps: SandboxStartDeps,
+  log: (message: string) => void,
+): Promise<boolean | null | undefined> {
+  if (sandbox.agent !== "hermes" || sandbox.stopped !== true) return undefined;
+  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
+  return await retryUntilAsync(
+    () => (deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus)(sandboxName, gatewayName),
+    {
+      accept: (running) => running !== false,
+      retryDelaysMs: Array.from(
+        { length: HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS - 1 },
+        () => HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS,
+      ),
+      onRetry: (_running, delayMs) => {
+        log(`  Hermes gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
+      },
+      sleep: deps.delayGatewayProcessProbe ?? sleep,
+    },
+  );
 }
 
 /**
@@ -151,16 +185,35 @@ async function startSandboxWithinLifecycleFence(
     return { exitCode: 0 };
   }
 
-  const readiness: { inference: SandboxInferenceInvocationResult | null } = {
+  const readiness: {
+    gatewayProcess: boolean | null | undefined;
+    inference: SandboxInferenceInvocationResult | null;
+  } = {
+    gatewayProcess: undefined,
     inference: null,
   };
+  const settleHermesGatewayProcess =
+    resolved.sandbox.agent === "hermes" && resolved.sandbox.stopped === true;
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Waiting for OpenShell sandbox readiness…");
     await waitForSandboxReady(name, deps.observer, deps.allowDockerRuntimeInspection);
+    readiness.gatewayProcess = await waitForStartedHermesGatewayProcess(
+      name,
+      resolved.sandbox,
+      deps,
+      log,
+    );
+    if (settleHermesGatewayProcess && readiness.gatewayProcess === false) return;
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
+  if (settleHermesGatewayProcess && readiness.gatewayProcess === false) {
+    log(
+      "  The sandbox started but its Hermes gateway did not become responsive before the startup settlement window expired.",
+    );
+    return { exitCode: 1 };
+  }
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);

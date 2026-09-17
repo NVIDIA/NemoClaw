@@ -62,7 +62,7 @@ describe("PR review advisor", () => {
     const requests: string[] = [];
     const olderReviews = Array.from({ length: 100 }, (_, index) => ({
       id: index + 1,
-      state: "CHANGES_REQUESTED",
+      state: "APPROVED",
       commit_id: "a".repeat(40),
       submitted_at: `2026-09-14T10:${String(index % 60).padStart(2, "0")}:00Z`,
       author_association: "MEMBER",
