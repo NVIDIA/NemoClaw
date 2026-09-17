@@ -220,6 +220,11 @@ describe("Hermes image build probes", () => {
     );
   });
 
+  it("pins the image dependency probe to the exact Hermes 0.21.3 lock", () => {
+    expect(baseDockerfile).toContain("'tornado': '6.5.8'");
+    expect(baseDockerfile).not.toContain("'tornado': '6.5.7'");
+  });
+
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {
     const result = runHermesReleaseIdentityGuard(reviewedHermesReleaseIdentities[0].environment);
 
