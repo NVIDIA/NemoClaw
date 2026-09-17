@@ -288,10 +288,7 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 # create new top-level state while the gateway user cannot remove config files.
 HERMES_DIR="/sandbox/.hermes"
 readonly HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
-readonly HERMES_GATEWAY_LAZY_INSTALL_TARGET="/run/nemoclaw/hermes-gateway-lazy-packages"
-readonly HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"
 export HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-export HERMES_BUNDLED_PLUGINS="$HERMES_MANAGED_BUNDLED_PLUGINS"
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
@@ -435,55 +432,19 @@ verify_hermes_config_integrity() {
 }
 
 prepare_hermes_lazy_dependencies() {
-  local lazy_target="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-  local uv_cache_target="/sandbox/.hermes/cache/uv"
-  local root_separated=0
-  local env_name
-  local -a installer=(/usr/bin/env)
+  local -a installer=()
 
   if [ "$(id -u)" -eq 0 ]; then
-    prepare_hermes_gateway_lazy_install_target || return 1
-    lazy_target="$HERMES_GATEWAY_LAZY_INSTALL_TARGET"
-    uv_cache_target="${HERMES_GATEWAY_LAZY_INSTALL_TARGET}/.uv-cache"
-    root_separated=1
-
-    # The gateway installer must not consume package-manager configuration or
-    # Python startup paths from the sandbox environment. In particular, uv
-    # discovers uv.toml from the current workspace and pip's fallback Python
-    # process imports from its current directory unless safe-path mode is
-    # inherited. Remove the complete input families before adding back only
-    # the fixed gateway values below.
-    while IFS= read -r env_name; do
-      case "$env_name" in
-        UV_* | PIP_* | PYTHON* | LD_* | DYLD_* | BASH_ENV | ENV | VIRTUAL_ENV) installer+=(-u "$env_name") ;;
-      esac
-    done < <(compgen -e)
+    prepare_hermes_native_lazy_install_target || return 1
+    installer+=("${STEP_DOWN_PREFIX_GATEWAY[@]}")
   fi
 
   installer+=(
+    /usr/bin/env
     HOME=/sandbox
-    UV_CACHE_DIR="$uv_cache_target"
-    UV_NO_CACHE=1
     HERMES_HOME="$HERMES_DIR"
-    HERMES_LAZY_INSTALL_TARGET="$lazy_target"
+    HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
   )
-  if [ "$root_separated" -eq 1 ]; then
-    installer+=(
-      UV_NO_CONFIG=1
-      PIP_CONFIG_FILE=/dev/null
-      PIP_DISABLE_PIP_VERSION_CHECK=1
-      PYTHONSAFEPATH=1
-      PYTHONNOUSERSITE=1
-      PYTHONUTF8=1
-      PATH=/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    )
-  fi
-
-  # A root-separated gateway installs and consumes dependencies only through
-  # its private /run target. Same-UID startup keeps the sandbox-owned target.
-  if [ "$root_separated" -eq 1 ]; then
-    installer+=("${STEP_DOWN_PREFIX_GATEWAY[@]}")
-  fi
   installer+=("$_HERMES_PYTHON" -I -c)
 
   "${installer[@]}" '
@@ -2189,10 +2150,10 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" current "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" current
@@ -2204,10 +2165,10 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
+  ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
   fi
-  ensure_dashboard_log_stream || return 1
   start_socat_forwarder \
     "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID \
     "$DASHBOARD_PID" sandbox
@@ -2217,6 +2178,7 @@ wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local deadline=$((SECONDS + 90))
   local code
+  local gateway_status
   local service_user=current
   [ "$(id -u)" -eq 0 ] && service_user=gateway
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -2233,8 +2195,14 @@ wait_for_hermes_gateway_internal() {
       esac
     fi
     if ! hermes_tracked_role_is_current gateway "$gateway_pid" "$service_user" "$INTERNAL_PORT"; then
-      wait "$gateway_pid"
-      return $?
+      gateway_status=0
+      wait "$gateway_pid" || gateway_status=$?
+      echo "[gateway] Hermes gateway exited before readiness (status ${gateway_status})" >&2
+      if [ -s /tmp/gateway.log ]; then
+        sed 's/^/[gateway-log:] /' /tmp/gateway.log >&2
+      fi
+      [ "$gateway_status" -ne 0 ] || return 1
+      return "$gateway_status"
     fi
     sleep 1
   done
@@ -2345,7 +2313,6 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 export HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}"
-export HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2637,11 +2604,7 @@ validate_hermes_env_secret_boundary() {
 }
 
 validate_hermes_runtime_env_secret_boundary() {
-  local lazy_target="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
-  if [ "$(id -u)" -eq 0 ]; then
-    lazy_target="$HERMES_GATEWAY_LAZY_INSTALL_TARGET"
-  fi
-  HERMES_LAZY_INSTALL_TARGET="$lazy_target" "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
+  HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET" "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
     "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
@@ -2715,8 +2678,7 @@ launch_hermes_gateway() {
   fi
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
-    HERMES_LAZY_INSTALL_TARGET="${HERMES_GATEWAY_LAZY_INSTALL_TARGET}" \
-    HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}" \
+    HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
     nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh "$HERMES" gateway run &
   GATEWAY_PID=$!
@@ -2870,34 +2832,48 @@ prepare_hermes_root_runtime_dir() {
   return 0
 }
 
-prepare_hermes_gateway_lazy_install_target() {
-  local target_metadata runtime_device target_device
-  prepare_hermes_root_runtime_dir || return 1
-  if [ -L "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is a symbolic link" >&2
+prepare_hermes_native_lazy_install_target() {
+  if [ -L "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is a symbolic link" >&2
     return 1
   fi
-  if [ ! -e "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    install -d -o gateway -g gateway -m 0700 -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" || {
-      echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target could not be created safely" >&2
+  if [ ! -e "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    install -d -o sandbox -g sandbox -m 2770 -- "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" || {
+      echo "[SECURITY] Refusing Hermes startup because the native lazy-install target could not be created safely" >&2
       return 1
     }
   fi
-  if [ ! -d "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ] || [ -L "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is not a real directory" >&2
+  if [ ! -d "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ] || [ -L "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" ]; then
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target is not a real directory" >&2
     return 1
   fi
-  runtime_device="$(stat -c '%d' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || runtime_device=""
-  target_device="$(stat -c '%d' -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null)" || target_device=""
-  if [ -z "$runtime_device" ] || [ "$target_device" != "$runtime_device" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target is outside the managed runtime filesystem" >&2
-    return 1
-  fi
-  chown gateway:gateway -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  chmod 0700 -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null || true
-  target_metadata="$(stat -c '%U:%G:%a' -- "$HERMES_GATEWAY_LAZY_INSTALL_TARGET" 2>/dev/null)" || target_metadata=""
-  if [ "$target_metadata" != "gateway:gateway:700" ]; then
-    echo "[SECURITY] Refusing Hermes startup because the gateway lazy-install target must be gateway-owned with mode 0700" >&2
+  if ! "$_HERMES_PYTHON" -I - "$HERMES_SANDBOX_LAZY_INSTALL_TARGET" <<'PY'; then
+import os
+import pwd
+import stat
+import sys
+
+target = sys.argv[1]
+flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open(target, flags)
+try:
+    before = os.fstat(fd)
+    if not stat.S_ISDIR(before.st_mode):
+        raise RuntimeError("native lazy-install target is not a directory")
+    sandbox = pwd.getpwnam("sandbox")
+    os.fchown(fd, sandbox.pw_uid, sandbox.pw_gid)
+    os.fchmod(fd, 0o2770)
+    after = os.fstat(fd)
+    if (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) != (
+        sandbox.pw_uid,
+        sandbox.pw_gid,
+        0o2770,
+    ):
+        raise RuntimeError("native lazy-install target metadata was not applied")
+finally:
+    os.close(fd)
+PY
+    echo "[SECURITY] Refusing Hermes startup because the native lazy-install target must be sandbox:sandbox with mode 2770" >&2
     return 1
   fi
   return 0
@@ -2948,7 +2924,6 @@ launch_hermes_gateway_current_user() {
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
-    HERMES_BUNDLED_PLUGINS="${HERMES_MANAGED_BUNDLED_PLUGINS}" \
     nohup "$HERMES" gateway run >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   if ! hermes_capture_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT"; then
@@ -3030,10 +3005,6 @@ fi
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
-publish_hermes_root_runtime_marker hermes-bundled-plugins-only 1 || exit 1
-if [ -n "$(find -P "$HERMES_DIR/plugins" -mindepth 1 -type d -print -quit 2>/dev/null)" ]; then
-  echo "[gateway] WARNING: root-separated Hermes ignores sandbox-owned user plugins; rebuild required plugins into /opt/hermes/plugins" >&2
-fi
 prepare_hermes_root_runtime
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
