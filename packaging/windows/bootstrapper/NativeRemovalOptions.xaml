@@ -1,0 +1,17 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<UserControl x:Class="Nvidia.NemoClaw.Bootstrapper.NativeRemovalOptions"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <StackPanel>
+  <TextBlock x:Name="UnavailableDetail" Visibility="Collapsed" Foreground="#BBBBBB" TextWrapping="Wrap" Margin="0,0,0,10"
+   Text="This older preview keeps your agent data when uninstalled. Install the current preview to use selected data removal." />
+  <CheckBox x:Name="RemoveData" Content="Also remove selected agent data and saved keys" Foreground="White"
+   Checked="SelectionChanged" Unchecked="SelectionChanged" AutomationProperties.AutomationId="RemoveOwnedAgentData" />
+  <StackPanel x:Name="Selections" Visibility="Collapsed" Margin="20,10,0,0">
+   <TextBlock Text="Choose the agents to reset. Stop their active sessions first. Shared local models are retained."
+    Foreground="#BBBBBB" TextWrapping="Wrap" Margin="0,0,0,8" />
+   <WrapPanel x:Name="Agents" />
+  </StackPanel>
+ </StackPanel>
+</UserControl>
