@@ -153,17 +153,22 @@ function hasReadOnlyTools(agent: NemoClawAgentConfig): boolean {
   return agent.type === "openclaw" && agent.tools !== undefined && "allow" in agent.tools;
 }
 
-function isPrimarySecondaryPair(agents: readonly NemoClawAgentConfig[]): boolean {
-  const [primary, secondary] = agents;
+function isPrimaryWithReadOnlyRoster(agents: readonly NemoClawAgentConfig[]): boolean {
+  const [primary, ...additional] = agents;
   return (
-    agents.length === 2 &&
+    additional.length > 0 &&
     primary?.name === "primary" &&
     primary.type === "openclaw" &&
     !hasReadOnlyTools(primary) &&
-    secondary?.type === "openclaw" &&
-    hasReadOnlyTools(secondary) &&
-    isValidNemoClawSecondaryAgentName(secondary.name) &&
-    secondary.execution === undefined
+    additional.every(
+      (agent) =>
+        agent.type === "openclaw" &&
+        hasReadOnlyTools(agent) &&
+        isValidNemoClawSecondaryAgentName(agent.name) &&
+        agent.execution === undefined &&
+        agent.interfaces === undefined &&
+        agent.observability === undefined,
+    )
   );
 }
 
@@ -171,11 +176,13 @@ function sharesPrimaryHostedRoute(
   agents: readonly NemoClawAgentConfig[],
   providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
 ): boolean {
-  const [primary, secondary] = agents;
+  const [primary, ...additional] = agents;
   const provider = providers.get(primary?.inference.routes[0]?.providerRef ?? "");
   return (
     primary?.inference.routes.length === 1 &&
-    isDeepStrictEqual(primary.inference.routes, secondary?.inference.routes) &&
+    additional.every((agent) =>
+      isDeepStrictEqual(primary.inference.routes, agent.inference.routes),
+    ) &&
     provider !== undefined &&
     !("serving" in provider)
   );
@@ -189,12 +196,12 @@ function additionalAgentProblems(
   if (!sandbox.agents.some(hasReadOnlyTools)) return [];
   const valid =
     sandbox.runtime.provider === "docker" &&
-    isPrimarySecondaryPair(sandbox.agents) &&
+    isPrimaryWithReadOnlyRoster(sandbox.agents) &&
     sharesPrimaryHostedRoute(sandbox.agents, providers);
   return valid
     ? []
     : [
-        `/spec/sandboxes/${sandboxIndex}/agents must pair primary with one read-only OpenClaw agent sharing its hosted route`,
+        `/spec/sandboxes/${sandboxIndex}/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route`,
       ];
 }
 

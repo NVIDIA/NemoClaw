@@ -267,6 +267,62 @@ async function runOpenClawSubagentTurn(
   );
 }
 
+export function managedActivationOpenClawPluginScript(): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/managed-activation-native-plugin",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "managed-activation-native",
+    name: "Managed Activation Native Plugin",
+    version: "1.0.0",
+    description: "Managed-image native plugin fixture",
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint =
+    'export default { id: "managed-activation-native", name: "Managed Activation Native Plugin", version: "1.0.0", register() {} };\n';
+  return [
+    "source_dir=/sandbox/managed-activation-native-plugin",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+  ].join("\n");
+}
+
+function managedActivationNativeStateScript(agent: ShippedManagedImageAgent): string {
+  if (agent === "langchain-deepagents-code") return "";
+  return agent === "openclaw"
+    ? managedActivationOpenClawPluginScript()
+    : [
+        "plugin=/sandbox/.hermes/plugins/managed-activation-native",
+        "package=/sandbox/.hermes/lazy-packages/managed_activation_native",
+        'mkdir -p "$plugin" "$package"',
+        "printf '%s\\n' 'name: managed-activation-native' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
+        "printf '%s\\n' 'MANAGED_ACTIVATION_NATIVE = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
+        "printf '%s\\n' 'MANAGED_ACTIVATION_NATIVE = \"present\"' > \"$package/__init__.py\"",
+      ].join("\n");
+}
+
+function managedActivationNativeStateReadbackScript(agent: ShippedManagedImageAgent): string {
+  if (agent === "langchain-deepagents-code") return "";
+  return agent === "openclaw"
+    ? "HOME=/sandbox openclaw plugins inspect managed-activation-native --runtime --json >/dev/null"
+    : [
+        "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/managed-activation-native-plugins",
+        "grep -Fq 'managed-activation-native' /tmp/managed-activation-native-plugins",
+        "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/managed-activation-native/__init__.py",
+        "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, managed_activation_native'",
+      ].join("\n");
+}
+
 export function managedHermesBoundaryPoisonCommand(): string {
   return `set -eu; cp /sandbox/.hermes/.env ${shellQuote(HERMES_BOUNDARY_BACKUP)}; printf '%s\\n' ${shellQuote(`DEVTEST_API_TOKEN=${HERMES_BOUNDARY_SENTINEL}`)} >> /sandbox/.hermes/.env`;
 }
@@ -554,7 +610,13 @@ async function qualifyAgent(
   const writeMarker = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
-      `umask 077; printf '%s\\n' ${shellQuote(marker)} > /sandbox/.nemoclaw-managed-activation-marker; sync`,
+      [
+        "set -eu",
+        `umask 077; printf '%s\\n' ${shellQuote(marker)} > /sandbox/.nemoclaw-managed-activation-marker; sync`,
+        managedActivationNativeStateScript(agent),
+      ]
+        .filter((line) => line !== "")
+        .join("\n"),
     ),
     {
       artifactName: `${agent}-write-durable-marker`,
@@ -572,9 +634,18 @@ async function qualifyAgent(
     env,
   });
   expectManagedReceipt(sandboxName, contract);
-  const readMarker = await sandbox.exec(
+  const readMarker = await sandbox.execShell(
     sandboxName,
-    ["cat", "/sandbox/.nemoclaw-managed-activation-marker"],
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        'marker="$(cat /sandbox/.nemoclaw-managed-activation-marker)"',
+        managedActivationNativeStateReadbackScript(agent),
+        'printf "%s\\n" "$marker"',
+      ]
+        .filter((line) => line !== "")
+        .join("\n"),
+    ),
     {
       artifactName: `${agent}-read-durable-marker`,
       env,
