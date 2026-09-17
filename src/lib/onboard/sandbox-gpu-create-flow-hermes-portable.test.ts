@@ -105,7 +105,7 @@ describe("Hermes portable sandbox create flow", () => {
     }
   });
 
-  it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
+  it("does not infer Portable ownership from ambient profile state", async () => {
     const input = createInput();
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = false;
@@ -117,7 +117,7 @@ describe("Hermes portable sandbox create flow", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
   });
 
   it("uses the Hermes portable create handoff without Docker or OpenClaw lifecycle mutation (#9203)", async () => {
