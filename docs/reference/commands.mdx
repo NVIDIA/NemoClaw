@@ -1414,7 +1414,7 @@ $$nemoclaw my-assistant recover
 
 <AgentOnly variant="openclaw,hermes">
 
-The privileged control path requires a running direct sandbox container that belongs to the named registry entry. Supported built-in images use either a direct root entrypoint or the OpenShell-managed process shape with OpenShell as PID 1 and exactly one nonroot `nemoclaw-start` supervisor. An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape fails with the `privileged control unavailable` failure layer. Kubernetes and other deployments without a matching direct container also fail with that layer.
+For `recover`, the privileged control path requires a running direct sandbox container that belongs to the named registry entry. Supported built-in images use either a direct root entrypoint or the OpenShell-managed process shape with OpenShell as PID 1 and exactly one nonroot `nemoclaw-start` supervisor. An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape fails with the `privileged control unavailable` failure layer. Kubernetes and other deployments without a matching direct container also fail with that layer.
 
 ### `$$nemoclaw <name> gateway restart`
 
