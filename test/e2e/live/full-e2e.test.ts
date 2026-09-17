@@ -4,8 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -146,6 +145,168 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
+type NativePluginVersion = "v1" | "v2";
+
+function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/e2e-native-weather",
+    version: version === "v1" ? "1.0.0" : "2.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "weather",
+    name: "NemoClaw Native Weather",
+    version: version === "v1" ? "1.0.0" : "2.0.0",
+    description: "Dependency-free native plugin lifecycle fixture",
+    activation: { onStartup: true },
+    contracts: { tools: ["get_weather"] },
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint = `const plugin = {
+  id: "weather",
+  name: "NemoClaw Native Weather",
+  version: ${JSON.stringify(version === "v1" ? "1.0.0" : "2.0.0")},
+  description: "Dependency-free native plugin lifecycle fixture",
+  register(api) {
+    api.registerTool({
+      name: "get_weather",
+      label: "Get Weather",
+      description: "Return deterministic weather data.",
+      parameters: {
+        type: "object",
+        properties: { location: { type: "string" } },
+        required: ["location"],
+        additionalProperties: false,
+      },
+      async execute(_toolCallId, params) {
+        const details = {
+          location: String(params.location),
+          condition: "clear",
+          fixtureVersion: ${JSON.stringify(version)},
+        };
+        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+      },
+    });
+  },
+};
+export default plugin;
+`;
+  const updateVerification =
+    version === "v2"
+      ? [
+          "HOME=/sandbox openclaw plugins inspect weather --runtime --json > /tmp/e2e-native-weather-v2.json",
+          `grep -Eq '"version"[[:space:]]*:[[:space:]]*"2\\.0\\.0"' /tmp/e2e-native-weather-v2.json`,
+        ]
+      : [];
+  return [
+    "set -eu",
+    "source_dir=/sandbox/e2e-native-weather",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+    ...updateVerification,
+  ].join("\n");
+}
+
+async function invokeNativeWeatherPlugin(
+  sandbox: SandboxClient,
+  version: NativePluginVersion,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"get_weather","args":{"location":"Santa Clara"}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
+    ),
+    { artifactName, env: env(), timeoutMs: 60_000 },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  const document = parseOpenClawJsonDocuments(result.stdout)[0] as
+    | {
+        ok?: boolean;
+        result?: { details?: { fixtureVersion?: string; location?: string } };
+      }
+    | undefined;
+  expect(
+    document?.ok === true &&
+      document.result?.details?.fixtureVersion === version &&
+      document.result.details.location === "Santa Clara",
+    resultText(result),
+  ).toBe(true);
+}
+
+async function exerciseNativeOpenClawPluginLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
+  const installV1 = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v1")),
+    { artifactName: "phase-4-native-plugin-install-v1", env: env(), timeoutMs: 120_000 },
+  );
+  expect(installV1.exitCode, resultText(installV1)).toBe(0);
+  const restart = await repoNemoclaw(
+    host,
+    [SANDBOX_NAME, "gateway", "restart"],
+    "phase-4-native-plugin-gateway-restart",
+    {},
+    180_000,
+  );
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  await invokeNativeWeatherPlugin(sandbox, "v1", "phase-4-native-plugin-invoke-v1");
+
+  const updateDryRun = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "update", "weather", "--dry-run"],
+    { artifactName: "phase-4-native-plugin-update-dry-run", env: env(), timeoutMs: 120_000 },
+  );
+  expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
+
+  const installV2 = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v2")),
+    { artifactName: "phase-4-native-plugin-install-v2", env: env(), timeoutMs: 120_000 },
+  );
+  expect(installV2.exitCode, resultText(installV2)).toBe(0);
+
+  const selfUpdateDryRun = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/local/bin/openclaw",
+      "update",
+      "--dry-run",
+      "--yes",
+      "--no-restart",
+      "--tag",
+      "2026.7.1",
+    ],
+    { artifactName: "phase-4-native-self-update-dry-run", env: env(), timeoutMs: 120_000 },
+  );
+  expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
+
+  const uninstall = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "uninstall", "weather", "--force"],
+    { artifactName: "phase-4-native-plugin-uninstall", env: env(), timeoutMs: 120_000 },
+  );
+  expect(uninstall.exitCode, resultText(uninstall)).toBe(0);
+  const absent = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "inspect", "weather", "--json"],
+    { artifactName: "phase-4-native-plugin-absent", env: env(), timeoutMs: 30_000 },
+  );
+  expect(`exit=${absent.exitCode}\n${resultText(absent)}`).toMatch(
+    /^exit=1\n[\s\S]*(?:weather.*(?:not found|unknown)|(?:not found|unknown).*weather)/iu,
+  );
+}
+
 async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {
   return sandbox.exec(
     SANDBOX_NAME,
@@ -175,12 +336,12 @@ console.log(JSON.stringify({
   );
 }
 
-async function runOpenClawLaunchTurnAfterRecovery(input: {
+async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
-  const stopGateway = await input.sandbox.execShell(
+  const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 /usr/local/bin/openclaw completion --shell bash --write-state --install --yes
@@ -192,10 +353,9 @@ ${
     ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
     : ""
 }
-sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
-${GATEWAY_STOP_SCRIPT}`),
+sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),
     {
-      artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+      artifactName: "phase-4-prepare-launch",
       env: env(),
       redactionValues: input.redactionValues,
       timeoutMs: 120_000,
@@ -205,45 +365,34 @@ ${GATEWAY_STOP_SCRIPT}`),
     ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
     : null;
   expect(
-    !stopGateway.timedOut &&
-      stopGateway.exitCode === 0 &&
+    !prepareLaunch.timedOut &&
+      prepareLaunch.exitCode === 0 &&
       (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)),
-    [stopGateway, afterNativeFix]
+    [prepareLaunch, afterNativeFix]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-  await sleep(3_000);
 
-  const recovery = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "status"],
-    "phase-4-status-recover-before-launch",
-    {},
-    120_000,
-  );
-  const configEdit =
-    !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
-      ? await repoNemoclaw(
-          input.host,
-          [
-            SANDBOX_NAME,
-            "config",
-            "set",
-            "--key",
-            "agents.defaults.timeoutSeconds",
-            "--value",
-            "120",
-            "--restart",
-          ],
-          "phase-4-host-config-edit-private-state",
-        )
-      : null;
+  const configEdit = securityPostureEnabled()
+    ? await repoNemoclaw(
+        input.host,
+        [
+          SANDBOX_NAME,
+          "config",
+          "set",
+          "--key",
+          "agents.defaults.timeoutSeconds",
+          "--value",
+          "120",
+          "--restart",
+        ],
+        "phase-4-host-config-edit-private-state",
+      )
+    : null;
   expect(
-    !recovery.timedOut &&
-      recovery.exitCode === 0 &&
-      (!configEdit || (!configEdit.timedOut && configEdit.exitCode === 0)),
-    resultText(configEdit ?? recovery),
+    !configEdit || (!configEdit.timedOut && configEdit.exitCode === 0),
+    configEdit ? resultText(configEdit) : "launch preparation passed",
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
@@ -480,16 +629,16 @@ async function assertColdOnboardPerformance(input: {
     responseChars,
   });
 
-  expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
-  expect(buildKitFallback, "expected no fallback from BuildKit to the gateway builder").toBe(false);
-  expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
+  expect(
+    plain.includes("[1/8]") && !buildKitFallback && classicBuildSteps === 0,
+    "expected wizard progress without BuildKit fallback or classic build steps",
+  ).toBe(true);
   expect(
     maxSilenceSecs,
     `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
   ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
-  expect(turn.exitCode, turnText).toBe(0);
   expect(
-    firstTurnSentinelMatched,
+    turn.exitCode === 0 && firstTurnSentinelMatched,
     `expected the sentinel first agent reply, got: ${turnText}`,
   ).toBe(true);
   for (const anomaly of performanceEvaluation.anomalies) {
@@ -516,7 +665,8 @@ test(
         "check full E2E prerequisites",
         "install and onboard OpenClaw sandbox",
         "validate CLI sandbox and policy state",
-        "exercise hosted, sandbox, and post-recovery launch inference",
+        "exercise hosted, sandbox, and launch inference",
+        "exercise native plugin package and update lifecycle",
         "inspect runtime logs and security posture",
         "remove full-E2E sandbox",
       ],
@@ -563,6 +713,7 @@ test(
           : []),
         "nemoclaw and openshell are installed and usable",
         "sandbox appears in list/status and has policy/inference configuration",
+        "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "direct hosted inference and sandbox inference.local both respond",
         ...(process.platform === "linux"
           ? [
@@ -720,12 +871,13 @@ test(
       ],
       { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
     );
-    expect(pathProbe.exitCode, resultText(pathProbe)).toBe(0);
-    expect(pathProbe.stdout).toContain("openshell");
+    expect(
+      pathProbe.exitCode === 0 && pathProbe.stdout.includes("openshell"),
+      resultText(pathProbe),
+    ).toBe(true);
 
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
-    expect(list.exitCode, resultText(list)).toBe(0);
-    expect(list.stdout).toContain(SANDBOX_NAME);
+    expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
     const status = await waitForSandboxStatus(host);
     expect(status.exitCode, resultText(status)).toBe(0);
 
@@ -734,18 +886,22 @@ test(
       env: env(),
       timeoutMs: 60_000,
     });
-    expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(resultText(inference)).toContain(hosted.model);
+    expect(
+      inference.exitCode === 0 && resultText(inference).includes(hosted.model),
+      resultText(inference),
+    ).toBe(true);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-3-openshell-policy-get",
       env: env(),
       timeoutMs: 60_000,
     });
-    expect(policy.exitCode, resultText(policy)).toBe(0);
-    expect(resultText(policy)).toMatch(/network_policies|egress/i);
+    expect(
+      policy.exitCode === 0 && /network_policies|egress/iu.test(resultText(policy)),
+      resultText(policy),
+    ).toBe(true);
 
-    progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
+    progress.phase("exercise hosted, sandbox, and launch inference");
     const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
     const direct = await host.command(directProbe.command, directProbe.args, {
       artifactName: "phase-4-direct-hosted-inference-models",
@@ -753,8 +909,9 @@ test(
       redactionValues,
       timeoutMs: 90_000,
     });
-    expect(direct.exitCode, resultText(direct)).toBe(0);
-    expect(resultText(direct)).toContain("data");
+    expect(direct.exitCode === 0 && resultText(direct).includes("data"), resultText(direct)).toBe(
+      true,
+    );
 
     const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
       sandbox.exec(
@@ -786,12 +943,17 @@ test(
     );
     const finalInferenceAttempt = sandboxInference.attempts.at(-1)!;
     const sandboxInferenceDiagnostic = `${resultText(finalInferenceAttempt.result)}\n${JSON.stringify(sandboxInferenceEvidence, null, 2)}`;
-    expect(finalInferenceAttempt.result.exitCode, sandboxInferenceDiagnostic).toBe(0);
-    expect(sandboxInference.outcome, sandboxInferenceDiagnostic).toBe("passed");
+    expect(
+      finalInferenceAttempt.result.exitCode === 0 && sandboxInference.outcome === "passed",
+      sandboxInferenceDiagnostic,
+    ).toBe(true);
 
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
+      ? runOpenClawLaunchTurns({ host, redactionValues, sandbox })
       : Promise.resolve());
+
+    progress.phase("exercise native plugin package and update lifecycle");
+    await exerciseNativeOpenClawPluginLifecycle(host, sandbox);
 
     progress.phase("inspect runtime logs and security posture");
     const logs = await repoNemoclaw(
@@ -801,8 +963,7 @@ test(
       {},
       90_000,
     );
-    expect(logs.exitCode, resultText(logs)).toBe(0);
-    expect(resultText(logs).trim().length, resultText(logs)).toBeGreaterThan(0);
+    expect(logs.exitCode === 0 && resultText(logs).trim().length > 0, resultText(logs)).toBe(true);
 
     const securityPosture = securityPostureEnabled()
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")

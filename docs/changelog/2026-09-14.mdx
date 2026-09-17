@@ -5,13 +5,9 @@
 
 ## v0.0.125
 
-NemoClaw v0.0.125 strengthens Hermes Portable recovery, OpenShell gateway authority, and onboarding finalization.
+NemoClaw v0.0.125 strengthens OpenShell gateway authority and onboarding finalization.
 It also improves sandbox transfers, native Podman and OpenClaw networking, and the release validation pipeline.
 
-- Hermes Portable interactive `connect` and `launch` can recover the exact stopped managed Ollama runtime after the recorded route becomes unavailable.
-  Forward recovery now allows 30 seconds for verification and 60 seconds for the complete transaction, while retaining the original structured failure when cleanup cannot be proved.
-  Related changes: [PR #11759](https://github.com/NVIDIA/NemoClaw/pull/11759) and [PR #11735](https://github.com/NVIDIA/NemoClaw/pull/11735).
-  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Set Up Ollama](/user-guide/hermes/inference/local-inference/set-up-ollama), and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
 - The Hermes `nemoclaw-acp` adapter can select and, when required, start only its exact recorded OpenShell gateway when it is missing, unhealthy, or unreachable, or when a different gateway is connected.
   Conflicting or ambiguous gateway identities, authentication errors, schema failures, timeouts, and other observation failures stop recovery before gateway startup or ACP session creation.
   Related changes: [PR #11691](https://github.com/NVIDIA/NemoClaw/pull/11691) and [PR #11681](https://github.com/NVIDIA/NemoClaw/pull/11681).
@@ -21,7 +17,6 @@ It also improves sandbox transfers, native Podman and OpenClaw networking, and t
   Related changes: [PR #11760](https://github.com/NVIDIA/NemoClaw/pull/11760) and [PR #11745](https://github.com/NVIDIA/NemoClaw/pull/11745).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Register an External Component During Onboarding](/user-guide/openclaw/deployment/register-external-component).
 - Legacy OpenShell upgrade recovery preserves the recorded gateway, sandbox identity, workspace, and digest-verified pre-upgrade policy when live provider inspection is unavailable.
-  Portable Hermes lifecycle and onboarding operations now await live policy reads and revalidate authority before startup, publication, restoration, or uninstall effects.
   Related changes: [PR #11612](https://github.com/NVIDIA/NemoClaw/pull/11612) and [PR #11585](https://github.com/NVIDIA/NemoClaw/pull/11585).
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Recover and Rebuild Sandboxes for Hermes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Sandbox upload and download commands now await typed OpenShell transfers on the sandbox's recorded gateway.
@@ -52,7 +47,6 @@ It also restores interactive Deep Agents Code execution features and improves ag
   Rebuild also preserves the recorded serving-profile selection instead of losing it during recreation.
   Related changes: [PR #11251](https://github.com/NVIDIA/NemoClaw/pull/11251), [PR #11710](https://github.com/NVIDIA/NemoClaw/pull/11710), [PR #11589](https://github.com/NVIDIA/NemoClaw/pull/11589), and [PR #11686](https://github.com/NVIDIA/NemoClaw/pull/11686).
 - Named sandbox commands now use the sandbox's recorded gateway across gateway-port registry roots.
-  Portable Hermes recovery reconciles a saved stopped OpenShell state and repairs required forwards.
   If forward startup fails, recovery removes only forwards it started and reports cleanup it cannot verify.
   Interactive `launch` releases lifecycle locks after dispatch so other lifecycle commands can proceed during the session.
   Related changes: [PR #11445](https://github.com/NVIDIA/NemoClaw/pull/11445), [PR #11668](https://github.com/NVIDIA/NemoClaw/pull/11668), [PR #11670](https://github.com/NVIDIA/NemoClaw/pull/11670), and [PR #11657](https://github.com/NVIDIA/NemoClaw/pull/11657).

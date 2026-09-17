@@ -31,7 +31,7 @@ export interface AgentSetupStateOptions<Agent> {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
-    isOpenclawReady(sandboxName: string): boolean;
+    isOpenclawReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -101,7 +101,7 @@ export async function handleAgentSetupState<Agent>({
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
-  const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
+  const resumeOpenclaw = resume && sandboxName && (await deps.isOpenclawReady(sandboxName));
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
     revalidateSandboxIdentity?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);

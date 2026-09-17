@@ -387,9 +387,9 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
-After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
+It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
@@ -426,7 +426,7 @@ Each entry owns these target properties:
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
-`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+`hermes-swap` provisions swap for the remaining measured Hermes execution lanes.
 Targets that require cloudflared set `cloudflared: true` in the catalogue.
 The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
 The installation step does not receive a catalogue profile credential.
@@ -498,8 +498,8 @@ runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing its model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
+the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
 checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
 definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
@@ -799,72 +799,21 @@ contains only the numeric port and TUI boolean. The fixture retains identity-dri
 registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
 disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
-## Current OpenClaw plugin EXDEV lifecycle
+## Native plugin and package lifecycle
 
-The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job
+and its custom-image prebuild/recreation fixtures. That removes one default E2E
+job and the image-ownership contract it existed to verify.
 
-1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
-2. Install v1-exdev with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1-exdev.
-4. Recreate the sandbox with the plugin changed to v2 and verify v2.
-
-The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If onboarding or recreation reports missing canonical
-CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
-record structured diagnostics, attempts to write bounded `failed-no-retry`
-evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence write failure propagates, so that retry artifact may be
-absent. `tools.invoke`
-assertions prove the plugin version after onboarding, restart, and recreation.
-The job uses OpenClaw's real plugin installer from a read-only host mount whose
-device differs from the extension target. This proves installation across the
-filesystem boundary, not a particular internal `EXDEV` system call or fallback.
-
-The live assertions stop at the boundary outcomes: v1 after onboarding,
-distinct source and target devices, a successful real install, v1-exdev after a
-real gateway restart, v2 after recreation, and registered cleanup. The target
-does not rewrite OpenShell commands or assert terminal wording. Its one
-forward-specific setup check proves the restarted listener belongs to the exact
-canonical OpenShell command before targeted termination, then bounds port
-release before recreation. Fast tests own the listener matching and
-termination behavior. `e2e-support` also owns canonical component composition,
-immutable image handoff, recreation command shape, fixture extraction safety,
-output parsing, and cleanup ordering. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
-permutations remain outside this live contract. Workspace preservation and
-policy selection retain their focused coverage. The `rebuild-openclaw` job
-remains the canonical live rebuild coverage.
-
-The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, extracts the cross-device payload
-from the matching immutable image ID into a fresh canonical `/dev/shm`
-directory, and mounts that directory read-only at the same target during
-onboarding and recreation. A minimal custom Dockerfile pins the image ID while
-preserving the tool-disclosure build arguments. Canonical OpenShell CLI,
-gateway, and sandbox executables own every forward lifecycle command. User
-`--from` Dockerfiles retain the gateway-builder trust boundary and are never
-host-prebuilt by this fixture. The current-checkout fixture enables local
-base-image resolution after the workflow removes Docker Hub credentials.
-
-The release-baseline lane is retired. Historical package versions are not part
-of this current runtime contract.
-
-At issue creation, the live target had 9 direct `expect` calls and 17 direct
-assertion points across 654 lines. Its three companions raised the transitive
-totals to 9 `expect` calls, 32 assertion points, and three generated probe
-blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
-though the core cross-device install took about seven seconds. After #11552
-fixed canonical forward ownership, the current base kept those assertion totals
-while growing to 658 target lines and 1,202 transitive live lines. Its first
-automatic main run completed the live step in 7 minutes 26 seconds.
-
-The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
-calls while lowering the direct assertion points from 17 to 16. Its two
-companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
-and no generated probe blocks across 1,140 lines. Against the current base, the
-live target falls from 658 to 585 lines and the transitive live surface falls
-from 1,202 to 1,140 lines.
-Push-run timing for this revision is recorded by the focused PR E2E run.
+The standard `full-e2e` target now owns native OpenClaw installation,
+invocation, update command access, local-source replacement, self-update dry
+run, restart survival, credential non-exposure, and removal in one sandbox.
+`rebuild-openclaw` proves a user-installed native plugin survives rebuild with
+no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+lazy-package state survive rebuild. Managed-image activation exercises native
+OpenClaw and Hermes discovery before and after gateway restart. Deterministic
+state-restore tests prove complete native directories are archived without
+image-plugin exclusions.
 
 ## OpenShell development artifact retention
 
@@ -955,8 +904,6 @@ lanes:
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
-- `rebuild-hermes`;
-- `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
 The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
@@ -1274,14 +1221,12 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 11 routed workflow lane identities / 13
+telemetry for 9 routed workflow lane identities / 11
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
-- `rebuild-hermes`
-- `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
@@ -1306,9 +1251,7 @@ Each execution writes one bounded, ordered v2 time series to the canonical
 - an `initialize` endpoint after commit-bound artifact restoration; the rebuild
   jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
-- a `periodic` sample on an approximately 15-second fixed cadence for
-  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
-  60-second fixed cadence for every other execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
   phase stops; and
 - a `finalize` endpoint from an `always()` step immediately before artifact
@@ -1323,14 +1266,8 @@ catch-up burst. Each successful append also prints one bounded
 The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
 records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
-sampling for that test progress instance. The two Hermes rebuild lanes use their
-shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
-the ledger bound, schema, privacy contract, or reserved final slot. In
-`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
-evidence is configured, the workflow establishes its 32 GiB swap before
-`initialize` so the ledger sees one stable swap capacity. If canonical sampling
-becomes unavailable, the existing five-minute full snapshot becomes the
-best-effort fallback.
+sampling for that test progress instance. If canonical sampling becomes unavailable,
+the existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.
