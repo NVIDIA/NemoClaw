@@ -17,8 +17,25 @@ import {
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
+import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
+
+function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSnapshot {
+  return {
+    schemaVersion: 1,
+    providerId: "docker",
+    providerHandle: "provider-handle",
+    lifecycleState: "running",
+    lifecycleGeneration: "generation-1",
+    runtime: {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "gpu", vendor: "nvidia", devices: [device] },
+    },
+  };
+}
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
@@ -105,6 +122,59 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
+  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "auto",
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: dockerGpuRuntimeSnapshot(),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxGpu: "enable",
+        sandboxGpuDevice: "nvidia.com/gpu=0",
+      }),
+    );
+    const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+      (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
+    );
+    expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
+    );
+    expect(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]).toBeLessThan(
+      harness.onboardSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.onboardSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the source sandbox when captured GPU authority conflicts with opt-out (#10758)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        sandboxGpuMode: "0",
+        sandboxGpuEnabled: false,
+        sandboxGpuDevice: null,
+      },
+      backupRuntimeSnapshot: dockerGpuRuntimeSnapshot(),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/captured sandbox GPU authority cannot be replayed safely/iu);
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 

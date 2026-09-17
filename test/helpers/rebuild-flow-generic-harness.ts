@@ -658,6 +658,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         dir: "/sandbox/.openclaw",
         backupPath,
         timestamp: "2026-06-01T00:00:00.000Z",
+        ...(overrides.backupRuntimeSnapshot
+          ? { runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot) }
+          : {}),
         ...(overrides.backupPreservedEnv
           ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
           : {}),

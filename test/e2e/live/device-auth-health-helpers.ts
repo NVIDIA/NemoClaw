@@ -149,24 +149,3 @@ export async function maybeWriteHostHealthExpectation(
     code !== "000" &&
     expectCode(["200", "401"], `host dashboard health returned ${code}`, code);
 }
-
-export async function waitForRecoveryArtifact(
-  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
-  sandbox: SandboxClient,
-): Promise<void> {
-  for (let attempt = 1; attempt <= 30; attempt += 1) {
-    const recoveredHealth = await httpCodeFromSandbox(
-      sandbox,
-      "/health",
-      `phase-5-recovery-health-code-attempt-${attempt}`,
-    );
-    const code = recoveredHealth.stdout.trim();
-    const recovered = code === "200" || code === "401";
-    recovered && (await artifacts.writeJson("gateway-recovered.json", { attempt, code }));
-    if (recovered) return;
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-  }
-  await artifacts.writeJson("gateway-recovery-inconclusive.json", {
-    reason: "Gateway did not recover within 150s; former shell treated this as optional.",
-  });
-}
