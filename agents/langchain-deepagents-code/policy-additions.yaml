@@ -20,6 +20,7 @@ filesystem_policy:
     - /app
     - /run/nemoclaw/managed-startup-ca-bundle.pem
     - /run/nemoclaw/managed-startup-runtime.env
+    - /run/nemoclaw/managed-startup-release.json
     - /etc
     - /var/log
     - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
