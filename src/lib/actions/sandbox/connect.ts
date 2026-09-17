@@ -52,7 +52,7 @@ import {
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
-import { ROOT, validateName } from "../../runner";
+import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
 import type { SandboxEntry } from "../../state/registry";
@@ -176,14 +176,7 @@ async function publishHermesLaunchReadinessWithSettlement(
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
   requireLaunchReadinessPublication?: boolean;
-  /** @internal Fail closed unless this probe owns current Hermes Portable authority. */
-  requireHermesPortablePrewarmAuthority?: boolean;
 };
-
-/** Validate the private prewarm target without adding another name-contract consumer. */
-export function validateHermesPortablePrewarmSandboxName(sandboxName: string): void {
-  validateName(sandboxName, "sandbox name");
-}
 
 export type SandboxStartupRecoveryResult = Awaited<
   ReturnType<typeof checkAndRecoverSandboxProcesses>
@@ -2606,12 +2599,6 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
-  if (options.requireHermesPortablePrewarmAuthority) {
-    if (options.probeOnly !== true) {
-      throw new Error("Hermes Portable prewarm authority is valid only for a probe-only connect");
-    }
-    validateHermesPortablePrewarmSandboxName(sandboxName);
-  }
   const probeTiming = options.probeOnly ? createProbeTimingRecorder() : undefined;
   const finishOnExit = (code: number): void => {
     probeTiming?.finishOnExit(
@@ -2655,11 +2642,7 @@ type PreparedConnectSession = {
 
 async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
-  {
-    probeOnly = false,
-    requireLaunchReadinessPublication = true,
-    requireHermesPortablePrewarmAuthority = false,
-  }: SandboxConnectOptions,
+  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
@@ -2678,9 +2661,6 @@ async function prepareConnectSandboxWithinLifecycleFence(
       initialPortableAuthority = probeTiming!.measure("authority", () =>
         qualifyPortableAgentLifecycleAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
       );
-      if (requireHermesPortablePrewarmAuthority && initialPortableAuthority.kind !== "hermes") {
-        throw new Error("Hermes Portable prewarm authority is unavailable");
-      }
     } catch {
       probeTiming!.markFailureStage("authority");
       failHermesPortableReadinessAuthority(sandboxName);

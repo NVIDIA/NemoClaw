@@ -972,24 +972,6 @@ describe("connectSandbox flow", () => {
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
-  it("fails the private prewarm path closed for non-Hermes authority", async () => {
-    const harness = createConnectHarness({ portableReceiptDisposition: { kind: "absent" } });
-
-    await expect(
-      harness.connectSandbox("alpha", {
-        probeOnly: true,
-        requireHermesPortablePrewarmAuthority: true,
-      }),
-    ).rejects.toThrow("process.exit(1)");
-
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "missing, incomplete, or changed during launch-readiness verification",
-    );
-    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["runtime driver", { openshellDriver: "podman" }],
     ["live identity", { lifecycleLiveIdentityFingerprint: "0".repeat(64) }],

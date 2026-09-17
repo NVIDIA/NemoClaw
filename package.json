@@ -15,7 +15,6 @@
   },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
-    "nemoclaw-prewarm": "./dist/lib/actions/sandbox/prewarm/cli.js",
     "nemoclaw-acp": "./dist/lib/acp/main.js",
     "nemoclaw-blueprint-runner": "./dist/lib/blueprint-runner.js",
     "nemohermes": "./bin/nemohermes.js",
