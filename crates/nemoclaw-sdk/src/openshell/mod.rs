@@ -5,6 +5,7 @@
 mod tests;
 
 mod agent;
+pub(crate) use agent::runtime_read_requirements;
 mod native_profile;
 mod network;
 mod profile;

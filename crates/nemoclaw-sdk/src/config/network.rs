@@ -281,6 +281,39 @@ impl Proxy {
     }
 }
 impl Network {
+    pub(crate) fn validate_runtime_access(&self, harness: &str) -> Result<(), ConfigError> {
+        let Some(filesystem) = self
+            .policy
+            .as_ref()
+            .and_then(|p| p.explicit.filesystem_policy.as_ref())
+        else {
+            return Ok(());
+        };
+        for (required, diagnostic) in crate::openshell::runtime_read_requirements(harness) {
+            let covered = filesystem
+                .read_only
+                .iter()
+                .flatten()
+                .chain(filesystem.read_write.iter().flatten())
+                .any(|grant| {
+                    // Sandbox paths are POSIX paths even on a Windows client. Do not
+                    // resolve symlinks against the client filesystem or infer '..'.
+                    if !grant.starts_with('/') || grant.split('/').any(|part| part == "..") {
+                        return false;
+                    }
+                    let mut required = required.split('/').filter(|part| !part.is_empty());
+                    grant
+                        .split('/')
+                        .filter(|part| !part.is_empty() && *part != ".")
+                        .all(|part| required.next() == Some(part))
+                });
+            if !covered {
+                return Err(ConfigError(diagnostic));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         match &self.policy {
             Some(policy) if self.tier.is_empty() => {

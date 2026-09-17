@@ -12,7 +12,7 @@ fn input() -> Value {
     value["spec"]["sandboxes"][0]["network"] = json!({
         "policy": {"explicit": {
             "version": 1,
-            "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt"], "read_write": ["/sandbox", "/tmp"]},
+            "filesystem_policy": {"include_workdir": false, "read_only": ["/usr", "/opt", "/app"], "read_write": ["/sandbox", "/tmp"]},
             "landlock": {"compatibility": "best_effort"},
             "process": {"run_as_user": "1000", "run_as_group": "1000"},
             "network_policies": {"docs": {"name": "docs", "endpoints": [{"host": "docs.example.com", "port": 443, "protocol": "rest", "tls": "terminate", "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": "/docs/**"}}]}], "binaries": [{"path": "/usr/bin/curl"}]}}
@@ -147,4 +147,131 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
     assert!(encoded.contains("/docs/$${file}/%%{literal}"));
     let rows = targets(&document, &generations).unwrap();
     assert!(rows[3].values["policy_json"].contains("/docs/${file}/%{literal}"));
+}
+
+#[test]
+fn explicit_filesystem_policy_must_allow_the_selected_runtime() {
+    for (harness, extra) in [
+        ("openclaw", "/app"),
+        ("hermes", "/opt/hermes"),
+        ("pi", "/opt/fabric-source"),
+        ("deepagents", "/opt/fabric"),
+    ] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"] = json!({"kind": harness});
+        let fs = "/spec/sandboxes/0/network/policy/explicit/filesystem_policy";
+        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr"]);
+        assert!(
+            parse(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("/opt/fabric")
+        );
+        value.pointer_mut(fs).unwrap()["read_only"] =
+            json!(["/usr", "/opt/fabric", "/opt/nemoclaw", extra]);
+        parse(&value).unwrap();
+        if harness != "deepagents" {
+            value.pointer_mut(fs).unwrap()["read_only"] =
+                json!(["/usr", "/opt/fabric", "/opt/nemoclaw"]);
+            assert!(parse(&value).unwrap_err().to_string().contains(extra));
+        }
+        value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr", "/opt/fabric", extra]);
+        assert!(
+            parse(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("/opt/nemoclaw")
+        );
+    }
+}
+
+#[test]
+fn runtime_grants_accept_parents_and_writable_paths_without_rewriting_policy() {
+    for grants in [
+        json!(["/opt", "/app"]),
+        json!(["/opt/fabric", "/opt/nemoclaw", "/app/"]),
+    ] {
+        let mut value = input();
+        let fs = value
+            .pointer_mut("/spec/sandboxes/0/network/policy/explicit/filesystem_policy")
+            .unwrap();
+        fs["read_only"] = json!(["/usr"]);
+        fs["read_write"] = grants;
+        let document = parse(&value).unwrap();
+        let expected = value["spec"]["sandboxes"][0]["network"]["policy"].clone();
+        assert_eq!(
+            serde_json::to_value(&document.spec.sandboxes[0].network.policy).unwrap(),
+            expected
+        );
+    }
+    for grants in [
+        json!(["/op", "/app"]),
+        json!(["/opt/fabric-source", "/opt/nemoclaw", "/app"]),
+        json!(["/opt/../unrelated", "/app"]),
+    ] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]["read_only"] =
+            grants;
+        assert!(parse(&value).is_err());
+    }
+}
+
+#[test]
+fn shared_harness_policy_is_checked_but_omitted_filesystem_grants_keep_defaults() {
+    let mut value = input();
+    value["spec"]["harnesses"] = json!({"shared": {"kind": "openclaw"}});
+    value["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("harness");
+    value["spec"]["sandboxes"][0]["harnessRef"] = json!("shared");
+    let policy = &mut value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"];
+    policy["filesystem_policy"]["read_only"] = json!(["/usr", "/opt"]);
+    assert!(parse(&value).unwrap_err().to_string().contains("/app"));
+    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]
+        .as_object_mut()
+        .unwrap()
+        .remove("filesystem_policy");
+    parse(&value).unwrap();
+}
+
+#[tokio::test]
+async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state() {
+    use nemoclaw_sdk::{CancellationToken, Deployment};
+    let mut document = parse(&input()).unwrap();
+    let mut second = document.spec.sandboxes[0].clone();
+    second.name = "blocked".into();
+    let filesystem = second
+        .network
+        .policy
+        .as_mut()
+        .unwrap()
+        .explicit
+        .filesystem_policy
+        .as_mut()
+        .unwrap();
+    filesystem.read_only = Some(vec!["/usr".into()]);
+    filesystem.include_workdir = Some(true);
+    document.spec.sandboxes.push(second);
+    let directory = tempfile::tempdir().unwrap();
+    let state = directory.path().join("state");
+    let deployment = Deployment::new(&state, &directory.path().join("missing-bundle"));
+    let cancel = CancellationToken::new();
+    assert!(
+        deployment
+            .plan(&document, &cancel)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("/opt/fabric")
+    );
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("/opt/fabric")
+    );
+    assert!(!state.exists());
 }

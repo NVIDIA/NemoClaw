@@ -4,6 +4,22 @@
 use crate::backend::Row;
 use openshell_core::proto;
 
+/// Readable directories required by the packaged Fabric runtime and adapters.
+/// Keep these aligned with image/fabric/Dockerfile and the launch command below.
+pub(crate) fn runtime_read_requirements(
+    harness: &str,
+) -> impl Iterator<Item = (&'static str, &'static str)> {
+    [
+        ("/opt/fabric", "explicit filesystem policy must grant read access to /opt/fabric for the Fabric runtime"),
+        ("/opt/nemoclaw", "explicit filesystem policy must grant read access to /opt/nemoclaw for the NemoClaw runtime bridge"),
+    ].into_iter().chain(match harness {
+        "openclaw" => Some(("/app", "explicit filesystem policy must grant read access to /app for OpenClaw")),
+        "hermes" => Some(("/opt/hermes", "explicit filesystem policy must grant read access to /opt/hermes for Hermes")),
+        "pi" => Some(("/opt/fabric-source", "explicit filesystem policy must grant read access to /opt/fabric-source for Pi")),
+        _ => None,
+    })
+}
+
 pub fn command(runtime: &str) -> Vec<String> {
     if runtime.starts_with("fabric-") {
         vec![

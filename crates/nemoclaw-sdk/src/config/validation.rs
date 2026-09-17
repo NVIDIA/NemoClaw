@@ -182,6 +182,7 @@ impl Document {
             sandbox.network.validate()?;
             require(!sandbox.agents.is_empty(), "at least one agent is required")?;
             let harness = self.sandbox_harness(sandbox)?;
+            sandbox.network.validate_runtime_access(&harness.kind)?;
             require(
                 sandbox.agents.len() == 1 || harness.kind == "openclaw",
                 "multiple agents require OpenClaw",
