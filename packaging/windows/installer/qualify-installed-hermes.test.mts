@@ -17,7 +17,9 @@ import {
   validateHermesEdgeReceipt,
   createHermesPtyState,
   finalHermesAssistant,
+  finalHermesTurn,
   hermesTurnIndex,
+  hermesMessagesAfter,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -361,14 +363,28 @@ test("settled conversation still needs a final saved assistant and a real execut
     },
   ];
   assert(recordedHermesCode(messages, code, sentinel));
+  assert.equal(finalHermesTurn(messages), false);
   assert.equal(finalHermesAssistant(messages, prompt), false);
   messages.push({ role: "assistant", content: "Both operations completed." });
+  assert.equal(finalHermesTurn(messages), true);
   assert.equal(finalHermesAssistant(messages, prompt), true);
   const normalizedPaste = structuredClone(messages);
   normalizedPaste[0].content = "normalized paste wrapper\n" + code + "\nend wrapper";
   assert.equal(hermesTurnIndex(normalizedPaste, prompt, [code]), 0);
   assert.equal(finalHermesAssistant(normalizedPaste, prompt, [code]), true);
   assert.equal(finalHermesAssistant(normalizedPaste, prompt, ["different exact code"]), false);
+  assert.deepEqual(
+    hermesMessagesAfter(
+      [
+        { id: 4, role: "assistant" },
+        { id: 1, role: "user" },
+        { id: 3, role: "tool" },
+      ],
+      1,
+    ).map((row) => row.id),
+    [3, 4],
+  );
+  assert.throws(() => hermesMessagesAfter([{ id: 0 }], 0), /no identity/u);
   const failed = structuredClone(messages);
   failed[2].content = JSON.stringify({
     status: "success",

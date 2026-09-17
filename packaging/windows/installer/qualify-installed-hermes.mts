@@ -375,14 +375,26 @@ export function hermesTurnIndex(messages: any[], prompt: string, markers: string
   );
 }
 
-export function finalHermesAssistant(messages: any[], prompt: string, markers: string[] = []) {
-  const user = hermesTurnIndex(messages, prompt, markers);
+export function finalHermesTurn(messages: any[]) {
+  const user = messages.findIndex((row) => row.role === "user");
   if (user < 0) return false;
   const last = messages.at(-1);
   if (last?.role !== "assistant" || typeof last.content !== "string" || !last.content.trim())
     return false;
   const calls = typeof last.tool_calls === "string" ? JSON.parse(last.tool_calls) : last.tool_calls;
   return messages.length > user + 1 && (!calls || calls.length === 0);
+}
+
+export function finalHermesAssistant(messages: any[], prompt: string, markers: string[] = []) {
+  const user = hermesTurnIndex(messages, prompt, markers);
+  return user >= 0 && finalHermesTurn(messages.slice(user));
+}
+
+export function hermesMessagesAfter(messages: any[], mark: number) {
+  assert(Number.isSafeInteger(mark) && mark >= 0, "Hermes transcript mark is invalid");
+  for (const row of messages)
+    assert(Number.isSafeInteger(row.id) && row.id > 0, "Hermes transcript row has no identity");
+  return [...messages].sort((left, right) => left.id - right.id).filter((row) => row.id > mark);
 }
 
 function argument(name: string, fallback?: string) {
@@ -811,7 +823,7 @@ async function main() {
       messagingRequested: false,
       tavilyLiveLookup: "not-tested-user-waiver",
     };
-    const messagesFor = async (prompt: string, markers: string[]) => {
+    const sessionMessages = async () => {
       const id = pty.storedSessionId(),
         profile = pty.profileName();
       if (!id || !profile) return [];
@@ -827,14 +839,12 @@ async function main() {
       if (detail === null) return [];
       assert.equal(detail.session_id, id);
       assert(Array.isArray(detail.messages));
-      return hermesTurnIndex(detail.messages, prompt, markers) >= 0 ? detail.messages : [];
+      return hermesMessagesAfter(detail.messages, 0);
     };
     let lastTurnMark = 0;
-    const turn = async (
-      prompt: string,
-      accept: (messages: any[]) => unknown,
-      markers: string[] = [],
-    ) => {
+    const turn = async (prompt: string, accept: (messages: any[]) => unknown) => {
+      const previous = await sessionMessages();
+      const transcriptMark = previous.at(-1)?.id ?? 0;
       const mark = pty.markTurn();
       lastTurnMark = mark;
       const start = performance.now();
@@ -845,21 +855,21 @@ async function main() {
       while (performance.now() - start < 120_000) {
         if (observerFailure) throw observerFailure;
         pty.assertHealthy();
-        const messages = await messagesFor(prompt, markers);
+        const messages = hermesMessagesAfter(await sessionMessages(), transcriptMark);
         lastMessages = messages;
         const value = accept(messages);
-        if (value && finalHermesAssistant(messages, prompt, markers) && pty.settledAfter(mark))
+        if (value && finalHermesTurn(messages) && pty.settledAfter(mark))
           return {
             conversationElapsedMs: performance.now() - start,
             measurement: "end-to-end conversation interval including model, tools and UI/protocol",
             isolatedProviderLatencyMs: null,
             value,
           };
-        if (finalHermesAssistant(messages, prompt, markers) && pty.settledAfter(mark)) {
+        if (finalHermesTurn(messages) && pty.settledAfter(mark)) {
           results.failedTurn = {
             prompt,
             pty: pty.snapshot(),
-            messages: messages.slice(hermesTurnIndex(messages, prompt, markers)),
+            messages,
           };
           throw new Error(
             "The actual settled Hermes turn did not produce the required recorded result",
@@ -896,7 +906,6 @@ async function main() {
         const executeCode = recordedHermesCode(messages, code, "NEMOCLAW_EXECUTE_CODE_" + nonce);
         return terminal && executeCode ? { terminal, executeCode } : null;
       },
-      [script, code],
     );
     results.toolsScope = {
       bash: true,
@@ -920,7 +929,6 @@ async function main() {
         browserCode +
         "\n```",
       (messages) => recordedHermesBrowser(messages, browserCode, browserSentinel),
-      [browserCode],
     );
     results.browserToolScope = {
       browser: "native-arm64-microsoft-edge",
