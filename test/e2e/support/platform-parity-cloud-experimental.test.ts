@@ -727,7 +727,7 @@ assert_status_mode disabled
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       ),
-    ).toBe(7 * 60_000);
+    ).toBe(20 * 60_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
