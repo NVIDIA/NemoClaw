@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { R, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
@@ -28,7 +31,47 @@ function warnHermesLightSkinFailure(action: string, error: unknown): void {
   console.error(`  ${YW}⚠${R} Could not ${action} Hermes light terminal skin${detail}`);
 }
 
-function writeHermesLightSkinFile(sandboxName: string): boolean {
+function commandSucceeded(completion: OpenShellSandboxBufferedCommandCompletion): boolean {
+  return (
+    completion.outcome.kind === "completed" &&
+    completion.outcome.exitCode === 0 &&
+    !completion.outcome.signal
+  );
+}
+
+function commandFailure(completion: OpenShellSandboxBufferedCommandCompletion): unknown {
+  if (completion.outcome.kind === "failed") return new Error(completion.outcome.error.message);
+  return `exit ${completion.outcome.signal ?? completion.outcome.exitCode}`;
+}
+
+async function runHermesLightSkinScript(
+  action: "write" | "remove",
+  sandboxName: string,
+  script: string,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<boolean> {
+  let completion: OpenShellSandboxBufferedCommandCompletion;
+  try {
+    completion = await commandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "selected" },
+      command: ["sh", "-s"],
+      input: script,
+      timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+  } catch (error) {
+    warnHermesLightSkinFailure(action, error);
+    return false;
+  }
+  if (commandSucceeded(completion)) return true;
+  warnHermesLightSkinFailure(action, commandFailure(completion));
+  return false;
+}
+
+async function writeHermesLightSkinFile(
+  sandboxName: string,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<boolean> {
   const skinB64 = encodeForSandboxWrite(NEMOCLAW_HERMES_LIGHT_SKIN_YAML);
   const script = [
     "set -eu",
@@ -42,40 +85,28 @@ function writeHermesLightSkinFile(sandboxName: string): boolean {
     'mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"',
     'chown sandbox:sandbox "$skin_dir/nemoclaw-light.yaml" 2>/dev/null || true',
   ].join("\n");
-  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"], {
-    ignoreError: true,
-    input: script,
-    stdio: ["pipe", "ignore", "ignore"],
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (result.status === 0 && !result.error && !result.signal) return true;
-  warnHermesLightSkinFailure("write", result.error ?? `exit ${result.status ?? result.signal}`);
-  return false;
+  return runHermesLightSkinScript("write", sandboxName, script, commandExecutor);
 }
 
-function removeHermesLightSkinFile(sandboxName: string): boolean {
+async function removeHermesLightSkinFile(
+  sandboxName: string,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<boolean> {
   const script = [
     "set -eu",
     'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"',
     'skin_dir="$hermes_home/skins"',
     'rm -f "$skin_dir/nemoclaw-light.yaml"',
   ].join("\n");
-  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"], {
-    ignoreError: true,
-    input: script,
-    stdio: ["pipe", "ignore", "ignore"],
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (result.status === 0 && !result.error && !result.signal) return true;
-  warnHermesLightSkinFailure("remove", result.error ?? `exit ${result.status ?? result.signal}`);
-  return false;
+  return runHermesLightSkinScript("remove", sandboxName, script, commandExecutor);
 }
 
-export function prepareHermesLightTerminalSkin(
+export async function prepareHermesLightTerminalSkin(
   sandboxName: string,
   agent: ConnectAgent,
   env: NodeJS.ProcessEnv,
-): void {
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<void> {
   if (agent?.name !== "hermes") return;
   if (!shouldInspectHermesLightSkinConfig(agent, env)) return;
 
@@ -98,20 +129,20 @@ export function prepareHermesLightTerminalSkin(
       warnHermesLightSkinFailure("update", error);
       return;
     }
-    if (!removeHermesLightSkinFile(sandboxName)) return;
+    if (!(await removeHermesLightSkinFile(sandboxName, commandExecutor))) return;
     return;
   }
 
   if (!shouldApplyHermesLightSkin(agent, env, config)) return;
   const changed = applyHermesLightSkinConfig(config);
   if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
-  if (!writeHermesLightSkinFile(sandboxName)) return;
+  if (!(await writeHermesLightSkinFile(sandboxName, commandExecutor))) return;
   if (!changed) return;
 
   try {
     writeSandboxConfig(sandboxName, target, config);
   } catch (error) {
     warnHermesLightSkinFailure("update", error);
-    if (!removeHermesLightSkinFile(sandboxName)) return;
+    if (!(await removeHermesLightSkinFile(sandboxName, commandExecutor))) return;
   }
 }

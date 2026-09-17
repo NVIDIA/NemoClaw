@@ -72,6 +72,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/source-architecture.mts"],
   },
   {
+    name: "openshell-consumer-boundary",
+    inputs: /^(?:src|nemoclaw\/src)\//,
+    args: ["scripts/checks/openshell-consumer-boundary.mts"],
+  },
+  {
     name: "onboard-entry-composition",
     inputs: /^src\/lib\/onboard\.ts$/,
     args: ["scripts/checks/onboard-entry-composition.mts"],

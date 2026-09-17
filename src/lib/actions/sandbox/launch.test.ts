@@ -554,7 +554,12 @@ describe("launchSandbox", () => {
 
     await launchSandbox("alpha");
 
-    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledWith("alpha", hermes, process.env);
+    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledWith(
+      "alpha",
+      hermes,
+      process.env,
+      expect.objectContaining({ runBuffered: expect.any(Function) }),
+    );
     expect(mocks.calls).toEqual([
       "prepareInteractiveSession",
       "prepareHermesLightTerminalSkin",

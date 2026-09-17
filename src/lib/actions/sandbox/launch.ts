@@ -260,7 +260,7 @@ async function startAgentWithPortableAuthority(
         `Cannot verify the live identity of sandbox '${sandboxName}' before launch. Run the sandbox doctor and retry.`,
       );
     }
-    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    await prepareHermesLightTerminalSkin(sandboxName, agent, process.env, sandboxCommandExecutor);
     beforeAgentExec?.();
     const finish = await startSandboxExec(
       sandboxName,
