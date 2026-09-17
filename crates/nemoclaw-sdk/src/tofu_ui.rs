@@ -4,13 +4,15 @@
 //! Bounded adapter for OpenTofu's versioned, newline-delimited UI protocol.
 use crate::Progress;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub(crate) struct Ui {
     line: Vec<u8>,
     version: bool,
     invalid: bool,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    started: BTreeMap<(String, bool), OffsetDateTime>,
 }
 impl Ui {
     pub(crate) fn new(progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
@@ -19,6 +21,7 @@ impl Ui {
             version: false,
             invalid: false,
             progress,
+            started: BTreeMap::new(),
         }
     }
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
@@ -83,11 +86,36 @@ impl Ui {
                 _ => return,
             }
         };
+        let mut elapsed =
+            Duration::from_secs(value["hook"]["elapsed_seconds"].as_u64().unwrap_or(0));
+        if let Some(address) = value["hook"]["resource"]["addr"].as_str() {
+            let key = (address.to_owned(), action == "refresh");
+            let timestamp = value["@timestamp"]
+                .as_str()
+                .and_then(|t| OffsetDateTime::parse(t, &Rfc3339).ok());
+            if status == "started" {
+                if let Some(timestamp) = timestamp
+                    && self.started.len() < 1024
+                {
+                    self.started.insert(key, timestamp);
+                }
+            } else {
+                if let Some(started) = self.started.get(&key)
+                    && let Some(timestamp) = timestamp
+                    && let Ok(measured) = Duration::try_from(timestamp - *started)
+                {
+                    elapsed = measured;
+                }
+                if matches!(status, "complete" | "failed") {
+                    self.started.remove(&key);
+                }
+            }
+        }
         (self.progress)(Progress::Resource {
             resource,
             action,
             status,
-            elapsed_seconds: value["hook"]["elapsed_seconds"].as_u64().unwrap_or(0),
+            elapsed,
         });
     }
     pub(crate) fn finish(mut self) -> std::io::Result<()> {
@@ -107,6 +135,48 @@ impl Ui {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn resource_timings_use_timestamps_and_keep_concurrent_addresses_separate() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let events = received.clone();
+        let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
+        ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
+        for (kind, address, timestamp) in [
+            (
+                "apply_start",
+                "nemoclaw_provider.fast",
+                "2026-09-17T00:00:00.000Z",
+            ),
+            (
+                "apply_start",
+                "nemoclaw_provider.smart",
+                "2026-09-17T00:00:00.100Z",
+            ),
+            (
+                "apply_complete",
+                "nemoclaw_provider.fast",
+                "2026-09-17T00:00:00.125Z",
+            ),
+            (
+                "apply_complete",
+                "nemoclaw_provider.smart",
+                "2026-09-17T00:00:00.350Z",
+            ),
+        ] {
+            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"nemoclaw_provider", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
+            line.push('\n');
+            ui.feed(line.as_bytes());
+        }
+        ui.finish().unwrap();
+        let events = received.lock().unwrap();
+        assert!(
+            matches!(events[2], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(125))
+        );
+        assert!(
+            matches!(events[3], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(250))
+        );
+    }
 
     #[test]
     fn fragmented_events_ignore_unknown_fields_and_never_forward_values() {
@@ -129,7 +199,7 @@ mod tests {
                 resource: "sandbox",
                 action: "create",
                 status: "waiting",
-                elapsed_seconds: 30
+                elapsed: std::time::Duration::from_secs(30)
             }]
         );
     }

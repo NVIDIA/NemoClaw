@@ -36,7 +36,7 @@ pub enum Progress {
         resource: &'static str,
         action: &'static str,
         status: &'static str,
-        elapsed_seconds: u64,
+        elapsed: std::time::Duration,
     },
     /// A step that has started or is still waiting.
     Waiting {
