@@ -28,7 +28,7 @@ describe("sandbox delete convergence", () => {
     const lookup = vi
       .fn<CliOpenShellSandboxLookup>()
       .mockResolvedValueOnce(present)
-      .mockResolvedValueOnce(missing);
+      .mockResolvedValue(missing);
 
     const result = await waitForSandboxDeleteAbsence("alpha", "nemoclaw", lookup, vi.fn(), {
       now: () => currentMs,
@@ -37,8 +37,8 @@ describe("sandbox delete convergence", () => {
       },
     });
 
-    expect(result).toMatchObject({ confirmed: true, attempts: 2, lastObservation: missing.result });
-    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ confirmed: true, attempts: 3, lastObservation: missing.result });
+    expect(lookup).toHaveBeenCalledTimes(3);
     expect(lookup).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -46,6 +46,27 @@ describe("sandbox delete convergence", () => {
         target: { kind: "named", gatewayName: "nemoclaw" },
       }),
     );
+    expect(currentMs).toBeGreaterThanOrEqual(500);
+  });
+
+  it("does not confirm a transient missing observation before renewed presence (#11941)", async () => {
+    let currentMs = 0;
+    const lookup = vi
+      .fn<CliOpenShellSandboxLookup>()
+      .mockResolvedValueOnce(missing)
+      .mockResolvedValueOnce(present)
+      .mockResolvedValue(missing);
+
+    const result = await waitForSandboxDeleteAbsence("alpha", "nemoclaw", lookup, vi.fn(), {
+      now: () => currentMs,
+      sleep: (milliseconds) => {
+        currentMs += milliseconds;
+      },
+    });
+
+    expect(result).toMatchObject({ confirmed: true, attempts: 4, lastObservation: missing.result });
+    expect(lookup).toHaveBeenCalledTimes(4);
+    expect(currentMs).toBeGreaterThanOrEqual(750);
   });
 
   it("fails closed when the same-name sandbox remains present through the bound (#11941)", async () => {

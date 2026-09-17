@@ -626,7 +626,7 @@ describe("rebuild destroy phase", () => {
     expect(mocks.stopNimContainerByName).toHaveBeenCalledWith("nim-alpha");
     expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(1);
-    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -1075,7 +1075,7 @@ describe("rebuild destroy phase", () => {
 
     expect(result).not.toBeNull();
     expect(result?.removalReceipt).toBeNull();
-    expect(events).toEqual(["delete", "get-live", "get-missing", "on-deleted"]);
+    expect(events).toEqual(["delete", "get-live", "get-missing", "get-missing", "on-deleted"]);
     expect(mocks.waitUntilAsync).toHaveBeenCalledOnce();
     expect(mocks.captureOpenshell).toHaveBeenNthCalledWith(
       1,

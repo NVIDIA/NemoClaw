@@ -198,7 +198,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "get", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "get", "get", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();

@@ -753,7 +753,7 @@ describe("sandbox destroy host-local inference transaction", () => {
 
     expect(result).toMatchObject({ ok: true, alreadyGone: true });
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
-    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(2);
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(3);
   });
 
   it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {

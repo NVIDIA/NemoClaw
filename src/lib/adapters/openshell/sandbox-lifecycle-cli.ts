@@ -32,6 +32,7 @@ export { createCliOpenShellSandboxLookupFromRunner, createCliOpenShellSandboxObs
 const DELETE_ABSENCE_MAX_ATTEMPTS = 20;
 const DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
 const DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
+const DELETE_ABSENCE_REQUIRED_MISSING_OBSERVATIONS = 2;
 
 export type SandboxDeleteConvergenceResult = Readonly<{
   confirmed: boolean;
@@ -45,7 +46,9 @@ type SandboxDeleteConvergenceDeps = Readonly<{
 }>;
 
 /**
- * Wait for explicit absence from the exact gateway-scoped sandbox lookup.
+ * Wait for stable explicit absence from the exact gateway-scoped sandbox lookup.
+ * Two consecutive missing observations prevent a transient lookup gap from
+ * retiring local ownership while the sandbox remains or is replaced.
  * The delete mutation belongs to the caller and must never be retried here.
  */
 export async function waitForSandboxDeleteAbsence(
@@ -59,6 +62,7 @@ export async function waitForSandboxDeleteAbsence(
   const deadlineMs = now() + OPENSHELL_PROBE_TIMEOUT_MS;
   let attempts = 0;
   let lastObservation: CliOpenShellSandboxLookupResult["result"] | null = null;
+  let consecutiveMissingObservations = 0;
 
   const confirmed = await waitUntilAsync(
     async () => {
@@ -73,9 +77,12 @@ export async function waitForSandboxDeleteAbsence(
         lastObservation = observation.result;
         const state = observation.result.ok ? observation.result.value.state : "unknown";
         log(`Delete convergence probe ${attempts}: state=${state}`);
-        return state === "missing";
+        consecutiveMissingObservations =
+          state === "missing" ? consecutiveMissingObservations + 1 : 0;
+        return consecutiveMissingObservations >= DELETE_ABSENCE_REQUIRED_MISSING_OBSERVATIONS;
       } catch {
         lastObservation = null;
+        consecutiveMissingObservations = 0;
         log(`Delete convergence probe ${attempts}: state=unknown`);
         return false;
       }

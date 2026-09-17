@@ -1122,6 +1122,7 @@ describe("socket-free MXC action contract", () => {
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
+      let deleteConvergenceMs = 0;
       const runOpenshell = vi.fn((args: string[]) => {
         switch (`${String(args[0])}:${String(args[1])}`) {
           case "sandbox:get":
@@ -1170,6 +1171,12 @@ describe("socket-free MXC action contract", () => {
           runtimeProviders: providers,
           deps: {
             wipeSandboxState: vi.fn(),
+            deleteConvergence: {
+              now: () => deleteConvergenceMs,
+              sleep: (milliseconds) => {
+                deleteConvergenceMs += milliseconds;
+              },
+            },
           },
         }),
       ).resolves.toMatchObject({ ok: true });
