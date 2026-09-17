@@ -159,7 +159,7 @@ def run(executable, args, cwd, environment, evidence, label, timeout):
                 )
             if code != 0:
                 raise RuntimeError(f"OpenSSL prerequisite {label} exited {code}")
-        except BaseException as error:
+        except (Exception, KeyboardInterrupt, SystemExit) as error:
             primary = error
         finally:
             if process is not None and process.poll() is None:
@@ -414,7 +414,7 @@ def main():
         ]
         receipt["sdkRoot"] = str(sdk)
         receipt["status"] = "sdk-built"
-    except BaseException as error:
+    except (Exception, KeyboardInterrupt, SystemExit) as error:
         receipt["error"] = str(error)
         raise
     finally:
