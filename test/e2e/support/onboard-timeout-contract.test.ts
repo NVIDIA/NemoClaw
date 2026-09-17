@@ -8,6 +8,8 @@ import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
+  DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+  DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
   LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
@@ -67,9 +69,7 @@ describe("onboard final-handoff timeout contract", () => {
 
   it("reserves job headroom after the Deep Agents Code lifecycle and export refusal", () => {
     expect(dcodeExpectedRefusalTimeout.testTimeoutMs).toBe(
-      LIVE_TARGET_BASE_TEST_TIMEOUT_MS +
-        DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS +
-        CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+      DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
     );
     expect(dcodeExpectedRefusalTimeout.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
       dcodeExpectedRefusalTimeout.testTimeoutMs! + jobHeadroomMs,
@@ -97,6 +97,8 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: dcodeExpectedRefusalTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      dcodeTypedTargetTestMinutes: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS / MINUTE_MS,
+      dcodeTypedTargetMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
       finalHandoffCommandMinutes: 40,
       singleFinalHandoffTestMinutes: 50,
@@ -105,10 +107,12 @@ describe("onboard final-handoff timeout contract", () => {
       configExportCommandMinutes: 2,
       configExportPolicyMinutes: 1,
       dcodeLifecycleMinutes: 20,
-      dcodeExpectedRefusalTestMinutes: 52,
-      dcodeExpectedRefusalTargetMinutes: 72,
+      dcodeExpectedRefusalTestMinutes: 132,
+      dcodeExpectedRefusalTargetMinutes: 152,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
+      dcodeTypedTargetTestMinutes: 130,
+      dcodeTypedTargetMinutes: 150,
     });
   });
 
@@ -135,6 +139,18 @@ describe("onboard final-handoff timeout contract", () => {
         .map((target) => target.id)
         .sort(),
     ).toEqual([...affectedTargetIds].sort());
+  });
+
+  it("reserves job headroom after the ordered Deep Agents target plan", () => {
+    expect(
+      liveTargetTimeoutContract("dcode-rebuild-invalid-credential", "no-usable-sandbox"),
+    ).toEqual({
+      testTimeoutMs: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+      targetTimeoutMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
+    });
+    expect(DCODE_TYPED_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + jobHeadroomMs,
+    );
   });
 
   it("selects retained typed targets when the export timeout contract changes", () => {
@@ -169,17 +185,17 @@ describe("onboard final-handoff timeout contract", () => {
     {
       lifecycle: "dcode-rebuild-invalid-credential",
       expectation: "expected-refusal",
-      minimumMinutes: 52,
+      minimumMinutes: 132,
     },
   ] as const)(
     "preserves timeout overrides and job headroom for $lifecycle/$expectation",
     ({ lifecycle, expectation, minimumMinutes }) => {
-      const overrideMs = 80 * MINUTE_MS + 1;
+      const overrideMs = (minimumMinutes + 30) * MINUTE_MS + 1;
       vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", String(overrideMs));
 
       const extended = liveTargetTimeoutContract(lifecycle, expectation);
       expect(extended.testTimeoutMs).toBe(overrideMs);
-      expect(extended.targetTimeoutMinutes).toBe(101);
+      expect(extended.targetTimeoutMinutes).toBe(minimumMinutes + 51);
 
       vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", "1");
       const bounded = liveTargetTimeoutContract(lifecycle, expectation);
@@ -198,7 +214,7 @@ describe("onboard final-handoff timeout contract", () => {
     const contract = liveTargetTimeoutContract(target.environment.lifecycle, expectation);
     const lifecycleTestBudgetMs =
       target.environment.lifecycle === "dcode-rebuild-invalid-credential"
-        ? LIVE_TARGET_BASE_TEST_TIMEOUT_MS + DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS
+        ? DCODE_TYPED_TARGET_TEST_TIMEOUT_MS
         : LIVE_TARGET_BASE_TEST_TIMEOUT_MS;
 
     expect(contract.testTimeoutMs).toBe(lifecycleTestBudgetMs + configExportBudgetMs);
@@ -226,6 +242,8 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it.each([
+    DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+    DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
