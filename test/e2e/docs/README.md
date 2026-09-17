@@ -92,7 +92,9 @@ removes the directory before it writes retained evidence.
 For `required` coverage, the canonical `NemoClawConfig` validator checks the
 complete exported document. Semantic expectations remain independent of the
 exporter. The fixture reads the target manifest and host registry directly,
-then queries the effective policy through the OpenShell CLI.
+then queries the effective policy through the OpenShell CLI. It captures these
+expectations before it invokes config export, so exporter-side mutations cannot
+redefine the expected deployment state.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets

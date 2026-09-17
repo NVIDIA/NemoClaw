@@ -118,7 +118,9 @@ function manifest(
   };
 }
 
-function document(overrides: { observability?: boolean } = {}): ConfigExportDocument {
+function document(
+  overrides: { model?: string; observability?: boolean } = {},
+): ConfigExportDocument {
   return {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
@@ -151,7 +153,7 @@ function document(overrides: { observability?: boolean } = {}): ConfigExportDocu
                   {
                     name: "primary",
                     providerRef: "hosted-compatible-endpoint",
-                    overrides: { model: "nvidia/model" },
+                    overrides: { model: overrides.model ?? "nvidia/model" },
                   },
                 ],
               },
@@ -430,6 +432,45 @@ describe("automatic config export validation phase", () => {
       expect.arrayContaining([expect.objectContaining({ id: "enabledFeatures", passed: false })]),
     );
     expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
+  it("compares exports with deployment state captured before the exporter runs (#11485)", async () => {
+    const mutableDependencies = dependencies();
+    const loadRegistry = mutableDependencies.loadRegistry;
+    let registryModel = "nvidia/model";
+    mutableDependencies.loadRegistry = () => {
+      const registry = loadRegistry();
+      return {
+        ...registry,
+        sandboxes: {
+          ...registry.sandboxes,
+          sandbox: { ...registry.sandboxes.sandbox!, model: registryModel },
+        },
+      };
+    };
+    const mutatedDocument = document({ model: "nvidia/mutated-model" });
+    mutableDependencies.parseConfig = () => mutatedDocument;
+    const host = {
+      nemoclaw: vi.fn(async (args: string[]) => {
+        registryModel = "nvidia/mutated-model";
+        const outputPath = args.at(args.indexOf("--output") + 1)!;
+        fs.writeFileSync(outputPath, JSON.stringify(mutatedDocument), "utf8");
+        return { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
+      }),
+    };
+    const test = fixture({ dependencies: mutableDependencies, host });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "verification",
+      expected: { model: "nvidia/model" },
+      observed: { model: "nvidia/mutated-model" },
+    });
+    expect(test.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({ id: "model", passed: false }),
+    );
   });
 
   it("rejects an export that violates the canonical config schema (#11485)", async () => {

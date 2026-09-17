@@ -540,6 +540,16 @@ export class ConfigExportValidationPhaseFixture {
     let command: ConfigExportCommandOutcome | undefined;
 
     try {
+      if (expectation === "required") {
+        failureStage = "observation";
+        expected = await expectedSemantics(
+          target,
+          instance,
+          this.dependencies,
+          this.readPolicy.bind(this),
+        );
+      }
+      failureStage = "transport";
       const result = await this.host.nemoclaw(
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
         {
@@ -631,14 +641,8 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "verification";
         const document = this.dependencies.parseConfig(raw);
         observed = semanticsFromDocument(document);
-        failureStage = "observation";
-        expected = await expectedSemantics(
-          target,
-          instance,
-          this.dependencies,
-          this.readPolicy.bind(this),
-        );
         failureStage = "verification";
+        if (!expected) throw new Error("config export expectations were not captured");
         verifications = compareSemantics(expected, observed);
         const failed = verifications.filter((verification) => !verification.passed);
         if (failed.length > 0) {
