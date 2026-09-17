@@ -72,6 +72,9 @@ pub(crate) enum Command {
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE", required_unless_present = "destroy")]
         file: Option<PathBuf>,
+        /// Fail instead of prompting for missing credential values.
+        #[arg(long)]
+        non_interactive: bool,
     },
     /// Apply a configuration read from a file or standard input.
     #[command(
@@ -81,6 +84,9 @@ pub(crate) enum Command {
         /// Desired-state YAML path, or - to read standard input.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Fail instead of prompting for missing credential values.
+        #[arg(long)]
+        non_interactive: bool,
     },
     /// Export observed configuration without secret values.
     #[command(after_help = "Examples:\n  nemoclaw export --output spark.yaml\n  nemoclaw export")]

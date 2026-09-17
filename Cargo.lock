@@ -1736,6 +1736,7 @@ dependencies = [
  "clap",
  "getrandom 0.4.3",
  "nemoclaw-sdk",
+ "nix 0.29.0",
  "serde-saphyr",
  "serde_json",
  "tempfile",

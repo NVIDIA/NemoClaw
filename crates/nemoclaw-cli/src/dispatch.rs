@@ -10,7 +10,7 @@ use crate::{
     io::document,
 };
 use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
     Onboard(Box<AuthoredDocument>),
@@ -46,7 +46,7 @@ pub(crate) fn render_error(error: &(dyn std::error::Error + 'static)) -> String 
 
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
-    stdin: R,
+    mut stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
     let command = match cli.command {
@@ -101,20 +101,46 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
-            file: Some(file), ..
+            file: Some(file),
+            non_interactive,
+            ..
         } => {
-            deployment
-                .plan(&document(&file, stdin, cancel).await?, cancel)
-                .await?
+            let document = document(&file, &mut stdin, cancel).await?;
+            let mut lines = tokio::io::BufReader::new(stdin).lines();
+            deployment = deployment.with_secrets(
+                crate::credentials::fulfill(
+                    &document,
+                    non_interactive,
+                    file != std::path::Path::new("-"),
+                    &mut lines,
+                    cancel,
+                )
+                .await?,
+            );
+            deployment.plan(&document, cancel).await?
         }
-        Command::Apply { file } => {
-            deployment
-                .apply(&document(&file, stdin, cancel).await?, cancel)
-                .await?
+        Command::Apply {
+            file,
+            non_interactive,
+        } => {
+            let document = document(&file, &mut stdin, cancel).await?;
+            let mut lines = tokio::io::BufReader::new(stdin).lines();
+            deployment = deployment.with_secrets(
+                crate::credentials::fulfill(
+                    &document,
+                    non_interactive,
+                    file != std::path::Path::new("-"),
+                    &mut lines,
+                    cancel,
+                )
+                .await?,
+            );
+            deployment.apply(&document, cancel).await?
         }
         Command::Plan {
             file: None,
             destroy: false,
+            ..
         } => return Err("configuration input is required".into()),
         Command::Export { .. } => {
             return Ok(CommandResult::Export(Box::new(

@@ -104,6 +104,129 @@ fn verbose_reports_failed_steps_on_stderr_without_changing_stdout() {
     }
 }
 
+fn generate_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
+    let path = directory.join("credential-input.yaml");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args([
+            "onboard",
+            "--generate-only",
+            "--non-interactive",
+            "--output",
+        ])
+        .arg(&path)
+        .args(["--credential-env", "STORY_CREDENTIAL_KEY"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    path
+}
+
+#[test]
+fn lifecycle_credential_fulfillment_is_transient_redacted_and_precedes_execution() {
+    use std::{io::Write, process::Stdio};
+
+    let directory = tempfile::tempdir().unwrap();
+    let document = generate_credential_document(directory.path());
+    let state = directory.path().join("state-must-not-exist");
+    let bundle = directory.path().join("missing-bundle");
+    let missing = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["apply", "--non-interactive"])
+        .arg(&document)
+        .arg("--bundle")
+        .arg(&bundle)
+        .arg("--state-dir")
+        .arg(&state)
+        .env_remove("STORY_CREDENTIAL_KEY")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(missing.stderr).unwrap(),
+        "missing credential environment variables: STORY_CREDENTIAL_KEY\n"
+    );
+    assert!(!state.exists());
+
+    let sentinel = "lifecycle-credential-value-sentinel";
+    let from_environment = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .arg("plan")
+        .arg(&document)
+        .arg("--non-interactive")
+        .arg("--bundle")
+        .arg(&bundle)
+        .arg("--state-dir")
+        .arg(&state)
+        .env("STORY_CREDENTIAL_KEY", sentinel)
+        .output()
+        .unwrap();
+    assert!(!from_environment.status.success());
+    assert!(!String::from_utf8_lossy(&from_environment.stderr).contains(sentinel));
+    assert!(!state.exists());
+
+    let mut prompted = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .arg("apply")
+        .arg(&document)
+        .arg("--bundle")
+        .arg(&bundle)
+        .arg("--state-dir")
+        .arg(&state)
+        .env_remove("STORY_CREDENTIAL_KEY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    prompted
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{sentinel}\n").as_bytes())
+        .unwrap();
+    let prompted = prompted.wait_with_output().unwrap();
+    assert!(!prompted.status.success());
+    let stderr = String::from_utf8(prompted.stderr).unwrap();
+    assert!(stderr.starts_with("Credential for STORY_CREDENTIAL_KEY: "));
+    assert!(!stderr.contains(sentinel));
+    assert!(!state.exists());
+}
+
+#[test]
+fn stdin_configuration_requires_environment_credentials_without_prompting() {
+    use std::{io::Write, process::Stdio};
+
+    let directory = tempfile::tempdir().unwrap();
+    let document = generate_credential_document(directory.path());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["apply", "-"])
+        .arg("--bundle")
+        .arg(directory.path().join("missing-bundle"))
+        .arg("--state-dir")
+        .arg(directory.path().join("state-must-not-exist"))
+        .env_remove("STORY_CREDENTIAL_KEY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&fs::read(document).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("reading configuration from stdin"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("STORY_CREDENTIAL_KEY"), "{stderr}");
+    assert!(!stderr.contains("Credential for"), "{stderr}");
+}
+
 #[test]
 fn non_interactive_onboarding_publishes_without_lifecycle_dependencies() {
     let directory = tempfile::tempdir().unwrap();

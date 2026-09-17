@@ -3,6 +3,7 @@
 
 mod args;
 mod authoring;
+mod credentials;
 mod dispatch;
 mod io;
 #[cfg(test)]
