@@ -699,6 +699,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         : null;
     },
   );
+  vi.spyOn(crossPortRegistry, "getSandboxAcrossGatewayRoots").mockImplementation(
+    (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(crossPortRegistry, "recordSandboxStopIntentAcrossGatewayRoots").mockImplementation(((
+    name: string,
+    stopped: boolean,
+  ) => registry.recordSandboxStopIntent(name, stopped, registry.updateSandbox)) as never);
   vi.spyOn(crossPortRegistry, "listPublishedSandboxesAcrossGatewayRoots").mockImplementation(
     () => registryEntries,
   );
