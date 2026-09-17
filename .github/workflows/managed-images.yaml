@@ -1102,7 +1102,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -1202,7 +1204,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )

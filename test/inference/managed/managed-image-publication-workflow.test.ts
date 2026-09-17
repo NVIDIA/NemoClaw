@@ -786,7 +786,7 @@ describe("complete managed-image publication workflow", () => {
       "${{ github.event.pull_request.head.sha }}",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts --no-audit --no-fund[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /openshell-sdk-install\.mts prepare[\s\S]*npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https:\/\/npm\.pkg\.github\.com[\s\S]*openshell-sdk-install\.mts check[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
@@ -811,6 +811,9 @@ describe("complete managed-image publication workflow", () => {
     });
     expect(JSON.stringify(activation)).not.toContain("secrets.");
     expect(JSON.stringify(activation)).not.toContain("github.token");
+    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
+      /openshell-sdk-install\.mts prepare[\s\S]*npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https:\/\/npm\.pkg\.github\.com[\s\S]*openshell-sdk-install\.mts check/u,
+    );
     expect(step(activation, "Install rootless Podman runtime").run).toContain(
       '"podman=$PODMAN_APT_VERSION"',
     );
