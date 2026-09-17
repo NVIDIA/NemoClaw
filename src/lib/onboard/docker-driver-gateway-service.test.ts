@@ -544,7 +544,7 @@ describe("docker-driver-gateway-service", () => {
         }),
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
-    ).rejects.toThrow("remains lifecycle authority");
+    ).resolves.toBe(false);
     expect(register).toHaveBeenCalledOnce();
     expect(sleepSeconds).not.toHaveBeenCalled();
     expect(ready).not.toHaveBeenCalled();
@@ -596,7 +596,7 @@ describe("docker-driver-gateway-service", () => {
     },
   );
 
-  it("keeps Homebrew as lifecycle authority when managed startup fails (#7707)", async () => {
+  it("uses standalone fallback when Homebrew startup fails (#7707)", async () => {
     const stopService = vi.fn();
 
     await expect(
@@ -618,7 +618,7 @@ describe("docker-driver-gateway-service", () => {
         stopOpenShellGatewayUserService: stopService,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
-    ).rejects.toThrow("temporary trust failed");
+    ).resolves.toBe(false);
     expect(stopService).not.toHaveBeenCalled();
   });
 
@@ -662,7 +662,7 @@ describe("docker-driver-gateway-service", () => {
     );
   });
 
-  it("stops an unhealthy Homebrew service without changing lifecycle authority (#7707)", async () => {
+  it("uses standalone fallback when the Homebrew service stays unhealthy (#7707)", async () => {
     const clock = createVirtualClock();
     const stopService = vi.fn(() => ({
       attempted: true,
@@ -693,8 +693,8 @@ describe("docker-driver-gateway-service", () => {
         stopOpenShellGatewayUserService: stopService,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
-    ).rejects.toThrow("Homebrew formula remains lifecycle authority");
-    expect(stopService).toHaveBeenCalledOnce();
+    ).resolves.toBe(false);
+    expect(stopService).not.toHaveBeenCalled();
   });
 
   it("blocks standalone fallback when managed service cleanup fails without permission (#8926)", async () => {

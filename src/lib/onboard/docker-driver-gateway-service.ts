@@ -1462,10 +1462,7 @@ export async function startPackageManagedDockerDriverGateway({
       validatePortOwnerForServiceStart: validatePortOwnerForOpenShellGatewayUserServiceStart,
     });
   } catch (error) {
-    if (
-      error instanceof OpenShellGatewayServiceEnvironmentError ||
-      error instanceof OpenShellGatewayServiceTrustError
-    ) {
+    if (error instanceof OpenShellGatewayServiceEnvironmentError) {
       throw error;
     }
     warn(
@@ -1481,7 +1478,7 @@ export async function startPackageManagedDockerDriverGateway({
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
-    if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
+    if (serviceStart.standaloneFallbackBlocked && serviceStart.manager !== "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
       printError(`  ${message}`);
       if (exitOnFailure) process.exit(1);
@@ -1491,7 +1488,9 @@ export async function startPackageManagedDockerDriverGateway({
       `  OpenShell gateway managed service failed to start${detail}; using standalone fallback.`,
     );
     reportLogs();
-    if (serviceStart.attempted) stopBeforeStandaloneFallback();
+    if (serviceStart.attempted && serviceStart.manager !== "homebrew") {
+      stopBeforeStandaloneFallback();
+    }
     return false;
   }
 
@@ -1534,12 +1533,7 @@ export async function startPackageManagedDockerDriverGateway({
   );
   reportLogs();
   if (serviceStart.manager === "homebrew") {
-    stopBeforeStandaloneFallback();
-    const authorityMessage =
-      "The installed OpenShell Homebrew formula remains lifecycle authority; " +
-      "run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash before retrying onboarding.";
-    if (exitOnFailure) process.exit(1);
-    throw new OpenShellGatewayServiceTrustError(authorityMessage);
+    return false;
   }
   if (serviceStart.attempted) stopBeforeStandaloneFallback();
   return false;
