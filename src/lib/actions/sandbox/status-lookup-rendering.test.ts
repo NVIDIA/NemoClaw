@@ -16,8 +16,10 @@ function captureConsoleLog(): { lines: () => string; restore: () => void } {
 async function printGuidance({
   phase,
   dockerRuntime,
+  openshellDriver = "docker",
 }: {
   phase: string;
+  openshellDriver?: string;
   dockerRuntime: {
     health: "none";
     paused: boolean;
@@ -30,6 +32,7 @@ async function printGuidance({
     registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
     phase,
+    openshellDriver,
     dockerRuntime,
     effectivePreflight: {
       failure: null,
@@ -115,6 +118,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       registered: true,
       lookup: { state: "missing", output: "sandbox beta not found" },
       phase: "Stopped",
+      openshellDriver: "docker",
       dockerRuntime: null,
       effectivePreflight: {
         failure: null,
@@ -142,6 +146,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
         registered: true,
         lookup: { state: "gateway_schema_mismatch", output: "gateway schema mismatch" },
         phase: "Stopped",
+        openshellDriver: "docker",
         dockerRuntime: null,
         effectivePreflight: {
           failure: null,
@@ -172,6 +177,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
             "  Sandbox 'beta' is running, but NemoClaw could not clear its stale intentional-stop record.",
         },
         phase: "Running",
+        openshellDriver: "docker",
         dockerRuntime: null,
         effectivePreflight: {
           failure: null,
@@ -211,9 +217,20 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
-  it("steers a provider without a Docker container to the OpenShell start path", async () => {
+  it("steers a Docker-driver sandbox without its container to rebuild", async () => {
     const cap = captureConsoleLog();
     await printGuidance({ phase: "Error", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta rebuild --yes");
+    expect(text).toContain("missing Docker-driver container");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("steers a native provider without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "mxc", dockerRuntime: null });
     const text = cap.lines();
     cap.restore();
 

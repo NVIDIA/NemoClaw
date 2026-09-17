@@ -284,8 +284,47 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("steers an Error sandbox without a Docker container through OpenShell start", async () => {
+  it("steers a Docker-driver Error sandbox without its container to rebuild", async () => {
     mockSandboxPhase("Error");
+    getSandboxSpy.mockReturnValue({
+      name: "instance-a",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      running: true,
+      containerName: null,
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("nemoclaw instance-a rebuild --yes");
+    expect(output).toContain("missing Docker-driver container");
+    expect(output).not.toContain("nemoclaw instance-a start");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps OpenShell start guidance for a native Error sandbox without a Docker container", async () => {
+    mockSandboxPhase("Error");
+    getSandboxSpy.mockReturnValue({
+      name: "instance-a",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "mxc",
+    });
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,

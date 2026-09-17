@@ -374,13 +374,23 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .join("\n"),
   ).toBe(true);
 
-  const stoppedStatus = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "status"],
-    "phase-4-status-after-native-gateway-exit",
-    {},
-    120_000,
-  );
+  await input.sandbox.killGatewayTree(SANDBOX_NAME, {
+    artifactName: "phase-4-stop-native-gateway-before-recovery",
+    env: env(),
+    redactionValues: input.redactionValues,
+    timeoutMs: 30_000,
+  });
+  const stoppedStatus = (
+    await pollUntil({
+      artifactPrefix: "phase-4-status-after-native-gateway-exit",
+      attempts: 10,
+      delayMs: 1_000,
+      probe: async (_attempt, artifactName) =>
+        await repoNemoclaw(input.host, [SANDBOX_NAME, "status"], artifactName, {}, 60_000),
+      accept: (result) =>
+        result.exitCode !== 0 && resultText(result).includes(`nemoclaw ${SANDBOX_NAME} start`),
+    })
+  ).value;
   const recovery = await repoNemoclaw(
     input.host,
     [SANDBOX_NAME, "start"],

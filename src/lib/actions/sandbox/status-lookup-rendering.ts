@@ -22,6 +22,7 @@ type SandboxGatewayLookupStatusContext = {
   registered: boolean;
   lookup: SandboxGatewayState;
   phase: string | null;
+  openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
   effectivePreflight: SandboxStatusPreflightResult;
 };
@@ -141,6 +142,7 @@ function printPresentSandboxGatewayLookupStatus({
   sandboxName,
   lookup,
   phase,
+  openshellDriver,
   dockerRuntime,
 }: SandboxGatewayLookupStatusContext): void {
   console.log("");
@@ -166,7 +168,7 @@ function printPresentSandboxGatewayLookupStatus({
       ? lookup.output.replace(/^(\s*Phase:\s*)\S+\s*$/gmu, "$1Stopped")
       : lookup.output;
   if (renderedOutput) console.log(renderedOutput);
-  printNonReadySandboxPhaseGuidance({ sandboxName, phase, dockerRuntime });
+  printNonReadySandboxPhaseGuidance({ sandboxName, phase, openshellDriver, dockerRuntime });
 }
 
 function printWrongGatewayActiveLookupStatus({
@@ -262,10 +264,12 @@ async function printUnknownGatewayLookupStatus({
 function printNonReadySandboxPhaseGuidance({
   sandboxName,
   phase,
+  openshellDriver,
   dockerRuntime,
 }: {
   sandboxName: string;
   phase: string | null;
+  openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
 }): void {
   if (!phase || phase === "Ready") return;
@@ -318,6 +322,12 @@ function printNonReadySandboxPhaseGuidance({
     "  This usually happens when a process crash inside the sandbox prevented clean startup.",
   );
   console.log("");
+  if (phase === "Error" && openshellDriver === "docker" && !dockerRuntime?.containerName) {
+    console.log(
+      `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the missing Docker-driver container (--yes skips the confirmation prompt; workspace state will be preserved).`,
+    );
+    return;
+  }
   if (phase === "Error") {
     console.log(
       `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,

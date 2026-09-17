@@ -1167,12 +1167,21 @@ export async function ensureLiveSandboxOrExit(
       );
       console.error("");
       if (phase === "Error") {
-        console.error(
-          `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
-        );
-        console.error(
-          `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
-        );
+        if (
+          getKnownSandboxTarget(sandboxName)?.openshellDriver === "docker" &&
+          !dockerRuntime.containerName
+        ) {
+          console.error(
+            `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the missing Docker-driver container (--yes skips the confirmation prompt; workspace state will be preserved).`,
+          );
+        } else {
+          console.error(
+            `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
+          );
+          console.error(
+            `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
+          );
+        }
       } else {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,

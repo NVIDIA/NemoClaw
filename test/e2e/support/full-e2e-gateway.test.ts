@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { printSandboxGatewayLookupStatus } from "../../../src/lib/actions/sandbox/status-lookup-rendering.ts";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 
 const directories: string[] = [];
@@ -61,35 +60,6 @@ function declaration(
 }
 
 describe("full E2E gateway ownership", () => {
-  it("maps a native gateway exit to workspace-preserving OpenShell recovery", async () => {
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      lines.push(args.map(String).join(" "));
-    });
-
-    await printSandboxGatewayLookupStatus({
-      sandboxName: "nemoclaw-e2e",
-      registered: true,
-      lookup: {
-        state: "present",
-        output: "Sandbox:\n  Name: nemoclaw-e2e\n  Phase: Error",
-      },
-      phase: "Error",
-      dockerRuntime: null,
-      effectivePreflight: {
-        failure: null,
-        failureLayer: null,
-        suppressInferenceProbe: false,
-        exitCode: 0,
-      },
-    });
-
-    const guidance = lines.join("\n");
-    expect(guidance).toContain("nemoclaw nemoclaw-e2e start");
-    expect(guidance).toContain("workspace state preserved");
-    expect(guidance).toContain("nemoclaw nemoclaw-e2e rebuild --yes");
-  });
-
   it.each([
     { preinstalled: true, targetId: "staging-brev-launchable", measuresColdOnboard: false },
     { preinstalled: false, targetId: "staging-brev-launchable", measuresColdOnboard: false },

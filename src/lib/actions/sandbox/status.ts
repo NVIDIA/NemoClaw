@@ -250,6 +250,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     registered: sb !== null,
     lookup,
     phase,
+    openshellDriver: sb?.openshellDriver ?? null,
     dockerRuntime,
     effectivePreflight,
   });
