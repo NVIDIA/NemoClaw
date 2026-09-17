@@ -204,6 +204,23 @@ const publish = (file, content) => {
   const handle = fs.openSync(file, "wx");
   try { fs.writeFileSync(handle, content); fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
 };
+const claimRetries = new Map();
+const claim = (file) => {
+  try {
+    fs.unlinkSync(file);
+    claimRetries.delete(file);
+    return true;
+  } catch (error) {
+    if (process.platform !== "win32" || !["EACCES", "EBUSY", "EPERM"].includes(error.code)) throw error;
+    const now = performance.now();
+    const retry = claimRetries.get(file) || { startedMs: now, attempts: 0 };
+    retry.attempts++;
+    if (now - retry.startedMs >= 250)
+      throw new Error("The contained NemoCUA relay frame remained locked after " + retry.attempts + " bounded attempts.");
+    claimRetries.set(file, retry);
+    return false;
+  }
+};
 const streams = new Map();
 let nextSlot = 0;
 let failure;
@@ -239,11 +256,19 @@ poll = setInterval(() => {
     const shutdown = join(relayRoot, "shutdown");
     if (fs.existsSync(shutdown) && fs.readFileSync(shutdown, "utf8") === relayToken) { stop(new Error("The NemoCUA session was stopped.")); return; }
     for (const stream of streams.values()) {
-      for (const name of fs.readdirSync(stream.root).filter((name) => /^host-[0-9]{10}[.]bin$/.test(name)).sort()) {
+      const incoming = fs.readdirSync(stream.root).filter((name) => /^host-[0-9]{10}[.]bin$/.test(name)).sort();
+      let delivered = 0;
+      for (const name of incoming) {
         const file = join(stream.root, name);
-        stream.socket.write(fs.readFileSync(file)); fs.unlinkSync(file);
+        const bytes = fs.readFileSync(file);
+        if (!claim(file)) break;
+        stream.socket.write(bytes);
+        delivered++;
       }
-      if (!stream.closing && fs.existsSync(join(stream.root, "host-close"))) { stream.closing = true; stream.socket.end(); }
+      if (!stream.closing && delivered === incoming.length && fs.existsSync(join(stream.root, "host-close"))) {
+        stream.closing = true;
+        stream.socket.end();
+      }
     }
   } catch (error) { stop(error); }
 }, 10);

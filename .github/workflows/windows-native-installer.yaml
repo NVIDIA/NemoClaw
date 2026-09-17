@@ -657,7 +657,8 @@ jobs:
           $tests = @(
             'packaging/windows/installer/control-installed-openclaw-input.test.mts',
             'packaging/windows/installer/run-installed-acceptance.test.mts',
-            'packaging/windows/installer/qualify-finished-package.test.mts'
+            'packaging/windows/installer/qualify-finished-package.test.mts',
+            'packaging/windows/runtime/native-ui-tunnel.test.mts'
           )
           & "$work\node\node.exe" --experimental-strip-types --no-warnings --test @tests `
             1>"$output\installed-acceptance-controller.stdout.log" `

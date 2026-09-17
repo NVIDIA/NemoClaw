@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RelayMeasurements } from "./native-broker-relay-protocol.mts";
 
+const FRAME_CLAIM_TIMEOUT_MS = 250;
+
 function readRelayFileUnmeasured(file: string, maxBytes: number): Buffer | null {
   let descriptor: number;
   try {
@@ -51,6 +53,42 @@ export function readNativeUiTunnelMarker(
   measurements?: RelayMeasurements,
 ): string | null {
   return readRelayFile(file, 4096, measurements)?.toString("utf8") ?? null;
+}
+
+export function claimNativeUiTunnelFrame(
+  file: string,
+  prior: { startedMs: number; attempts: number } | undefined,
+  runtime: {
+    platform?: NodeJS.Platform;
+    now?: () => number;
+    unlink?: (file: string) => void;
+  } = {},
+) {
+  try {
+    (runtime.unlink ?? fs.unlinkSync)(file);
+    return { claimed: true as const };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // The native publisher atomically renames a flushed frame before its
+    // deny-delete handle is closed. A contained reader can observe that brief
+    // Windows sharing window. Leave the frame unclaimed for the next poll so
+    // its bytes are never delivered twice.
+    if (
+      (runtime.platform ?? process.platform) === "win32" &&
+      ["EACCES", "EBUSY", "EPERM"].includes(code ?? "")
+    ) {
+      const now = (runtime.now ?? performance.now)();
+      const retry = {
+        startedMs: prior?.startedMs ?? now,
+        attempts: (prior?.attempts ?? 0) + 1,
+      };
+      if (now - retry.startedMs < FRAME_CLAIM_TIMEOUT_MS) return { claimed: false as const, retry };
+      throw new Error(
+        `The native UI relay frame remained locked after ${retry.attempts} bounded attempts.`,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function startNativeUiTunnel({
@@ -150,6 +188,7 @@ export async function startNativeUiTunnel({
         pendingFrames: number;
         blocked: boolean;
         hostEnded: boolean;
+        claimRetries: Map<string, { startedMs: number; attempts: number }>;
       }
     >();
     writeRelayFile(join(relayRoot, "ready"), relayToken);
@@ -193,6 +232,7 @@ export async function startNativeUiTunnel({
             pendingFrames: 0,
             blocked: false,
             hostEnded: false,
+            claimRetries: new Map(),
           };
           streams.set(entry, state);
           socket.on("drain", () => {
@@ -232,8 +272,13 @@ export async function startNativeUiTunnel({
             const chunk = join(stream.root, entry);
             const bytes = readRelayFile(chunk, 1024 * 1024, measurements);
             if (bytes === null) throw new Error("A native UI relay frame disappeared.");
+            const claim = claimNativeUiTunnelFrame(chunk, stream.claimRetries.get(entry));
+            if (!claim.claimed) {
+              stream.claimRetries.set(entry, claim.retry);
+              break;
+            }
+            stream.claimRetries.delete(entry);
             stream.blocked = !stream.socket.write(bytes);
-            fs.unlinkSync(chunk);
             delivered++;
           }
           if (
