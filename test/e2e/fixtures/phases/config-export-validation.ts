@@ -13,10 +13,6 @@ import type {
   NemoClawSandboxConfig,
   ValidatedNemoClawConfig,
 } from "../../../../src/lib/config/model.ts";
-import {
-  createCliOpenShellSandboxPolicyReader,
-  namedOpenShellGateway,
-} from "../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
@@ -293,6 +289,8 @@ async function readEffectivePolicyDocument(
   gatewayName: string,
   sandboxName: string,
 ): Promise<string> {
+  const { createCliOpenShellSandboxPolicyReader, namedOpenShellGateway } =
+    await import("../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts");
   const reader = createCliOpenShellSandboxPolicyReader({
     capture: async (args, options) => {
       const result = await host.command(host.openshellCommandPath, args, {
