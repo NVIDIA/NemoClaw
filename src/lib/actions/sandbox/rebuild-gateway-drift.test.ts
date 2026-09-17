@@ -531,4 +531,21 @@ describe("rebuild owning registry routing", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("rejects traversal-shaped recovery names before reading gateway roots", () => {
+    const readDirectory = vi.spyOn(fs, "readdirSync");
+
+    expect(() =>
+      findRebuildRecoveryStorageRoot(
+        {
+          sandboxName: "../outside",
+          transactionId: "11111111-1111-4111-8111-111111111111",
+          confirmDataRecovered: true,
+        },
+        "/home/test",
+      ),
+    ).toThrow("Invalid sandbox name.");
+
+    expect(readDirectory).not.toHaveBeenCalled();
+  });
 });

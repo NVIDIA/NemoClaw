@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 
+import { isValidNemoClawSandboxName } from "../../../config/model";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
 import { assertGatewayStatePathSafe, listGatewayStateRoots } from "../../../state/gateway-registry";
@@ -52,7 +53,7 @@ type RebuildOwningRegistryDependencies = {
   runWorker(
     input: OwningRegistryWorkerInput,
     gatewayPort: number,
-    options?: Readonly<{ timeoutMs?: number }>,
+    options?: Readonly<{ terminationGraceMs?: number; timeoutMs?: number }>,
   ): Promise<void>;
 };
 
@@ -61,6 +62,8 @@ const MAX_RECOVERY_BACKUP_ENTRIES = 1024;
 const MAX_WORKER_RESULT_BYTES = 64 * 1024;
 const REBUILD_WORKER_TIMEOUT_MS = 45 * 60_000;
 const REBUILD_WORKER_TERMINATION_GRACE_MS = 5_000;
+const REBUILD_WORKER_REAP_TIMEOUT_MS = 2_000;
+const REBUILD_WORKER_REAP_POLL_MS = 10;
 const REBUILD_ENV_NAMES = [
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
   "NEMOCLAW_NON_INTERACTIVE",
@@ -118,16 +121,82 @@ async function readWorkerResult(stream: Readable): Promise<OwningRegistryWorkerR
   return parsed as OwningRegistryWorkerResult;
 }
 
+function workerProcessGroupIsRunning(child: ChildProcess, dedicatedProcessGroup: boolean): boolean {
+  if (!dedicatedProcessGroup || typeof child.pid !== "number") {
+    return child.exitCode === null && child.signalCode === null;
+  }
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function signalWorkerProcessGroup(
+  child: ChildProcess,
+  dedicatedProcessGroup: boolean,
+  signal: NodeJS.Signals,
+): void {
+  if (dedicatedProcessGroup && typeof child.pid === "number") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the leader when the group is already gone or unavailable.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The leader already exited.
+  }
+}
+
+async function waitForWorkerProcessGroupExit(
+  child: ChildProcess,
+  dedicatedProcessGroup: boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (workerProcessGroupIsRunning(child, dedicatedProcessGroup)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, REBUILD_WORKER_REAP_POLL_MS));
+  }
+  return true;
+}
+
+async function settleWorkerPromises(
+  promises: readonly Promise<unknown>[],
+  timeoutMs: number,
+): Promise<void> {
+  let deadline: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    deadline = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled(promises), timeout]);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+}
+
 async function runWorker(
   input: OwningRegistryWorkerInput,
   gatewayPort: number,
-  options: Readonly<{ timeoutMs?: number }> = {},
+  options: Readonly<{ terminationGraceMs?: number; timeoutMs?: number }> = {},
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? REBUILD_WORKER_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error("Rebuild worker timeout must be a positive integer.");
   }
+  const terminationGraceMs = options.terminationGraceMs ?? REBUILD_WORKER_TERMINATION_GRACE_MS;
+  if (!Number.isInteger(terminationGraceMs) || terminationGraceMs <= 0) {
+    throw new Error("Rebuild worker termination grace must be a positive integer.");
+  }
+  const dedicatedProcessGroup = process.platform !== "win32";
   const child = spawn(process.execPath, [WORKER_PATH], {
+    detached: dedicatedProcessGroup,
     env: rebuildWorkerEnv(gatewayPort),
     stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
   });
@@ -174,22 +243,21 @@ async function runWorker(
     if (deadline) clearTimeout(deadline);
   }
   if (outcome.kind === "timeout") {
-    child.kill("SIGTERM");
-    let graceDeadline: NodeJS.Timeout | undefined;
-    const graceExpired = new Promise<boolean>((resolve) => {
-      graceDeadline = setTimeout(() => resolve(true), REBUILD_WORKER_TERMINATION_GRACE_MS);
-    });
-    const exitedDuringGrace = exited.then(
-      () => false,
-      () => false,
+    signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGTERM");
+    const stoppedGracefully = await waitForWorkerProcessGroupExit(
+      child,
+      dedicatedProcessGroup,
+      terminationGraceMs,
     );
-    const forceKill = await Promise.race([graceExpired, exitedDuringGrace]);
-    if (graceDeadline) clearTimeout(graceDeadline);
-    if (forceKill) {
-      child.kill("SIGKILL");
-      await exited.catch(() => undefined);
+    if (!stoppedGracefully) {
+      signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGKILL");
+      await waitForWorkerProcessGroupExit(
+        child,
+        dedicatedProcessGroup,
+        REBUILD_WORKER_REAP_TIMEOUT_MS,
+      );
     }
-    await Promise.allSettled([inputWritten, result]);
+    await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
     const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
     throw new Error(
       `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.`,
@@ -226,6 +294,9 @@ export function findRebuildRecoveryStorageRoot(
   input: RetireRecoveryOwningRegistryInput,
   homeDir: string,
 ): RebuildRecoveryStorageRoot | null {
+  if (!isValidNemoClawSandboxName(input.sandboxName)) {
+    throw new Error("Invalid sandbox name.");
+  }
   const matches: RebuildRecoveryStorageRoot[] = [];
   for (const state of listGatewayStateRoots(homeDir)) {
     const sandboxBackupRoot = path.join(state.root, "rebuild-backups", input.sandboxName);

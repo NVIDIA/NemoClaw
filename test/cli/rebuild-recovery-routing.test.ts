@@ -84,7 +84,58 @@ function writeRecoveryFixture(home: string) {
   return { backupPath, handoffPath, manifestPath, recordPath, retainedPath };
 }
 
+function writeSiblingRegistry(home: string): string {
+  const stateRoot = path.join(home, ".nemoclaw", "gateways", "9000");
+  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+  const registryPath = path.join(stateRoot, "sandboxes.json");
+  fs.writeFileSync(
+    registryPath,
+    `${JSON.stringify({
+      defaultSandbox: "gw1-sb",
+      sandboxes: {
+        "gw1-sb": {
+          name: "gw1-sb",
+          provider: "ollama-local",
+          model: "nvidia/nemotron",
+          agent: "openclaw",
+          nemoclawVersion: "0.1.0",
+          dashboardPort: 18_789,
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+        },
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
+  return registryPath;
+}
+
 describe("CLI rebuild recovery routing", () => {
+  it(
+    "routes a valid sibling-root rebuild through the compiled worker",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-rebuild-sibling-"));
+      try {
+        const registryPath = writeSiblingRegistry(home);
+
+        const result = runWithEnv("gw1-sb rebuild --yes", {
+          HOME: home,
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          DOCKER_HOST: `unix://${path.join(home, "missing-docker.sock")}`,
+        });
+
+        expect(result.code).toBe(1);
+        expect(result.out).toContain("Rebuild sandbox 'gw1-sb'");
+        expect(result.out).toContain("Replacement onboarding preflight failed");
+        expect(fs.existsSync(registryPath)).toBe(true);
+        expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json"))).toBe(false);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it(
     "retires a retained recovery record from a sibling gateway root after its registry row is removed (#11394)",
     testTimeoutOptions(35_000),
