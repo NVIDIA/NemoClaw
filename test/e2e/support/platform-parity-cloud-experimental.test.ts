@@ -14,8 +14,16 @@ vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
 }));
 
 import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../fixtures/shell-probe.ts";
 import {
   cloudExperimentalChecksForOnboarding,
   DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
@@ -25,6 +33,7 @@ import {
   buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
   cloudExperimentalCheckTimeoutMs,
+  runE2eCloudExperimentalChecks,
 } from "../live/cloud-experimental-checks.ts";
 
 const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
@@ -738,6 +747,73 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
       ),
     ).toBe(35 * 60_000);
+  });
+
+  it("removes only the identified DCode TUI session after the caller timeout (#11847)", async () => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-caller-timeout-"));
+    const cleanup = new CleanupRegistry();
+    const tuiCheck = "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
+    const responses: ShellProbeResult[] = [
+      shellResult(0, ""),
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\n"),
+      {
+        ...shellResult(0, ""),
+        exitCode: null,
+        signal: "SIGTERM",
+        timedOut: true,
+      },
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\nNEMOCLAW_TUI_CALLER_RECOVERY_OK:2\n"),
+    ];
+    let responseIndex = 0;
+    const run = vi.fn(
+      async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+        responses[responseIndex++]!,
+    );
+
+    try {
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "cloud-langchain-deepagents-code",
+          "deepagents-sandbox",
+          [tuiCheck],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup,
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
+        ),
+      ).rejects.toThrow();
+
+      expect(run).toHaveBeenCalledTimes(4);
+      const tuiCommand = run.mock.calls[2]?.[0];
+      const tuiOptions = run.mock.calls[2]?.[1];
+      const sessionId = tuiOptions?.env?.NEMOCLAW_TUI_SESSION_ID;
+      expect(tuiCommand).toMatchObject({
+        command: "bash",
+        args: [path.join(process.cwd(), tuiCheck)],
+      });
+      expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+
+      const recoveryCommand = run.mock.calls[3]?.[0];
+      expect(recoveryCommand).toMatchObject({
+        command: "bash",
+        args: expect.arrayContaining(["recover", "deepagents-sandbox", sessionId, "2"]),
+      });
+      const guardScript = fs.readFileSync(recoveryCommand?.args[0] ?? "", "utf8");
+      expect(guardScript).toContain('grep -Fqx -- "NEMOCLAW_TUI_SESSION_ID=$session_id"');
+      expect(guardScript).toContain('if [ "$count" -gt "$baseline" ]');
+
+      await expect(cleanup.runAll()).resolves.toEqual({
+        passed: [expect.stringContaining("stop timed-out DCode TUI session")],
+        failures: [],
+      });
+      expect(run).toHaveBeenCalledTimes(4);
+    } finally {
+      fs.rmSync(artifactRoot, { force: true, recursive: true });
+    }
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

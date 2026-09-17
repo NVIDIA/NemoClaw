@@ -18,6 +18,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-120}"
+TUI_SESSION_ID="${NEMOCLAW_TUI_SESSION_ID:-}"
 PROCESS_CLEANUP_TIMEOUT=20
 SANDBOX_EXEC_TIMEOUT_SECONDS=45
 SANDBOX_EXEC_KILL_AFTER_SECONDS=5
@@ -40,6 +41,11 @@ TUI_MODEL_PROMPT='What is 731 + 206? Reply only with the number.'
 TUI_MODEL_RESPONSE_PATTERN='(^|[^0-9])937([^0-9]|$)'
 TUI_RUNTIME_ERROR_PATTERN='(cannot create a memfd|wasmtimeerror)'
 SENSITIVE_CAPTURE_FILES=()
+
+if [ -n "$TUI_SESSION_ID" ] && [[ ! "$TUI_SESSION_ID" =~ ^[0-9a-f-]{36}$ ]]; then
+  printf '%s\n' "${PREFIX}: invalid caller TUI session id" >&2
+  exit 2
+fi
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -217,10 +223,12 @@ run_tui_expect() {
     NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN="$TUI_RUNTIME_ERROR_PATTERN" \
     NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
+    NEMOCLAW_TUI_SESSION_ID="$TUI_SESSION_ID" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
 set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
+set session_id $env(NEMOCLAW_TUI_SESSION_ID)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 set composer_pattern $env(NEMOCLAW_TUI_COMPOSER_PATTERN)
 set markers $env(NEMOCLAW_TUI_MARKERS)
@@ -289,7 +297,7 @@ proc terminate_failed_tui {markers sandbox exit_code} {
   }
 }
 
-set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
+set cmd [list openshell sandbox exec --name $sandbox --tty -- env "NEMOCLAW_TUI_SESSION_ID=$session_id" sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 
 # DCode's own onboarding predicate is sampled immediately before launch. This
