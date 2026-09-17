@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
-import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -11,7 +10,12 @@ import {
   openClawConfigDir,
 } from "./mcp-bridge-adapters";
 import { parseUnsafeDeepAgentsMcpConfigResult } from "./mcp-bridge-adapter-status";
-import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
+import {
+  isAgentMcpAdapter,
+  McpBridgeError,
+  type McpSourceEntry,
+  type McpBridgeStatus,
+} from "./mcp-bridge-contracts";
 import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
@@ -45,11 +49,11 @@ import {
 } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
-  normalizeMcpServerUrl,
   resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand } from "./process-recovery";
 
 export interface McpBridgeJsonSummary {
@@ -113,9 +117,7 @@ export async function assertUnchangedStableMcpCredentialAuthorized(
 
 function storedUrlWarning(entry: McpSourceEntry): string | undefined {
   try {
-    return normalizeMcpServerUrl(entry.url, {
-      trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
-    }) === entry.url
+    return normalizeRecordedMcpServerUrl(entry) === entry.url
       ? undefined
       : UNSUPPORTED_STORED_URL_WARNING;
   } catch {
