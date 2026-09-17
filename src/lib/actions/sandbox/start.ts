@@ -4,7 +4,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
-import { retryUntilAsync } from "../../core/retry";
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
@@ -23,6 +22,7 @@ import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
   resolveGatewayRecoveryWaitSeconds,
+  waitForStartedHermesGatewayProcess,
 } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
@@ -70,7 +70,6 @@ export interface SandboxStartDeps {
   log?: (message: string) => void;
 }
 
-const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
@@ -91,13 +90,10 @@ async function waitForStartedNativeGatewayProcess(
     await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
   };
   if (nativeAgent === "hermes") {
-    return retryUntilAsync(() => probe(sandboxName, gatewayName), {
-      accept: (running) => running !== false,
-      retryDelaysMs: Array.from(
-        { length: HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS - 1 },
-        () => GATEWAY_PROCESS_SETTLEMENT_DELAY_MS,
-      ),
-      sleep: delay,
+    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
+      probe,
+      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+      log,
     });
   }
 

@@ -24,7 +24,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import type {
@@ -403,13 +403,9 @@ describe("E2E fixture clients", () => {
     "preserves destroy exit %i and its artifacts after successful final cleanup",
     async (destroyExitCode) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-evidence-"));
-      const progress = startTestProgress(
-        "cleanup evidence",
-        ["destroy sandbox", "inspect evidence"],
-        {
-          logLine: () => undefined,
-        },
-      );
+      const progress = startTestProgress("cleanup", ["destroy sandbox", "inspect evidence"], {
+        logLine: () => undefined,
+      });
       try {
         const artifacts = new ArtifactSink(tmp);
         const probe = new ShellProbe({
@@ -438,10 +434,15 @@ describe("E2E fixture clients", () => {
         cleanup.trackSandbox(host, "assistant", { artifactName: "cleanup-nemoclaw-destroy" });
         progress.phase("destroy sandbox");
         await host.cleanupSandbox("assistant", { artifactName: "pre-cleanup-nemoclaw-destroy" });
-        const outcome = await host
-          .cleanupSandbox("assistant", { artifactName: "verify-cleanup-nemoclaw-destroy" })
-          .catch((error: Error) => error.message);
-        expect((await cleanup.runAll()).failures).toEqual([]);
+        const outcome = await (async () => {
+          try {
+            await host.cleanupSandbox("assistant", {
+              artifactName: "verify-cleanup-nemoclaw-destroy",
+            });
+          } finally {
+            assertCleanupPassed(await cleanup.runAll());
+          }
+        })().catch((error: Error) => error.message);
         expect(outcome).toBe(
           destroyExitCode === 0
             ? undefined
