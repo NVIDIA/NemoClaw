@@ -163,6 +163,7 @@
         "test/e2e/live/pr-base-comparison.ts"
       ],
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
@@ -475,6 +476,7 @@
       "live": "test/e2e/live/device-auth-health.test.ts",
       "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -570,13 +572,6 @@
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
-      "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -811,6 +806,7 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
