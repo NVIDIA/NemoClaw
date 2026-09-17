@@ -836,7 +836,10 @@ describe("managed startup agent environment", () => {
           subagents: { maxSpawnDepth: 3 },
           timeoutSeconds: 900,
         },
-        list: [{ default: true, id: "main" }, { id: "reviewer" }],
+        entries: {
+          main: { default: true },
+          reviewer: {},
+        },
       },
       models: {
         providers: {

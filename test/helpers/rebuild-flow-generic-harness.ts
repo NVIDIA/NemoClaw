@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { OpenShellRuntimeSelection } from "../../src/lib/adapters/openshell/runtime-selection";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -35,6 +36,7 @@ import {
   nim,
   onboardCredentialEnv,
   onboardSession,
+  openClawLifecycle,
   openshellRuntime,
   policies,
   policyGet,
@@ -951,8 +953,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         },
       };
     });
-  vi.spyOn(processRecovery, "beginOpenClawBackupQuiesce").mockImplementation(
-    async (sandboxName, runtimeSelection) => {
+  vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
       const result = await (
         overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
       )();
@@ -968,7 +970,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     },
   );
   vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
-  vi.spyOn(processRecovery, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
+  vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
     ok: true,
   });
   const checkAndRecoverSandboxProcessesSpy = vi
