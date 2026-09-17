@@ -77,6 +77,7 @@ const POLICY = {
   },
 };
 const createdDirectories: string[] = [];
+const artifactDirectories: string[] = [];
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -366,18 +367,27 @@ afterEach(() => {
   for (const directory of createdDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+  for (const directory of artifactDirectories.splice(0)) {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
 });
 describe("automatic config export validation phase", () => {
   it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
+    artifactDirectories.push(artifactRoot);
     const independentDependencies = dependencies();
     independentDependencies.parseConfig = parseConfigExport;
     const test = fixture({
+      artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
       host: successfulHost(raw),
     });
 
     const evidence = await test.phase.from(target("required"), instance());
+    const persistedEvidence = JSON.parse(
+      fs.readFileSync(path.join(artifactRoot, "config-export-evidence.v1.json"), "utf8"),
+    ) as ConfigExportEvidenceEnvelope;
 
     expect(evidence).toMatchObject({
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
@@ -389,6 +399,11 @@ describe("automatic config export validation phase", () => {
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
     expect(sha256(evidence.export!.bytes)).toBe(evidence.export!.sha256);
+    expect(persistedEvidence.export).toEqual({
+      bytes: raw,
+      byteLength: Buffer.byteLength(raw, "utf8"),
+      sha256: sha256(raw),
+    });
     expect(evidence.verifications.every((entry) => entry.passed)).toBe(true);
     expect(evidence.producer).toEqual({
       sourceRevision: SOURCE_REVISION,
