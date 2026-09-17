@@ -456,10 +456,7 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: {
-          targetAgentType?: string;
-          freshOpenClawImagePluginInstalls?: unknown[];
-        };
+        options?: { targetAgentType?: string };
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -479,7 +476,6 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-      assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
     },
   );
 

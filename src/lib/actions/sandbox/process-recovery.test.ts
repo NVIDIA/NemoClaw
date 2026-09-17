@@ -7,10 +7,10 @@ import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command";
-import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
+  resolveGatewayRecoveryWaitSeconds,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
 } from "./process-recovery";
@@ -74,39 +74,6 @@ function sequencedExecutor(
   });
   return { runBuffered };
 }
-
-describe("managed gateway control completion", () => {
-  const nonce = "a".repeat(64);
-
-  it.each([
-    ["ok", 0, 4242],
-    ["ok", 4242, 4242],
-    ["already-running", 4242, 4242],
-    ["already-running", 4242, 5252],
-  ] as const)(
-    "preserves the exact %s controller disposition (#7919)",
-    (disposition, oldPid, newPid) => {
-      expect(
-        parseManagedGatewayControlCompletion({
-          status: 0,
-          stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
-          stderr: "",
-        }),
-      ).toEqual({ disposition, oldPid, newPid });
-    },
-  );
-
-  it.each([
-    [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242\nextra`, ""],
-    [`v1 ${nonce} complete changed 0 4242\nGATEWAY_PID=4242`, ""],
-    [`v1 ${nonce} complete ok 0 9007199254740992\nGATEWAY_PID=9007199254740992`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242`, "unexpected warning"],
-    ["GATEWAY_PID=4242", ""],
-  ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
-    expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
-  });
-});
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -852,5 +819,39 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
 
     expect(ok).toBe(false);
     expect(probes).toBe(3);
+  });
+});
+
+describe("shared gateway recovery wait policy", () => {
+  it.each([
+    [undefined, 30],
+    ["", 30],
+    ["invalid", 30],
+    ["-1", 30],
+    ["Infinity", 30],
+    ["0", 0],
+    ["0.25", 0.25],
+    ["6", 6],
+    ["1e300", Number.MAX_SAFE_INTEGER / 1_000],
+  ] as const)("resolves HTTP health override %s", (value, expected) => {
+    expect(
+      resolveGatewayRecoveryWaitSeconds(undefined, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: value,
+      }),
+    ).toBe(expected);
+  });
+
+  it.each([30, 90, 120])("preserves the %s-second phase default with one override", (fallback) => {
+    expect(resolveGatewayRecoveryWaitSeconds(fallback, {})).toBe(fallback);
+    expect(
+      resolveGatewayRecoveryWaitSeconds(fallback, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "invalid",
+      }),
+    ).toBe(fallback);
+    expect(
+      resolveGatewayRecoveryWaitSeconds(fallback, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.25",
+      }),
+    ).toBe(0.25);
   });
 });

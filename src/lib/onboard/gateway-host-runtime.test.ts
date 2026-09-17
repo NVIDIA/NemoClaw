@@ -60,6 +60,7 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     // the raw enumeration.
     getGatewayPortListenerRawScan: () => ({ pids: [SYSTEMD_GATEWAY_PID], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.72",
+    preparePackagedGatewayServiceEnvAfterTrustedInstall: () => undefined,
     restartPackagedGatewayAfterTrustedInstall: () => undefined,
     resolveOpenShellGatewayBinary: () => SYSTEMD_GATEWAY_EXEC,
     spawnSyncImpl: (() => ({ status: 0, stdout: "active\n", stderr: "" })) as never,
@@ -245,22 +246,72 @@ describe("gateway host runtime ownership", () => {
   });
 
   it("restarts an already-bound packaged service after a trusted binary replacement", () => {
-    const start = vi.spyOn(gatewayService, "startOpenShellGatewayUserService").mockReturnValue({
-      attempted: true,
-      started: true,
+    const events: string[] = [];
+    const preparePackagedGatewayServiceEnvAfterTrustedInstall = vi.fn(() =>
+      events.push("prepare-env"),
+    );
+    const start = vi
+      .spyOn(gatewayService, "startOpenShellGatewayUserService")
+      .mockImplementation((options) => {
+        options?.prepareServiceEnv?.();
+        events.push("start");
+        return { attempted: true, started: true };
+      });
+    const portReady = vi.spyOn(wait, "waitForPort").mockImplementation(() => {
+      events.push("wait-port");
+      return true;
     });
-    const portReady = vi.spyOn(wait, "waitForPort").mockReturnValue(true);
     const runtime = createGatewayHostRuntime(
       createDeps({
         hasOpenShellGatewayUserService: () => true,
+        preparePackagedGatewayServiceEnvAfterTrustedInstall,
         restartPackagedGatewayAfterTrustedInstall: undefined,
       }),
     );
     const owner = runtime.getGatewayOwner();
 
     expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
-    expect(start).toHaveBeenCalledBefore(portReady);
+    expect(start).toHaveBeenCalledWith({ prepareServiceEnv: expect.any(Function) });
+    expect(preparePackagedGatewayServiceEnvAfterTrustedInstall).toHaveBeenCalledWith(owner);
     expect(portReady).toHaveBeenCalledExactlyOnceWith(owner.gatewayPort, 30);
+    expect(events).toEqual(["prepare-env", "start", "wait-port"]);
+  });
+
+  it("stamps the built authenticated environment before the default packaged restart", () => {
+    const events: string[] = [];
+    const desiredEnv = { OPENSHELL_SERVER_PORT: "8080" };
+    const getDockerDriverGatewayEnv = vi.fn(() => desiredEnv);
+    const prepare = vi.fn(() => {
+      events.push("prepare-env");
+    });
+    const start = vi
+      .spyOn(gatewayService, "startOpenShellGatewayUserService")
+      .mockImplementation((options) => {
+        options?.prepareServiceEnv?.();
+        events.push("start");
+        return { attempted: true, started: true };
+      });
+    vi.spyOn(wait, "waitForPort").mockImplementation(() => {
+      events.push("wait-port");
+      return true;
+    });
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        getDockerDriverGatewayEnv,
+        hasOpenShellGatewayUserService: () => true,
+        preparePackagedGatewayServiceEnvAfterTrustedInstall: undefined,
+        preparePackageManagedGatewayServiceEnv: prepare,
+        restartPackagedGatewayAfterTrustedInstall: undefined,
+      }),
+    );
+
+    runtime.getGatewayOwner();
+    runtime.adoptPackagedGatewayOwnerAfterTrustedInstall();
+
+    expect(getDockerDriverGatewayEnv).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(desiredEnv);
+    expect(start).toHaveBeenCalledWith({ prepareServiceEnv: expect.any(Function) });
+    expect(events).toEqual(["prepare-env", "start", "wait-port"]);
   });
 
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {

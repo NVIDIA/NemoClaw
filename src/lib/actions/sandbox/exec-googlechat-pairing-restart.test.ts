@@ -155,7 +155,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
     const openshellPath = path.join(fixtureRoot, "openshell");
     const configPath = path.join(fixtureRoot, "openclaw.json");
     const runtimePath = path.join(fixtureRoot, "gateway-runtime.json");
-    const supervisorLog = path.join(fixtureRoot, "supervisor.log");
+    const restartLog = path.join(fixtureRoot, "restart.log");
     const sender = "googlechat:users/123456789";
 
     fs.writeFileSync(configPath, JSON.stringify({ commands: { ownerAllowFrom: [] } }));
@@ -210,7 +210,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                 getSessionAgent: () => null,
                 getSandbox: () => ({ name: sandboxName, agent: "openclaw" }),
                 resolveSandboxDashboardPort: () => 18789,
-                requestGatewaySupervisorAction: (_name, action) => {
+                executeSandboxExecCommand: async (_name, command) => {
                   const result = spawnSync(
                     process.execPath,
                     [
@@ -222,13 +222,13 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                         'fs.appendFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG, process.argv[1] + "\\n");',
                         'process.stdout.write("GATEWAY_PID=4242\\n");',
                       ].join("\n"),
-                      action,
+                      command,
                     ],
                     {
                       encoding: "utf8",
                       env: {
                         ...process.env,
-                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: supervisorLog,
+                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: restartLog,
                       },
                     },
                   );
@@ -238,7 +238,6 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
-                executeSandboxExecCommand: async () => null,
                 waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
@@ -270,7 +269,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(fs.readFileSync(supervisorLog, "utf8")).toBe("restart\n");
+      expect(fs.readFileSync(restartLog, "utf8")).toBe("openclaw gateway restart\n");
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

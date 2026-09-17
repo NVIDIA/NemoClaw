@@ -260,11 +260,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
     [
-      "spec.sandboxes[].agents.secondary",
-      entry.openclawImagePluginInstalls,
-      "secondary agents or added agent plugins",
-    ],
-    [
       "spec.sandboxes[].agents[0].dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
@@ -579,13 +574,13 @@ function supportedAgentSettingsProfile(
 }
 
 function isSupportedAdditionalAgent(
-  secondary: NormalizedExtraAgent,
+  agent: NormalizedExtraAgent,
   primaryModelRef: string | null,
 ): boolean {
   return (
-    secondary.subagents === undefined &&
-    secondary.description === undefined &&
-    (secondary.model === undefined || secondary.model === primaryModelRef)
+    agent.subagents === undefined &&
+    agent.description === undefined &&
+    (agent.model === undefined || agent.model === primaryModelRef)
   );
 }
 
@@ -610,7 +605,7 @@ function supportsAdditionalAgents(
   return (
     entry.openshellDriver === "docker" &&
     entry.servingProfileProvenance === undefined &&
-    manifest.agents.length === 1 &&
+    manifest.agents.length > 0 &&
     Object.keys(manifest.defaults.subagents).length === 0 &&
     Object.keys(manifest.main).length === 0
   );
@@ -628,15 +623,19 @@ function projectAdditionalAgents(
       profile.inference.routeProvider,
     );
     if (manifest.agents.length === 0) return undefined;
-    const [secondary] = manifest.agents;
-    if (!secondary || !supportsAdditionalAgents(entry, manifest)) return null;
-    const exported = { name: secondary.id, tools: secondary.tools };
-    if (
-      !isSupportedAdditionalAgent(secondary, profile.inference.primaryModelRef) ||
-      !Check(NemoClawAdditionalAgentSchema, exported)
-    )
-      return null;
-    return [exported];
+    if (!supportsAdditionalAgents(entry, manifest)) return null;
+    const exported: Array<NonNullable<VerifiedExportSource["additionalAgents"]>[number]> = [];
+    for (const agent of manifest.agents) {
+      const candidate = { name: agent.id, tools: agent.tools };
+      if (
+        !isSupportedAdditionalAgent(agent, profile.inference.primaryModelRef) ||
+        !Check(NemoClawAdditionalAgentSchema, candidate)
+      ) {
+        return null;
+      }
+      exported.push(candidate);
+    }
+    return exported;
   } catch {
     return null;
   }
@@ -715,21 +714,22 @@ function classifyManagedStartupProfile(
     ...classifyReasoningAgreement(entry, profile),
     ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
-  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
-    const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
-    if (!supported) {
-      return [
-        ...findings,
-        finding(
-          "source.workload.startupProfile",
-          "unsupported",
-          "The managed agent settings cannot be represented by v1 export.",
-        ),
-      ];
-    }
-    expected = supported;
+  const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
+  if (
+    !supported ||
+    (entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID &&
+      profile.tuning.contextWindow !== EXPORTED_VLLM_CONTEXT_WINDOW)
+  ) {
+    return [
+      ...findings,
+      finding(
+        "source.workload.startupProfile",
+        "unsupported",
+        "The managed agent settings cannot be represented by v1 export.",
+      ),
+    ];
   }
-  return [...findings, ...classifyProfileEquality(profile, expected)];
+  return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
@@ -1270,10 +1270,9 @@ function completeVerifiedSource(
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const settings =
-    authority && snapshot.inference.topology !== "managed"
-      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-      : {};
+  const settings = authority
+    ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
+    : {};
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
