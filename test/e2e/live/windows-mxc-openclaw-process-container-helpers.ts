@@ -2724,7 +2724,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
           clientEnvironment,
           progress,
           `command: windows-mxc-openclaw-forwarded-health-attempt-${attempt}`,
-          90_000,
+          // OpenClaw's internal 60-second timeout starts only after its CLI has
+          // initialized. A cold ARM64 install can spend more than 30 seconds
+          // loading its dependency tree while Defender scans it, so preserve
+          // the product timeout but leave enough room for CLI startup.
+          300_000,
         ),
     });
     fs.writeFileSync(
