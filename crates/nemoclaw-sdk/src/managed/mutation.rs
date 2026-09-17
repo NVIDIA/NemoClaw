@@ -129,25 +129,25 @@ impl Engine {
         let image = image.ok_or(ObservationError::Incomplete)?;
         spec.validate_image_authentication(&image)?;
         let architecture = image.architecture.as_deref();
-        let architecture_matches = spec.service.as_ref().map_or_else(
-            || matches!(architecture, Some("arm64" | "amd64")),
-            |service| {
-                architecture
-                    == Some(
-                        service
-                            .hardware
-                            .as_ref()
-                            .map(|hardware| hardware.architecture.as_str())
-                            .or_else(|| {
-                                service
-                                    .recipe
-                                    .as_ref()
-                                    .map(|recipe| recipe.compatibility.architecture.as_str())
-                            })
-                            .unwrap_or("arm64"),
-                    )
-            },
-        );
+        let architecture_matches = if let Some(service) = &spec.service {
+            architecture
+                == Some(
+                    service
+                        .hardware
+                        .as_ref()
+                        .map(|hardware| hardware.architecture.as_str())
+                        .or_else(|| {
+                            service
+                                .recipe
+                                .as_ref()
+                                .map(|recipe| recipe.compatibility.architecture.as_str())
+                        })
+                        .unwrap_or("arm64"),
+                )
+        } else {
+            let engine = self.info().await?;
+            gateway_architecture_matches(architecture, engine.architecture.as_deref())
+        };
         if image.id.as_ref().is_none_or(String::is_empty)
             || !architecture_matches
             || image.os.as_deref() != Some("linux")
@@ -284,4 +284,11 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+fn gateway_architecture_matches(image: Option<&str>, engine: Option<&str>) -> bool {
+    matches!(
+        (image, engine),
+        (Some("amd64"), Some("amd64" | "x86_64")) | (Some("arm64"), Some("arm64" | "aarch64"))
+    )
 }

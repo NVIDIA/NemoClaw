@@ -36,9 +36,16 @@ struct State {
 async fn managed_gateway_accepts_a_native_linux_amd64_image() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    let fixture = Fixture::start(|request| {
-        assert!(request.path.starts_with("/images/"));
-        Some((
+    let fixture = Fixture::start(|request| match request.path.as_str() {
+        "/info" => Some((
+            200,
+            serde_json::to_vec(&json!({
+                "ID": "engine",
+                "Architecture": "x86_64"
+            }))
+            .unwrap(),
+        )),
+        path if path.starts_with("/images/") => Some((
             200,
             serde_json::to_vec(&json!({
                 "Id": "sha256:gateway",
@@ -47,7 +54,8 @@ async fn managed_gateway_accepts_a_native_linux_amd64_image() {
                 "Config": {"Env": []}
             }))
             .unwrap(),
-        ))
+        )),
+        _ => panic!("unexpected runtime observation {}", request.path),
     })
     .await;
 
@@ -56,6 +64,44 @@ async fn managed_gateway_accepts_a_native_linux_amd64_image() {
         .ensure_image(&spec)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let fixture = Fixture::start(|request| match request.path.as_str() {
+        "/info" => Some((
+            200,
+            serde_json::to_vec(&json!({
+                "ID": "engine",
+                "Architecture": "x86_64"
+            }))
+            .unwrap(),
+        )),
+        path if path.starts_with("/images/") => Some((
+            200,
+            serde_json::to_vec(&json!({
+                "Id": "sha256:gateway",
+                "Architecture": "arm64",
+                "Os": "linux",
+                "Config": {"Env": []}
+            }))
+            .unwrap(),
+        )),
+        _ => panic!("unexpected runtime observation {}", request.path),
+    })
+    .await;
+
+    assert!(matches!(
+        fixture
+            .engine_for(&spec.gateway.engine)
+            .ensure_image(&spec)
+            .await,
+        Err(Error::Conflict(
+            "runtime image is unavailable or incompatible with the execution target"
+        ))
+    ));
 }
 
 #[tokio::test]
