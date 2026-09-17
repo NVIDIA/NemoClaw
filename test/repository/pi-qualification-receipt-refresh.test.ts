@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { checkPiQualificationReceiptRefresh } from "../../scripts/checks/pi-qualification-receipt-refresh.mts";
 
@@ -16,7 +17,7 @@ const RECEIPTS = [
   { path: "ci/pi-arm64.json", platform: "linux/arm64" as const },
 ];
 
-function receipt(platform: string, cohort = "ghrun-123-1"): string {
+function receipt(platform: string, cohort = "ghrun-123-1", revision = SOURCE_REVISION): string {
   const digest = `sha256:${(platform === "linux/amd64" ? "b" : "c").repeat(64)}`;
   return `${JSON.stringify(
     {
@@ -28,7 +29,7 @@ function receipt(platform: string, cohort = "ghrun-123-1"): string {
       reference: `ghcr.io/nvidia/nemoclaw/pi-sandbox@${digest}`,
       source: {
         repository: "NVIDIA/NemoClaw",
-        revision: SOURCE_REVISION,
+        revision,
         release: "v0.1.0",
         cohort,
       },
@@ -67,7 +68,10 @@ describe("Pi qualification receipt refresh", () => {
     acceptedDigests = new Set([receiptDigest(amd64Contents), receiptDigest(arm64Contents)]);
   });
 
-  afterEach(() => fs.rmSync(rootDir, { force: true, recursive: true }));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(rootDir, { force: true, recursive: true });
+  });
 
   function run(
     changedPaths: readonly string[],
@@ -139,6 +143,53 @@ describe("Pi qualification receipt refresh", () => {
         stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
       }),
     ).not.toThrow();
+  });
+
+  it("checks staged merge inputs and rejects staged drift after qualification", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "false");
+    const gitOptions = {
+      cwd: rootDir,
+      encoding: "utf8" as const,
+      env: {
+        PATH: process.env.PATH,
+        HOME: rootDir,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: os.devNull,
+      },
+    };
+    const git = (args: readonly string[]) => {
+      const result = spawnSync("git", [...args], gitOptions);
+      return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+    };
+    const command = (...args: string[]) => execFileSync("git", args, gitOptions).trim();
+    command("init", "-q", "-b", "main");
+    command("config", "user.name", "Receipt fixture");
+    command("config", "user.email", "receipt-fixture@example.invalid");
+    fs.mkdirSync(path.join(rootDir, "protected/app"), { recursive: true });
+    const input = path.join(rootDir, "protected/app/config.json");
+    fs.writeFileSync(input, "old image input\n");
+    command("add", "--all");
+    command("commit", "-qm", "old inputs");
+    const oldHead = command("rev-parse", "HEAD");
+    fs.writeFileSync(input, "qualified image input\n");
+    command("add", "--all");
+    command("commit", "-qm", "qualified inputs");
+    const qualifiedRevision = command("rev-parse", "HEAD");
+    command("update-ref", "refs/remotes/origin/main", qualifiedRevision);
+    command("reset", "--mixed", oldHead);
+    const amd64 = receipt(RECEIPTS[0].platform, "ghrun-123-1", qualifiedRevision);
+    const arm64 = receipt(RECEIPTS[1].platform, "ghrun-123-1", qualifiedRevision);
+    fs.writeFileSync(path.join(rootDir, RECEIPTS[0].path), amd64);
+    fs.writeFileSync(path.join(rootDir, RECEIPTS[1].path), arm64);
+    acceptedDigests = new Set([receiptDigest(amd64), receiptDigest(arm64)]);
+    command("add", "--all");
+    const options = { acceptedDigests, baseBranch: "main", git, receipts: RECEIPTS, rootDir };
+    expect(() => checkPiQualificationReceiptRefresh(options)).not.toThrow();
+    fs.writeFileSync(input, "unqualified image input\n");
+    command("add", "--all");
+    expect(() => checkPiQualificationReceiptRefresh(options)).toThrow(
+      `Pi image inputs changed after receipt source revision ${qualifiedRevision}`,
+    );
   });
 
   it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {

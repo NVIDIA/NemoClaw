@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NEMOCLAW_CLI="${SCRIPT_DIR}/../bin/nemoclaw.js"
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
-FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
+FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md MEMORY.md)
 DIRS=(memory)
 
 RED='\033[0;31m'

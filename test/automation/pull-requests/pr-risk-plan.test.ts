@@ -453,17 +453,12 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it.each([
-    "scripts/lib/patch-openclaw-container-restart.mts",
-    "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
-    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-  ])("maps %s changes to the EXDEV job (#10517, #11547)", (changedFile) => {
-    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
-      {
-        id: "openclaw-plugin-runtime-exdev",
-        matchedFiles: [changedFile],
-      },
-    ]);
+  it("selects native plugin reload coverage for the OpenClaw restart patch", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["scripts/lib/patch-openclaw-container-restart.mts"]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(["full-e2e"]);
   });
 
   it("maps shared canonical OpenShell components to every live consumer (#11547)", () => {
@@ -471,7 +466,6 @@ describe("deterministic PR risk plan", () => {
 
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
       { id: "mcp-bridge", matchedFiles: [changedFile] },
-      { id: "openclaw-plugin-runtime-exdev", matchedFiles: [changedFile] },
     ]);
   });
 

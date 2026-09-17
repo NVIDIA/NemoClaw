@@ -183,7 +183,15 @@ function requireReceiptSourceParity(
 function receiptComparisonRevision(git: GitRunner, explicit?: string): string {
   if (explicit) return explicit;
   if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "pull_request") {
-    return "HEAD";
+    // Hooks must inspect the proposed index, including incoming merge sources.
+    const revision = requireGitOutput(
+      git(["write-tree"]),
+      "Could not snapshot staged Pi image inputs",
+    ).trim();
+    if (!/^[0-9a-f]{40}$/u.test(revision)) {
+      throw new Error("Could not snapshot staged Pi image inputs: invalid tree");
+    }
+    return revision;
   }
   const result = git(["rev-parse", "--verify", "HEAD^2"]);
   const revision = requireGitOutput(result, "Could not resolve the exact pull-request head").trim();

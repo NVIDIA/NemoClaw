@@ -13,6 +13,8 @@ import {
   MAX_FINDING_LEDGER_BYTES,
 } from "../../../tools/pr-review-advisor/finding-ledger.mts";
 
+import { createE2eRecommendationRecorder } from "../../../tools/pr-review-advisor/e2e-receipt.mts";
+
 const identity = { headSha: "a".repeat(40), interest: "security-standard-work" };
 const blocker = {
   severity: "P1" as const,
@@ -171,4 +173,38 @@ it("keeps recorded exclusions immutable after the finding ID is derived (#11489)
   expect(() => exclusions.push("external-mutation")).toThrow(TypeError);
   expect(controller.snapshot()).toEqual(snapshot);
   expect(parseAdvisorFindingLedger(controller.snapshot(), identity)).toEqual(snapshot);
+});
+
+it("does not commit findings until required evidence is recorded", async () => {
+  const recommendations = createE2eRecommendationRecorder({
+    workflow: "e2e.yaml",
+    fanoutId: "e2e-all",
+    selectorTypes: ["all", "job", "target"],
+    allowedJobIds: [],
+    manualOnlyJobIds: [],
+    liveSupportedTargetIds: [],
+  });
+  const controller = createAdvisorFindingToolController({
+    ...identity,
+    validatePrerequisites: () => {
+      recommendations.snapshot();
+    },
+  });
+  const submit = () =>
+    controller.tools[0]!.execute("submit", clear, undefined, undefined, undefined as never);
+  await expect(submit()).rejects.toThrow("did not record E2E recommendations");
+  expect(() => controller.snapshot()).toThrow("did not commit");
+  await recommendations.tool.execute(
+    "e2e",
+    {
+      recommendations: [],
+      noAdditionalE2eReason: "Unit tests cover the changed failure paths.",
+      unresolvedRecommendations: [],
+    },
+    undefined,
+    undefined,
+    undefined as never,
+  );
+  await submit();
+  expect(controller.snapshot()).toEqual(build(clear));
 });
