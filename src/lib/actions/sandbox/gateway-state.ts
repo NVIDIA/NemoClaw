@@ -1170,11 +1170,21 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
+      const openshellDriver = getKnownSandboxTarget(sandboxName)?.openshellDriver;
       const recoveryAction = classifySandboxPhaseRecoveryAction({
         phase,
-        openshellDriver: getKnownSandboxTarget(sandboxName)?.openshellDriver,
+        openshellDriver,
         dockerContainerName: dockerRuntime.containerName,
       });
+      if (
+        recoveryAction === "replace_missing_docker_container" &&
+        isDockerRuntimeDown(sandboxName, {
+          getSandbox: () => ({ openshellDriver }),
+        })
+      ) {
+        printDockerRuntimeDownGuidance(sandboxName);
+        exit(1);
+      }
       if (recoveryAction === "replace_missing_docker_container") {
         console.error(
           "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",

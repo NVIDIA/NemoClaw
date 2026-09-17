@@ -33,6 +33,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getSandboxSpy: MockInstance;
   let findSandboxAcrossGatewayRootsSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
+  let dockerInfoSpy: MockInstance;
 
   function mockSandboxPhase(phase: string): void {
     captureOpenshellSpy.mockImplementation((args: string[]) =>
@@ -50,6 +51,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     delete require.cache[gatewayStatePath];
     const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
     const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+    const dockerInfo = requireDist("../../adapters/docker/info.js");
     const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const registry = requireDist("../../state/registry.js");
     const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
@@ -65,6 +67,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({ recovered: false });
+    dockerInfoSpy = vi.spyOn(dockerInfo, "dockerInfo").mockReturnValue("Server: available");
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "instance-a",
       gatewayName: "nemoclaw",
@@ -317,6 +320,41 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(output).toContain("separately created snapshot");
     expect(output).not.toContain("nemoclaw instance-a rebuild --yes");
     expect(output).not.toContain("nemoclaw instance-a start");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("reports a Docker outage instead of treating an uninspectable container as missing", async () => {
+    mockSandboxPhase("Error");
+    getSandboxSpy.mockReturnValue({
+      name: "instance-a",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+    });
+    dockerInfoSpy.mockReturnValue("");
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("Docker daemon is not reachable");
+    expect(output).toContain("do not rebuild, destroy, or re-onboard");
+    expect(output).not.toContain("nemoclaw instance-a destroy --yes");
+    expect(output).not.toContain("nemoclaw onboard");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

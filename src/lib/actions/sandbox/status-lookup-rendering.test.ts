@@ -17,9 +17,11 @@ async function printGuidance({
   phase,
   dockerRuntime,
   openshellDriver = "docker",
+  dockerRuntimeDown = false,
 }: {
   phase: string;
   openshellDriver?: string | null;
+  dockerRuntimeDown?: boolean;
   dockerRuntime: {
     health: "none";
     paused: boolean;
@@ -36,9 +38,9 @@ async function printGuidance({
     dockerRuntime,
     effectivePreflight: {
       failure: null,
-      failureLayer: null,
-      suppressInferenceProbe: false,
-      exitCode: 0,
+      failureLayer: dockerRuntimeDown ? "docker_unreachable" : null,
+      suppressInferenceProbe: dockerRuntimeDown,
+      exitCode: dockerRuntimeDown ? 1 : 0,
     },
   });
 }
@@ -229,6 +231,20 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).toContain("separately created snapshot");
     expect(text).not.toContain("nemoclaw beta rebuild --yes");
     expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("reports a Docker outage instead of treating an uninspectable container as missing", async () => {
+    const cap = captureConsoleLog();
+    await expect(
+      printGuidance({ phase: "Error", dockerRuntime: null, dockerRuntimeDown: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Docker daemon is not reachable");
+    expect(text).toContain("do not rebuild, destroy, or re-onboard");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+    expect(text).not.toContain("nemoclaw onboard");
   });
 
   it("steers a Docker sandbox with missing legacy metadata and no container to clean replacement", async () => {

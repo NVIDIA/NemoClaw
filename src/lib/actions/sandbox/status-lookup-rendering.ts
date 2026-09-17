@@ -148,6 +148,7 @@ function printPresentSandboxGatewayLookupStatus({
   phase,
   openshellDriver,
   dockerRuntime,
+  effectivePreflight,
 }: SandboxGatewayLookupStatusContext): void {
   console.log("");
   if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
@@ -172,7 +173,13 @@ function printPresentSandboxGatewayLookupStatus({
       ? lookup.output.replace(/^(\s*Phase:\s*)\S+\s*$/gmu, "$1Stopped")
       : lookup.output;
   if (renderedOutput) console.log(renderedOutput);
-  printNonReadySandboxPhaseGuidance({ sandboxName, phase, openshellDriver, dockerRuntime });
+  printNonReadySandboxPhaseGuidance({
+    sandboxName,
+    phase,
+    openshellDriver,
+    dockerRuntime,
+    dockerRuntimeDown: effectivePreflight.failureLayer === "docker_unreachable",
+  });
 }
 
 function printWrongGatewayActiveLookupStatus({
@@ -270,11 +277,13 @@ function printNonReadySandboxPhaseGuidance({
   phase,
   openshellDriver,
   dockerRuntime,
+  dockerRuntimeDown,
 }: {
   sandboxName: string;
   phase: string | null;
   openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
+  dockerRuntimeDown: boolean;
 }): void {
   if (!phase || phase === "Ready") return;
   if (
@@ -331,6 +340,10 @@ function printNonReadySandboxPhaseGuidance({
     openshellDriver,
     dockerContainerName: dockerRuntime?.containerName,
   });
+  if (recoveryAction === "replace_missing_docker_container" && dockerRuntimeDown) {
+    printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
+    deferSandboxLifecycleExit(1);
+  }
   if (recoveryAction === "replace_missing_docker_container") {
     console.log(
       "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",

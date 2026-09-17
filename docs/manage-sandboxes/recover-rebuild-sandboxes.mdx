@@ -52,9 +52,9 @@ If the container is paused, follow the printed `docker unpause` guidance instead
 If OpenShell reports the sandbox in `Phase: Error` but Docker no longer has its driver container,
 NemoClaw cannot back up the live workspace for rebuild. Destroy the stale entry, onboard a clean
 replacement, and restore a separately created snapshot afterward if one is available.
-If the sandbox is absent from the live OpenShell gateway, destroy the stale NemoClaw entry and
-onboard a clean replacement. Restore a separately created snapshot afterward if one is available;
-rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+If the sandbox is absent from the live OpenShell gateway, NemoClaw preserves its registry entry.
+Retry status after the gateway finishes reconnecting. If the sandbox is stuck mid-provision, retry
+rebuild after it reappears. Remove the stale entry only when the sandbox was intentionally deleted.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.
