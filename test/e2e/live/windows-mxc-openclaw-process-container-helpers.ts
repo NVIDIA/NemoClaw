@@ -988,7 +988,6 @@ export function withoutOpenShellGatewaySelection(
 }
 
 export function createWindowsMxcGatewayConfiguration(input: {
-  readonly agentPath: string;
   readonly distributionRevision: string;
   readonly distributionVersion: string;
   readonly egressProxyPort: number;
@@ -2119,7 +2118,6 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       );
 
       const gatewayConfiguration = createWindowsMxcGatewayConfiguration({
-        agentPath: stagedOpenClaw.nodePath,
         distributionRevision: input.inputs.openShell.revision,
         distributionVersion: input.inputs.openShell.packageVersion,
         egressProxyPort,

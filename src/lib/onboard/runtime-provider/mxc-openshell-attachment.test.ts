@@ -99,7 +99,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it("binds the combined qualification package to provider-rendered run-local configuration (#10585)", () => {
     const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
       distributionProfileId: profile.profileId,
       distributionVersion: profile.expectation.distribution.version,
@@ -225,7 +224,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
     const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     expect(() =>
       createMxcOpenShellQualificationGatewayConfiguration({
-        agentPath: "C:\\openclaw\\node.exe",
         distributionRevision: profile.expectation.distribution.revision,
         distributionProfileId: profile.profileId,
         distributionVersion: profile.expectation.distribution.version,
@@ -242,7 +240,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it("rejects drift from provider-rendered configuration before attachment (#10585)", () => {
     const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
       distributionProfileId: profile.profileId,
       distributionVersion: profile.expectation.distribution.version,
@@ -285,7 +282,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
     (profileId, error) => {
       expect(() =>
         createMxcOpenShellQualificationGatewayConfiguration({
-          agentPath: "C:\\openclaw\\node.exe",
           distributionRevision: "abcdef0123456789",
           distributionProfileId: profileId,
           distributionVersion: "9.9.9-dev.1",

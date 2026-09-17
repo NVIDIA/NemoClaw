@@ -23,28 +23,6 @@ const VERSION_PATTERN =
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const LOCAL_DRIVE_PATH_PATTERN = /^[A-Za-z]:\\/u;
 const MAX_TEXT_BYTES = 4096;
-const QUALIFICATION_AGENT_ENVIRONMENT_NAMES = [
-  "COMSPEC",
-  "NEMOCLAW_MXC_E2E_COMPAT_PRELOAD",
-  "NEMOCLAW_MXC_E2E_DENY_PATH",
-  "NEMOCLAW_MXC_E2E_ENTRY",
-  "NEMOCLAW_MXC_E2E_HEARTBEAT_PATH",
-  "NEMOCLAW_MXC_E2E_HOME",
-  "NEMOCLAW_MXC_E2E_MOCK_PORT",
-  "NEMOCLAW_MXC_E2E_NODE",
-  "NEMOCLAW_MXC_E2E_OPENCLAW_PORT",
-  "NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH",
-  "NEMOCLAW_MXC_E2E_OPENCLAW_STATE_DIR",
-  "NEMOCLAW_MXC_E2E_OUTCOME_PATH",
-  "NEMOCLAW_MXC_E2E_READY_PATH",
-  "NEMOCLAW_MXC_E2E_RESULT_PATH",
-  "NEMOCLAW_MXC_E2E_STOP_PATH",
-  "NEMOCLAW_MXC_E2E_TOKEN",
-  "PATH",
-  "SYSTEMROOT",
-  "WINDIR",
-] as const;
-
 type ExactDistributionIdentity = {
   readonly version: string;
   readonly revision: string;
@@ -493,7 +471,6 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
   exactKeys(
     input,
     [
-      "agentPath",
       "distributionRevision",
       "distributionProfileId",
       "distributionVersion",
@@ -533,7 +510,6 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
       "qualification distribution does not match the provider-owned profile",
     );
   }
-  const agentPath = canonicalWindowsPath(input.agentPath, "qualification agent path");
   const relayPath = canonicalWindowsPath(input.relayPath, "qualification relay path");
   const shareDirectory = canonicalWindowsPath(
     input.shareDirectory,
@@ -563,14 +539,6 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
     throw new MxcOpenShellAttachmentError("qualification egress proxy port is invalid");
   }
 
-  const sandboxTempDirectory = path.win32.join(shareDirectory, "temp");
-  const probeAgentPath = path.win32.join(shareDirectory, "probe-agent.mjs");
-  const agentEnvironment = [
-    ...QUALIFICATION_AGENT_ENVIRONMENT_NAMES,
-    `LOCALAPPDATA=${path.win32.join(shareDirectory, "home", "AppData", "Local")}`,
-    `TEMP=${sandboxTempDirectory}`,
-    `TMP=${sandboxTempDirectory}`,
-  ];
   const content = [
     ...(profile.compatibility.networkMode === "egress-proxy"
       ? ["[openshell]", "version = 2", ""]
@@ -579,15 +547,6 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
     `wxc_exec_path = ${tomlWindowsPath(wxcExecPath)}`,
     'backend = "process_container"',
     'default_configuration_id = "composable"',
-    `share_dir = ${tomlWindowsPath(shareDirectory)}`,
-    `agent_cwd = ${tomlWindowsPath(shareDirectory)}`,
-    "agent_command = [",
-    `  ${tomlWindowsPath(agentPath)},`,
-    `  ${tomlWindowsPath(probeAgentPath)},`,
-    "]",
-    "agent_env = [",
-    ...agentEnvironment.map((value) => `  ${tomlWindowsPath(value)},`),
-    "]",
     "pc_least_privilege = false",
     'pc_capabilities = ["privateNetworkClientServer"]',
     ...(profile.compatibility.networkMode === "egress-proxy"

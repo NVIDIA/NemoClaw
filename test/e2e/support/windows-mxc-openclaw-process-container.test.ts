@@ -627,7 +627,6 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("selects the combined upstream package for the live relay configuration without credentials (#8178)", () => {
     const input = {
-      agentPath: "C:\\artifact\\node.exe",
       distributionRevision: "9a0946a3ccc76a6b8fdeacdf70c76feda6f16c0b",
       distributionVersion: "0.0.117-dev.153+g9a0946a3c",
       egressProxyPort: 18080,
@@ -662,11 +661,10 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       'pc_relay_spawner_path = "C:/probe/share/openshell-supervisor-relay.exe"',
     );
     expect(config).toContain("pc_relay_target_port = 18889");
-    expect(config).toContain('"NEMOCLAW_MXC_E2E_TOKEN"');
-    expect(config).toContain('"TEMP=C:/probe/share/temp"');
-    expect(config).toContain('"TMP=C:/probe/share/temp"');
-    expect(config).not.toMatch(/^\s*"TEMP",$/mu);
-    expect(config).not.toMatch(/^\s*"TMP",$/mu);
+    expect(config).not.toContain("agent_command");
+    expect(config).not.toContain("agent_cwd");
+    expect(config).not.toContain("agent_env");
+    expect(config).not.toContain("share_dir");
     expect(config).not.toContain("credential-value");
     expect(config).not.toContain("--token");
   });
