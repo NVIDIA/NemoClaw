@@ -464,6 +464,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "nemoclaw_observability.py",
         "nemoclaw_read_only_mcp.py",
         "patch-managed-deepagents-code.py",
+        "patch-managed-quickjs.py",
         "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
@@ -483,6 +484,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
+        "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+        'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
       ].every((s) => dockerfile.includes(s)),
@@ -795,7 +798,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(secretBoundaryCheck).toContain(expected);
     }
-    expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
+    expect(tuiStartupCheck).toContain(
+      "Case: Deep Agents Code interactive TUI model turn (#5620, #11847)",
+    );
     expect(tuiStartupCheck).not.toContain("-nocase -re {(deep agents|");
     expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
       tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
@@ -809,6 +814,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_PROBE:other",
       "unable to probe sandbox",
       "unexpected sandbox probe output",
+      "libc.memfd_create",
+      "errno.EPERM",
+      "from quickjs_rs import Runtime",
+      'context.eval("20 + 22") == 42',
+      "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK",
       "cd /sandbox; dcode",
       'NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN"',
       "-nocase -re $first_run_pattern",
@@ -818,6 +828,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       'send -- "\\003"\nafter 250\ncatch {send -- "\\003"}',
       'append_marker $markers "$expect_out(0,string)"',
       'append_marker $markers "NEMOCLAW_TUI_READY"',
+      'append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"',
+      'append_marker $markers "NEMOCLAW_TUI_RUNTIME_FAILURE"',
       'append_marker $markers "NEMOCLAW_TUI_TIMEOUT"',
       'append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"',
       'append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',

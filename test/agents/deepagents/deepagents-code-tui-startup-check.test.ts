@@ -57,7 +57,16 @@ function secretFixture(...parts: string[]): string {
   return parts.join("");
 }
 
-type TuiExpectEvent = "composer" | "eof" | "exit" | "firstRun" | "namePrompt" | "ready" | "timeout";
+type TuiExpectEvent =
+  | "composer"
+  | "eof"
+  | "exit"
+  | "firstRun"
+  | "namePrompt"
+  | "ready"
+  | "response"
+  | "runtimeError"
+  | "timeout";
 
 const tclEventLiterals: Record<TuiExpectEvent, string> = {
   composer: "{composer}",
@@ -66,6 +75,8 @@ const tclEventLiterals: Record<TuiExpectEvent, string> = {
   firstRun: "{firstRun}",
   namePrompt: "{namePrompt}",
   ready: "{ready}",
+  response: "{response}",
+  runtimeError: "{runtimeError}",
   timeout: "{timeout}",
 };
 const tclshAvailable =
@@ -130,6 +141,14 @@ proc expect {branches} {
         set branch_index [lsearch -exact $branches {$ready_pattern}]
         set ::expect_out(0,string) "Select Agent"
       }
+      response {
+        set branch_index [lsearch -exact $branches {$model_response_pattern}]
+        set ::expect_out(0,string) " 937 "
+      }
+      runtimeError {
+        set branch_index [lsearch -exact $branches {$runtime_error_pattern}]
+        set ::expect_out(0,string) "WasmtimeError: cannot create a memfd"
+      }
       exit {
         set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
         set ::expect_out(0,string) "NEMOCLAW_TUI_EXIT:0"
@@ -179,9 +198,12 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
+      NEMOCLAW_TUI_MODEL_PROMPT: "What is 731 + 206? Reply only with the number.",
+      NEMOCLAW_TUI_MODEL_RESPONSE_PATTERN: "(^|[^0-9])937([^0-9]|$)",
       NEMOCLAW_TUI_NAME_PROMPT_PATTERN:
         "(your name \\(optional\\)|what should deep agents call you)",
       NEMOCLAW_TUI_READY_PATTERN: "(select agent)",
+      NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN: "(cannot create a memfd|wasmtimeerror)",
       NEMOCLAW_TUI_SANDBOX_NAME: "fake-deepagents",
       NEMOCLAW_TUI_TIMEOUT: "5",
       NEMOCLAW_TUI_TRACE: trace,
@@ -193,6 +215,21 @@ proc exit {{code 0}} {
   const traceText = fs.existsSync(trace) ? fs.readFileSync(trace, "utf8").trim() : "";
   fs.rmSync(captureDir, { force: true, recursive: true });
   return { markerText, result, traceText };
+}
+
+const tuiModelPrompt = "What is 731 + 206? Reply only with the number.";
+
+function expectedTuiSendTrace(options: { includeNamePrompt?: boolean } = {}): string {
+  const sends = [
+    ...(options.includeNamePrompt ? ["\r"] : []),
+    ..."/agents",
+    "\r",
+    "\u001b",
+    ...tuiModelPrompt,
+    "\r",
+    "\u0003",
+  ];
+  return sends.map((value) => Buffer.from(value).toString("hex")).join(",");
 }
 
 describe("Deep Agents Code TUI startup check helpers", () => {
@@ -347,15 +384,16 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   // no managed DCode sandboxes remain on pre-marker images.
   itWithTclsh("can diagnose a legacy image that still presents the first-run name prompt", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(
-      ["namePrompt", "ready", "exit"],
+      ["namePrompt", "ready", "response", "exit"],
       { closeAfterFirstCtrlC: true },
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("0d,2f,61,67,65,6e,74,73,0d,1b,03");
+    expect(traceText).toBe(expectedTuiSendTrace({ includeNamePrompt: true }));
     expect(markerText).toContain("What should Deep Agents call you");
     expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
+    expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
     expect(markerText).not.toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
   });
 
@@ -372,7 +410,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
 
   itWithTclsh("captures a clean exit when dcode closes after the first Ctrl-C (tclsh)", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(
-      ["composer", "ready", "exit"],
+      ["composer", "ready", "response", "exit"],
       {
         closeAfterFirstCtrlC: true,
         expectNamePrompt: false,
@@ -380,10 +418,23 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d,1b,03");
+    expect(traceText).toBe(expectedTuiSendTrace());
     expect(markerText).toContain("NEMOCLAW_TUI_COMPOSER_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
+    expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+  });
+
+  itWithTclsh("reports the Wasmtime boundary before the TUI model turn completes (#11847)", () => {
+    const { markerText, result } = runTuiExpectStateMachine(["composer", "ready", "runtimeError"], {
+      closeAfterFirstCtrlC: true,
+      expectNamePrompt: false,
+    });
+
+    expect(result.status, result.stderr).toBe(26);
+    expect(markerText).toContain("WasmtimeError: cannot create a memfd");
+    expect(markerText).toContain("NEMOCLAW_TUI_RUNTIME_FAILURE");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
   });
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
@@ -425,6 +476,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK\\n'; }",
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() {",
           '  value="$(sed -n "1p" "$COUNT_FILE")"',
@@ -434,7 +486,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "}",
           "sleep() { :; }",
           "run_tui_expect() {",
-          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_MODEL_TURN_COMPLETE\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
@@ -453,8 +505,10 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
       expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_READY");
+      expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
       expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
       expect(result.stdout).toContain(
         "session 2: DCode/LangGraph process count returned to baseline",
@@ -473,6 +527,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          "sandbox_quickjs_memfd_probe() { printf 'NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK\\n'; }",
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",

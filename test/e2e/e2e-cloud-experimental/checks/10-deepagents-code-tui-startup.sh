@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Case: Deep Agents Code interactive TUI startup (#5620).
+# Case: Deep Agents Code interactive TUI model turn (#5620, #11847).
 #
 # This live check runs two interactive sessions against a real Deep Agents Code
-# sandbox. It proves completed sessions do not leak
-# DCode/LangGraph processes and leaves only sanitized, secret-free capture
-# artifacts.
+# sandbox. It proves the sandbox still blocks memfd creation, the real QuickJS
+# runtime initializes without that optimization, and each TUI completes a model
+# turn. Completed sessions must not leak DCode/LangGraph processes. The check
+# retains only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
 # expect(1) Tcl: $env(...) and {...} are Tcl/sh expansion, not bash expansion.
@@ -16,7 +17,7 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
-TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
+TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-120}"
 PROCESS_CLEANUP_TIMEOUT=20
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/agents/deepagents/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
@@ -33,6 +34,9 @@ TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.55)'
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
 TUI_NAME_PROMPT_PATTERN='(your name \(optional\)|what should deep agents call you)'
+TUI_MODEL_PROMPT='What is 731 + 206? Reply only with the number.'
+TUI_MODEL_RESPONSE_PATTERN='(^|[^0-9])937([^0-9]|$)'
+TUI_RUNTIME_ERROR_PATTERN='(cannot create a memfd|wasmtimeerror)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -48,6 +52,10 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+sandbox_quickjs_memfd_probe() {
+  sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
 }
 
 sandbox_is_ready() {
@@ -187,8 +195,11 @@ run_tui_expect() {
     NEMOCLAW_TUI_COMPOSER_PATTERN="$TUI_COMPOSER_PATTERN" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
+    NEMOCLAW_TUI_MODEL_PROMPT="$TUI_MODEL_PROMPT" \
+    NEMOCLAW_TUI_MODEL_RESPONSE_PATTERN="$TUI_MODEL_RESPONSE_PATTERN" \
     NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
+    NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN="$TUI_RUNTIME_ERROR_PATTERN" \
     NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
@@ -199,8 +210,11 @@ set capture $env(NEMOCLAW_TUI_CAPTURE)
 set composer_pattern $env(NEMOCLAW_TUI_COMPOSER_PATTERN)
 set markers $env(NEMOCLAW_TUI_MARKERS)
 set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
+set model_prompt $env(NEMOCLAW_TUI_MODEL_PROMPT)
+set model_response_pattern $env(NEMOCLAW_TUI_MODEL_RESPONSE_PATTERN)
 set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
+set runtime_error_pattern $env(NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN)
 set expect_name_prompt $env(NEMOCLAW_TUI_EXPECT_NAME_PROMPT)
 log_file -a $capture
 
@@ -220,6 +234,16 @@ proc submit_agents {markers} {
   after 500
   send -- "\r"
   append_marker $markers "NEMOCLAW_TUI_AGENTS_SUBMITTED"
+}
+
+proc submit_model_prompt {markers prompt} {
+  foreach char [split $prompt ""] {
+    send -- $char
+    after 25
+  }
+  after 250
+  send -- "\r"
+  append_marker $markers "NEMOCLAW_TUI_MODEL_PROMPT_SUBMITTED"
 }
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
@@ -327,9 +351,37 @@ expect {
 append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
-# Close the Select Agent modal before exercising the idle-app quit path.
+# Close the Select Agent modal before submitting the first model prompt.
 send -- "\033"
 after 500
+submit_model_prompt $markers $model_prompt
+
+set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+expect {
+  -re $model_response_pattern {
+    append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"
+    puts "\nNEMOCLAW_TUI_MODEL_TURN_COMPLETE"
+  }
+  -nocase -re $runtime_error_pattern {
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_RUNTIME_FAILURE"
+    puts "\nNEMOCLAW_TUI_RUNTIME_FAILURE"
+    send -- "\003"
+    exit 26
+  }
+  timeout {
+    append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
+    puts "\nNEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
+    send -- "\003"
+    exit 27
+  }
+  eof {
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_MODEL_RESPONSE"
+    puts "\nNEMOCLAW_TUI_EOF_BEFORE_MODEL_RESPONSE"
+    exit 28
+  }
+}
+
 # Idle dcode arms quit on the first Ctrl-C and exits on the second.
 send -- "\003"
 after 250
@@ -435,6 +487,16 @@ main() {
     exit 1
   fi
 
+  local quickjs_probe_output
+  if quickjs_probe_output="$(sandbox_quickjs_memfd_probe)" \
+    && grep -Fxq "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK" <<<"$quickjs_probe_output"; then
+    pass "OpenShell blocks memfd creation and the real QuickJS runtime initializes"
+  else
+    fail_test "QuickJS runtime did not initialize while OpenShell blocked memfd creation"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
+
   local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
   # The typed target may inherit agent processes from earlier checks, so the
@@ -506,6 +568,12 @@ main() {
       pass "session ${session_index}: dcode TUI reached the main composer and opened Select Agent"
     else
       fail_test "session ${session_index}: dcode TUI Select Agent readiness marker missing from capture"
+    fi
+
+    if grep -q "NEMOCLAW_TUI_MODEL_TURN_COMPLETE" "$plain_capture_file"; then
+      pass "session ${session_index}: dcode TUI completed the first model turn"
+    else
+      fail_test "session ${session_index}: dcode TUI did not complete the first model turn"
     fi
 
     assert_clean_exit_code "$plain_capture_file"
