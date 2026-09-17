@@ -54,6 +54,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
     jobs: {
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
+        if: "${{ github.event.pull_request.base.ref == github.event.repository.default_branch }}",
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 5,
         steps: [
