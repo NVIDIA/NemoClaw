@@ -112,6 +112,14 @@ export const finalizationHandlerRuntime = {
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
 };
 
+export async function restartNativeGatewayForInitialSetup(
+  sandboxName: string,
+): ReturnType<GatewayRestartDeps["restartSandboxGateway"]> {
+  return await finalizationHandlerRuntime
+    .loadGatewayRestart()
+    .restartSandboxGateway(sandboxName, { quiet: true });
+}
+
 function samePairingTarget(
   left: OpenClawPairingSettlementTarget,
   right: OpenClawPairingSettlementTarget | null,
@@ -371,16 +379,6 @@ export const finalizationHandlerDeps = {
       ...options,
       ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
     });
-    if (
-      result.checked === true &&
-      result.wasRunning === false &&
-      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
-    ) {
-      const restart = await finalizationHandlerRuntime
-        .loadGatewayRestart()
-        .restartSandboxGateway(name, options);
-      return restart.ok;
-    }
     return (
       result.checked === true &&
       (result.wasRunning !== false || result.recovered === true) &&

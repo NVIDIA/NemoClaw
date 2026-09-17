@@ -67,11 +67,13 @@ describe("OpenClaw sandbox setup", () => {
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
     const configureOpenclawSandbox = vi.fn(async () => undefined);
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
     const revalidateSandboxIdentity = vi.fn();
     const setup = createOpenclawSetup({
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
+      restartNativeGateway,
     });
 
     await setup("spark-box", "model", "provider", null, revalidateSandboxIdentity);
@@ -83,6 +85,8 @@ describe("OpenClaw sandbox setup", () => {
       null,
       revalidateSandboxIdentity,
     );
+    expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
+    expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
@@ -94,12 +98,36 @@ describe("OpenClaw sandbox setup", () => {
         configureOpenclawSandbox: async () => {
           throw new Error("sandbox identity changed");
         },
+        restartNativeGateway: vi.fn(),
       });
 
       await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
         "sandbox identity changed",
       );
 
+      expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("withholds setup success when the native gateway restart fails", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => undefined),
+        restartNativeGateway: vi.fn(async () => ({
+          ok: false as const,
+          failureLayer: "native agent command",
+          detail: "restart rejected",
+        })),
+      });
+
+      await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
+        /native gateway restart failed.*restart rejected/,
+      );
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {
       log.mockRestore();
