@@ -18,18 +18,18 @@ impl Sandbox {
             return Ok(base);
         }
         let mut value = openshell_policy::sandbox_policy_to_json_value(&base)
-            .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
+            .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
         value
             .as_object_mut()
             .expect("policy object")
             .entry("network_policies")
             .or_insert_with(|| json!({}));
         let mut policy: ExplicitPolicy = serde_json::from_value(value)
-            .map_err(|_| ConfigError("cannot represent sandbox policy"))?;
+            .map_err(|_| ConfigError::new("cannot represent sandbox policy"))?;
         if observability.is_some_and(|observability| observability.uses_otlp()) {
             let name = "nemoclaw-otlp";
             if policy.network_policies.contains_key(name) {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "nemoclaw-otlp is reserved for the declared tracing integration",
                 ));
             }
@@ -48,7 +48,9 @@ impl Sandbox {
         }
         if web_search {
             if policy.network_policies.contains_key("nemoclaw-brave") {
-                return Err(ConfigError("nemoclaw-brave is reserved for web search"));
+                return Err(ConfigError::new(
+                    "nemoclaw-brave is reserved for web search",
+                ));
             }
             policy
                 .network_policies
@@ -62,5 +64,5 @@ pub(crate) fn brave_policy() -> super::PolicyRule {
     serde_json::from_value(json!({"name":"nemoclaw-brave", "endpoints":[{
         "host":"api.search.brave.com", "port":443, "protocol":"rest", "tls":"terminate", "enforcement":"enforce",
         "rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]}],
-        "binaries":[{"path":"/usr/local/bin/node"}]})).expect("typed Brave policy")
+        "binaries":[{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3.14"}]})).expect("typed Brave policy")
 }

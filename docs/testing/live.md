@@ -137,6 +137,20 @@ Run only one of these live tests against a given deployment at a time.
 After intentional destroy, apply the retained configuration first.
 A read-only plan cannot observe workspace resources through a stopped gateway and will ask for that explicit reconciliation.
 
+## Hosted NVIDIA OpenClaw Parity
+
+The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) strictly translates a redacted, exact-hash v0 export artifact into a new v1 desired state and compares the v1 export with that translation.
+It requires a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, explicit v1-only runtime bindings, and an ownership marker.
+
+The ignored test accepts the `issue-11810-local-feedback` acknowledgement for non-qualifying Docker Desktop feedback.
+Docker Desktop feedback may require an explicitly recorded operator-owned forwarding layer for the managed gateway and sandbox callback paths; native Linux qualification must not use it.
+Docker Desktop socket-source canonicalization remains unsupported and fails closed.
+The `issue-11810` gate, a clean v1 checkout, and fresh owned state produce a qualification candidate.
+The test also requires an explicit v0-to-v1 process-principal mapping and decision reference; retained evidence records both sides.
+The runner records `qualified: false`; qualification requires external artifact-provenance and evidence review.
+It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
+Do not run it as part of an ignored-test aggregate.
+
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.

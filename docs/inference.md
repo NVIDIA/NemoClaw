@@ -7,8 +7,8 @@ Choose who operates the inference service, then select the API and model used by
 A deployment can select up to 32 inference providers across its sandboxes.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
-Live deployment with the current OpenShell pin is [blocked by a main-process environment propagation bug](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker).
-The configuration below is implemented and fixture-tested; it is not yet qualified end to end with that pin.
+The [earlier native-inference attempt](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) records a blocker at its tested OpenShell revision.
+Use the current images and verify your chosen harness and model; historical results do not qualify every supported configuration.
 
 OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
@@ -19,7 +19,7 @@ See [state migration](state.md#native-inference-migration) before changing an ex
 
 ## Give an Agent Multiple Model Choices
 
-OpenClaw agents can select different models from one or more providers.
+OpenClaw and Pi agents can select different models from one or more providers.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
@@ -36,13 +36,14 @@ Missing credential references still fail deployment; actual endpoint authenticat
 Use native requests to verify model selection through the agent interface separately.
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
-Multiple choices are currently supported only by OpenClaw, with at most 32 routes per inference definition.
+OpenClaw and Pi support up to 32 routes per inference definition.
 Other harnesses keep one choice.
-`reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
+For OpenClaw, `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
 Native reasoning changes remain a harness operation.
 Managed Ollama and its proxy currently manage one selected model; vLLM choices must use its declared served model.
 Additional models can use external providers alongside that managed provider.
-Changing model choices changes the sandbox launch specification and requires a fresh deployment.
+Changing OpenClaw model choices changes the sandbox launch specification and requires a fresh deployment.
+For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
 ## Combine Local and Hosted Providers
 
@@ -64,11 +65,13 @@ OpenClaw's per-agent model-selection policy is not separate credential or networ
 Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
-One selected provider may have managed inference dependencies: a vLLM service, managed Ollama, or an Ollama proxy.
-Other selected providers must be external endpoints.
-That managed lifecycle belongs to its provider even when other agents select another provider.
-Multiple independently managed inference lifecycles in one document are rejected.
-Multiple sandboxes can share the selected managed service or external providers.
+Multiple selected providers can each own a vLLM service, with independent storage and separate generated credentials when `service.authentication: bearer` is configured.
+Services on the same engine require distinct publication addresses and the same managed network CIDR.
+Plan checks their combined GPU budgets and startup memory; the runtime rechecks available memory before starting inference and keeps its memory watchdog active.
+An existing GPU process alone does not reject startup when measured capacity is sufficient.
+Managed Ollama and Ollama proxies still share a singleton lifecycle: at most one selected provider may use either mode.
+Multiple sandboxes can share any selected provider.
+Managed vLLM resource identities now include the provider identity; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
@@ -217,7 +220,8 @@ Changing an existing service to enable authentication follows the normal runtime
 Use this mode when Ollama and the route's model are already installed on the local Linux Docker host.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
-OpenClaw and Hermes can use this proxy with `openai-completions`.
+OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completions`.
+For Pi, omit provider `api` and supply `piModel` metadata when the model is absent from its registry; see the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
 Build the proxy image from the repository root:
@@ -292,8 +296,8 @@ Explicit `false` remains distinct from omission in the exported document.
 Choose limits and reasoning capabilities that your model supports; the parser checks bounds, not model capabilities.
 See the generated [field reference](reference/configuration.md) for accepted ranges.
 
-Route tuning is currently supported only by OpenClaw.
-Other harnesses reject these fields; Pi has its separate native model metadata interface.
+Deep Agents, mini-swe-agent, and remote-agent also accept `maxTokens`, which is passed through Fabric to the native model client.
+The other tuning fields remain OpenClaw-specific; Pi accepts its native model metadata through `piModel`.
 The SDK verifies the configured OpenClaw API, model limits, and explicitly selected thinking level without rewriting drifted configuration.
 Unrelated native settings, including channels and plugins, remain owned by OpenClaw.
 

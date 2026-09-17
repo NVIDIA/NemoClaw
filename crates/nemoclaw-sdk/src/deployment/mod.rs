@@ -351,24 +351,39 @@ impl Deployment {
                 client.ready(&sandbox, cancel).await?;
                 Ok(())
             }).await?;
-            let health = self.timed("fabric.health", async {
-                tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health(&sandbox) => result }
-            }).await?;
-            let health = crate::SandboxHealth {
-                sandbox: definition.name.clone(),
-                agents: definition
+            let separate = document.sandbox_harness(definition)?.kind == "deepagents"
+                && definition.agents.len() > 1;
+            let groups: Vec<Vec<String>> = if separate {
+                definition
                     .agents
                     .iter()
-                    .map(|agent| agent.name.clone())
-                    .collect(),
-                health,
+                    .map(|agent| vec![agent.name.clone()])
+                    .collect()
+            } else {
+                vec![
+                    definition
+                        .agents
+                        .iter()
+                        .map(|agent| agent.name.clone())
+                        .collect(),
+                ]
             };
-            if !health.health.allows_apply_completion() {
-                return Err(Error::Health {
-                    health: Box::new(health),
-                });
+            for agents in groups {
+                let health = self.timed("fabric.health", async {
+                    tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health_for(&sandbox, separate.then(|| agents[0].as_str())) => result }
+                }).await?;
+                let health = crate::SandboxHealth {
+                    sandbox: definition.name.clone(),
+                    agents,
+                    health,
+                };
+                if !health.health.allows_apply_completion() {
+                    return Err(Error::Health {
+                        health: Box::new(health),
+                    });
+                }
+                result.health.push(health);
             }
-            result.health.push(health);
         }
         record.succeeded = true;
         store.save(&record)?;

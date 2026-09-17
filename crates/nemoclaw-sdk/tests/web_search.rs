@@ -34,22 +34,21 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     assert_eq!(rows.len(), 6);
     let search = rows
         .iter()
-        .find(|r| r.address == "nemoclaw_provider.web_search")
+        .find(|r| {
+            r.kind == "provider" && r.values.get("provider_type").is_some_and(|v| v == "brave")
+        })
         .unwrap();
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["nemoclaw_provider"]["inference_local"].is_object());
     assert_eq!(
-        graph["resource"]["nemoclaw_provider"]["web_search"]["depends_on"],
+        graph["resource"]["nemoclaw_provider"][search.address.split_once('.').unwrap().1]["depends_on"],
         json!(["nemoclaw_provider_profile.web_search"])
     );
     assert_eq!(
         graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
-        json!([
-            "nemoclaw_provider.inference_local",
-            "nemoclaw_provider.web_search"
-        ])
+        json!(["nemoclaw_provider.inference_local", search.address])
     );
 }
 #[test]
@@ -253,7 +252,7 @@ fn schema_and_parser_reject_unsupported_integration_shapes() {
 }
 
 #[test]
-fn sandboxes_share_search_registration_but_reject_conflicting_credentials() {
+fn sandboxes_share_search_registration_only_for_the_same_credential() {
     let mut value = input();
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
@@ -269,13 +268,53 @@ fn sandboxes_share_search_registration_but_reject_conflicting_credentials() {
     assert_eq!(
         resources
             .iter()
-            .filter(|row| row.address == "nemoclaw_provider.web_search")
+            .filter(|row| row.kind == "provider"
+                && row
+                    .values
+                    .get("provider_type")
+                    .is_some_and(|v| v == "brave"))
             .count(),
         1
     );
     assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
     value["spec"]["sandboxes"][1]["integrations"]["search"]["credential"]["env"] =
         json!("OTHER_KEY");
-    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
-    assert!(error.to_string().contains("same provider credential"));
+    let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+    let resources = targets(&doc, &generations).unwrap();
+    let search: Vec<_> = resources
+        .iter()
+        .filter(|r| {
+            r.kind == "provider" && r.values.get("provider_type").is_some_and(|v| v == "brave")
+        })
+        .collect();
+    assert_eq!(search.len(), 2);
+    assert_ne!(search[0].values["name"], search[1].values["name"]);
+    assert_ne!(
+        search[0].values["credential_env"],
+        search[1].values["credential_env"]
+    );
+    let exported = Document::parse(doc.yaml().unwrap().as_bytes()).unwrap();
+    assert_eq!(exported, doc);
+}
+
+#[test]
+fn deep_agents_search_preserves_explicit_grants_and_rejects_read_only_agents() {
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("deepagents");
+    let document = Document::parse(value.to_string().as_bytes()).expect("Deep Agents search");
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&document, &generations).unwrap();
+    let settings: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values["inference_json"],
+    )
+    .unwrap();
+    assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"]));
+    value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"allow":["read"]});
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }

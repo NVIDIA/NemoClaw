@@ -81,7 +81,7 @@ Before enabling export, identify who can read the collector's stored data and ho
 The current integration selects an existing collector; it does not provision or manage that retention policy.
 Experimental [Hermes Relay tracing](agents.md#hermes-relay-tracing) instead writes local sandbox artifacts without adding a collector or egress rule.
 Its full-payload setting is disabled, but trace contents still need privacy review before sharing; deleting the sandbox deletes those files.
-The Relay adapter also defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
+Relay without explicit `interfaces` selects the upstream adapter, which defaults to `HERMES_YOLO_MODE=1` and accepted hooks when unset; the local Hermes adapter's manual-approval configuration does not apply.
 Review this change in native control behavior before enabling the experimental mode.
 
 Production tracing privacy review and retention guidance: **TBD**.

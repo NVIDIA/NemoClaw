@@ -25,7 +25,7 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
     if service.backend != c::BACKEND {
-        return Err(ConfigError("unsupported inference backend"));
+        return Err(ConfigError::new("unsupported inference backend"));
     }
     service.validate_hardware()?;
     crate::recipes::huggingface::validate_model(service)?;
@@ -40,7 +40,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
                 || !v.mamba_backend.is_empty()
                 || v.enforce_eager.is_some()))
     {
-        return Err(ConfigError(
+        return Err(ConfigError::new(
             "native serving overrides must be valid and cannot override an inline recipe",
         ));
     }
@@ -54,7 +54,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
         || !c::TOOL_PARSERS.contains(&v.tool_parser.as_str())
         || !c::REASONING_PARSERS.contains(&v.reasoning_parser.as_str())
     {
-        return Err(ConfigError(
+        return Err(ConfigError::new(
             "serving settings are unsupported by the generic vLLM backend",
         ));
     }
@@ -65,7 +65,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
     if !(0..=c::GPU_MEMORY_MAX).contains(&service.memory.gpu_memory_gib)
         || gpu_bytes(service) < (service.memory.kv_cache_gib as u64 + 4) * GIB
     {
-        return Err(ConfigError(
+        return Err(ConfigError::new(
             "GPU memory budget must include KV cache and at least 4 GiB for model and runtime",
         ));
     }

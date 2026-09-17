@@ -105,7 +105,9 @@ Process tests cover exit codes, piping, secret-safe diagnostics, and preservatio
 
 ## CI Caches
 
-Native CI disables incremental compilation but retains the existing debug-symbol settings.
+Native CI disables incremental compilation.
+Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
+Changing this profile requires a one-time dependency rebuild before measuring warm-cache CI duration.
 The dependency cache keeps third-party build artifacts for both debug and target-specific release profiles.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 

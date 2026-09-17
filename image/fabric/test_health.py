@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
-from health import runtime_health
+from health import request_health, runtime_health
 
 
 class RuntimeHealthTests(unittest.IsolatedAsyncioTestCase):
@@ -58,3 +59,16 @@ class RuntimeHealthTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual((await runtime_health(runtime))["reason_code"], "fabric_health_error")
+
+    async def test_named_health_request_preserves_report(self):
+        report = {"supported": True, "report": {"runtime_id": "bob"}, "reason_code": None}
+        reader = SimpleNamespace(readline=AsyncMock(return_value=json.dumps(report).encode()))
+        writer = SimpleNamespace(
+            write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock()
+        )
+        with patch("health.asyncio.open_unix_connection", AsyncMock(return_value=(reader, writer))):
+            self.assertEqual(await request_health("/private/socket", "bob"), report)
+        self.assertEqual(
+            json.loads(writer.write.call_args.args[0]), {"operation": "health", "agent": "bob"}
+        )
+        writer.wait_closed.assert_awaited_once()

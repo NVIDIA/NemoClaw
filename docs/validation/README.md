@@ -7,8 +7,12 @@ These records qualify specific behaviors, revisions, and environments of NemoCla
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
-Current native inference qualification is [blocked by OpenShell main-process environment propagation](rust-native-inference-linux-arm64.md).
-The record separates passing schema and protocol fixtures from the failed live attempt.
+The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as strict translation of a manually curated, redacted v0 export followed by a new v1 lifecycle.
+Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
+The scenario is explicitly live-gated and is not qualification evidence until a native Linux run records the reviewed `sandbox:sandbox` to `1000:1000` process-principal decision and has its redacted lifecycle evidence reviewed and retained here.
+
+The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
+The newer [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the remaining managed Podman blocker.
 
 | Contract | Evidence |
 |---|---|

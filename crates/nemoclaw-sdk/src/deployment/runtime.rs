@@ -9,7 +9,13 @@ use crate::{
 };
 use std::time::Duration;
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
-const MODEL_STORAGE: &str = "nemoclaw_inference_storage.runtime";
+fn model_storage(address: &str) -> String {
+    address.replacen(
+        "nemoclaw_inference_service.",
+        "nemoclaw_inference_storage.",
+        1,
+    )
+}
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 pub(super) fn check_runtime_plan(
     plan: &Plan,
@@ -28,10 +34,9 @@ pub(super) fn check_runtime_plan(
             "runtime plan contains an undeclared resource",
         ))?;
         if change.change.actions == ["delete", "create"] {
-            if !matches!(
-                change.address.as_str(),
-                GATEWAY | "nemoclaw_inference_service.runtime"
-            ) || !replacements.contains(&change.address)
+            if !(change.address == GATEWAY
+                || change.address.starts_with("nemoclaw_inference_service."))
+                || !replacements.contains(&change.address)
             {
                 return Err(Error::Conflict(
                     "runtime replacement requires verified retained storage",
@@ -147,6 +152,7 @@ async fn preflight(
             retained.insert(target.address.clone());
         }
     }
+    let mut service_budgets: BTreeMap<String, Vec<(Spec, bool)>> = BTreeMap::new();
     for target in targets
         .iter()
         .filter(|target| matches!(target.kind.as_str(), GATEWAY_KIND | SERVICE_KIND))
@@ -173,16 +179,39 @@ async fn preflight(
         }
         if want.service.is_some() {
             engine.check_capacity(&want, observed.as_ref()).await?;
+            service_budgets
+                .entry(want.engine().to_owned())
+                .or_default()
+                .push((want.clone(), observed.as_ref().is_none_or(|o| !o.running)));
         }
         if old != want
-            && retained.contains(if want.kind == GATEWAY_KIND {
-                GATEWAY_STORAGE
+            && retained.contains(&if want.kind == GATEWAY_KIND {
+                GATEWAY_STORAGE.to_owned()
             } else {
-                MODEL_STORAGE
+                model_storage(&target.address)
             })
         {
             result.replacements.insert(target.address.clone());
         }
+    }
+    for (endpoint, specs) in service_budgets {
+        if specs.len() < 2 {
+            continue;
+        }
+        let engine = engines.resolve(&endpoint)?;
+        let host = tokio::time::timeout(
+            Duration::from_secs(30),
+            engine.host_observer.observe(&engine),
+        )
+        .await
+        .map_err(|_| Error::State("combined capacity observation timed out"))??;
+        let info = engine.info().await?;
+        let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
+        let services: Vec<_> = specs
+            .iter()
+            .map(|(spec, starting)| (spec.service.as_ref().unwrap(), *starting))
+            .collect();
+        crate::hardware::check_service_budgets(&services, &capacity)?;
     }
     Ok(result)
 }

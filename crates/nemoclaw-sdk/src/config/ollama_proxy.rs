@@ -40,9 +40,9 @@ impl OllamaProxy {
     ) -> Result<(), ConfigError> {
         validate_endpoint(&self.endpoint, false)?;
         let upstream = url::Url::parse(&provider.endpoint)
-            .map_err(|_| ConfigError("invalid Ollama upstream"))?;
-        let endpoint =
-            url::Url::parse(&self.endpoint).map_err(|_| ConfigError("invalid proxy endpoint"))?;
+            .map_err(|_| ConfigError::new("invalid Ollama upstream"))?;
+        let endpoint = url::Url::parse(&self.endpoint)
+            .map_err(|_| ConfigError::new("invalid proxy endpoint"))?;
         let loopback = match upstream.host() {
             Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
@@ -55,7 +55,7 @@ impl OllamaProxy {
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(harness, "openclaw" | "hermes")
+            || !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
             || !loopback
             || upstream.scheme() != "http"
             || upstream.path() != "/v1"
@@ -78,8 +78,8 @@ impl OllamaProxy {
                 .unwrap()
                 .is_match(model)
         {
-            return Err(ConfigError(
-                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw or Hermes completions",
+            return Err(ConfigError::new(
+                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw, Hermes, Deep Agents, or Pi completions",
             ));
         }
         Ok(())

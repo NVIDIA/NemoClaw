@@ -152,7 +152,12 @@ fn native_cache_retains_only_dependencies_in_both_build_profiles() {
     assert_eq!(inputs["cache-targets"], "true");
     // Include debug and target-triple/release artifacts, not just one profile.
     assert_eq!(inputs["workspaces"], ". -> target");
-    assert_eq!(inputs["key"], "${{ matrix.platform }}");
+    // rust-cache omits a virtual workspace manifest from its automatic inputs.
+    // Profile changes must invalidate the cache instead of rebuilding on every hit.
+    assert_eq!(
+        inputs["key"],
+        "${{ matrix.platform }}-${{ hashFiles('Cargo.toml') }}"
+    );
     assert_eq!(inputs["add-rust-environment-hash-key"], "true");
     assert!(!inputs.to_string().contains("github.sha"));
     let cache_index = steps.iter().position(|step| step == cache).unwrap();

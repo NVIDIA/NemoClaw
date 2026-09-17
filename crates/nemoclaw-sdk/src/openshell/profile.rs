@@ -15,7 +15,7 @@ fn definition(owner: &str, generation: &str) -> proto::ProviderProfile {
     proto::ProviderProfile {
         id: "nemoclaw-brave".into(),
         display_name: "NemoClaw Brave Search".into(),
-        description: "Native OpenClaw web search".into(),
+        description: "Declared Brave web search".into(),
         category: proto::ProviderProfileCategory::Knowledge as i32,
         credentials: vec![proto::ProviderProfileCredential {
             name: "BRAVE_API_KEY".into(),
@@ -153,8 +153,7 @@ pub(super) fn provider_row(
         .metadata
         .as_ref()
         .ok_or(ObservationError::Incomplete)?;
-    if name != "brave-search"
-        || !provider.config.is_empty()
+    if !provider.config.is_empty()
         || metadata.workspace.is_empty()
         || provider.profile_workspace != metadata.workspace
     {
@@ -166,6 +165,9 @@ pub(super) fn provider_row(
         .filter(|s| !s.is_empty())
         .ok_or(ObservationError::Incomplete)?
         .clone();
+    if name != crate::config::search_provider_name(&credential) {
+        return Err(ObservationError::BindingMismatch);
+    }
     let mut result = base(provider.metadata, name, removing)?;
     result.insert("credential_source".into(), String::new());
     result.extend([

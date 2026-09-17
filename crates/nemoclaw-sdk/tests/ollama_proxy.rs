@@ -73,3 +73,28 @@ fn proxy_rejects_unpinned_models_nonlocal_daemons_and_ambiguous_ownership() {
     value["spec"]["inferenceProviders"][0]["ollamaProxy"]["model"]["digest"] = json!("latest");
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
+    for harness in ["deepagents", "pi"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+        let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+        assert!(
+            jsonschema::validator_for(&input_schema())
+                .unwrap()
+                .is_valid(&value)
+        );
+        let gens: Generations = ["workspace", "provider", "sandbox", "ollama"]
+            .map(|k| (k.into(), "a".repeat(32)))
+            .into();
+        let graph = compile(&doc, &gens, "0.1.0").unwrap();
+        assert!(graph["resource"]["nemoclaw_ollama_proxy"]["service"].is_object());
+        assert!(
+            !graph["resource"]["nemoclaw_provider"]["inference_local"]["credential_source"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+    }
+}

@@ -242,12 +242,20 @@ async def main():
         os.environ["NEMOCLAW_ANONYMOUS_API_KEY"] = "unused"
     relay_enabled = HARNESS == "hermes" and os.environ.get("FABRIC_HERMES_RELAY") == "1"
     if inference and HARNESS == "openclaw":
+        inference["provider"] = "fixture"
+        inference["connection"] = {
+            "provider": "openai",
+            "model": "primary",
+            "base_url": "https://inference.local/v1",
+            "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+        }
         inference["tuning"] = {
             "contextWindow": 65536,
             "maxTokens": 2048,
             "reasoning": True,
             "reasoningEffort": "low",
         }
+        os.environ["NEMOCLAW_ANONYMOUS_API_KEY"] = "unused"
     if inference and HARNESS == "hermes":
         inference["auth"] = {"method": "api-key", "providerRef": "fixture"}
         if relay_enabled:

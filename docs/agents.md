@@ -38,8 +38,8 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 | Agent | Access and conversation behavior |
 |---|---|
 | OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
-| Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) selects another adapter without those interfaces |
-| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the deployment's route |
+| Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) can accompany explicitly declared interfaces |
+| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the named agent's route |
 | Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
@@ -48,12 +48,25 @@ NemoClaw has no `launch`, `connect`, or invocation command.
 Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
 Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
 
+### Multiple Deep Agents in One Sandbox
+
+Declare each instance under the sandbox’s `agents`, with its own inference, tools, and integration references.
+Each instance selects one model and has a separate Fabric runtime; all use the sandbox-selected Deep Agents harness.
+With multiple agents, workspaces are `/sandbox/workspaces/<agent-name>` and artifacts are `/sandbox/artifacts/<agent-name>`.
+Single-agent deployments retain `/sandbox/workspace` and `/sandbox/artifacts`.
+These directories separate native state, not permissions or network access within the sandbox.
+
+Apply checks every hosted configuration and reports each agent’s Fabric health separately.
+A failed startup stops runtimes already started by that launch.
+Changing the roster changes the immutable sandbox launch configuration; use a fresh deployment and an image built from this revision.
+To invoke a specific agent through the SDK procedure below, pass its declared name to `configuration()`.
+
 ### Run One Deep Agents Request
 
 Use an already applied `harness: {kind: deepagents}` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
 Follow its [harness matrix entry](reference/fabric-harnesses.md) and the shared [deployment procedure](usage.md) to create it first.
 This call starts a separate Fabric runtime inside the sandbox and sends a real model request, which can incur charges.
-It shares `/sandbox/workspace` with the hosted runtime and can use the agent's tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
+It shares the selected agent’s workspace with its hosted runtime and can use that agent’s tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
 Use an idle sandbox you own and preserve any files you need before running it.
 It does not attach to or resume the hosted runtime's conversation.
 
@@ -93,8 +106,8 @@ The adapters write these settings when first creating native configuration:
 |---|---|
 | OpenClaw | Nested native sandbox mode `off`; execution host `gateway` and mode `full`, inside the OpenShell sandbox; coding tool profile |
 | OpenClaw | Memory search, cron, update checks, and automatic updates disabled |
-| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings do not describe the Relay adapter |
-| Hermes Relay adapter | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
+| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings also apply with Relay and explicit interfaces |
+| Hermes Relay without explicit interfaces | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
 
 The nested OpenClaw sandbox setting does not disable the outer OpenShell sandbox.
 These defaults do not guarantee that arbitrary native tools are harmless or supply missing integration prerequisites.
@@ -107,13 +120,15 @@ Readiness rejects conflicts in those checked fields; it does not continuously re
 
 A sandbox accepts one or more uniquely named OpenClaw agents.
 Agents share one harness runtime and can select different [named model choices](inference.md#give-an-agent-multiple-model-choices).
-Other harnesses still require one agent.
-Plain-text Fabric invocations require exactly one declared agent.
-With multiple agents, use an input object containing `agent` and `message`; there is no implicit default agent.
+Deep Agents also supports multiple agents, each with its own Fabric runtime. Other harnesses require one agent.
+Plain-text OpenClaw Fabric invocations require exactly one declared agent.
+With multiple OpenClaw agents, use an input object containing `agent` and `message`; there is no implicit default agent.
 Native OpenClaw commands can select any declared agent by name.
 The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
 
-Declare a read-only tool policy on any OpenClaw agent:
+Build the selected harness image from this revision before using read-only policies; older Deep Agents and Pi images do not apply the mapping.
+Follow [Build Agent Images](build.md#build-agent-images) and select its immutable digest.
+Declare a read-only tool policy on an OpenClaw, Deep Agents, or Pi agent:
 
 ```yaml
 tools:
@@ -121,12 +136,15 @@ tools:
 ```
 
 Only this allowlist is supported; empty lists, other tools, wildcards, and additional grant fields are rejected.
-Omitting `tools` selects progressive discovery without restricting tools.
+The policy selects native `read` in OpenClaw/Pi and `read_file` in Deep Agents; other tool calls are blocked.
+Omitting `tools` preserves the harness defaults.
+OpenClaw also defaults to progressive discovery.
 This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
-Each agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
+Each OpenClaw agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
+Single-agent Deep Agents and Pi use `/sandbox/workspace`.
 Those directories are not separate security boundaries.
 
-An unrestricted agent can select tool disclosure instead of an allowlist:
+An unrestricted OpenClaw agent can select tool disclosure instead of an allowlist:
 
 ```yaml
 tools:
@@ -163,7 +181,7 @@ execution:
   heartbeatEvery: 30m
 ```
 
-`timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
+For OpenClaw, `timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
 Fabric's outer deadline includes time for the gateway response and cleanup.
 Startup, readiness, and explicit inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
 
@@ -174,7 +192,8 @@ See the [execution field reference](reference/configuration.md#agentexecution) f
 
 Execution settings apply to the shared OpenClaw gateway defaults.
 Select these settings once on the sandbox; use `harnessRef` to reuse a named configuration.
-Other harnesses and empty `execution` objects are rejected.
+Other harnesses accept `execution.timeoutSeconds` as the Fabric invocation timeout, defaulting to 300 seconds; they reject `heartbeatEvery`.
+Empty `execution` objects are rejected.
 Export preserves explicit settings and leaves omitted fields absent.
 
 Build the updated image using the [runtime build procedure](#runtime-lifecycle) and use its immutable digest in a fresh deployment.
@@ -220,15 +239,18 @@ observability:
     enabled: true
 ```
 
-Fabric then starts Hermes through its upstream adapter and enables Hermes' in-process NeMo Relay integration.
+Fabric enables Hermes' in-process NeMo Relay integration.
+With explicit `interfaces`, it keeps the local API/dashboard adapter. Without `interfaces`, it selects the upstream Fabric adapter.
 Relay writes ATOF events and an ATIF trajectory under `/sandbox/artifacts/relay`; it does not run as a sidecar or add network egress.
 Full payload capture is disabled.
+With native interfaces, ATOF events appear during conversation turns; ATIF export follows native session finalization or graceful process shutdown. An open conversation may not yet have a trajectory file.
 
-This path cannot be combined with Hermes `interfaces` because the upstream adapter does not provide NemoClaw's local API and dashboard process.
-Omit `observability` to preserve the existing local Hermes adapter and its interface behavior.
+To trace the native API and dashboard, combine the declaration above with `interfaces` from [the Hermes interfaces example](../examples/hermes-interfaces.yaml).
+The native processes inherit Fabric's generated Relay configuration; API and dashboard conversations remain separate.
+The local adapter keeps its manual-approval settings.
 Relay also cannot be combined with OpenClaw's `otlp` setting; `enabled: false` is rejected, so omit the declaration to select the default mode.
-Enabling Relay also changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
-Do not rely on the local adapter's manual approvals when evaluating this mode.
+With `interfaces` omitted, selecting the upstream adapter changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
+Do not rely on the local adapter's manual approvals when evaluating the upstream adapter.
 Its native home is under the Fabric artifact root at `.fabric/hermes/runtimes/<runtime-id>`, rather than the local API/dashboard homes.
 
 Build the current Hermes image with the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface).
@@ -247,8 +269,8 @@ Look for per-session `events.atof.jsonl` and `trajectory-*.atif.json` files; ins
 Full payload capture being disabled does not establish that every trace is free of private data.
 Trace files live in the sandbox and are deleted with it; there is no managed collector or independent archival lifecycle.
 Apply does not invoke Hermes or produce conversation traces.
-An explicitly requested Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation.
-General interactive access to this experimental hosted adapter remains **TBD**; do not use the local API/dashboard/token procedure for it.
+An explicitly requested upstream Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation. The local API adapter retains its isolated probe behavior when Relay is enabled.
+For Relay with explicit `interfaces`, use the normal local API/dashboard/token procedure. General interactive access to the upstream adapter remains **TBD**.
 On failure, preserve deployment state and inspect the original error; do not replay an uncertain invocation merely to produce traces.
 
 The [Fabric configuration](../image/fabric/fabric.py), [observability tests](../crates/nemoclaw-sdk/tests/observability.rs), and [offline adapter experiment](../test/fabric_adapters.py) define this contract.
@@ -272,7 +294,7 @@ Only `kind: webSearch` with Brave is currently supported; VoiceClaw and other ki
 
 ## Brave Web Search
 
-Declare a shared search integration and attach it to the selected OpenClaw agents.
+Declare a shared search integration and attach it to selected OpenClaw or Deep Agents agents.
 This fragment omits the deployment's other required fields; the [complete example](../examples/openclaw-web-search.yaml) includes them:
 
 ```yaml
@@ -313,28 +335,33 @@ Unused enclosing definitions create no provider, policy grant, or secret require
 
 Set the referenced environment variable on the host running `nemoclaw apply`.
 NemoClaw resolves that reference locally and creates a workspace-scoped Brave provider profile and credential-bearing provider in OpenShell.
+Different sandboxes can use different credential references; each sandbox receives only its selected provider.
+Sandboxes using the same reference share one provider registration.
 The agent receives OpenShell's placeholder through `BRAVE_API_KEY`; OpenShell's supervisor proxy replaces it with the real key in requests to Brave.
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the managed provider and profile without revoking the key at Brave.
 Unchanged apply does not rotate a changed value behind the same environment reference.
 
-Every attached agent must be an unrestricted OpenClaw agent.
-Selected agents receive `web_search`; other unrestricted agents explicitly deny it, and read-only agents retain only `read`.
+Every attached agent must be an unrestricted OpenClaw or Deep Agents agent.
+Selected agents receive `web_search`; OpenClaw explicitly denies it for other agents, while Deep Agents only configures its MCP tool for selected agents.
+Read-only policies cannot attach search.
 These are native tool restrictions within a shared sandbox, not separate process or filesystem boundaries.
 Other harnesses are rejected.
 
-The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node executable to GET `/res/v1/web/search` at `api.search.brave.com:443`.
+The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node and Python 3.14 executables to GET `/res/v1/web/search` at `api.search.brave.com:443`.
 The supervisor proxy terminates TLS there to inject `X-Subscription-Token`.
-An explicit policy cannot reuse this rule name, and the inference provider cannot be named `brave-search`.
-The integration owns its profile, provider attachment, native plugin settings, and agent tool grants.
+An explicit policy cannot reuse this rule name, and inference provider names cannot be `brave-search` or start with `brave-search-`.
+OpenClaw uses its native Brave plugin; Deep Agents uses Fabric’s native MCP tool support with a local stdio server.
+The integration owns its profile, provider attachment, native tool settings, and agent grants.
+Build the selected harness image from this revision and use a fresh deployment; older profiles and images lack the Python search grant and MCP configuration.
 Export preserves authored definition scope and references; the adapter's internal agent grants are derived from those attachments.
 Profile, attachment, or native configuration drift stops refresh and export without overwriting the conflicting configuration.
 Restore the declared settings before retrying.
 
 Build an updated image using the [runtime build procedure](#runtime-lifecycle) and use a fresh deployment when changing integration intent.
-The builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
+For OpenClaw, the builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
 Changing YAML does not update an image or migrate retained native configuration.
-Offline tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
+Offline OpenClaw tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
 
 The former `integrations.webSearch.agentRefs` input is rejected.
 Move its provider and credential fields into a named `kind: webSearch` definition and put `integrationRefs` on the selected agents.
@@ -342,7 +369,7 @@ Retained intent with the old shape is not migrated automatically; use its matchi
 
 ## Hermes Native Server
 
-With Relay tracing omitted, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
+With Relay tracing omitted or `interfaces` explicitly declared, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
 This section's API, token, native-file, and probe-isolation behavior applies to that default adapter.
 It invokes the native Responses endpoint and chains completed turns within the Fabric runtime.
 A runtime restart starts a new Fabric conversation; native persisted history remains in `/sandbox/.hermes`.
@@ -363,7 +390,9 @@ Existing images and native state are not automatically migrated; use a fresh dep
 
 ## Pi Model Selection
 
-Pi receives the model ID from `inference.routes[].overrides.model`.
+Pi receives each model ID from `inference.routes[].overrides.model`.
+Declare named routes and an explicit `inference.default` when supplying multiple choices.
+Each choice retains its own provider endpoint, credential reference, and native model metadata.
 Omit `piModel` to use that model's OpenAI catalog entry.
 When supplied, `piModel` is an opaque object passed to Pi as a native `models.json` model definition:
 
@@ -392,8 +421,15 @@ Pi rejects invalid native values at startup, with resources retained for a corre
 The optional inference probe uses Pi's native model API; apply does not invoke it.
 
 Apply configures Pi after attaching the native provider.
-A model or metadata change stops Pi, updates its separate model configuration, and starts a new Pi runtime in the existing sandbox.
+For a single declared choice without a tool policy, applying changed model IDs or metadata restarts Pi in the existing sandbox.
+With multiple choices or a tool policy, changing the declared catalog changes the sandbox launch configuration and requires a fresh deployment.
+Changes to provider attachments also require a new sandbox.
 Unchanged apply preserves the runtime.
+
+Within one Fabric runtime, use `runtime.invoke(input={"prompt": "...", "model": "fast"})` to select a declared route by name.
+Subsequent plain-string requests keep the selected model; switching choices preserves the Pi conversation.
+An unknown choice fails before inference.
+This requires the updated Pi image; it does not provide automatic fallback or model routing.
 
 Pi's in-memory conversation does not survive a runtime restart.
 Export and readiness compare the hosted configuration with the declared model.

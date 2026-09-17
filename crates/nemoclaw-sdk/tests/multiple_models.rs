@@ -88,3 +88,45 @@ fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected()
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }
+
+#[test]
+fn pi_choices_preserve_native_metadata_and_provider_credentials() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
+    let mut provider = value["spec"]["inferenceProviders"][0].clone();
+    provider["name"] = json!("oracle");
+    provider["endpoint"] = json!("https://oracle.example/v1");
+    provider["credential"] = json!({"env":"ORACLE_KEY"});
+    value["spec"]["inferenceProviders"]
+        .as_array_mut()
+        .unwrap()
+        .push(provider);
+    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let mut oracle = inference["routes"][0].clone();
+    oracle["name"] = json!("smart");
+    oracle["providerRef"] = json!("oracle");
+    oracle["overrides"]["model"] = json!("custom-smart");
+    oracle["overrides"]["piModel"]["maxTokens"] = json!(4096);
+    inference["routes"].as_array_mut().unwrap().push(oracle);
+    inference["default"] = json!("primary");
+    let doc = Document::parse(value.to_string().as_bytes()).expect("Pi supports model choices");
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&doc, &generations).unwrap();
+    let settings: Value = serde_json::from_str(
+        &rows.iter().find(|t| t.kind == "sandbox").unwrap().values["inference_json"],
+    )
+    .unwrap();
+    let choices = &settings["agents"][0]["inference"]["models"];
+    assert_eq!(choices["smart"]["pi"]["model"], "custom-smart");
+    assert_eq!(choices["smart"]["pi"]["piModel"]["maxTokens"], 4096);
+    assert_eq!(
+        choices["smart"]["connection"]["api_key_env"],
+        "NEMOCLAW_INFERENCE_ORACLE_KEY"
+    );
+    assert_eq!(
+        Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}

@@ -135,7 +135,7 @@ impl Watchdog {
 
 mod capacity;
 mod spark;
-pub use capacity::{check_capacity, check_memory, serving_memory};
+pub use capacity::{check_capacity, check_memory, check_service_budgets, serving_memory};
 pub(crate) use spark::validate_memory;
 
 #[cfg(target_os = "linux")]

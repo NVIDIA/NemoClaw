@@ -21,9 +21,9 @@ Empty or zero selects a default only where stated.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
+- The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
-- The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; only OpenClaw currently supports multiple agents. Shared definitions reuse configuration across sandboxes.
+- The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; OpenClaw and Deep Agents support multiple agents. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.
 - The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.
 - The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.
@@ -65,7 +65,7 @@ Paths:
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
+| `tools` | [AgentTools](#agenttools) | No | — | Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
 
@@ -83,7 +83,7 @@ Paths:
 
 ## AgentExecution
 
-OpenClaw execution defaults shared by the sandbox through its harness configuration.
+Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -96,7 +96,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `heartbeatEvery` | string | No | — | Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session. Constraints: pattern `^[0-9]+[smh]$(?![\s\S])`; maximum characters 256. |
-| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
+| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
 
 ## AgentInterfaces
 
@@ -131,7 +131,7 @@ Paths:
 
 ## AgentTools
 
-OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -161,7 +161,7 @@ Select the shared gateway's tool discovery mode without granting additional tool
 
 ## AllowedTool
 
-Tool supported by the read-only OpenClaw policy.
+Tool supported by the native read-only policy.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -422,7 +422,7 @@ Paths:
 |---|---|---|---|---|
 | `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults shared by the sandbox. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access for this sandbox runtime. |
-| `kind` | string | Yes | — | Fabric harness implementation. Multiple agents require OpenClaw. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
+| `kind` | string | Yes | — | Fabric harness implementation. Multiple agents require OpenClaw or Deep Agents. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
 | `observability` | [AgentObservability](#agentobservability) | No | — | Harness-native tracing shared by the sandbox. |
 
 ## HermesApi
@@ -522,7 +522,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `default` | string | No | — | Initial model choice by route name. Required with multiple routes; omission selects the sole route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw. Constraints: minimum items 1; maximum items 32. |
+| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw or Pi. Constraints: minimum items 1; maximum items 32. |
 
 ## InferenceApi
 
@@ -954,7 +954,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `contextWindow` | integer | No | — | Model context capacity in tokens. Does not resize the inference server. Constraints: minimum 1; maximum 4194304. |
-| `maxTokens` | integer | No | — | Maximum output tokens advertised to OpenClaw. Constraints: minimum 1; maximum 1000000000. |
+| `maxTokens` | integer | No | — | Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent. Constraints: minimum 1; maximum 1000000000. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
 | `reasoning` | boolean | No | — | Whether the model supports reasoning. |
@@ -1292,7 +1292,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `agents` | array of [Agent](#agent) | Yes | — | Instances of the sandbox-selected harness. OpenClaw supports multiple named agents sharing one runtime process; other harnesses require one agent. Constraints: minimum items 1. |
+| `agents` | array of [Agent](#agent) | Yes | — | Instances of the sandbox-selected harness. OpenClaw supports multiple named agents in one runtime; Deep Agents supports separate Fabric runtimes in one sandbox. Other harnesses require one agent. Constraints: minimum items 1. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. Every agent in the sandbox is an instance of this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -1537,7 +1537,7 @@ Paths:
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw agents sharing a runtime, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 
 ## TLS
 

@@ -24,7 +24,7 @@ fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, C
         .get(kind)
         .filter(|value| !value.is_empty())
         .map(String::as_str)
-        .ok_or(ConfigError("missing resource generation"))
+        .ok_or(ConfigError::new("missing resource generation"))
 }
 pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, ConfigError> {
     document.validate()?;
@@ -52,6 +52,13 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         let settings = document.sandbox_runtime_settings(sandbox)?;
         let agent_name = if harness.kind == "openclaw" {
             &sandbox.name
+        } else if harness.kind == "deepagents" {
+            &sandbox
+                .agents
+                .iter()
+                .min_by_key(|agent| &agent.name)
+                .expect("validated roster")
+                .name
         } else {
             &sandbox.sole_agent()?.name
         };
@@ -84,9 +91,9 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 &provider.provider,
                 false,
             )
-            .map_err(|_| ConfigError("invalid native inference policy"))?;
+            .map_err(|_| ConfigError::new("invalid native inference policy"))?;
             if policy.network_policies.contains_key(&profile.id) {
-                return Err(ConfigError("inference policy name is reserved"));
+                return Err(ConfigError::new("inference policy name is reserved"));
             }
             policy.network_policies.insert(
                 profile.id.clone(),
@@ -100,7 +107,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         values.insert(
             "policy_json".into(),
             crate::openshell::policy_json(&policy)
-                .map_err(|_| ConfigError("cannot encode sandbox policy"))?,
+                .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?,
         );
         if let Some(proxy) = &sandbox.network.proxy {
             values.insert("proxy_host".into(), proxy.host.clone());
@@ -112,9 +119,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
         if let Some(search) = settings.web_search {
+            let provider_name = crate::config::search_provider_name(&search.credential.env);
             for (kind, name) in [
                 ("provider_profile", "nemoclaw-brave"),
-                ("provider", "brave-search"),
+                ("provider", provider_name.as_str()),
             ] {
                 let mut values: Row = [
                     ("workspace".into(), workspace.clone()),
@@ -135,13 +143,20 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 }
                 let target = Target {
                     kind: kind.into(),
-                    address: format!("nemoclaw_{kind}.web_search"),
+                    address: if kind == "provider" {
+                        format!(
+                            "nemoclaw_provider.web_search_{}",
+                            provider_name.strip_prefix("brave-search-").unwrap()
+                        )
+                    } else {
+                        "nemoclaw_provider_profile.web_search".into()
+                    },
                     values,
                 };
                 if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                     if previous != &target {
-                        return Err(ConfigError(
-                            "sandboxes sharing web search must use the same provider credential",
+                        return Err(ConfigError::new(
+                            "web search provider registration conflicts with an existing target",
                         ));
                     }
                 } else {
@@ -150,33 +165,43 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             }
         }
     }
-    let provider = document.lifecycle_provider()?;
-    if provider
-        .service
-        .as_ref()
-        .is_some_and(|s| s.authentication.is_some())
-    {
-        let spec = runtime_targets(document, generations)
-            .map_err(|_| ConfigError("invalid managed credential source"))?
-            .into_iter()
-            .find(|t| t.kind == crate::managed::SERVICE_KIND)
-            .ok_or(ConfigError("missing managed credential source"))?
-            .values["spec"]
-            .clone();
-        let source = crate::inference_auth::Source::ManagedService {
-            spec: serde_json::from_str(&spec)
-                .map_err(|_| ConfigError("invalid managed credential source"))?,
-        };
-        result
-            .iter_mut()
-            .find(|r| r.kind == "provider" && r.values["name"] == document.provider_key(provider))
-            .unwrap()
-            .values
-            .insert("credential_source".into(), source.json()?);
+    for provider in document.selected_inference_providers()? {
+        if provider
+            .service
+            .as_ref()
+            .is_some_and(|s| s.authentication.is_some())
+        {
+            let spec = runtime_targets(document, generations)
+                .map_err(|_| ConfigError::new("invalid managed credential source"))?
+                .into_iter()
+                .find(|t| {
+                    t.address
+                        == format!(
+                            "nemoclaw_inference_service.inference_{}",
+                            document.provider_key(provider)
+                        )
+                })
+                .ok_or(ConfigError::new("missing managed credential source"))?
+                .values["spec"]
+                .clone();
+            let source = crate::inference_auth::Source::ManagedService {
+                spec: serde_json::from_str(&spec)
+                    .map_err(|_| ConfigError::new("invalid managed credential source"))?,
+            };
+            result
+                .iter_mut()
+                .find(|r| {
+                    r.kind == "provider" && r.values["name"] == document.provider_key(provider)
+                })
+                .unwrap()
+                .values
+                .insert("credential_source".into(), source.json()?);
+        }
     }
+    let provider = document.lifecycle_provider()?;
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
-            .map_err(|_| ConfigError("invalid Ollama proxy specification"))?;
+            .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;
         let source = crate::inference_auth::Source::OllamaProxy {
             engine: proxy.engine.clone(),
             spec: Box::new(spec),
@@ -189,7 +214,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             .insert("credential_source".into(), source.json()?);
         result.extend(
             crate::ollama::proxy::targets(document, generations)
-                .map_err(|_| ConfigError("invalid proxy resources"))?,
+                .map_err(|_| ConfigError::new("invalid proxy resources"))?,
         );
     }
     Ok(result)
@@ -277,7 +302,7 @@ pub fn compile(
         let authority = inference
             .endpoint
             .strip_prefix("http://")
-            .ok_or(ConfigError("invalid Ollama endpoint"))?
+            .ok_or(ConfigError::new("invalid Ollama endpoint"))?
             .split('/')
             .next()
             .unwrap_or("");
@@ -327,7 +352,12 @@ pub fn compile(
                 "nemoclaw_ollama_external_model.inference"
             ]);
         }
-        if target.kind == "provider" && target.address != "nemoclaw_provider.web_search" {
+        if target.kind == "provider"
+            && target
+                .values
+                .get("provider_type")
+                .is_none_or(|kind| kind != "brave")
+        {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
             if target.values["name"] == document.provider_key(inference) {
@@ -340,7 +370,12 @@ pub fn compile(
             }
             attributes["depends_on"] = json!(dependencies);
         }
-        if target.address == "nemoclaw_provider.web_search" {
+        if target.kind == "provider"
+            && target
+                .values
+                .get("provider_type")
+                .is_some_and(|kind| kind == "brave")
+        {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
         attributes["lifecycle"] = json!({"prevent_destroy":true});

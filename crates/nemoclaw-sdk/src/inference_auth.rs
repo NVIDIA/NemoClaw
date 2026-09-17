@@ -17,7 +17,7 @@ impl Source {
     pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
         let source = serde_json::to_string(self).expect("typed credential source");
         crate::openshell::credential_metadata::pack(&source).map_err(|_| {
-            crate::config::ConfigError(
+            crate::config::ConfigError::new(
                 "managed credential reference exceeds gateway annotation capacity",
             )
         })?;

@@ -55,7 +55,7 @@ impl AgentObservability {
                         .is_some_and(|n| (0.0..=1.0).contains(&n)) => {}
             (None, Some(relay)) if harness == "hermes" && relay.enabled => {}
             _ => {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "observability requires exactly one supported harness-native integration",
                 ));
             }
@@ -65,9 +65,5 @@ impl AgentObservability {
 
     pub(crate) fn uses_otlp(&self) -> bool {
         self.otlp.is_some()
-    }
-
-    pub(crate) fn uses_relay(&self) -> bool {
-        self.relay.is_some()
     }
 }

@@ -34,7 +34,7 @@ pub enum ReasoningEffort {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Optional OpenClaw model limits and reasoning defaults. Omission preserves native defaults.
+/// Optional model limits and OpenClaw reasoning defaults. Omission preserves native defaults.
 pub struct RouteTuning {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 4194304))]
@@ -42,7 +42,7 @@ pub struct RouteTuning {
     pub context_window: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 1000000000))]
-    /// Maximum output tokens advertised to OpenClaw.
+    /// Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent.
     pub max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "bool")]
@@ -55,7 +55,13 @@ pub struct RouteTuning {
 }
 impl RouteTuning {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if (self != &Self::default() && harness != "openclaw")
+        let supported = harness == "openclaw"
+            || (matches!(harness, "deepagents" | "mini-swe-agent" | "remote-agent")
+                && self.context_window.is_none()
+                && self.reasoning.is_none()
+                && self.reasoning_effort.is_none())
+            || self == &Self::default();
+        if !supported
             || self
                 .context_window
                 .is_some_and(|n| !(1..=4194304).contains(&n))
@@ -63,8 +69,8 @@ impl RouteTuning {
                 .max_tokens
                 .is_some_and(|n| !(1..=1000000000).contains(&n))
         {
-            return Err(ConfigError(
-                "route tuning requires OpenClaw and supported token bounds",
+            return Err(ConfigError::new(
+                "route tuning requires a supported harness, option, and token bounds",
             ));
         }
         Ok(())
@@ -85,7 +91,7 @@ pub struct AgentAuth {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
-/// OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+/// Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
 pub enum AgentTools {
     /// Expose only the read tool, independently of the gateway's discovery mode.
     ReadOnly {
@@ -97,6 +103,19 @@ pub enum AgentTools {
         /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
         disclosure: ToolDisclosure,
     },
+}
+impl AgentTools {
+    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+        if harness == "openclaw"
+            || (matches!(harness, "deepagents" | "pi") && matches!(self, Self::ReadOnly { .. }))
+        {
+            Ok(())
+        } else {
+            Err(ConfigError::new(
+                "read-only tools require OpenClaw, Deep Agents, or Pi; disclosure requires OpenClaw",
+            ))
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -119,7 +138,7 @@ impl ToolDisclosure {
                 None => Self::Progressive,
             };
             if selected.is_some_and(|prior| prior != mode) {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "OpenClaw agents must share a tool disclosure mode; omission means progressive",
                 ));
             }
@@ -130,7 +149,7 @@ impl ToolDisclosure {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
-/// Tool supported by the read-only OpenClaw policy.
+/// Tool supported by the native read-only policy.
 pub enum AllowedTool {
     /// Read a file within the sandbox's filesystem permissions.
     Read,
@@ -185,6 +204,8 @@ pub(crate) struct RuntimeAgentInference {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi: Option<Overrides>,
     pub provider: String,
     pub connection: RuntimeConnection,
     pub api: InferenceApi,
@@ -207,7 +228,7 @@ impl RuntimeConnection {
             &self.provider,
             self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
         )
-        .map_err(|_| ConfigError("invalid native inference connection"))?;
+        .map_err(|_| ConfigError::new("invalid native inference connection"))?;
         if profile
             .credentials
             .first()
@@ -215,7 +236,7 @@ impl RuntimeConnection {
             .unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY")
             != self.api_key_env
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "inference credential does not match its provider",
             ));
         }
@@ -225,7 +246,7 @@ impl RuntimeConnection {
                 .as_deref()
                 .is_some_and(|model| !super::validation::valid_model(model))
         {
-            return Err(ConfigError("invalid native inference model"));
+            return Err(ConfigError::new("invalid native inference model"));
         }
         Ok(())
     }
@@ -245,11 +266,6 @@ impl SandboxRuntimeSettings {
         }
         if let Some(observability) = &self.observability {
             observability.validate(harness)?;
-            if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError(
-                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
-                ));
-            }
         }
         if let Some(execution) = &self.execution {
             execution.validate(harness)?;
@@ -257,16 +273,22 @@ impl SandboxRuntimeSettings {
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(harness)?;
         }
+        for agent in &self.agents {
+            if let Some(tools) = &agent.tools {
+                tools.validate(harness)?;
+            }
+        }
         ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
-            && (harness != "openclaw"
+            && (!matches!(harness, "openclaw" | "pi" | "deepagents")
+                || (!matches!(harness, "openclaw" | "deepagents") && self.agents.len() != 1)
                 || self
                     .agents
                     .iter()
                     .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
         {
-            return Err(ConfigError("invalid OpenClaw agent roster"));
+            return Err(ConfigError::new("invalid harness agent roster"));
         }
         let explicit_choices = self.agents.iter().any(|agent| agent.inference.is_some());
         if explicit_choices {
@@ -274,19 +296,28 @@ impl SandboxRuntimeSettings {
                 let selection = agent
                     .inference
                     .as_ref()
-                    .ok_or(ConfigError("every agent requires model choices"))?;
-                if selection.models.is_empty()
+                    .ok_or(ConfigError::new("every agent requires model choices"))?;
+                if (harness == "deepagents" && selection.models.len() != 1)
+                    || selection.models.is_empty()
                     || selection.models.len() > 32
                     || !selection.models.contains_key(&selection.default)
                 {
-                    return Err(ConfigError("invalid default model choice"));
+                    return Err(ConfigError::new("invalid default model choice"));
                 }
                 for (name, model) in &selection.models {
                     if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
-                        return Err(ConfigError("invalid native model choice"));
+                        return Err(ConfigError::new("invalid native model choice"));
                     }
                     model.connection.validate(&model.provider, harness)?;
                     model.tuning.validate(harness)?;
+                    if (harness == "pi") != model.pi.is_some()
+                        || model
+                            .pi
+                            .as_ref()
+                            .is_some_and(|pi| !super::validation::valid_model(&pi.model))
+                    {
+                        return Err(ConfigError::new("invalid Pi model choice"));
+                    }
                 }
             }
             let selection = self
@@ -303,7 +334,7 @@ impl SandboxRuntimeSettings {
                 || primary.api != self.api
                 || primary.tuning != self.tuning
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "runtime inference envelope differs from the canonical agent selection",
                 ));
             }
@@ -314,7 +345,7 @@ impl SandboxRuntimeSettings {
                 .as_ref()
                 .is_some_and(|a| harness != "hermes" || a.provider_ref.is_empty())
         {
-            return Err(ConfigError("unsupported agent inference settings"));
+            return Err(ConfigError::new("unsupported agent inference settings"));
         }
         Ok(())
     }
@@ -333,8 +364,9 @@ impl Document {
             &provider.provider,
             provider.authenticated(),
         )
-        .map_err(|_| ConfigError("invalid native inference profile"))?;
+        .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {
+            pi: (harness == "pi").then(|| route.overrides.clone()),
             provider: self.provider_key(provider),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
@@ -382,9 +414,11 @@ impl Document {
         resolved.sort_by_key(|resolved| &resolved.agent.name);
         let first = resolved
             .first()
-            .ok_or(ConfigError("at least one agent is required"))?;
+            .ok_or(ConfigError::new("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
+            || resolved.len() > 1
+            || (harness.kind == "pi" && resolved.iter().any(|agent| agent.agent.tools.is_some()))
             || resolved
                 .iter()
                 .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);

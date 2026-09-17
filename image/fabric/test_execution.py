@@ -25,6 +25,15 @@ class ExecutionConfiguration(unittest.TestCase):
         self.assertEqual(configuration("main", "openclaw")["runtime"]["timeout_seconds"], 660)
         self.assertEqual(configuration("main", "deepagents")["runtime"]["timeout_seconds"], 300)
 
+    def test_other_harnesses_receive_fabric_timeout_without_heartbeat(self):
+        for harness in ("deepagents", "hermes", "pi", "claude", "codex"):
+            options = {"api": "openai-completions", "execution": {"timeoutSeconds": 45}}
+            config = configuration("main", harness, {"model": "custom"}, inference=options)
+            self.assertEqual(config["runtime"]["timeout_seconds"], 45)
+            options["execution"]["heartbeatEvery"] = "1m"
+            with self.assertRaises(ValueError):
+                configuration("main", harness, {"model": "custom"}, inference=options)
+
     def test_execution_and_default_drift_never_overwrite_native_state(self):
         for execution in [
             None,
@@ -162,6 +171,35 @@ process.stdout.write(JSON.stringify([timeout({cfg}), heartbeat(cfg)]));
                         self.assertEqual(actual["agents"]["defaults"], native["agents"]["defaults"])
                     finally:
                         await runtime.stop()
+
+
+class NativeToolConfiguration(unittest.TestCase):
+    def test_read_policy_uses_each_adapters_native_tool_name(self):
+        for harness, tool in (("deepagents", "read_file"), ("pi", "read")):
+            route = {
+                "connection": {
+                    "provider": "openai",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "model": "custom",
+                    "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+                },
+                "pi": {"model": "custom"},
+            }
+            inference = {
+                "api": "openai-completions",
+                "agents": [
+                    {
+                        "name": "main",
+                        "tools": {"allow": ["read"]},
+                        "inference": {"default": "primary", "models": {"primary": route}},
+                    }
+                ],
+            }
+            config = configuration("main", harness, {"model": "custom"}, inference)
+            self.assertEqual(config["tools"], {"enabled": [tool]})
+            inference["agents"][0]["tools"] = {"disclosure": "direct"}
+            with self.assertRaises(ValueError):
+                configuration("main", harness, {"model": "custom"}, inference)
 
 
 if __name__ == "__main__":

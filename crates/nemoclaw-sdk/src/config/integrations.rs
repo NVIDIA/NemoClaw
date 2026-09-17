@@ -13,7 +13,7 @@ pub enum Integration {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Web search through the native OpenClaw Brave plugin.
+/// Brave web search through OpenClaw or Deep Agents native tool configuration.
 pub struct WebSearch {
     /// Supported search service.
     pub provider: SearchProvider,
@@ -45,7 +45,7 @@ impl Sandbox {
             .keys()
             .any(|name| shared.contains_key(name))
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "sandbox integration names must not shadow deployment definitions",
             ));
         }
@@ -57,34 +57,52 @@ impl Sandbox {
                 .keys()
                 .any(|name| shared.contains_key(name) || self.integrations.contains_key(name))
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "agent integration names must not shadow enclosing definitions",
                 ));
             }
             let mut names = BTreeSet::new();
-            let references = agent.integration_refs.iter().map(|name| {
-                let definition = self
-                    .integrations
-                    .get(name)
-                    .or_else(|| shared.get(name))
-                    .ok_or(ConfigError(
-                        "agent integration reference has no visible definition",
-                    ))?;
-                Ok((None, name.as_str(), definition))
-            });
+            let references = agent
+                .integration_refs
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let definition = self
+                        .integrations
+                        .get(name)
+                        .or_else(|| shared.get(name))
+                        .ok_or_else(|| {
+                            super::references::missing_reference(
+                                &format!(
+                                    "spec.sandboxes[{}].agents[{}].integrationRefs[{index}]",
+                                    super::references::diagnostic_name(&self.name),
+                                    super::references::diagnostic_name(&agent.name)
+                                ),
+                                "integration",
+                                name,
+                                shared
+                                    .keys()
+                                    .chain(self.integrations.keys())
+                                    .map(String::as_str),
+                            )
+                        })?;
+                    Ok((None, name.as_str(), definition))
+                });
             let inline = agent.integrations.iter().map(|(name, definition)| {
                 Ok((Some(agent.name.as_str()), name.as_str(), definition))
             });
             for definition in references.chain(inline) {
                 let (owner, name, definition) = definition?;
                 if !names.insert(name) {
-                    return Err(ConfigError("agent integration references must be unique"));
+                    return Err(ConfigError::new(
+                        "agent integration references must be unique",
+                    ));
                 }
                 match definition {
                     Integration::WebSearch(_)
                         if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
                     {
-                        return Err(ConfigError(
+                        return Err(ConfigError::new(
                             "web search requires unrestricted OpenClaw agents",
                         ));
                     }
@@ -116,7 +134,7 @@ impl Document {
             match binding.definition {
                 Integration::WebSearch(search) => {
                     if selected.is_some() {
-                        return Err(ConfigError(
+                        return Err(ConfigError::new(
                             "a sandbox supports only one attached web search definition",
                         ));
                     }
@@ -138,7 +156,9 @@ impl Document {
 fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(), ConfigError> {
     for (name, definition) in definitions {
         if !super::validation::SLUG.is_match(name) {
-            return Err(ConfigError("integration names must be lowercase names"));
+            return Err(ConfigError::new(
+                "integration names must be lowercase names",
+            ));
         }
         match definition {
             Integration::WebSearch(search) => {
@@ -171,7 +191,7 @@ impl RuntimeWebSearch {
     ) -> Result<(), ConfigError> {
         let agents: std::collections::BTreeMap<_, _> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
-        if harness != "openclaw"
+        if !matches!(harness, "openclaw" | "deepagents")
             || self.agent_refs.is_empty()
             || self.agent_refs.iter().any(|name| {
                 !names.insert(name)
@@ -179,10 +199,19 @@ impl RuntimeWebSearch {
                     || matches!(agents[name.as_str()], Some(AgentTools::ReadOnly { .. }))
             })
         {
-            return Err(ConfigError(
-                "web search requires unique unrestricted OpenClaw agent references",
+            return Err(ConfigError::new(
+                "web search requires unique unrestricted OpenClaw or Deep Agents references",
             ));
         }
         super::validation::credential(&Some(self.credential.clone()))
     }
+}
+
+/// Stable registration identity for a search credential reference, never its value.
+pub(crate) fn search_provider_name(reference: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "brave-search-{}",
+        &super::hex(&Sha256::digest(reference))[..24]
+    )
 }

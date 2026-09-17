@@ -170,3 +170,67 @@ fn multiple_selected_managed_lifecycles_are_rejected_before_resources_are_create
             .contains("at most one provider with managed")
     );
 }
+
+#[test]
+fn managed_services_have_independent_storage_credentials_and_dependencies() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+    let first = value["spec"]["inferenceProviders"][0]["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    value["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
+    let mut other = value["spec"]["inferenceProviders"][0].clone();
+    other["name"] = json!("other");
+    other["service"]["serving"]["port"] = json!(18999);
+    value["spec"]["inferenceProviders"]
+        .as_array_mut()
+        .unwrap()
+        .push(other);
+    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    inference["default"] = json!("primary");
+    let mut route = inference["routes"][0].clone();
+    route["name"] = json!("other");
+    route["providerRef"] = json!("other");
+    inference["routes"].as_array_mut().unwrap().push(route);
+    let doc = Document::parse(value.to_string().as_bytes()).expect("two managed services");
+    let runtime = runtime_targets(&doc, &generations()).unwrap();
+    let services: Vec<_> = runtime
+        .iter()
+        .filter(|t| t.kind == "inference_service")
+        .collect();
+    assert_eq!(services.len(), 2);
+    assert_ne!(services[0].address, services[1].address);
+    let graph = nemoclaw_sdk::compile::compile_runtime(&doc, &generations(), "0.1.0").unwrap();
+    let rows = targets(&doc, &generations()).unwrap();
+    for name in [&first, "other"] {
+        let address = format!("nemoclaw_inference_service.inference_{name}");
+        let service = runtime.iter().find(|t| t.address == address).unwrap();
+        let spec: Value = serde_json::from_str(&service.values["spec"]).unwrap();
+        let credentials: Value = serde_json::from_str(
+            &rows
+                .iter()
+                .find(|t| t.kind == "provider" && t.values["name"] == name)
+                .unwrap()
+                .values["credential_source"],
+        )
+        .unwrap();
+        assert_eq!(credentials["spec"], spec);
+        let dependencies = graph["resource"]["nemoclaw_inference_service"]
+            [format!("inference_{name}")]["depends_on"]
+            .as_array()
+            .unwrap();
+        assert!(dependencies.contains(&json!(format!(
+            "nemoclaw_inference_storage.inference_{name}"
+        ))));
+    }
+    // Duplicate bind ports must fail before creating either service.
+    value["spec"]["inferenceProviders"][1]["service"]["serving"]["port"] =
+        value["spec"]["inferenceProviders"][0]["service"]["serving"]["port"].clone();
+    assert!(
+        Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string()
+            .contains("publication")
+    );
+}
