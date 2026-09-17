@@ -573,7 +573,10 @@ export function createSandboxGpuCreateAttemptRunner(
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
     const deferRestartSafeCutover =
-      !portableLifecycle && !compatibility && persistRestartSafeStartup;
+      !portableLifecycle &&
+      input.managedImage !== true &&
+      !compatibility &&
+      persistRestartSafeStartup;
     const portableRuntimePatch = portableLifecycle
       ? createPortableRuntimePatch(input, deps, (generation) => {
           state.portableLifecycleGeneration = generation;
@@ -583,12 +586,11 @@ export function createSandboxGpuCreateAttemptRunner(
       ? portableRuntimePatch
       : createDockerGpuSandboxCreatePatch({
           route,
-          // The startup clone preserves native CDI devices, so non-terminal agents
-          // keep their selected command and DCode can apply its exact required limits
-          // without replacing the native GPU envelope. Native terminal agents without
-          // required limits retain their create-time command.
+          // Managed images already launch their canonical command directly and must
+          // keep the exact runtime OpenShell created. Legacy/custom images retain the
+          // restart-safe clone used to persist commands and DCode resource limits.
           persistStartupCommand: persistRestartSafeStartup,
-          externalRecreation: false,
+          externalRecreation: input.managedImage === true,
           sandboxName: input.sandboxName,
           gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
           openshellSandboxCommand: input.sandboxStartupCommand,

@@ -3201,12 +3201,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
           isOpenclawReady,
-          isOpenclawGatewayReady: (name) =>
-            openclawSetup.isOpenclawGatewayReady(
-              name,
-              registry.getSandbox(name)?.dashboardPort ?? DASHBOARD_PORT,
-              sandboxExec,
-            ),
+          isOpenclawGatewayReady: openclawSetup.createOpenclawGatewayReadinessProbe(
+            registry.getSandbox,
+            DASHBOARD_PORT,
+            sandboxExec,
+          ),
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,

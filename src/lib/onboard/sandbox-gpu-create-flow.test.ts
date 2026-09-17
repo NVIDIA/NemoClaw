@@ -309,6 +309,46 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("keeps managed DCode on the exact OpenShell-created runtime", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.managedImage = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "none",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "none",
+        persistStartupCommand: true,
+        externalRecreation: true,
+        requiredUlimits: input.requiredUlimits,
+      }),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create"],
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: false }),
+    );
+    expect(patch.ensureApplied).toHaveBeenCalled();
+  });
+
   it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
     const input = createInput();
     const patch = createPatch();

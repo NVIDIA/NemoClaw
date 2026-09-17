@@ -88,8 +88,8 @@ type DockerGpuSandboxCreatePatchOptions = {
   route: SelectedDockerGpuRoute;
   persistStartupCommand?: boolean;
   /**
-   * A managed bootstrap owns the one permitted recreation after Ready. Keep
-   * route diagnostics/proof active without running the legacy recreator.
+   * The selected lifecycle already owns the exact runtime OpenShell created.
+   * Keep route diagnostics/proof active without running the legacy recreator.
    */
   externalRecreation?: boolean;
   sandboxName: string;

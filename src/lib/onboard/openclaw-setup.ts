@@ -42,6 +42,19 @@ export async function isOpenclawGatewayReady(
   }
 }
 
+export function createOpenclawGatewayReadinessProbe(
+  readSandbox: (sandboxName: string) => { dashboardPort?: number | null } | null,
+  defaultPort: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): (sandboxName: string) => Promise<boolean> {
+  return (sandboxName) =>
+    isOpenclawGatewayReady(
+      sandboxName,
+      readSandbox(sandboxName)?.dashboardPort ?? defaultPort,
+      sandboxCommandExecutor,
+    );
+}
+
 interface OpenClawWebSearchReuseDeps {
   readEnabled(sandboxName: string): unknown;
   disable(sandboxName: string): Promise<void>;
