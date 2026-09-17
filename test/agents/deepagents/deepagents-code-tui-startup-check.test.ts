@@ -85,11 +85,16 @@ const itWithTclsh = it.runIf(tclshAvailable);
 
 function runTuiExpectStateMachine(
   events: TuiExpectEvent[],
-  options: { closeAfterFirstCtrlC?: boolean; expectNamePrompt?: boolean } = {},
+  options: {
+    closeAfterFirstCtrlC?: boolean;
+    expectNamePrompt?: boolean;
+    sessionId?: string;
+  } = {},
 ) {
   const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
   const capture = path.join(captureDir, "raw.log");
   const markers = path.join(captureDir, "markers.log");
+  const spawnTrace = path.join(captureDir, "spawn.log");
   const trace = path.join(captureDir, "trace.log");
   fs.writeFileSync(capture, "");
   fs.writeFileSync(markers, "");
@@ -102,7 +107,11 @@ set ::fake_sent {}
 set ::fake_closed 0
 
 proc log_file {args} {}
-proc spawn {args} {}
+proc spawn {args} {
+  set spawn_file [open $::env(NEMOCLAW_TUI_SPAWN_TRACE) w]
+  puts $spawn_file [join $args "\n"]
+  close $spawn_file
+}
 proc after {args} {}
 proc send {args} {
   binary scan [lindex $args end] H* key_hex
@@ -207,6 +216,8 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_READY_PATTERN: "(select agent)",
       NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN: "(cannot create a memfd|wasmtimeerror)",
       NEMOCLAW_TUI_SANDBOX_NAME: "fake-deepagents",
+      NEMOCLAW_TUI_SESSION_ID: options.sessionId ?? "",
+      NEMOCLAW_TUI_SPAWN_TRACE: spawnTrace,
       NEMOCLAW_TUI_TIMEOUT: "5",
       NEMOCLAW_TUI_TRACE: trace,
     },
@@ -214,9 +225,10 @@ proc exit {{code 0}} {
   });
 
   const markerText = fs.readFileSync(markers, "utf8");
+  const spawnText = fs.existsSync(spawnTrace) ? fs.readFileSync(spawnTrace, "utf8").trim() : "";
   const traceText = fs.existsSync(trace) ? fs.readFileSync(trace, "utf8").trim() : "";
   fs.rmSync(captureDir, { force: true, recursive: true });
-  return { markerText, result, traceText };
+  return { markerText, result, spawnText, traceText };
 }
 
 const tuiModelPrompt = "What is 731 + 206? Reply only with the number.";
@@ -434,6 +446,25 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
+
+  itWithTclsh(
+    "passes the caller's TUI session ID to the sandbox process through a completed model turn (#11847)",
+    () => {
+      const sessionId = "12345678-1234-1234-1234-123456789abc";
+      const { markerText, result, spawnText } = runTuiExpectStateMachine(
+        ["composer", "ready", "response", "exit"],
+        {
+          closeAfterFirstCtrlC: true,
+          expectNamePrompt: false,
+          sessionId,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
+      expect(spawnText.split("\n")).toContain(`NEMOCLAW_TUI_SESSION_ID=${sessionId}`);
+    },
+  );
 
   itWithTclsh("reports the Wasmtime boundary before the TUI model turn completes (#11847)", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(

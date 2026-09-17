@@ -8,6 +8,7 @@ MODE="${1:-}"
 SANDBOX_NAME="${2:-}"
 SESSION_ID="${3:-}"
 BASELINE="${4:-}"
+PROCESS_ROOT="${5:-/proc}"
 
 if [[ ! "$SANDBOX_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   printf 'invalid sandbox name\n' >&2
@@ -23,9 +24,11 @@ count=0
 for proc_dir in /proc/[0-9]*; do
   pid=${proc_dir##*/}
   case " $self $parent " in *" $pid "*) continue ;; esac
+  kill -0 "$pid" 2>/dev/null || continue
   [ -r "$proc_dir/cmdline" ] || continue
   cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue
-  case "${cmdline,,}" in
+  lower_cmdline=$(printf "%s" "$cmdline" | tr "[:upper:]" "[:lower:]")
+  case "$lower_cmdline" in
     *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;;
   esac
 done
@@ -44,17 +47,23 @@ if [[ ! "$SESSION_ID" =~ ^[0-9a-f-]{36}$ ]] || [[ ! "$BASELINE" =~ ^[0-9]+$ ]]; 
   printf 'invalid TUI recovery arguments\n' >&2
   exit 2
 fi
+if [[ "$PROCESS_ROOT" != /* ]] || [ ! -d "$PROCESS_ROOT" ]; then
+  printf 'invalid process root\n' >&2
+  exit 2
+fi
 
-recovery_script="$(
-  cat <<'REMOTE'
+recovery_script=""
+IFS= read -r -d '' recovery_script <<'REMOTE' || true
 set -euo pipefail
 session_id="$1"
 baseline="$2"
+process_root="$3"
 
 tagged_pids() {
   local proc_dir pid
-  for proc_dir in /proc/[0-9]*; do
+  for proc_dir in "$process_root"/[0-9]*; do
     pid=${proc_dir##*/}
+    kill -0 "$pid" 2>/dev/null || continue
     [ -r "$proc_dir/environ" ] || continue
     tr "\000" "\n" <"$proc_dir/environ" 2>/dev/null \
       | grep -Fqx -- "NEMOCLAW_TUI_SESSION_ID=$session_id" || continue
@@ -85,12 +94,14 @@ fi
 self=$$
 parent=$PPID
 count=0
-for proc_dir in /proc/[0-9]*; do
+for proc_dir in "$process_root"/[0-9]*; do
   pid=${proc_dir##*/}
   case " $self $parent " in *" $pid "*) continue ;; esac
+  kill -0 "$pid" 2>/dev/null || continue
   [ -r "$proc_dir/cmdline" ] || continue
   cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue
-  case "${cmdline,,}" in
+  lower_cmdline=$(printf '%s' "$cmdline" | tr '[:upper:]' '[:lower:]')
+  case "$lower_cmdline" in
     *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;;
   esac
 done
@@ -101,7 +112,7 @@ if [ "$count" -gt "$baseline" ]; then
 fi
 printf 'NEMOCLAW_TUI_CALLER_RECOVERY_OK:%s\n' "$count"
 REMOTE
-)"
 
 openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  bash -c "$recovery_script" nemoclaw-tui-caller-recovery "$SESSION_ID" "$BASELINE"
+  bash -c "$recovery_script" nemoclaw-tui-caller-recovery \
+  "$SESSION_ID" "$BASELINE" "$PROCESS_ROOT"

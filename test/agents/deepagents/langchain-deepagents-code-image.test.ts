@@ -820,8 +820,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const expected of [
       "test -d /sandbox/.deepagents && command -v dcode",
       "expect <<'EXPECT'",
-      'NEMOCLAW_TUI_SESSION_ID="$TUI_SESSION_ID"',
-      'set cmd [list openshell sandbox exec --name $sandbox --tty -- env "NEMOCLAW_TUI_SESSION_ID=$session_id" sh -lc',
       "spawn {*}$cmd",
       "NEMOCLAW_DCODE_PROBE:deepagents",
       "NEMOCLAW_DCODE_PROBE:other",

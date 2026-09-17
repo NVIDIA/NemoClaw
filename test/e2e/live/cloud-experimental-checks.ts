@@ -156,7 +156,7 @@ async function captureDcodeProcessBaseline(
   return count instanceof Error ? Promise.reject(count) : count;
 }
 
-async function recoverTimedOutTuiSession(
+async function cleanupFailedTuiSession(
   sandboxName: string,
   sessionId: string,
   baseline: number,
@@ -171,12 +171,12 @@ async function recoverTimedOutTuiSession(
       timeoutMs: TUI_CALLER_RECOVERY_TIMEOUT_MS,
     },
   );
-  const recoveredCount = processCountFromResult("recover the timed-out DCode TUI session", result);
-  if (recoveredCount instanceof Error) return Promise.reject(recoveredCount);
+  const remainingCount = processCountFromResult("clean up the failed DCode TUI session", result);
+  if (remainingCount instanceof Error) return Promise.reject(remainingCount);
   const output = resultText(result);
-  if (!output.includes(`${TUI_CALLER_RECOVERY_MARKER}${recoveredCount}`)) {
+  if (!output.includes(`${TUI_CALLER_RECOVERY_MARKER}${remainingCount}`)) {
     return Promise.reject(
-      new Error(`recover the timed-out DCode TUI session did not confirm cleanup: ${output}`),
+      new Error(`clean up the failed DCode TUI session did not confirm completion: ${output}`),
     );
   }
 }
@@ -195,7 +195,7 @@ async function runDcodeTuiCheck(
   let recoveryAttempt: Promise<void> | undefined;
   const recover = async (): Promise<void> => {
     if (!recoveryArmed) return;
-    recoveryAttempt ??= recoverTimedOutTuiSession(sandboxName, sessionId, baseline, context);
+    recoveryAttempt ??= cleanupFailedTuiSession(sandboxName, sessionId, baseline, context);
     try {
       await recoveryAttempt;
       recoveryArmed = false;
@@ -203,7 +203,7 @@ async function runDcodeTuiCheck(
       recoveryAttempt = undefined;
     }
   };
-  context.cleanup.add(`stop timed-out DCode TUI session ${sessionId}`, recover);
+  context.cleanup.add(`clean up failed DCode TUI session ${sessionId}`, recover);
 
   let result: ShellProbeResult;
   try {
@@ -226,16 +226,16 @@ async function runDcodeTuiCheck(
       return Promise.reject(
         new AggregateError(
           [error, recoveryError],
-          "DCode TUI check failed and caller recovery did not complete",
+          "DCode TUI check failed, and its sandbox process cleanup did not complete",
         ),
       );
     }
     return Promise.reject(error);
   }
-  if (result.timedOut || result.signal) {
-    await recover();
-  } else {
+  if (result.exitCode === 0 && !result.timedOut && !result.signal) {
     recoveryArmed = false;
+  } else {
+    await recover();
   }
   return result;
 }
