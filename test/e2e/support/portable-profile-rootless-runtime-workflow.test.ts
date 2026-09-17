@@ -127,6 +127,12 @@ describe("portable profile rootless runtime workflow", () => {
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);
     expect(job?.["timeout-minutes"]).toBe(45);
+    expect(job?.env?.E2E_HERMES_BASE_STORAGE_HOME).toBe(
+      "${{ runner.temp }}/nemoclaw-hermes-base-storage",
+    );
+    expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
+      "${{ env.E2E_HERMES_BASE_STORAGE_HOME }}",
+    );
     expect(hermesBaseBuild).toContain("--file agents/hermes/Dockerfile.base");
     expect(hermesBaseBuild).toContain("--tag localhost/nemoclaw-hermes-base:portable-e2e");
     expect(liveStep?.env?.NEMOCLAW_HERMES_E2E_BASE_IMAGE).toBe(
@@ -162,6 +168,7 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).not.toContain("OPENSHELL_V0106_QUALIFICATION");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
     expect(liveTest).toContain("baseImageRef: process.env.NEMOCLAW_HERMES_E2E_BASE_IMAGE");
+    expect(liveTest).toContain("process.env.E2E_HERMES_BASE_STORAGE_HOME");
     expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
     expect(liveTest).toContain('".hermes-policy.yaml"');
     expect(liveTest).toContain('flag: "wx"');

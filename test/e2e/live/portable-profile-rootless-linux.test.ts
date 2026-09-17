@@ -932,6 +932,7 @@ async function main(progress: TestProgress): Promise<void> {
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  const hermesBaseStorageHome = process.env.E2E_HERMES_BASE_STORAGE_HOME;
   const disposableNetworkName = `nemoclaw-portable-id-proof-${String(process.pid)}`;
   let disposableNetworkCreated = false;
   let disposableNetworkId: string | null = null;
@@ -952,7 +953,7 @@ async function main(progress: TestProgress): Promise<void> {
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
     XDG_CONFIG_HOME: configHome,
-    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_DATA_HOME: hermesBaseStorageHome ?? path.join(home, ".local", "share"),
     XDG_RUNTIME_DIR: runtimeDir,
     NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
     NEMOCLAW_SANDBOX_PREBUILD: "1",
