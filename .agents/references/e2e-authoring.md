@@ -44,8 +44,10 @@ artifacts, and terminal cleanup; `credential-sanitization`,
 and `gpu-e2e` are separate behavior contracts rather than one broad "full" run.
 Extend matrix metadata only when it selects an already-defined behavior
 dimension. Do not duplicate behavior logic in a second registry, workflow list,
-or hand-maintained catalogue; use the typed registry and shared E2E workflow
-planner documented in [`test/e2e/README.md`](../../test/e2e/README.md) and
+or hand-maintained catalogue; register targets in the execution inventory at
+`tools/e2e/target-inventory.mts` and its route-specific definitions. Use
+`tools/e2e/workflow-plan.mts` for workflow planning, as documented in
+[`test/e2e/README.md`](../../test/e2e/README.md) and
 [`test/e2e/docs/README.md`](../../test/e2e/docs/README.md).
 
 If a gap is real but not ready for a test, record it as a combinatorial gap

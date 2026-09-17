@@ -10,10 +10,10 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 
 const GATEWAY = "nemoclaw";
 const SANDBOX_ABSENT =
-  /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/i;
+  /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox[^\n]*not found|no such sandbox/i;
 const GATEWAY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
-type BootstrapHost = Pick<HostCliClient, "command">;
+type BootstrapHost = Pick<HostCliClient, "command" | "cleanupGatewayRegistration">;
 
 function names(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || value.some((entry) => typeof entry?.name !== "string")) {
@@ -30,6 +30,16 @@ async function gatewayNames(host: BootstrapHost, env: NodeJS.ProcessEnv): Promis
   });
   assertExitZero(result, "inspect bootstrap gateway registrations");
   return names(JSON.parse(result.stdout), "OpenShell gateway inventory");
+}
+
+async function sandboxNames(host: BootstrapHost, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const result = await host.command("nemoclaw", ["list", "--json"], {
+    artifactName: "bootstrap-sandbox-inventory",
+    env,
+    timeoutMs: 30_000,
+  });
+  assertExitZero(result, "inspect bootstrap sandbox inventory");
+  return names(JSON.parse(result.stdout).sandboxes, "NemoClaw sandbox inventory");
 }
 
 export async function cleanupBootstrapClone(
@@ -52,12 +62,11 @@ export async function cleanupBootstrapGateway(
   host: BootstrapHost,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const result = await host.command("openshell", ["gateway", "destroy", "-g", GATEWAY], {
+  await host.cleanupGatewayRegistration(GATEWAY, {
     artifactName: "cleanup-bootstrap-gateway",
     env,
     timeoutMs: 60_000,
   });
-  assertCleanupSucceededOrAbsent(result, GATEWAY_ABSENT, "destroy owned bootstrap gateway");
   if ((await gatewayNames(host, env)).includes(GATEWAY)) {
     throw new Error("Owned bootstrap gateway remains registered after cleanup");
   }
@@ -74,17 +83,7 @@ export async function registerBootstrapRuntimeCleanup(
   if ((await gatewayNames(host, env)).includes(GATEWAY)) {
     throw new Error("Bootstrap smoke requires an unused nemoclaw gateway");
   }
-  const inventory = await host.command("nemoclaw", ["list", "--json"], {
-    artifactName: "bootstrap-sandbox-inventory",
-    env,
-    timeoutMs: 30_000,
-  });
-  assertExitZero(inventory, "inspect bootstrap sandbox inventory");
-  if (
-    names(JSON.parse(inventory.stdout).sandboxes, "NemoClaw sandbox inventory").includes(
-      sandboxName,
-    )
-  ) {
+  if ((await sandboxNames(host, env)).includes(sandboxName)) {
     throw new Error(`Bootstrap smoke requires an unused sandbox name: ${sandboxName}`);
   }
 
@@ -101,6 +100,28 @@ export async function registerBootstrapRuntimeCleanup(
         GATEWAY_ABSENT.test(`${result.stdout}\n${result.stderr}`),
       `delete owned bootstrap runtime sandbox ${sandboxName}`,
     );
+    const inventory = await host.command(
+      "openshell",
+      ["sandbox", "list", "-g", GATEWAY, "-o", "json"],
+      {
+        artifactName: "cleanup-bootstrap-runtime-inventory",
+        env,
+        timeoutMs: 30_000,
+      },
+    );
+    if (
+      inventory.exitCode !== 0 &&
+      GATEWAY_ABSENT.test(`${inventory.stdout}\n${inventory.stderr}`) &&
+      !(await gatewayNames(host, env)).includes(GATEWAY)
+    ) {
+      return;
+    }
+    assertExitZero(inventory, "inspect bootstrap runtime sandbox inventory after cleanup");
+    if (names(JSON.parse(inventory.stdout), "OpenShell sandbox inventory").includes(sandboxName)) {
+      throw new Error(
+        `Owned bootstrap runtime sandbox remains registered after cleanup: ${sandboxName}`,
+      );
+    }
   });
   cleanup.add(`destroy owned bootstrap sandbox ${sandboxName}`, async () => {
     const result = await host.command("nemoclaw", [sandboxName, "destroy", "--yes"], {
@@ -113,5 +134,8 @@ export async function registerBootstrapRuntimeCleanup(
       SANDBOX_ABSENT,
       `destroy owned bootstrap sandbox ${sandboxName}`,
     );
+    if ((await sandboxNames(host, env)).includes(sandboxName)) {
+      throw new Error(`Owned bootstrap sandbox remains registered after cleanup: ${sandboxName}`);
+    }
   });
 }

@@ -448,6 +448,10 @@ Manual entries link to their owning instructions. Keep prerequisites in those in
 Listing a manual qualification does not schedule it or establish product support.
 Jetson dispatch retains its opt-in and trusted-controller checks.
 The bootstrap test body resides in `bootstrap-install-smoke.test.ts`.
+Its cleanup verifies that the owned sandbox is absent from both the NemoClaw registry and the OpenShell gateway inventory.
+Gateway cleanup uses the host client's current and legacy OpenShell command support, then verifies that the registration is absent.
+A successful delete command alone does not establish removal; an unreadable inventory fails cleanup.
+The cleanup support tests cover successful commands that leave resources behind and inventory failures.
 The `launchable-smoke`, `sandbox-rlimits-connect`, and
 `common-egress-agent-openclaw-personal-stock-price` selectors are retired and fail selection,
 including requests mixed with active selectors.

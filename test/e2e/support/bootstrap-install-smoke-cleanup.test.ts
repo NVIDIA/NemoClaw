@@ -7,20 +7,31 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   cleanupBootstrapClone,
   registerBootstrapRuntimeCleanup,
 } from "../live/bootstrap-install-smoke-cleanup.ts";
 
-class BootstrapHostFixture {
+class BootstrapHostFixture extends HostCliClient {
   readonly sandboxes = new Set<string>();
   readonly runtimeSandboxes = new Set<string>();
   readonly gateways = new Set<string>();
   readonly failures = new Set<string>();
   readonly leaveBehind = new Set<string>();
+  readonly unsupportedGatewayVerbs = new Set<string>();
+  readonly gatewayDeletionVerbs: string[] = [];
 
-  async command(command: string, args: string[]): Promise<ShellProbeResult> {
+  constructor() {
+    super({
+      run: async () => {
+        throw new Error("Bootstrap fixture commands must use the state-backed command handler");
+      },
+    });
+  }
+
+  override async command(command: string, args: string[]): Promise<ShellProbeResult> {
     let stdout = "";
     let stderr = "";
     let exitCode = 0;
@@ -37,14 +48,27 @@ class BootstrapHostFixture {
               ? args[1] === "list"
                 ? "gateways"
                 : "gateway"
-              : "runtime";
-    if (this.failures.has(operation)) {
+              : args[1] === "list"
+                ? "runtime-inventory"
+                : "runtime";
+    if (operation === "gateway") this.gatewayDeletionVerbs.push(args[1]);
+    if (operation === "gateway" && this.unsupportedGatewayVerbs.has(args[1])) {
+      exitCode = 2;
+      stderr = `unrecognized subcommand '${args[1]}'`;
+    } else if (this.failures.has(operation)) {
       exitCode = 1;
       stderr = `injected ${operation} deletion failure`;
     } else if (operation === "inventory") {
       stdout = JSON.stringify({ sandboxes: [...this.sandboxes].map((name) => ({ name })) });
     } else if (operation === "gateways") {
       stdout = JSON.stringify([...this.gateways].map((name) => ({ name })));
+    } else if (operation === "runtime-inventory") {
+      if (!this.gateways.has("nemoclaw")) {
+        exitCode = 1;
+        stderr = "gateway nemoclaw not found";
+      } else {
+        stdout = JSON.stringify([...this.runtimeSandboxes].map((name) => ({ name })));
+      }
     } else if (operation === "clone") {
       if (!this.leaveBehind.has(operation))
         fs.rmSync(args.at(-1)!, { recursive: true, force: true });
@@ -59,7 +83,11 @@ class BootstrapHostFixture {
       if (!resources.has(name)) {
         exitCode = 1;
         stderr =
-          operation === "gateway" ? `gateway ${name} not found` : `sandbox ${name} not found`;
+          operation === "gateway"
+            ? `gateway ${name} not found`
+            : operation === "runtime"
+              ? "Error: code: 'Some requested entity was not found', message: \"sandbox not found\""
+              : `sandbox ${name} not found`;
       } else if (!this.leaveBehind.has(operation)) {
         resources.delete(name);
       }
@@ -77,6 +105,22 @@ class BootstrapHostFixture {
 }
 
 describe("bootstrap install smoke owned cleanup", () => {
+  it.each(["remove", "destroy"])(
+    "cleans up through the supported gateway %s verb",
+    async (supportedVerb) => {
+      const host = new BootstrapHostFixture();
+      host.unsupportedGatewayVerbs.add(supportedVerb === "remove" ? "destroy" : "remove");
+      const cleanup = new CleanupRegistry();
+      await registerBootstrapRuntimeCleanup(cleanup, host, "e2e-owned", {});
+      host.gateways.add("nemoclaw");
+      expect((await cleanup.runAll()).failures).toEqual([]);
+      expect(host.gateways.size).toBe(0);
+      expect(host.gatewayDeletionVerbs).toEqual(
+        supportedVerb === "remove" ? ["remove"] : ["remove", "destroy"],
+      );
+    },
+  );
+
   it.each(["gateway", "sandbox"])(
     "preserves a pre-existing %s before claiming ownership",
     async (resource) => {
@@ -127,6 +171,54 @@ describe("bootstrap install smoke owned cleanup", () => {
     await registerBootstrapRuntimeCleanup(cleanup, host, "e2e-owned", {});
     expect((await cleanup.runAll()).failures).toEqual([]);
   });
+
+  it.each(["sandbox", "runtime"])(
+    "fails a successful %s command that leaves the owned sandbox behind",
+    async (resource) => {
+      const host = new BootstrapHostFixture();
+      const cleanup = new CleanupRegistry();
+      await registerBootstrapRuntimeCleanup(cleanup, host, "e2e-owned", {});
+      host.sandboxes.add("e2e-owned");
+      host.sandboxes.add("somebody-elses-sandbox");
+      host.runtimeSandboxes.add("e2e-owned");
+      host.runtimeSandboxes.add("somebody-elses-sandbox");
+      host.gateways.add("nemoclaw");
+      host.leaveBehind.add(resource);
+      const result = await cleanup.runAll();
+      expect(result.failures).toEqual([
+        {
+          name: expect.stringContaining(
+            `owned bootstrap ${resource === "runtime" ? "runtime " : ""}sandbox e2e-owned`,
+          ),
+          message: expect.stringContaining("remains registered after cleanup"),
+        },
+      ]);
+      expect(host.sandboxes.has("e2e-owned")).toBe(resource === "sandbox");
+      expect(host.runtimeSandboxes.has("e2e-owned")).toBe(resource === "runtime");
+      expect(host.sandboxes.has("somebody-elses-sandbox")).toBe(true);
+      expect(host.runtimeSandboxes.has("somebody-elses-sandbox")).toBe(true);
+      expect(host.gateways.size).toBe(0);
+    },
+  );
+
+  it.each(["inventory", "runtime-inventory"])(
+    "fails closed when %s cannot establish sandbox absence",
+    async (inventory) => {
+      const host = new BootstrapHostFixture();
+      const cleanup = new CleanupRegistry();
+      await registerBootstrapRuntimeCleanup(cleanup, host, "e2e-owned", {});
+      host.gateways.add("nemoclaw");
+      host.failures.add(inventory);
+      const result = await cleanup.runAll();
+      expect(result.failures).toEqual([
+        {
+          name: expect.stringContaining("sandbox e2e-owned"),
+          message: expect.stringContaining(`injected ${inventory} deletion failure`),
+        },
+      ]);
+      expect(host.gateways.size).toBe(0);
+    },
+  );
 
   it.for(["failure", "reported-success-with-leftover"])(
     "fails clone cleanup on %s",
