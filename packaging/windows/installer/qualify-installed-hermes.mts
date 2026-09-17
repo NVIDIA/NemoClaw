@@ -764,21 +764,30 @@ async function main() {
       "guardian launch through actual PTY AIAgent-attached usable prompt";
     results.startup.pty = pty.snapshot();
     await page.screenshot({ path: path.join(output, "dashboard-ready.png"), fullPage: true });
-    const api = async (route: string) => {
+    const api = async (route: string, allowNotFound = false) => {
       assert(route.startsWith("/api/") && !route.includes(".."));
       return await page.evaluate(
-        async ({ route, token }: { route: string; token?: string }) => {
+        async ({
+          route,
+          token,
+          allowNotFound,
+        }: {
+          route: string;
+          token?: string;
+          allowNotFound: boolean;
+        }) => {
           const response = await fetch(route, {
             headers: token ? { "X-Hermes-Session-Token": token } : {},
             signal: AbortSignal.timeout(5000),
           });
+          if (allowNotFound && response.status === 404) return null;
           if (!response.ok) throw new Error("Hermes dashboard API returned " + response.status);
           const text = await response.text();
           if (text.length > 2 * 1024 * 1024)
             throw new Error("Hermes API evidence exceeds its bound");
           return JSON.parse(text);
         },
-        { route, token: sessionToken },
+        { route, token: sessionToken, allowNotFound },
       );
     };
     const config = await api("/api/config");
@@ -796,12 +805,16 @@ async function main() {
       const id = pty.storedSessionId(),
         profile = pty.profileName();
       if (!id || !profile) return [];
+      // Hermes deliberately creates the stored row on the first prompt, so
+      // the first bounded transcript poll can precede that row.
       const detail = await api(
         "/api/sessions/" +
           encodeURIComponent(id) +
           "/messages?limit=500&order=latest&profile=" +
           encodeURIComponent(profile),
+        true,
       );
+      if (detail === null) return [];
       assert.equal(detail.session_id, id);
       assert(Array.isArray(detail.messages));
       return detail.messages.some((row: any) => row.role === "user" && row.content === prompt)
