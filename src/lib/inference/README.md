@@ -55,8 +55,9 @@ be exported; upgrading or restarting them remains an operator lifecycle action.
 
 The public `serving.backend: ollama` branch records the daemon as external and the auth proxy as
 NemoClaw-managed. It does not claim ownership of the daemon process, software installation, or model
-cache. The initial contract covers `qwen3.5:9b` on native Linux Docker with managed OpenClaw and no
-direct sandbox GPU. Hosted inference and managed vLLM retain their existing schema variants.
+cache. Export records the verified selected model on native Linux Docker with managed OpenClaw and
+no direct sandbox GPU. Uniquely named read-only secondary agents can share the primary agent's
+verified route, model, and tuning. Hosted inference and managed vLLM retain their existing schema variants.
 
 The pinned OpenShell release can bind the Ollama route to its `openai` provider type without
 a provider profile. The binding can be global or use the provider's own workspace. Export records
