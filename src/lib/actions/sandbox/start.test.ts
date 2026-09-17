@@ -77,6 +77,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     [
       "docker",
       createDockerRuntimeProviderBundle({
+        withLifecycleLock: async (_name, operation) => operation(),
         captureSandboxLifecycle,
         findLabeledSandboxContainers,
         hasPortableLifecycleReceipt,
@@ -88,7 +89,14 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       }),
     ],
   ]);
+  let elapsedMs = 0;
+  const delayGatewayProcessProbe = vi.fn(async (ms: number) => {
+    elapsedMs += ms;
+  });
   const deps: SandboxStartDeps = {
+    environment: {},
+    now: () => elapsedMs,
+    delayGatewayProcessProbe,
     getSandbox,
     updateSandbox,
     runtimeProviders,
@@ -231,6 +239,143 @@ describe("startSandbox native lifecycle", () => {
     );
   });
 
+  it.each(["openclaw", undefined])(
+    "waits for the stopped %s gateway HTTP listener before repairing forwards",
+    async (agent) => {
+      const probeGatewayProcess = vi
+        .fn(async () => true)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false);
+      const delayGatewayProcessProbe = vi.fn(async () => {});
+      const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+      h.getSandbox.mockReturnValue(
+        sandbox({ agent, gatewayName: "nemoclaw-19080", stopped: true }),
+      );
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(4);
+      expect(probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw-19080", {
+        startup: { timeoutMs: 15_000 },
+      });
+      expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000], [2_000]]);
+      expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
+        probeGatewayProcess.mock.invocationCallOrder[3],
+      );
+    },
+  );
+
+  it.each([
+    [undefined, 30_000],
+    ["", 30_000],
+    ["-1", 30_000],
+    ["Infinity", 30_000],
+    ["invalid", 30_000],
+    ["0", 0],
+    ["0.25", 250],
+    ["4", 4_000],
+  ] as const)("bounds stopped OpenClaw startup with recovery timeout %s", async (value, budget) => {
+    let elapsed = 0;
+    const probeGatewayProcess = vi.fn(async () => false);
+    const delayGatewayProcessProbe = vi.fn(async (ms: number) => {
+      elapsed += ms;
+    });
+    const h = harness({
+      probeGatewayProcess,
+      delayGatewayProcessProbe,
+      now: () => elapsed,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: value },
+    });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(elapsed).toBe(budget);
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(Math.ceil(budget / 2_000));
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("uses a bounded shared override for a large finite startup setting", async () => {
+    const h = harness({ environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "1e300" } });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(h.probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw", {
+      startup: { timeoutMs: 15_000 },
+    });
+  });
+
+  it("charges slow probes and sleep to one deadline and passes only the remaining time", async () => {
+    let elapsed = 0;
+    const budgets: number[] = [];
+    const probeGatewayProcess = vi.fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>(
+      async (_name, _gateway, options) => {
+        const remaining = options?.startup?.timeoutMs ?? 0;
+        budgets.push(remaining);
+        elapsed += Math.min(700, remaining);
+        return false;
+      },
+    );
+    const h = harness({
+      probeGatewayProcess,
+      now: () => elapsed,
+      delayGatewayProcessProbe: async (ms) => {
+        elapsed += ms;
+      },
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+    });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(elapsed).toBe(3_000);
+    expect(budgets).toEqual([3_000, 300]);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("rejects a positive observation that arrives after the startup deadline", async () => {
+    let elapsed = 0;
+    const h = harness({
+      probeGatewayProcess: async () => {
+        elapsed = 1_001;
+        return true;
+      },
+      now: () => elapsed,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "1" },
+    });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("repeats stopped OpenClaw settlement after a timed-out start retry", async () => {
+    const probeGatewayProcess = vi
+      .fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const h = harness({
+      probeGatewayProcess,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.001" },
+    });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped: true }));
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
+      probeGatewayProcess.mock.invocationCallOrder[1],
+    );
+    expect(h.updateSandbox.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
+  it.each(["openclaw", undefined])(
+    "does not wait for %s when the sandbox was already running",
+    async (agent) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ agent, stopped: false }));
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(h.probeGatewayProcess).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns nonzero when the Hermes gateway stays stopped", async () => {
     const probeGatewayProcess = vi.fn(async () => false);
     const delayGatewayProcessProbe = vi.fn(async () => {});
@@ -259,21 +404,24 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it("passes an unavailable Hermes process observation to gateway verification", async () => {
-    const probeGatewayProcess = vi.fn(async () => null);
-    const delayGatewayProcessProbe = vi.fn(async () => {});
-    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
-    h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
-    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
+  it.each(["hermes", "openclaw"])(
+    "passes an unavailable %s observation to gateway verification",
+    async (agent) => {
+      const probeGatewayProcess = vi.fn(async () => null);
+      const delayGatewayProcessProbe = vi.fn(async () => {});
+      const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+      h.getSandbox.mockReturnValue(sandbox({ agent, stopped: true }));
+      h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
 
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
-      "native gateway route unavailable",
-    );
+      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+        "native gateway route unavailable",
+      );
 
-    expect(probeGatewayProcess).toHaveBeenCalledOnce();
-    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
-    expect(h.verifyGateway).toHaveBeenCalledOnce();
-  });
+      expect(probeGatewayProcess).toHaveBeenCalledOnce();
+      expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+      expect(h.verifyGateway).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(

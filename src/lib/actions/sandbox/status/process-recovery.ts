@@ -8,4 +8,5 @@
 export {
   checkAndRecoverSandboxProcesses,
   isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
 } from "../process-recovery";

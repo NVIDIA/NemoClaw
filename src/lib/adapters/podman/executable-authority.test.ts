@@ -3,12 +3,13 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 
 import {
   assertPodmanExecutableAuthority,
   assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
+  PodmanExecutablePermissionError,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
 } from "./executable-authority";
@@ -21,6 +22,7 @@ const DIRECTORY_INODES = new Map([
   ["/", 103n],
 ]);
 
+/** Model a trusted executable unless a test overrides a specific authority invariant. */
 function executableStat(
   overrides: Partial<{
     ctimeNs: bigint;
@@ -48,6 +50,7 @@ function executableStat(
   };
 }
 
+/** Keep parent identities stable so permission and replacement tests fail for their intended reason. */
 function directoryStat(
   filePath: string,
   overrides: Partial<{ dev: bigint; ino: bigint; mode: bigint; uid: bigint }> = {},
@@ -66,6 +69,7 @@ function directoryStat(
   };
 }
 
+/** Isolate filesystem access while preserving the production authority checks. */
 function authorityDeps(
   overrides: Partial<PodmanExecutableAuthorityDeps> = {},
 ): PodmanExecutableAuthorityDeps {
@@ -80,6 +84,57 @@ function authorityDeps(
 }
 
 describe("Podman executable authority", () => {
+  it.each([
+    ["ESC", "\u001b", "\\u001b"],
+    ["C1 CSI", "\u009b", "\\u009b"],
+    ["right-to-left override", "\u202e", "\\u202e"],
+    ["left-to-right isolate", "\u2066", "\\u2066"],
+  ])("renders %s in rejected paths without raw terminal controls", (_name, control, escaped) => {
+    const failure = new PodmanExecutablePermissionError(`/opt/${control}/podman`, 0o100775n);
+    const displayPath = failure.message.match(/^Executable path (.+) has mode/u)?.[1];
+
+    expect(failure.message).toContain(escaped);
+    expect(failure.message).not.toContain(control);
+    expect(displayPath).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
+  });
+
+  it.each(["file", "parent"])(
+    "redacts credentials in rejected %s paths before creating shared errors",
+    (kind) => {
+      const secret = `nvapi-${"a".repeat(60)}`;
+      const parent = `/opt/${secret}`;
+      const executablePath = `${parent}/podman`;
+      const readFile = vi.fn(() => EXECUTABLE_BYTES);
+      let failure: unknown;
+      try {
+        capturePodmanExecutableAuthority(
+          executablePath,
+          authorityDeps({
+            readFile,
+            /** Make only the selected file or parent writable; preserve all other authority checks. */
+            lstat: (filePath) =>
+              filePath === executablePath
+                ? executableStat({ mode: kind === "file" ? 0o100775n : 0o100755n })
+                : directoryStat(filePath, {
+                    mode: kind === "parent" && filePath === parent ? 0o40775n : 0o40755n,
+                  }),
+          }),
+        );
+      } catch (error) {
+        failure = error;
+      }
+      assert(failure instanceof Error);
+      expect(failure.message).not.toContain(secret);
+      expect(failure.stack).not.toContain(secret);
+      expect(failure.message).toContain("<REDACTED>");
+      expect(failure.message).toContain("has mode 0775");
+      expect(failure.message).toContain("Remove group and other write permission");
+      expect(readFile).not.toHaveBeenCalled();
+    },
+  );
+
   it("captures immutable metadata and a content digest from a canonical absolute file", () => {
     const lstat = vi.fn((filePath: string) =>
       filePath === EXECUTABLE_PATH ? executableStat() : directoryStat(filePath),
