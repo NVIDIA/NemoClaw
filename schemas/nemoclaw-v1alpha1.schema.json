@@ -3122,6 +3122,7 @@
             "",
             "hermes",
             "qwen3_coder",
+            "qwen3_xml",
             "llama3_json",
             "mistral"
           ],
