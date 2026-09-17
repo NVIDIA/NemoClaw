@@ -13,6 +13,7 @@ import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/r
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxEntry, SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import type { SandboxRuntimeSnapshot } from "../../src/lib/state/registry/runtime-snapshot";
 
 export type RebuildSandbox =
   (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
@@ -149,6 +150,7 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   backupPreservedEnv?: PreservedEnvFile[];
+  backupRuntimeSnapshot?: SandboxRuntimeSnapshot;
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
