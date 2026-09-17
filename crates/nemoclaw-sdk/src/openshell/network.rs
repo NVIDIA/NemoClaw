@@ -35,8 +35,8 @@ pub fn policy_json(policy: &proto::SandboxPolicy) -> Result<String, ObservationE
     }
     canonical(policy)
 }
-/// OpenShell b3e4ad457 proxy baseline enrichment adds read-only /var/log.
-/// 2026-09-17: account for that runtime addition during loaded-policy comparison,
+/// OpenShell 7e7a8d561 enriches authored filesystem grants with its restrictive baseline.
+/// 2026-09-17: account for those pinned runtime additions during loaded-policy comparison,
 /// preserving the authored policy and rejecting every other difference.
 pub(super) fn loaded_policy_matches(
     loaded: &proto::SandboxPolicy,
@@ -53,13 +53,28 @@ pub(super) fn loaded_policy_matches(
     let Some(fs) = &mut baseline.filesystem else {
         return Ok(false);
     };
-    if !fs
-        .read_only
-        .iter()
-        .chain(&fs.read_write)
-        .any(|p| p == "/var/log")
-    {
-        fs.read_only.push("/var/log".into());
+    let defaults = openshell_policy::restrictive_default_policy()
+        .filesystem
+        .expect("the pinned OpenShell restrictive policy has filesystem grants");
+    for path in defaults.read_only {
+        if !fs
+            .read_only
+            .iter()
+            .chain(&fs.read_write)
+            .any(|existing| existing == &path)
+        {
+            fs.read_only.push(path);
+        }
+    }
+    for path in defaults.read_write {
+        if !fs
+            .read_only
+            .iter()
+            .chain(&fs.read_write)
+            .any(|existing| existing == &path)
+        {
+            fs.read_write.push(path);
+        }
     }
     Ok(policy_json(&baseline)? == actual)
 }

@@ -165,3 +165,54 @@ fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
     assert!(active_policy(response(missing), &expected).is_err());
     assert!(active_policy(response(declared), &expected).is_ok());
 }
+
+#[test]
+fn loaded_policy_accepts_the_pinned_openshell_filesystem_baseline() {
+    let mut declared = policy();
+    {
+        let filesystem = declared.filesystem.as_mut().unwrap();
+        filesystem.read_only = ["/usr", "/app", "/opt/fabric", "/opt/nemoclaw"]
+            .map(String::from)
+            .to_vec();
+        filesystem.read_write = vec!["/sandbox".into()];
+        filesystem.include_workdir = true;
+    }
+    let profile =
+        native_profile::definition("local", "http://172.30.122.1:18899/v1", "openai", false)
+            .unwrap();
+    declared.network_policies.insert(
+        profile.id.clone(),
+        proto::NetworkPolicyRule {
+            name: profile.id,
+            endpoints: profile.endpoints,
+            binaries: profile.binaries,
+        },
+    );
+    let expected = policy_json(&declared).unwrap();
+
+    let defaults = openshell_policy::restrictive_default_policy()
+        .filesystem
+        .unwrap();
+    let filesystem = declared.filesystem.as_mut().unwrap();
+    for path in defaults.read_only {
+        if !filesystem.read_only.contains(&path) {
+            filesystem.read_only.push(path);
+        }
+    }
+    for path in defaults.read_write {
+        if !filesystem.read_write.contains(&path) {
+            filesystem.read_write.push(path);
+        }
+    }
+
+    let response = proto::GetSandboxPolicyStatusResponse {
+        active_version: 2,
+        revision: Some(proto::SandboxPolicyRevision {
+            version: 2,
+            status: proto::PolicyStatus::Loaded as i32,
+            policy: Some(declared),
+            ..Default::default()
+        }),
+    };
+    assert!(active_policy(response, &expected).is_ok());
+}
