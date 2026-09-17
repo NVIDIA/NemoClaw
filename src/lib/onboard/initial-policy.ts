@@ -354,9 +354,10 @@ function addManagedStartupReleasePolicy(
   }
   if (agentName === "hermes" && isPortableExperimentalProfile()) return policyContent;
   const normalizedPath = policyPath.split(path.sep).join("/");
-  const expectedSuffix = MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES[
-    agentName as keyof typeof MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES
-  ];
+  const expectedSuffix =
+    MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES[
+      agentName as keyof typeof MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES
+    ];
   if (!normalizedPath.endsWith(expectedSuffix)) return policyContent;
   const parsed = YAML.parse(policyContent);
   if (!isObjectRecord(parsed)) {
