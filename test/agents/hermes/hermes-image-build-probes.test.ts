@@ -18,6 +18,10 @@ const baseDockerfile = fs.readFileSync(
   "utf8",
 );
 const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
+const securityDependenciesPatch = fs.readFileSync(
+  path.join(root, "agents", "hermes", "security-dependencies.patch"),
+  "utf8",
+);
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
 const hermesDownloaderMarker = "download-hermes-source-archive.sh invoked";
@@ -225,6 +229,15 @@ describe("Hermes image build probes", () => {
     expect(baseDockerfile).not.toContain("'tornado': '6.5.7'");
     expect(baseDockerfile).toContain("from tools.browser_tool_install import _find_agent_browser");
     expect(baseDockerfile).not.toContain("browser_tool._find_agent_browser() ");
+  });
+
+  it("pins the inherited Hindsight lazy dependency before the final image verifies it", () => {
+    expect(securityDependenciesPatch).toContain(
+      '-  - "hindsight-client>=0.6.1"\n+  - "hindsight-client==0.6.1"',
+    );
+    expect(dockerfile).toContain(
+      "grep -Fqx '  - \"hindsight-client==0.6.1\"' /opt/hermes/plugins/memory/hindsight/plugin.yaml",
+    );
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {

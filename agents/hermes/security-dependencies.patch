@@ -4,10 +4,23 @@
 # Pins the remaining NemoClaw source compatibility differences in the checksum-
 # pinned Hermes v2026.9.14 source. Keep the upstream agent-browser fallback
 # exact so runtime resolution cannot drift beyond the separately verified
-# build-time probe. Scope one-shot completion waits to the exact turn so
-# unrelated managed-runtime processes cannot hold a completed query open. Keep
-# the cron tick lock in writable runtime state while job definitions remain
-# sealed read-only.
+# build-time probe, and keep the Hindsight lazy-install dependency exact. Scope
+# one-shot completion waits to the exact turn so unrelated managed-runtime
+# processes cannot hold a completed query open. Keep the cron tick lock in
+# writable runtime state while job definitions remain sealed read-only.
+diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
+index 4a364fc60a..110ee31a3b 100644
+--- a/plugins/memory/hindsight/plugin.yaml
++++ b/plugins/memory/hindsight/plugin.yaml
+@@ -2,7 +2,7 @@ name: hindsight
+ version: 1.0.0
+ description: "Hindsight — long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval."
+ pip_dependencies:
+-  - "hindsight-client>=0.6.1"
++  - "hindsight-client==0.6.1"
+ requires_env: []
+ hooks:
+   - on_session_end
 diff --git a/cron/scheduler.py b/cron/scheduler.py
 index 3d745e1360..651770198a 100644
 --- a/cron/scheduler.py
