@@ -13,6 +13,7 @@ import {
   withRegistryLockAt,
 } from "../gateway-registry";
 import { writeConfigFile } from "../config-io";
+import { removeSandboxFromRegistry } from "../registry-reversible-removal";
 import type { SandboxEntry } from "./types";
 
 export interface CrossPortSandboxHit {
@@ -94,15 +95,22 @@ export function findSandboxAcrossGatewayRoots(
   return matches[0];
 }
 
-/** Persist intentional-stop state in the registry root that owns the sandbox. */
-export function recordSandboxStopIntentAcrossGatewayRoots(
+/** Read one unambiguous sandbox from the registry root that owns it. */
+export function getSandboxAcrossGatewayRoots(
   sandboxName: string,
+  home: string = resolveHome(),
+): SandboxEntry | null {
+  return findSandboxAcrossGatewayRoots(sandboxName, home)?.entry ?? null;
+}
+
+/** Persist intentional-stop state in the registry root that owns the sandbox. */
+export function recordSandboxStopIntentInOwningGatewayRegistry(
+  hit: CrossPortSandboxHit,
   stopped: boolean,
   home: string = resolveHome(),
 ): boolean {
   try {
-    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
-    if (!hit) return false;
+    const sandboxName = hit.entry.name;
     return withRegistryLockAt(hit.registryFile, () => {
       const registry = readGatewayRegistryFile(home, hit.registryFile);
       const current = registry?.sandboxes[sandboxName];
@@ -126,6 +134,45 @@ export function recordSandboxStopIntentAcrossGatewayRoots(
   } catch {
     return false;
   }
+}
+
+/** Persist intentional-stop state after resolving one unambiguous owning registry. */
+export function recordSandboxStopIntentAcrossGatewayRoots(
+  sandboxName: string,
+  stopped: boolean,
+  home: string = resolveHome(),
+): boolean {
+  try {
+    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+    return hit ? recordSandboxStopIntentInOwningGatewayRegistry(hit, stopped, home) : false;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove one sandbox from its owning registry while preserving default-pointer revision rules. */
+export function removeSandboxFromOwningGatewayRegistry(
+  hit: CrossPortSandboxHit,
+  home: string = resolveHome(),
+): boolean {
+  const sandboxName = hit.entry.name;
+  return withRegistryLockAt(hit.registryFile, () => {
+    const registry = readGatewayRegistryFile(home, hit.registryFile);
+    if (!registry) return false;
+    const result = removeSandboxFromRegistry(registry, sandboxName);
+    if (!result.receipt) return false;
+    writeConfigFile(hit.registryFile, result.registry);
+    return true;
+  });
+}
+
+/** Remove one sandbox after resolving one unambiguous owning registry. */
+export function removeSandboxAcrossGatewayRoots(
+  sandboxName: string,
+  home: string = resolveHome(),
+): boolean {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+  return hit ? removeSandboxFromOwningGatewayRegistry(hit, home) : false;
 }
 
 function listEntriesAcrossGatewayRoots(published: boolean, home: string): SandboxEntry[] {

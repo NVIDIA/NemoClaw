@@ -15,6 +15,12 @@ import {
 } from "../../onboard/runtime-provider/access";
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  recordSandboxStopIntentInOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
@@ -69,6 +75,13 @@ export type OllamaActiveOwnershipDiscovery =
 type OllamaStopReleaseResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string };
+
+function listSandboxesAcrossGatewayRoots(): ReturnType<typeof registry.listSandboxes> {
+  return {
+    sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
+    defaultSandbox: null,
+  };
+}
 
 type OllamaOwnershipDiscoveryDeps = {
   readonly captureSandboxOwnershipPhases?: typeof captureSandboxOwnershipPhases;
@@ -164,7 +177,7 @@ function releaseStoppedSandboxOllamaModel(
     return withOwnershipLock(() => {
       const selectedHost = loadPersistedOllamaHost();
       if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
-      const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+      const { sandboxes } = (deps.listSandboxes ?? listSandboxesAcrossGatewayRoots)();
       const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
       const discovery = (deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames)(
         matchingPeers,
@@ -286,7 +299,9 @@ async function stopSandboxWithinLifecycleFence(
 ): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
-  const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+  const owningRegistryHit = deps.getSandbox ? null : findSandboxAcrossGatewayRoots(sandboxName);
+  const readSandbox = deps.getSandbox ?? getSandboxAcrossGatewayRoots;
+  const sandbox = owningRegistryHit?.entry ?? readSandbox(sandboxName);
   const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
     sandbox,
@@ -296,7 +311,7 @@ async function stopSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
-    readRegistry: deps.getSandbox ?? registry.getSandbox,
+    readRegistry: readSandbox,
     environment: deps.environment ?? process.env,
     log,
     sandbox: resolved.sandbox,
@@ -325,13 +340,13 @@ async function stopSandboxWithinLifecycleFence(
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
-  const stopIntentRecorded =
-    hermesPortableVerified ||
-    registry.recordSandboxStopIntent(
-      sandboxName,
-      true,
-      deps.updateSandbox ?? registry.updateSandbox,
-    );
+  const stopIntentRecorded = hermesPortableVerified
+    ? true
+    : deps.updateSandbox
+      ? registry.recordSandboxStopIntent(sandboxName, true, deps.updateSandbox)
+      : owningRegistryHit
+        ? recordSandboxStopIntentInOwningGatewayRegistry(owningRegistryHit, true)
+        : false;
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
   const dashboardForwardReleased = await teardownDashboardForwardBestEffort(
     sandboxName,

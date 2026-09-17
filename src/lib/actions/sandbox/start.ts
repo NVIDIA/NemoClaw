@@ -13,6 +13,11 @@ import {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  recordSandboxStopIntentInOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
+import {
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
@@ -167,7 +172,9 @@ async function startSandboxWithinLifecycleFence(
   deps: SandboxStartDeps,
 ): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
-  const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+  const owningRegistryHit = deps.getSandbox ? null : findSandboxAcrossGatewayRoots(sandboxName);
+  const readSandbox = deps.getSandbox ?? getSandboxAcrossGatewayRoots;
+  const sandbox = owningRegistryHit?.entry ?? readSandbox(sandboxName);
   const resolved = resolveSandboxLifecycleProvider(
     sandboxName,
     sandbox,
@@ -177,7 +184,7 @@ async function startSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
-    readRegistry: deps.getSandbox ?? registry.getSandbox,
+    readRegistry: readSandbox,
     environment: deps.environment ?? process.env,
     log,
     sandbox: resolved.sandbox,
@@ -188,14 +195,13 @@ async function startSandboxWithinLifecycleFence(
   const result = await resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   const clearIntentionalStop = () => {
-    if (
-      resolved.sandbox.stopped === true &&
-      !registry.recordSandboxStopIntent(
-        sandboxName,
-        false,
-        deps.updateSandbox ?? registry.updateSandbox,
-      )
-    ) {
+    if (resolved.sandbox.stopped !== true) return;
+    const recorded = deps.updateSandbox
+      ? registry.recordSandboxStopIntent(sandboxName, false, deps.updateSandbox)
+      : owningRegistryHit
+        ? recordSandboxStopIntentInOwningGatewayRegistry(owningRegistryHit, false)
+        : false;
+    if (!recorded) {
       throw new Error(
         `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
       );
