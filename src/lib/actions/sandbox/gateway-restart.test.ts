@@ -102,6 +102,42 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
+  it("verifies Hermes health after its restart closes the OpenShell exec relay", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      executeSandboxExecCommand: vi.fn(async () => ({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error: code: 'The service is currently unavailable', message: \"exec relay closed before the command reported an exit status\"",
+      })),
+    });
+
+    const result = await restartSandboxGateway("hermes-box", { quiet: true, deps });
+
+    expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
+    expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledOnce();
+  });
+
+  it("does not accept the Hermes relay closure for another agent", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      executeSandboxExecCommand: vi.fn(async () => ({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error: code: 'The service is currently unavailable', message: \"exec relay closed before the command reported an exit status\"",
+      })),
+    });
+
+    const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+
+    expect(result).toMatchObject({ ok: false, failureLayer: "native agent command" });
+    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+  });
+
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
     silenceConsole();
     const execute = vi.fn(async () => ({
