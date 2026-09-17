@@ -310,8 +310,8 @@ describe("PR review advisor specialist lifecycle", () => {
   it.each([
     { failedStage: "configure", expectedDownload: false },
     { failedStage: "create", expectedDownload: false },
-    { failedStage: "run", expectedDownload: false },
-    { failedStage: "execution", expectedDownload: false },
+    { failedStage: "run", expectedDownload: true },
+    { failedStage: "execution", expectedDownload: true },
     { failedStage: "download", expectedDownload: true },
     { failedStage: "validate", expectedDownload: true },
   ])(
@@ -1267,6 +1267,14 @@ describe("PR review advisor OpenShell wrapper", () => {
     createAdvisorSandbox(env, tools);
     await runAdvisorSandboxAsync(env, tools).completion;
     downloadAdvisorArtifacts(env, tools);
+    const downloadOptions = vi
+      .mocked(tools.run)
+      .mock.calls.find(
+        ([command, args]) =>
+          command === "openshell" && args[0] === "sandbox" && args[1] === "download",
+      )?.[2];
+    expect(downloadOptions?.timeout).toBe(60_000);
+    expect(downloadOptions?.killSignal).toBe("SIGKILL");
     deleteAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
