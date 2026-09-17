@@ -428,6 +428,24 @@ it("rejects a prepopulated SQLite store after a JSONL baseline even with the lau
   expect(qualification.stderr).toContain('"reason":"sqlite_session_store_appeared"');
 });
 
+it("qualifies a first-use SQLite store created after an empty session baseline", () => {
+  const { baseline, qualification } = runEvidenceFixture({
+    before: {},
+    after: {},
+    afterBaseline: (sessionRoot) =>
+      createSqliteSessionStore(sessionRoot, [
+        { eventJson: message("user", "first input"), seq: 1, sessionId: "session-a" },
+        { eventJson: message("assistant", "first response"), seq: 2, sessionId: "session-a" },
+        { eventJson: message("user", "second input"), seq: 3, sessionId: "session-a" },
+        { eventJson: message("assistant", "second response"), seq: 4, sessionId: "session-a" },
+      ]),
+    expectedTurns: 2,
+  });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status, qualification.stderr).toBe(0);
+});
+
 it("keeps an incomplete SQLite-backed turn pending", () => {
   const { baseline, qualification } = runSqliteEvidenceFixture({
     after: [{ eventJson: message("user"), seq: 1, sessionId: "session-a" }],

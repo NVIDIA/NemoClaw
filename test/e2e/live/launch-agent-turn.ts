@@ -1240,11 +1240,20 @@ function structuredMessages(events, sessionId) {
   });
 }
 
-function appendedSqliteSessions(baseline) {
+function appendedSqliteSessions(baseline, jsonlBaseline) {
   const snapshot = readSqliteTranscriptSnapshot(
     baseline ? "sqlite_session_store_removed" : undefined,
   );
-  requireEvidence(baseline || !snapshot, "sqlite_session_store_appeared");
+  if (!baseline && snapshot) {
+    requireEvidence(
+      Object.keys(jsonlBaseline).length === 0,
+      "sqlite_session_store_appeared",
+    );
+    return Array.from(snapshot.sessions, ([sessionId, events]) => ({
+      sessionId,
+      messages: structuredMessages(events, sessionId),
+    })).filter((session) => session.messages.length > 0);
+  }
   return snapshot ? appendedExistingSqliteSessions(snapshot, baseline) : null;
 }
 
@@ -1338,7 +1347,7 @@ function qualifyTurns() {
   }
 
   const baseline = readBaseline();
-  const sqliteSessions = appendedSqliteSessions(baseline.sqlite);
+  const sqliteSessions = appendedSqliteSessions(baseline.sqlite, baseline.sessions);
   qualifyStructuredTurns(
     sqliteSessions === null ? appendedJsonlSessions(baseline.sessions) : sqliteSessions,
     expectedTurns,
