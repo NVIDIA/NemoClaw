@@ -193,6 +193,37 @@ describe("showSandboxStatus flow", () => {
     },
   );
 
+  it("preserves Docker-outage safety guidance for a terminal Error phase", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: { openshellDriver: "docker" },
+      preflight: {
+        failure: { layer: "docker_unreachable", dockerUnreachable: true },
+        failureLayer: "docker_unreachable",
+        suppressInferenceProbe: true,
+        exitCode: 1,
+      },
+      lookup: {
+        state: "present",
+        output: "Name: alpha\nPhase: Error\nEndpoint: http://127.0.0.1:18789\n",
+        phase: "Error",
+      },
+    });
+    harness.getSandboxDockerRuntimeSpy.mockReturnValue({
+      containerName: null,
+      health: "none",
+      paused: false,
+      running: false,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Docker daemon is not reachable");
+    expect(output).toContain("do not rebuild, destroy, or re-onboard");
+    expect(output).not.toContain("nemoclaw alpha destroy --yes");
+    expect(output).not.toContain("nemoclaw onboard");
+  });
+
   it("classifies publication while waiting for the status lifecycle fence (#9203)", async () => {
     let disposition: { readonly kind: "absent" } | ReturnType<typeof hermesPortableDisposition> = {
       kind: "absent",

@@ -28,6 +28,7 @@ type SandboxGatewayLookupStatusContext = {
   phase: string | null;
   openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
+  dockerRuntimeDown: boolean;
   effectivePreflight: SandboxStatusPreflightResult;
 };
 
@@ -148,7 +149,7 @@ function printPresentSandboxGatewayLookupStatus({
   phase,
   openshellDriver,
   dockerRuntime,
-  effectivePreflight,
+  dockerRuntimeDown,
 }: SandboxGatewayLookupStatusContext): void {
   console.log("");
   if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
@@ -178,7 +179,7 @@ function printPresentSandboxGatewayLookupStatus({
     phase,
     openshellDriver,
     dockerRuntime,
-    dockerRuntimeDown: effectivePreflight.failureLayer === "docker_unreachable",
+    dockerRuntimeDown,
   });
 }
 

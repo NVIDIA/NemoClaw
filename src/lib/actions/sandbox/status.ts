@@ -204,14 +204,10 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
-  const phase = resolveSandboxStatusPhase(
-    observedPhase,
-    snapshot.postRecoveryPreflight ?? preflight,
-  );
-  const effectivePreflight = withoutTerminalPhasePreflight(
-    snapshot.postRecoveryPreflight ?? preflight,
-    phase,
-  );
+  const observedPreflight = snapshot.postRecoveryPreflight ?? preflight;
+  const phase = resolveSandboxStatusPhase(observedPhase, observedPreflight);
+  const dockerRuntimeDown = observedPreflight.failureLayer === "docker_unreachable";
+  const effectivePreflight = withoutTerminalPhasePreflight(observedPreflight, phase);
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   printSandboxStatusPreflightHeader(effectivePreflight);
   if (effectivePreflight.exitCode !== 0) {
@@ -254,6 +250,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     phase,
     openshellDriver: sb?.openshellDriver ?? null,
     dockerRuntime,
+    dockerRuntimeDown,
     effectivePreflight,
   });
 

@@ -85,6 +85,40 @@ function snapshotDeps(recoveryResult: unknown) {
 }
 
 describe("collectSandboxStatusSnapshot Docker recovery", () => {
+  it("uses an explicit cross-root sandbox entry instead of the local registry fallback", async () => {
+    const crossRootSandbox: SandboxEntry = { ...sandbox, openshellDriver: "mxc" };
+    const getSandbox = vi.fn(() => null);
+    const reconcile = vi.fn(async () => ({
+      state: "present" as const,
+      phase: "Error",
+      output: "Phase: Error",
+    }));
+    const deps = {
+      ...snapshotDeps({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      }),
+      getSandbox,
+      reconcile,
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps,
+      sandboxEntry: crossRootSandbox,
+      suppressInferenceProbe: true,
+    });
+
+    expect(getSandbox).not.toHaveBeenCalled();
+    expect(reconcile).toHaveBeenCalledWith("alpha");
+    expect(snapshot.sb).toEqual(crossRootSandbox);
+    expect(snapshot.recordedRoute).toEqual({
+      provider: crossRootSandbox.provider,
+      model: crossRootSandbox.model,
+    });
+  });
+
   it("recovers the delivery chain when OpenShell already reports the restarted container (#7824)", async () => {
     const deps = {
       ...snapshotDeps({

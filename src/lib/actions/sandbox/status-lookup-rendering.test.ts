@@ -36,6 +36,7 @@ async function printGuidance({
     phase,
     openshellDriver,
     dockerRuntime,
+    dockerRuntimeDown,
     effectivePreflight: {
       failure: null,
       failureLayer: dockerRuntimeDown ? "docker_unreachable" : null,
@@ -122,6 +123,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       phase: "Stopped",
       openshellDriver: "docker",
       dockerRuntime: null,
+      dockerRuntimeDown: false,
       effectivePreflight: {
         failure: null,
         failureLayer: null,
@@ -150,6 +152,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
         phase: "Stopped",
         openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
@@ -181,6 +184,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
         phase: "Running",
         openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
