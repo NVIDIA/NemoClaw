@@ -65,6 +65,8 @@ pub struct OperationResult {
     pub deferred: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub health: Vec<crate::SandboxHealth>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -73,6 +75,7 @@ impl OperationResult {
             changes,
             deferred: Vec::new(),
             retained: Vec::new(),
+            health: Vec::new(),
         }
     }
 }
@@ -322,6 +325,29 @@ impl Deployment {
             client.ready(&sandbox, cancel).await?;
             Ok(())
         }).await?;
+        let health = self
+            .timed("fabric.health", async {
+                tokio::select! {
+                    () = cancel.cancelled() => Err(Error::Cancelled),
+                    result = client.health(&sandbox) => result,
+                }
+            })
+            .await?;
+        let health = crate::SandboxHealth {
+            sandbox: document.spec.sandboxes[0].name.clone(),
+            agents: document.spec.sandboxes[0]
+                .agents
+                .iter()
+                .map(|agent| agent.name.clone())
+                .collect(),
+            health,
+        };
+        if !health.health.allows_apply_completion() {
+            return Err(Error::Health {
+                health: Box::new(health),
+            });
+        }
+        result.health.push(health);
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;

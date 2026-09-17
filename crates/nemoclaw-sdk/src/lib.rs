@@ -112,6 +112,8 @@ pub mod backend;
 pub mod compile;
 pub mod config;
 mod error;
+mod health;
+pub use health::{RuntimeHealth, SandboxHealth};
 pub mod openshell;
 mod state;
 pub use error::Error;

@@ -21,6 +21,16 @@ impl CommandResult {
     }
 }
 
+pub(crate) fn render_error(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(Error::Health { health }) = error.downcast_ref::<Error>() {
+        return serde_json::json!({
+            "error": "fabric_readiness", "health": health, "resourcesRetained": true
+        })
+        .to_string();
+    }
+    error.to_string()
+}
+
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     stdin: R,
@@ -89,6 +99,38 @@ mod tests {
         task::{Context, Poll},
     };
     use tokio::io::ReadBuf;
+
+    #[test]
+    fn apply_reports_health_without_changing_the_command_surface() {
+        let value = serde_json::json!({
+            "outcome": "succeeded", "changes": [], "health": [{
+                "sandbox": "research", "agents": ["researcher", "writer"],
+                "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
+            }]
+        });
+        let result = CommandResult::Operation(serde_json::from_value(value.clone()).unwrap());
+        let output: serde_json::Value = serde_json::from_str(&result.render().unwrap()).unwrap();
+        assert_eq!(output, value);
+    }
+
+    #[test]
+    fn health_failure_keeps_structured_evidence_in_stderr() {
+        let health = serde_json::from_value(serde_json::json!({
+            "sandbox": "research", "agents": ["researcher"],
+            "supported": true, "report": null, "reason_code": "fabric_health_timeout"
+        }))
+        .unwrap();
+        let error = Error::Health {
+            health: Box::new(health),
+        };
+        let output: serde_json::Value = serde_json::from_str(&render_error(&error)).unwrap();
+        assert_eq!(output["health"]["reason_code"], "fabric_health_timeout");
+        assert_eq!(output["resourcesRetained"], true);
+        assert_eq!(
+            render_error(&Error::Conflict("fixed message")),
+            "fixed message"
+        );
+    }
 
     struct ForbiddenInput;
     impl AsyncRead for ForbiddenInput {

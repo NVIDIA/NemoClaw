@@ -21,6 +21,7 @@ pub struct State {
     pub active_policy: Option<p::SandboxPolicy>,
     pub sandbox_phase: Option<p::SandboxPhase>,
     pub exec_exit: i32,
+    pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
     pub exec_stalled: bool,
@@ -530,6 +531,20 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
         let mut events = Vec::new();
+        if request.command.last().is_some_and(|arg| arg == "health") {
+            let health = state.health_report.clone().unwrap_or_else(|| {
+                serde_json::json!({
+                    "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
+                })
+            });
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&health).unwrap(),
+                    },
+                )),
+            }));
+        }
         if request.command.first().is_some_and(|c| c == "openclaw") {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(

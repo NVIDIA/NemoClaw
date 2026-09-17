@@ -277,6 +277,30 @@ impl OpenShell {
         readiness_deadline(wait, cancel).await
     }
 
+    /// Query the existing hosted Fabric runtime; never invoke an agent or model.
+    pub async fn health(&self, binding: &Row) -> Result<crate::RuntimeHealth, Error> {
+        let (exit, output) = self
+            .exec_bound(
+                binding,
+                [
+                    "/opt/fabric/bin/python",
+                    "/opt/nemoclaw/fabric.py",
+                    "health",
+                ]
+                .map(String::from)
+                .to_vec(),
+                Row::new(),
+                10,
+            )
+            .await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "Fabric health bridge unavailable; rebuild the agent image; resources retained",
+            ));
+        }
+        crate::RuntimeHealth::decode(&output)
+    }
+
     pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
         if value(binding, "agent_runtime") == "fabric-pi" {
             let model = binding

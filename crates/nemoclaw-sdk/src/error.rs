@@ -11,6 +11,8 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
+    #[error("Fabric readiness could not be established; resources retained")]
+    Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
     #[error("sandbox startup failed: {phase}, exit code {exit_code}; resources retained")]

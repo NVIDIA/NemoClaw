@@ -51,7 +51,7 @@ async fn main() -> ExitCode {
             }
         },
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{}", dispatch::render_error(error.as_ref()));
             ExitCode::FAILURE
         }
     }
