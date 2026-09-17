@@ -642,9 +642,33 @@ describe("OpenShell forward service", () => {
         procRoot: fixture.procRoot,
       }),
     ).toBe(true);
-    expect(probe).toHaveBeenCalledTimes(3);
-    expect(probe).toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
+    expect(probe).toHaveBeenCalledOnce();
+    expect(probe).not.toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
     expect(probe).toHaveBeenCalledWith("ps", ["-ww", "-p", "4321", "-o", "args="]);
+  });
+
+  it("falls back to lsof when Linux procfs cannot find the listener", () => {
+    const fixture = createLinuxOwnerFixture();
+    writeFileSync(path.join(fixture.procRoot, "net", "tcp"), "header\n");
+    const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
+      " ",
+    );
+    const probe = vi.fn((executable: string) =>
+      executable === "lsof"
+        ? { status: 0, stdout: "4321\n" }
+        : { status: 0, stdout: `${expected}\n` },
+    );
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+      }),
+    ).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(probe).toHaveBeenNthCalledWith(1, "lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
+    expect(probe).toHaveBeenNthCalledWith(3, "lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
   });
 
   it("rejects spoofed arguments when the Linux executable is different", () => {
@@ -667,7 +691,7 @@ describe("OpenShell forward service", () => {
         procRoot: fixture.procRoot,
       }),
     ).toBe(false);
-    expect(probe).toHaveBeenCalledOnce();
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it("denies Linux ownership when the /proc work limit is reached", () => {

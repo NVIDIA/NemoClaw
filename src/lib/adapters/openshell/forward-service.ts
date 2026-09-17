@@ -333,9 +333,15 @@ function listenerPids(
   probe: ForwardServiceOwnerProbe,
   assertBudget: () => void,
 ): string[] {
+  if (platform === "linux") {
+    // /proc proves the same kernel listener ownership without spawning lsof. Keep lsof as
+    // a compatibility fallback when procfs is unavailable, permission-limited, or observes
+    // no listener. The caller still brackets exact executable/argv proof with two snapshots.
+    const procPids = linuxListenerPids(port, procRoot, procWorkLimit, assertBudget);
+    if (procPids.length > 0) return procPids;
+  }
   const lsof = lsofListenerPids(port, probe);
-  if (lsof !== null || platform !== "linux") return lsof ?? [];
-  return linuxListenerPids(port, procRoot, procWorkLimit, assertBudget);
+  return lsof ?? [];
 }
 
 function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
