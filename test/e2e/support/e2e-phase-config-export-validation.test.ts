@@ -26,6 +26,24 @@ import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/typ
 const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
 const SECRET = "fixture-secret-value";
+const ENCODED_SECRET = Buffer.from(SECRET, "utf8").toString("base64");
+const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
+  { name: "literal", value: SECRET },
+  { name: "wrapped-literal", value: `${SECRET.slice(0, 7)}\n# ${SECRET.slice(7)}` },
+  {
+    name: "escaped-literal",
+    value: `\\u${SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${SECRET.slice(1)}`,
+  },
+  { name: "base64", value: ENCODED_SECRET },
+  {
+    name: "wrapped-base64",
+    value: `${ENCODED_SECRET.slice(0, 12)}\n# ${ENCODED_SECRET.slice(12)}`,
+  },
+  {
+    name: "escaped-base64",
+    value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
+  },
+] as const;
 const POLICY = {
   version: 1,
   network_policies: {
@@ -733,24 +751,45 @@ describe("automatic config export validation phase", () => {
     });
   });
 
-  it("redacts bounded refusal diagnostics before evidence publication (#11485)", async () => {
-    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-evidence-"));
-    createdDirectories.push(artifactRoot);
-    const artifacts = new ArtifactSink(artifactRoot, [SECRET]);
-    const host = refusalHost(`Config export failed (unsupported). ${SECRET}`);
+  it.each(DIAGNOSTIC_SECRET_REPRESENTATIONS)(
+    "redacts $name secrets from refusal diagnostics before evidence publication (#11485)",
+    async ({ value: representedSecret }) => {
+      const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-evidence-"));
+      createdDirectories.push(artifactRoot);
+      const artifacts = new ArtifactSink(artifactRoot, [SECRET]);
+      const host = refusalHost(`Config export failed (unsupported). ${representedSecret}`);
+      const test = fixture({
+        artifacts,
+        host: host as ReturnType<typeof successfulHost>,
+        secret: SECRET,
+      });
+
+      await test.phase.from(target("expected-refusal"), instance());
+
+      const stored = fs.readFileSync(
+        path.join(artifactRoot, "config-export-evidence.v1.json"),
+        "utf8",
+      );
+      expect(JSON.parse(stored)).toMatchObject({ diagnostic: "[REDACTED]" });
+      expect(stored).not.toContain(SECRET);
+      expect(stored).not.toContain(ENCODED_SECRET);
+    },
+  );
+
+  it("redacts encoded secrets from required-export failure diagnostics (#11485)", async () => {
+    const host = refusalHost(`export failed: ${ENCODED_SECRET}`);
     const test = fixture({
-      artifacts,
       host: host as ReturnType<typeof successfulHost>,
       secret: SECRET,
     });
 
-    await test.phase.from(target("expected-refusal"), instance());
+    await captureFailure(test.phase.from(target("required"), instance()));
 
-    const stored = fs.readFileSync(
-      path.join(artifactRoot, "config-export-evidence.v1.json"),
-      "utf8",
-    );
-    expect(stored).not.toContain(SECRET);
-    expect(stored).toContain("[REDACTED]");
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "export",
+      diagnostic: "[REDACTED]",
+    });
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(ENCODED_SECRET);
   });
 });

@@ -384,6 +384,7 @@ function compareSemantics(
 
 function boundedDiagnostic(secretStore: SecretStore, value: unknown): string {
   const raw = value instanceof Error ? value.message : String(value);
+  if (containsKnownSecretText(raw, secretStore.redactionValues())) return "[REDACTED]";
   return secretStore.redact(raw).slice(0, MAX_DIAGNOSTIC_LENGTH);
 }
 
@@ -422,7 +423,7 @@ function encodedSecretValues(secretValues: readonly string[]): string[] {
   return [...encoded];
 }
 
-function normalizedEncodedSecretScanText(raw: string): string {
+function normalizedSecretScanText(raw: string): string {
   const decodedEscapes = raw
     .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
       String.fromCodePoint(Number.parseInt(hex, 16)),
@@ -436,6 +437,13 @@ function normalizedEncodedSecretScanText(raw: string): string {
     })
     .replace(/\\[nrt]/gu, "");
   return decodedEscapes.replace(/[\s#'"`>|\\]/gu, "");
+}
+
+function containsKnownSecretText(raw: string, secretValues: readonly string[]): boolean {
+  const normalizedRaw = normalizedSecretScanText(raw);
+  return [...secretValues, ...encodedSecretValues(secretValues)].some(
+    (value) => value.length > 0 && normalizedRaw.includes(normalizedSecretScanText(value)),
+  );
 }
 
 export class ConfigExportValidationPhaseFixture {
@@ -589,10 +597,7 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         const encodedSecrets = encodedSecretValues(secretValues);
-        const normalizedRaw = normalizedEncodedSecretScanText(raw);
-        const rawSecretsAbsent =
-          !secretValues.some((value) => value && raw!.includes(value)) &&
-          !encodedSecrets.some((value) => value && normalizedRaw.includes(value));
+        const rawSecretsAbsent = !containsKnownSecretText(raw, secretValues);
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
