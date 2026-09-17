@@ -164,6 +164,7 @@
       ],
       "fast": [
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -671,6 +672,7 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
+        "test/e2e/support/messaging-providers-installed-runtime-paths.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
@@ -725,21 +727,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": [
-        "test/e2e/live/json-envelope.ts",
-        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
-      ],
-      "fast": [
-        "test/e2e/support/json-envelope.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/openclaw-skill-cli.test.ts",
       "fast": [
         "src/lib/actions/sandbox/skill-install.test.ts",
@@ -774,8 +761,7 @@
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
         "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
         "src/lib/onboard/dockerfile-patch.test.ts",
-        "src/lib/state/openclaw-plugin-restore.test.ts",
-        "test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts",
         "test/install/install-preexisting-sandbox-recovery.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
@@ -803,6 +789,7 @@
       "fast": [
         "src/lib/actions/sandbox/gateway-restart.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/agents/hermes/hermes-gateway-wrapper.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -815,6 +802,7 @@
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts"

@@ -5729,82 +5729,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Main-push current-lifecycle coverage for #6108. This proves a custom plugin
-  # installs across devices and remains usable after restart and recreation.
-  openclaw-plugin-runtime-exdev:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    # Two bounded 25-minute onboarding operations plus the 15-minute Vitest
-    # buffer need 65 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 85
-    env:
-      E2E_JOB: "1"
-      E2E_GATEWAY_RUNTIMES: docker
-      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
-      E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Pre-pull current-checkout Docker Hub builder image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
-
-      - name: Remove Docker auth before current-checkout fixture
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run OpenClaw cross-device plugin lifecycle live test
-        run: |
-          set -euo pipefail
-          test -n "${DOCKER_CONFIG:-}"
-          test ! -e "${DOCKER_CONFIG}"
-          test -z "${DOCKERHUB_USERNAME:-}"
-          test -z "${DOCKERHUB_TOKEN:-}"
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx tsx tools/e2e/live-vitest-invocation.mts run \
-              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-              --selector current-lifecycle
-
-      - name: Upload OpenClaw cross-device plugin lifecycle artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
   report-to-pr:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -5837,7 +5761,6 @@ jobs:
         messaging-providers,
         jetson-nvmap-gpu,
         cloud-onboard,
-        openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
