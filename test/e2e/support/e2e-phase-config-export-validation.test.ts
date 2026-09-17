@@ -8,8 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CONFIG_EXPORT_POLICY_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
   type ConfigExportDocument,
@@ -301,6 +304,7 @@ function fixture(
     artifacts?: ArtifactSink;
     dependencies?: ConfigExportValidationDependencies;
     host?: ReturnType<typeof successfulHost>;
+    sandbox?: Pick<SandboxClient, "openshell">;
     secret?: string;
   } = {},
 ) {
@@ -315,6 +319,7 @@ function fixture(
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
+  const sandbox = options.sandbox ?? { openshell: vi.fn() };
   const secrets = new SecretStore(
     options.secret ? { FIXTURE_API_KEY: options.secret } : {},
     (message) => {
@@ -324,9 +329,10 @@ function fixture(
   return {
     cleanup,
     host,
+    sandbox,
     phase: new ConfigExportValidationPhaseFixture(
       host as never,
-      { openshell: vi.fn() } as never,
+      sandbox as SandboxClient,
       secrets,
       cleanup,
       artifacts,
@@ -383,6 +389,36 @@ describe("automatic config export validation phase", () => {
     expect(evidence.elapsedMs).toBe(25);
     expect(createdDirectories.every((directory) => !fs.existsSync(directory))).toBe(true);
     expect((await test.cleanup.runAll()).failures).toEqual([]);
+  });
+
+  it("observes the effective policy through the sandbox client boundary (#11485)", async () => {
+    const livePolicyDependencies = dependencies();
+    delete livePolicyDependencies.readPolicy;
+    const sandbox = {
+      openshell: vi.fn(async () => ({
+        command: [],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: `OpenShell policy output\n---\n${JSON.stringify(POLICY)}\n`,
+        stderr: "",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      })),
+    };
+    const test = fixture({ dependencies: livePolicyDependencies, sandbox });
+
+    const evidence = await test.phase.from(target("required"), instance());
+
+    expect(sandbox.openshell).toHaveBeenCalledWith(["policy", "get", "--full", "sandbox"], {
+      artifactName: "config-export-effective-policy",
+      env: { ...buildAvailabilityProbeEnv(), OPENSHELL_GATEWAY: "nemoclaw" },
+      redactionValues: [],
+      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+    });
+    expect(evidence.verifications).toContainEqual(
+      expect.objectContaining({ id: "policySha256", passed: true }),
+    );
+    expect(evidence).toMatchObject({ classification: "success", passed: true });
   });
 
   it("fails when export omits an enabled scenario feature (#11485)", async () => {
