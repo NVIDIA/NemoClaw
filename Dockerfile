@@ -702,26 +702,24 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Harden: remove unnecessary build tools and network probes from base image (#830)
-# Protect runtime tools before autoremove — the GHCR base may predate the
-# procps/e2fsprogs/tmux additions, leaving ps/chattr/tmux absent or auto-marked.
-# The conditional install keeps stale bases usable while fresh bases skip apt.
-# tmux is required by OpenClaw's bundled tmux-session flow (#4513); a stale base
-# without it makes that flow fail with `tmux: command not found`.
-# Refs: #2343, #4513, config transaction hardening
+# Harden: remove unnecessary build tools; preserve runtime tools on stale bases.
+# OpenClaw needs lsof to signal its listener; otherwise restart can exit zero
+# without restarting. Keep tmux for bundled sessions and ps/chattr for lifecycle.
 # hadolint ignore=DL3001
 RUN set -eu; \
-    apt-mark manual procps e2fsprogs tmux 2>/dev/null || true; \
+    apt-mark manual procps e2fsprogs tmux lsof 2>/dev/null || true; \
     (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
     apt-get autoremove --purge -y; \
     needs_ps=0; \
     needs_chattr=0; \
     needs_tmux=0; \
+    needs_lsof=0; \
     if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
     if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
     if ! command -v tmux >/dev/null 2>&1; then needs_tmux=1; fi; \
-    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ] || [ "$needs_tmux" = "1" ]; then \
+    if ! command -v lsof >/dev/null 2>&1; then needs_lsof=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ] || [ "$needs_tmux" = "1" ] || [ "$needs_lsof" = "1" ]; then \
         apt-get update; \
         if [ "$needs_ps" = "1" ]; then \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
@@ -732,12 +730,15 @@ RUN set -eu; \
         if [ "$needs_tmux" = "1" ]; then \
             apt-get install -y --no-install-recommends tmux=3.5a-3; \
         fi; \
+        if [ "$needs_lsof" = "1" ]; then \
+            apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2; \
+        fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \
     ps --version; \
     command -v chattr >/dev/null; \
-    command -v tmux >/dev/null
-
+    command -v tmux >/dev/null; \
+    command -v lsof >/dev/null
 
 # Install runtime dependencies before copying mutable build outputs so source
 # and blueprint changes keep the production dependency layer cached.

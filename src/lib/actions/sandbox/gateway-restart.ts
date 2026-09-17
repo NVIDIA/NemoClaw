@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export { restartOpenClawGatewayThroughProvider } from "./gateway-restart/openclaw-native-restart";
+
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
@@ -85,7 +87,9 @@ type SandboxExec = (
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
-  sleep: (seconds: number) => void | Promise<void>;
+  restartOpenClawGateway: (
+    sandboxName: string,
+  ) => GatewayRestartCommandResult | Promise<GatewayRestartCommandResult | null> | null;
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
@@ -412,13 +416,14 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  // Listener discovery cannot inspect a gateway outside the exec process's
-  // Landlock domain. Ask the authenticated gateway to restart itself instead.
+  // Keep lifecycle decisions in the native agent. OpenClaw listener discovery
+  // needs the host runtime transport because sandbox exec is Landlock-confined.
   const nativeCommand =
+    agentName === "openclaw" ? "openclaw gateway restart --json" : "hermes gateway restart";
+  const restartResult =
     agentName === "openclaw"
-      ? "openclaw gateway restart --safe --skip-deferral --json"
-      : "hermes gateway restart";
-  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+      ? await deps.restartOpenClawGateway(sandboxName)
+      : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult || restartResult.status !== 0) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
@@ -444,26 +449,13 @@ export async function restartSandboxGatewayWithDeps(
         ? (documents[0] as {
             ok?: boolean;
             result?: string;
-            restart?: { ok?: boolean; delayMs?: number };
           } | null)
         : null;
-    const delayMs = acknowledgement?.restart?.delayMs;
-    if (
-      acknowledgement?.ok !== true ||
-      acknowledgement.restart?.ok !== true ||
-      !["scheduled", "coalesced"].includes(acknowledgement.result ?? "") ||
-      typeof delayMs !== "number" ||
-      !Number.isSafeInteger(delayMs) ||
-      delayMs < 0 ||
-      delayMs > 60_000
-    ) {
-      const detail = "OpenClaw did not confirm that the gateway restart was scheduled";
+    if (acknowledgement?.ok !== true || acknowledgement.result !== "restarted") {
+      const detail = "OpenClaw did not confirm that the gateway restarted";
       printGatewayRestartFailure(sandboxName, "native agent command", detail);
       return { ok: false, failureLayer: "native agent command", detail };
     }
-    // The native cooldown can schedule the restart after our health settle
-    // window. Do not start checking health until its reported delay has elapsed.
-    if (delayMs > 0) await deps.sleep(delayMs / 1000);
   }
 
   if (

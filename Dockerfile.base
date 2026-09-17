@@ -131,6 +131,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl3t64=3.5.7-1~deb13u2 \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
+        lsof=4.99.4+dfsg-2 \
         e2fsprogs=1.47.2-3+b12 \
         "dos2unix=7.5.2-1*" \
         libonig5=6.9.9-1+b1 \

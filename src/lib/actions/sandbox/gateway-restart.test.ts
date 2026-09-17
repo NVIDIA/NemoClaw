@@ -49,7 +49,11 @@ describe("restartSandboxGateway native lifecycle", () => {
 
   function baseDeps(overrides = {}) {
     return {
-      sleep: vi.fn(async () => undefined),
+      restartOpenClawGateway: vi.fn(async () => ({
+        status: 0,
+        stdout: JSON.stringify({ ok: true, result: "restarted" }),
+        stderr: "",
+      })),
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
@@ -82,11 +86,8 @@ describe("restartSandboxGateway native lifecycle", () => {
       restarted: true,
       healthPassed: true,
     });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw gateway restart --safe --skip-deferral --json",
-      210000,
-    );
+    expect(deps.restartOpenClawGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -102,7 +103,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     async (stdout) => {
       silenceConsole();
       const deps = baseDeps({
-        executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout, stderr: "" })),
+        restartOpenClawGateway: vi.fn(async () => ({ status: 0, stdout, stderr: "" })),
       });
       expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
         ok: false,
@@ -110,33 +111,6 @@ describe("restartSandboxGateway native lifecycle", () => {
       });
       expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
       expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([false, true])(
-    "waits for the acknowledged cooldown before checking gateway health (async: %s)",
-    async (asynchronous) => {
-      silenceConsole();
-      const sleep = vi.fn(() => (asynchronous ? Promise.resolve() : undefined));
-      const deps = baseDeps({
-        sleep,
-        executeSandboxExecCommand: vi.fn(async () => ({
-          status: 0,
-          stderr: "",
-          stdout: JSON.stringify({
-            ok: true,
-            result: "coalesced",
-            restart: { ok: true, delayMs: 30_000 },
-          }),
-        })),
-      });
-      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
-        ok: true,
-      });
-      expect(deps.sleep).toHaveBeenCalledWith(30);
-      expect(deps.sleep.mock.invocationCallOrder[0]).toBeLessThan(
-        deps.waitForRecoveredSandboxGateway.mock.invocationCallOrder[0]!,
-      );
     },
   );
 
@@ -187,7 +161,7 @@ describe("restartSandboxGateway native lifecycle", () => {
   it("reports the native agent failure without an authorization verdict", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeSandboxExecCommand: vi.fn(async () => ({
+      restartOpenClawGateway: vi.fn(async () => ({
         status: 1,
         stdout: "",
         stderr: "native restart failed",

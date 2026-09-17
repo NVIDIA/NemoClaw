@@ -1433,6 +1433,7 @@ It also checks the dashboard forward, messaging forward, and manifest-declared a
 <AgentOnly variant="openclaw">
 
 In supported Linux OpenShell sandboxes, OpenClaw's native restart replaces the Node process image while preserving its process ID, so updated plugin modules load without recreating the sandbox.
+The host must have access to the sandbox's registered runtime. NemoClaw uses that runtime to run the native command as the `sandbox` user, with root privileges and capabilities removed. This lets OpenClaw find its gateway process without granting the paired CLI device administrative scopes.
 NemoClaw verifies gateway health and checks or recovers host-side forwards after the native command succeeds.
 A native command failure, health timeout, or forward recovery failure makes the command fail.
 
