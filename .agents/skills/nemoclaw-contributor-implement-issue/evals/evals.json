@@ -163,5 +163,34 @@
       "Follows CI and automated reviews for the current commit, repairing in-scope defects.",
       "Does not merge without merge authorization."
     ]
+  },
+  {
+    "id": "prune-live-e2e-with-lower-layer-evidence",
+    "question": "Implement an accepted test-pruning issue. The live E2E asserts parser output, exact progress text, sandbox denial, recovery after a rejected mutation, cleanup of the sandbox, and credential isolation. Keep only necessary live coverage.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Deterministic parser behavior belongs in a lower layer, incidental progress text has no test owner, and the distinct live denial, recovery, cleanup, and security outcomes remain live.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Moves parser evidence only when equivalent lower-layer coverage is absent.",
+      "Removes the incidental progress-text assertion.",
+      "Retains the smallest live assertions for the sandbox denial, recovery, cleanup, and credential-isolation outcomes.",
+      "Records the lower-layer owner for moved parser evidence and states that removed progress text protects no product contract.",
+      "For each retained live assertion, records the lower-layer evidence owner or states that no deterministic behavior applies, plus its real boundary, semantic outcome, distinct regression, canonical live test, and smallest assertion.",
+      "For each moved or removed assertion, records its semantic outcome and distinct regression or lack of a product contract, and explains why semantic coverage remains complete.",
+      "Does not hide duplicate evidence in helpers or artifacts."
+    ]
+  },
+  {
+    "id": "repair-live-e2e-contract",
+    "question": "Implement an accepted issue that repairs a live E2E assertion which currently checks brittle progress text instead of the sandbox recovery outcome.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Repairing live evidence defines the distinct live contract that the stable assertion protects; it does not use a pruning disposition for the replacement assertion.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Classifies the brittle text assertion before changing it.",
+      "Records the repaired assertion's real boundary, semantic outcome, distinct regression, lower-layer evidence owner, canonical live test, and smallest live assertion.",
+      "Replaces progress-text matching with the smallest stable sandbox recovery outcome.",
+      "Does not label the repaired replacement assertion as stayed, moved, or removed."
+    ]
   }
 ]
