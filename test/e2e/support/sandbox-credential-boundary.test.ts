@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS } from "../../../nemoclaw/src/security/secret-scanner.ts";
-import { buildSandboxCredentialScanCommand } from "../live/cloud-inference-credential-boundary.ts";
+import { buildSandboxCredentialScanCommand } from "../live/sandbox-credential-boundary.ts";
 
 const roots: string[] = [];
 
@@ -47,7 +47,7 @@ function scan(root: string): string {
   });
 }
 
-describe("cloud inference sandbox credential scan", () => {
+describe("sandbox credential scan", () => {
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
 
