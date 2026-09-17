@@ -194,7 +194,11 @@ export function createHermesPtyState() {
     }
     // Canonical gateway.ready and other globals are intentionally unsequenced.
     // They cannot establish readiness or completion of a PTY session.
-    if (event.session_id == null && event.seq === undefined) return;
+    if (
+      (event.session_id === undefined || event.session_id === null || event.session_id === "") &&
+      event.seq === undefined
+    )
+      return;
     if (
       typeof event.session_id !== "string" ||
       !event.session_id ||

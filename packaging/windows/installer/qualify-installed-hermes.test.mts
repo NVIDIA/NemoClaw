@@ -238,6 +238,12 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
   state.ptyData();
   // entry.py publishes this global before attaching the real session.
   state.receive("actual-pty", { method: "event", params: { type: "gateway.ready" } });
+  // server._event_frame preserves an explicit empty session id for other
+  // intentionally unsequenced global events.
+  state.receive("actual-pty", {
+    method: "event",
+    params: { type: "sessions.changed", session_id: "", payload: {} },
+  });
   state.assertHealthy();
   assert.equal(state.usable(), false);
   state.receive("sidecar", info(1));
