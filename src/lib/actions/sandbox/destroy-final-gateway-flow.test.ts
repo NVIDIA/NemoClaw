@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
   createDestroyHarness,
@@ -28,10 +28,14 @@ function warnOutput(harness: ReturnType<typeof createDestroyHarness>): string {
 }
 
 describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), () => {
+  let exitSpy: MockInstance;
   let originalGatewayEnv: string | undefined;
 
   beforeEach(() => {
     originalGatewayEnv = process.env.OPENSHELL_GATEWAY;
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
   });
 
   afterEach(() => {
@@ -131,10 +135,13 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("process.exit(1)");
 
+    expect(harness.executeSandboxDestroySpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.finalGatewaySleepSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
     expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain("OpenShell still reports sandbox 'beta'");
@@ -153,10 +160,13 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("process.exit(1)");
 
+    expect(harness.executeSandboxDestroySpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.captureOpenshellSpy).toHaveBeenCalledOnce();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
     expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain("'openshell sandbox list' failed");
@@ -179,7 +189,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("process.exit(1)");
 
     expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledTimes(2);
     expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenNthCalledWith(
@@ -189,6 +199,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     );
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     expect(warnOutput(harness)).toContain("Shared NemoClaw gateway left running");
     expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
     expect(warnOutput(harness)).toContain(

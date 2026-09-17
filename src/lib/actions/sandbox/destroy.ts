@@ -1280,6 +1280,7 @@ async function destroySandboxUnlocked(
         finalGatewayCleanup,
         normalized.cleanupGateway === true,
       );
+      if (normalized.cleanupGateway === true) requestSandboxDestroyExit(1);
     }
   }
   if (alreadyGone) {

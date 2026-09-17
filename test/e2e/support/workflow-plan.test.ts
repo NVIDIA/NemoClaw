@@ -664,6 +664,18 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects sandbox operations when its gateway client changes", () => {
+    const changedFile = "test/e2e/fixtures/clients/gateway.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "sandbox-operations",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-operations",
+    );
+  });
+
   it.each([
     "src/lib/actions/sandbox/gateway-state.ts",
     "src/lib/onboard/runtime-provider/docker.ts",

@@ -1246,6 +1246,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
+      "test/e2e/fixtures/clients/gateway.ts",
     ],
     timeoutMinutes: 120,
     installMode: "credential-free",
