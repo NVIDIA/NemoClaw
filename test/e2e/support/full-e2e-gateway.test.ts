@@ -87,7 +87,7 @@ describe("full E2E gateway ownership", () => {
     const guidance = lines.join("\n");
     expect(guidance).toContain("nemoclaw nemoclaw-e2e start");
     expect(guidance).toContain("workspace state preserved");
-    expect(guidance).not.toContain("Run `nemoclaw nemoclaw-e2e rebuild --yes`");
+    expect(guidance).toContain("nemoclaw nemoclaw-e2e rebuild --yes");
   });
 
   it.each([
