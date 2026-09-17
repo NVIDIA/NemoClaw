@@ -81,11 +81,6 @@ type SandboxExec = (
   timeout?: number,
 ) => Promise<GatewayRestartCommandResult | null>;
 
-type ManagedGatewayRestart = (
-  sandboxName: string,
-  timeout?: number,
-) => GatewayRestartCommandResult | null | Promise<GatewayRestartCommandResult | null>;
-
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
@@ -93,7 +88,7 @@ export type GatewayRestartDeps = {
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
   executeSandboxExecCommand: SandboxExec;
-  executeManagedGatewayRestart: ManagedGatewayRestart;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
     options?: {
@@ -416,16 +411,13 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const nativeCommand = `${agentName} gateway restart`;
-  const restartResult =
+  const nativeCommand =
     agentName === "openclaw"
-      ? await deps.executeManagedGatewayRestart(sandboxName, 210000)
-      : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
+      : `${agentName} gateway restart`;
+  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult) {
-    const detail =
-      agentName === "openclaw"
-        ? "managed gateway supervisor did not return command output"
-        : `${nativeCommand} did not return command output`;
+    const detail = `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
@@ -439,35 +431,34 @@ export async function restartSandboxGatewayWithDeps(
     /code: 'The service is currently unavailable'[\s\S]*exec relay closed[\s\S]*before the command reported an exit status/u.test(
       gatewayRestartOutput(restartResult),
     );
-  const managedCompletion =
-    agentName === "openclaw" ? parseManagedGatewayControlCompletion(restartResult) : null;
-  if (
-    (restartResult.status !== 0 && !hermesRelayClosed) ||
-    (agentName === "openclaw" && !managedCompletion)
-  ) {
+  if (restartResult.status !== 0 && !hermesRelayClosed) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
       printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
       return { ok: false, failureLayer: classified.layer, detail: classified.detail };
     }
     const detail =
-      agentName === "openclaw" && restartResult.status === 0 && !managedCompletion
-        ? "managed gateway supervisor returned an invalid completion receipt"
-        : sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
-          `${nativeCommand} exited ${restartResult.status}`;
+      sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+      `${nativeCommand} exited ${restartResult.status}`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
-    const failureLayer = agentName === "openclaw" ? classified.layer : "native agent command";
-    printGatewayRestartFailure(sandboxName, failureLayer, detail, gatewayLogTail);
-    return { ok: false, failureLayer, detail };
+    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
+    return { ok: false, failureLayer: "native agent command", detail };
+  }
+
+  if (hermesRelayClosed && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+    const detail = "Hermes restarted, but its OpenShell exec relay did not re-register";
+    printGatewayRestartFailure(sandboxName, "health timeout", detail);
+    return { ok: false, failureLayer: "health timeout", detail };
   }
 
   if (
     !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
-      initialManagedHealthPassed: managedCompletion !== null,
+      initialManagedHealthPassed: false,
+      managedProbeImpl: () => null,
     }))
   ) {
     const detail = "gateway process restarted but health did not pass before timeout";

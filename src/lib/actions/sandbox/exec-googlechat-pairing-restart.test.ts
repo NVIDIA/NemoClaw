@@ -238,6 +238,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
+                waitForSandboxControlPlaneReady: async () => true,
                 waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
@@ -270,7 +271,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
       expect(exitCode).toBe(0);
       expect(fs.readFileSync(restartLog, "utf8")).toBe(
-        "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart\n",
+        "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json\n",
       );
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
