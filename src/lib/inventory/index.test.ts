@@ -1311,7 +1311,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 
-  it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", async () => {
+  it("keeps the default sandbox's own recorded provider in the Inference line when the live shared route differs (#11412)", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -1323,7 +1323,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference (configured): live-provider / live-model");
+    expect(lines).toContain("      Inference (configured): stored-provider / stored-model");
   });
 
   it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", async () => {

@@ -526,22 +526,16 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
 async function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
-  liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
 ): Promise<StatusSandboxRow> {
   const isDefault = sandbox.name === defaultSandbox;
-  const liveModel = isDefault ? liveInference?.model : null;
-  const liveProvider = isDefault ? liveInference?.provider : null;
+  // #11412: this row's `model`/`provider` are the documented "configured"
+  // fields, meaning this sandbox's own recorded inference, not the shared
+  // live gateway route. Report `liveInference` (above, once per report) for
+  // the gateway-wide value.
   const inference = getSandboxEntryDisplayInference(sandbox);
-  const publicFields = await projectPublicSandboxFields(
-    sandbox,
-    {
-      model: liveModel || inference.model,
-      provider: liveProvider || inference.provider,
-    },
-    getPolicyPresets,
-  );
+  const publicFields = await projectPublicSandboxFields(sandbox, inference, getPolicyPresets);
   return {
     ...publicFields,
     ...(portablePhase ? { phase: portablePhase } : {}),
@@ -634,7 +628,6 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
       buildStatusSandboxRow(
         sandbox,
         resolvedDefault,
-        liveInference,
         portablePhases.get(sandbox.name) ?? null,
         deps.getPolicyPresets,
       ),
@@ -666,6 +659,10 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
  * model so it agrees with `openshell inference get` (#2369); when it drifts
  * from the stored onboarded model a `(onboarded: …)` line is appended.
  * Non-default rows and the unreachable-gateway case fall back to stored.
+ * The labeled `Inference (configured): …` line always reports this
+ * sandbox's own recorded provider/model, never the shared live gateway
+ * route, so a different sandbox's stop/start cannot change what this line
+ * reports (#11412).
  */
 export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<void> {
   const log = deps.log ?? console.log;
@@ -701,11 +698,10 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
       const liveModel = safeStatusString(isDefault && live ? live.model : null);
-      const liveProvider = safeStatusString(isDefault && live ? live.provider : null);
       const inference = getSandboxEntryDisplayInference(sb);
       const storedModel = safeStatusString(inference.model);
+      const storedProvider = safeStatusString(inference.provider);
       const model = liveModel || storedModel;
-      const provider = liveProvider || safeStatusString(inference.provider);
       const name = safeStatusString(sb.name) ?? "unknown";
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
@@ -718,8 +714,13 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // SSH-session count as labeled fields. Bare `nemoclaw status` previously
       // only had the model in parens above — users had to run
       // `nemoclaw <name> status` to see provider and session state.
-      if (provider || model) {
-        const parts = [provider, model].filter(Boolean).join(" / ");
+      // #11412: this line is documented and labeled "configured", so it must
+      // always show this sandbox's own recorded provider/model, never the
+      // shared live gateway route (that would silently show one sandbox's
+      // "configured" line as another sandbox's route after a stop/start
+      // realigns the one shared route).
+      if (storedProvider || storedModel) {
+        const parts = [storedProvider, storedModel].filter(Boolean).join(" / ");
         log(`      Inference (configured): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
