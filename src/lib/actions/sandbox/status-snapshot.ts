@@ -294,6 +294,7 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
+  findSandboxAcrossGatewayRoots?: typeof registry.findSandboxAcrossGatewayRoots;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
   listSandboxes?: typeof registry.listSandboxes;
@@ -785,14 +786,18 @@ async function buildSandboxStatusReport(
   const getSandbox =
     deps.getSandbox ??
     ((name: string) => {
-      const entry = registry.getSandbox(name);
+      const entry =
+        (deps.findSandboxAcrossGatewayRoots ?? registry.findSandboxAcrossGatewayRoots)(name)
+          ?.entry ?? null;
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
+  const sandboxEntry = getSandbox(sandboxName);
   const preflight = await (deps.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight)(
-    getSandbox(sandboxName),
+    sandboxEntry,
   );
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     preflight,
+    sandboxEntry,
     deps,
   });
   const {

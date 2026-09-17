@@ -335,7 +335,46 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
   });
 });
 
-describe("getSandboxStatusReport Docker recovery preflight refresh", () => {
+describe("getSandboxStatusReport", () => {
+  it("uses cross-root sandbox authority for the JSON status report", async () => {
+    const crossRootSandbox: SandboxEntry = {
+      ...sandbox,
+      openshellDriver: "mxc",
+      gatewayPort: 19000,
+    };
+    const findSandboxAcrossGatewayRoots = vi.fn(() => ({
+      entry: crossRootSandbox,
+      gatewayPort: 19000,
+      registryFile: "/test/.nemoclaw-gateway-19000/sandboxes.json",
+    }));
+    const { getSandbox: _getSandbox, ...deps } = snapshotDeps({
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    });
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...deps,
+      findSandboxAcrossGatewayRoots,
+      getGatewayPresets: async () => [],
+      getSandboxStatusPreflightImpl: vi.fn(async () => clearPreflight),
+      reconcile: vi.fn(async () => ({
+        state: "present" as const,
+        phase: "Error",
+        output: "Phase: Error",
+      })),
+    });
+
+    expect(findSandboxAcrossGatewayRoots).toHaveBeenCalledWith("alpha");
+    expect(report.found).toBe(true);
+    expect(report.openshellDriver).toBe("mxc");
+    expect(report.recordedRoute).toEqual({
+      provider: crossRootSandbox.provider,
+      model: crossRootSandbox.model,
+    });
+  });
+
   it("clears a stale stopped-container preflight after successful recovery", async () => {
     const getSandboxStatusPreflightImpl = vi
       .fn()

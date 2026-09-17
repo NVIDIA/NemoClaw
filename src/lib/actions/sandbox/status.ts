@@ -8,7 +8,6 @@ import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-
 import { getGatewayPresets } from "../../policy";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
-import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
   qualifyPortableAgentLifecycleAuthority,
@@ -71,7 +70,7 @@ function inspectHermesPortableStatus(
 }
 
 function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null {
-  const entry = findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+  const entry = registry.findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 
