@@ -127,11 +127,11 @@ describe("portable profile rootless runtime workflow", () => {
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);
     expect(job?.["timeout-minutes"]).toBe(45);
-    expect(job?.env?.E2E_HERMES_BASE_STORAGE_HOME).toBe(
+    expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
       "${{ runner.temp }}/nemoclaw-hermes-base-storage",
     );
-    expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
-      "${{ env.E2E_HERMES_BASE_STORAGE_HOME }}",
+    expect(liveStep?.env?.E2E_HERMES_BASE_STORAGE_HOME).toBe(
+      "${{ runner.temp }}/nemoclaw-hermes-base-storage",
     );
     expect(hermesBaseBuild).toContain("--file agents/hermes/Dockerfile.base");
     expect(hermesBaseBuild).toContain("--tag localhost/nemoclaw-hermes-base:portable-e2e");
