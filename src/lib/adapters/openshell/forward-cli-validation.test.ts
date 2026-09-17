@@ -94,6 +94,15 @@ describe("CLI OpenShell forward list parser", () => {
     expect(parseCliOpenShellForwardList("", noActiveForwards)).toEqual({ ok: true, rows: [] });
   });
 
+  it("accepts different dead forwards that reused one port", () => {
+    expect(
+      parseCliOpenShellForwardList(
+        `${listHeader}\nnemochow 127.0.0.1 18789 6236 dead\nnemoclaw-inbox 127.0.0.1 18789 81718 dead`,
+        "",
+      ),
+    ).toMatchObject({ ok: true });
+  });
+
   it.each([
     ["empty output", ""],
     ["missing header", "demo 127.0.0.1 18789 4312 running"],
