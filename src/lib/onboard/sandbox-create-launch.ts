@@ -120,8 +120,8 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   const managedBootstrapIdentity = managedStartupRootApplyRequest
     ? randomBytes(32).toString("hex")
     : null;
-  // Keep the raw profile and CA payload out of OpenShell's create argv; the
-  // host applies them only after the returned identity selects one exact runtime.
+  // Keep the raw profile and CA payload out of OpenShell's create argv and
+  // sandbox environment; apply them only after identity selects one exact runtime.
   const sandboxStartupCommand =
     managedStartupRootApplyRequest && managedBootstrapIdentity
       ? [

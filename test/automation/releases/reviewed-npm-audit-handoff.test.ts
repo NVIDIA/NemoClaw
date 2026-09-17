@@ -335,6 +335,9 @@ describe("npm audit handoff", () => {
         path.join(targetRoot, "scripts", "lib", "npm-audit-receipt.mts"),
         "throw new Error('candidate verifier executed');\n",
       );
+      const exceptionExpiry = new Date(Date.now() + 24 * 60 * 60 * 1_000)
+        .toISOString()
+        .slice(0, 10);
       fs.writeFileSync(
         exceptionFile,
         `${JSON.stringify({
@@ -344,7 +347,7 @@ describe("npm audit handoff", () => {
               advisory: acceptedAdvisory,
               compensatingControls: ["The vulnerable input is rejected before use."],
               decision: "temporary-risk-acceptance",
-              expires: "2026-09-16",
+              expires: exceptionExpiry,
               graph: "mcporter-runtime",
               installedVersion: "1.0.0",
               owner: "security-maintainers",

@@ -51,7 +51,7 @@ import {
 } from "./podman-cpu-lifecycle-helpers.ts";
 
 // Prove OpenShell-owned lifecycle for every standard runtime after retirement
-// of NemoClaw's provider-specific container controller.
+// of NemoClaw's provider-specific container controller, with Docker unavailable.
 const AGENTS = [
   { agent: "openclaw", sandboxName: "podman-openclaw" },
   { agent: "hermes", sandboxName: "podman-hermes" },
