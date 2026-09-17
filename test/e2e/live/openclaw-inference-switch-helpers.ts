@@ -61,6 +61,12 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
   return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
 }
 
+/** Record zero only when Anthropic tools are absent or an empty array. */
+export function anthropicToolCount(tools: unknown): number | null {
+  if (tools === undefined) return 0;
+  return Array.isArray(tools) ? tools.length : null;
+}
+
 export interface OpenClawGatewayModelRunResult {
   model: string;
   provider: string;

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   agentReplyContainsToken,
+  anthropicToolCount,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
@@ -106,6 +107,16 @@ describe("openclaw-inference-switch agent reply matching", () => {
     expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
     expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
     expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
+  });
+});
+
+describe("openclaw-inference-switch Anthropic tool evidence", () => {
+  it("distinguishes tool-free requests from malformed tool metadata", () => {
+    expect(anthropicToolCount(undefined)).toBe(0);
+    expect(anthropicToolCount([])).toBe(0);
+    expect(anthropicToolCount([{ name: "shell" }])).toBe(1);
+    expect(anthropicToolCount({ name: "shell" })).toBeNull();
+    expect(anthropicToolCount("invalid")).toBeNull();
   });
 });
 

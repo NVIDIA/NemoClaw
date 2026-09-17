@@ -50,6 +50,7 @@ import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
+  anthropicToolCount,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
@@ -148,7 +149,7 @@ interface MockAnthropicRequest {
   model: string | null;
   path: string;
   stream: boolean;
-  toolCount: number;
+  toolCount: number | null;
 }
 
 function proveMockBaselineAuthentication(
@@ -384,7 +385,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
         model: typeof payload.model === "string" ? payload.model : null,
         path: url.pathname,
         stream: payload.stream === true,
-        toolCount: Array.isArray(payload.tools) ? payload.tools.length : 0,
+        toolCount: anthropicToolCount(payload.tools),
       });
       if (payload.stream === true) {
         const message = {
