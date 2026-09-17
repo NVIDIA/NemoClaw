@@ -10,7 +10,7 @@ import {
   expectTrustedPrivateStatusResult,
   statusHarnessConfig,
   TRUSTED_PRIVATE_STATUS_HARNESS,
-} from "./mcp-bridge/status-resolution-test-helpers.js";
+} from "../../../../test/helpers/mcp-bridge-status-resolution";
 import {
   createAbortAwareLimiter,
   createControlledHarnessProcess,
