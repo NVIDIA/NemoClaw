@@ -98,6 +98,123 @@ describe("Hermes Portable connect recovery errors", () => {
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
+  it("commits prepared forwards only after remote inference is verified", async () => {
+    const release = vi.fn();
+    const rollback = vi.fn(async () => undefined);
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        provider: "compatible-endpoint",
+        model: "descriptor/model",
+        endpointUrl: "https://example.test/v1/chat/completions",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: descriptor/model\n",
+      inferenceProbeResponses: ["OK 200"],
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      preparedForwardRecovery: { release, rollback },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareHermesPortableLaunchForwardsSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareHermesPortableLaunchForwardsSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.sandboxRunBufferedSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(rollback).not.toHaveBeenCalled();
+
+    const publicationDeps = harness.publishLaunchReadinessSpy.mock.calls[0]?.[1] as {
+      inferenceProbe: (
+        sandboxName: string,
+        agent: { name: string },
+        gatewayName: string,
+      ) => Promise<unknown>;
+    };
+    const routeProbeCount = harness.sandboxRunBufferedSpy.mock.calls.length;
+    await expect(
+      publicationDeps.inferenceProbe("alpha", { name: "hermes" }, "nemoclaw"),
+    ).resolves.toMatchObject({ healthy: true });
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledTimes(routeProbeCount);
+  });
+
+  it("rolls prepared forwards back when remote inference verification fails", async () => {
+    const release = vi.fn();
+    const rollback = vi.fn(async () => undefined);
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        provider: "compatible-endpoint",
+        model: "descriptor/model",
+        endpointUrl: "https://example.test/v1/chat/completions",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: descriptor/model\n",
+      inferenceProbeResponses: ["BROKEN 503"],
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      preparedForwardRecovery: { release, rollback },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(release).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not hide unproved forward restoration behind a remote inference failure", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        provider: "compatible-endpoint",
+        model: "descriptor/model",
+        endpointUrl: "https://example.test/v1/chat/completions",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: descriptor/model\n",
+      inferenceProbeResponses: ["BROKEN 503"],
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      preparedForwardRecovery: {
+        release: vi.fn(),
+        rollback: vi.fn(async () => {
+          throw new Error("rollback diagnostic canary");
+        }),
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("could not prove that the recovered host forwards returned");
+    expect(output).not.toContain("rollback diagnostic canary");
+    expect(output).not.toContain("Hermes portable inference authority");
+  });
+
   it.each([
     [
       "authority drift",
