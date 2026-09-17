@@ -51,7 +51,7 @@ describe("rebuild post-restore phase", () => {
       return { status: 0, stdout: "", stderr: "" };
     });
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
-      () => {
+      async () => {
         order.push("reconcile");
       },
     );
@@ -63,14 +63,16 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(
       rebuildConfigHash,
       "refreshMutableOpenClawConfigHashAfterPostRestoreWrites",
-    ).mockImplementation(() => {
+    ).mockImplementation(async () => {
       order.push("config-hash");
       return true;
     });
-    vi.spyOn(rebuildConfigHash, "verifyFinalMutableOpenClawConfigHash").mockImplementation(() => {
-      order.push("config-hash-final");
-      return true;
-    });
+    vi.spyOn(rebuildConfigHash, "verifyFinalMutableOpenClawConfigHash").mockImplementation(
+      async () => {
+        order.push("config-hash-final");
+        return true;
+      },
+    );
     vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(() => {
       order.push("permissions");
       return {
@@ -114,7 +116,7 @@ describe("rebuild post-restore phase", () => {
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-    vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+    vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: null,
       isStale: false,
@@ -123,7 +125,7 @@ describe("rebuild post-restore phase", () => {
       unavailableReason: "no-expected-version",
     });
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
-      () => {
+      async () => {
         order.push("host-forward");
         return true;
       },
@@ -395,18 +397,18 @@ describe("rebuild post-restore phase", () => {
     });
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockImplementation(() => {
+    ).mockImplementation(async () => {
       configHashValid = true;
       return true;
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         configHashValid = false;
         return true;
       },
     );
     vi.mocked(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).mockImplementation(
-      () => configHashValid,
+      async () => configHashValid,
     );
     const args = input();
 
@@ -449,7 +451,7 @@ describe("rebuild post-restore phase", () => {
       displayName: "Hermes Agent",
       expectedVersion: "0.20.6",
     } as never);
-    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+    vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
       sandboxVersion: "0.19.0",
       expectedVersion: "0.20.6",
       isStale: true,
@@ -501,7 +503,7 @@ describe("rebuild post-restore phase", () => {
       displayName: "Hermes Agent",
       expectedVersion: "0.20.6",
     } as never);
-    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+    vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
       sandboxVersion: "0.20.6",
       expectedVersion: "0.20.6",
       isStale: false,
@@ -590,7 +592,7 @@ describe("rebuild post-restore phase", () => {
       return { pid: 77, start_time: 903, drain_token: "restore-token" };
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         attemptDispatch();
         return true;
       },
@@ -852,24 +854,9 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("gateway-token --quiet");
   });
 
-  it("does not print the Hermes API token notice when post-restore verification is incomplete (#7175)", async () => {
-    agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
-      "unverified",
-    );
-    const args = input();
-
-    await runRebuildPostRestorePhase(args);
-
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
-    expect(output).not.toContain("gateway-token --quiet");
-    expect(args.bail).toHaveBeenCalledWith("Hermes post-restore verification failed for 'alpha'.");
-  });
-
   it("still prints the Hermes API token notice when a non-fatal post-restore step is unverified (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -883,7 +870,7 @@ describe("rebuild post-restore phase", () => {
 
   it("does not print the Hermes API token notice when prepared backup recovery is incomplete (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
     args.preparedBackupRecovery = true;
 
@@ -897,21 +884,6 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("prints the Hermes API token notice after gateway recovery (#7175)", async () => {
-    agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
-      "recovered",
-    );
-    const args = input();
-
-    await runRebuildPostRestorePhase(args);
-
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(args.bail).not.toHaveBeenCalled();
-    expect(output).toContain("Hermes gateway recovered after state restore");
-    expect(output).toContain("Hermes API bearer token changed during rebuild");
-  });
-
   it("reconciles the registry before verifying host forwarding (#8283)", async () => {
     const observed: string[] = [];
     vi.mocked(registry.updateSandbox).mockImplementation(() => {
@@ -919,7 +891,7 @@ describe("rebuild post-restore phase", () => {
       return true;
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         observed.push("forward");
         return true;
       },
@@ -933,7 +905,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("names the connect recovery command when host forwarding is unverified (#8283)", async () => {
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -987,13 +959,13 @@ describe("rebuild post-restore phase", () => {
   it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockReturnValue(false);
+    ).mockResolvedValue(false);
     vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockReturnValue({
       applied: true,
       verified: false,
       errors: ["config is unreadable"],
     });
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
     const args = {
       ...input(),

@@ -20,7 +20,6 @@ import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 // scoping its ps snapshot to PIDs created by this test. This guards all gateway
 // argv forms without risking unrelated developer or CI processes.
 describe("GATEWAY_STOP_SCRIPT (executed)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const cp = require("node:child_process");
   const children: Array<{ pid?: number }> = [];
   const identityDirs: string[] = [];

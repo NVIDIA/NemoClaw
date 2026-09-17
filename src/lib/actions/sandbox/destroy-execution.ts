@@ -5,9 +5,12 @@ import { isDeepStrictEqual } from "node:util";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
+import type { OpenShellSandboxDeleteSubmission } from "../../adapters/openshell/sandbox-lifecycle";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
-import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
   preparePortableDemoSandboxDestroyAuthority,
@@ -67,6 +70,7 @@ type SandboxDestroyExecutionInput = {
   force: boolean;
   getSandbox?: (sandboxName: string) => SandboxEntry | null;
   listSandboxes?: () => { sandboxes: SandboxEntry[] };
+  deleteGatewayName: string;
   runOpenshell: DestroyRunOpenshell;
   mcpRuntimeSelection?: McpDestroyPreparation["runtimeSelection"];
   sandbox: SandboxEntry | null;
@@ -79,7 +83,7 @@ type SandboxDestroyExecutionInput = {
   expectedContainerIdentityFingerprint?: string;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
-  verifyForwardPortsReleased?: () => boolean;
+  verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -94,7 +98,7 @@ export type SandboxDestroyExecutionResult =
       ok: true;
       alreadyGone: boolean;
       deleteOutput: string;
-      deleteResult: ReturnType<DestroyRunOpenshell>;
+      deleteResult: OpenShellSandboxDeleteSubmission;
       detachOutcome: DetachSandboxProvidersResult;
       forcedLocalCleanup: boolean;
       runtimeSelection?: OpenShellRuntimeSelection;
@@ -120,10 +124,6 @@ function emptyMcpDestroyPreparation(
 ): McpDestroyPreparation {
   return {
     entries: [],
-    detachedProviderEntries: [],
-    scrubbedAdapterEntries: [],
-    destroyAlreadyPrepared: false,
-    destroyAlreadyPending: false,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };
 }
@@ -135,7 +135,7 @@ async function prepareMcpDestroy(
   force: boolean,
   runtimeSelection?: McpDestroyPreparation["runtimeSelection"],
 ): Promise<McpDestroyPreparation> {
-  if (Object.keys(sandbox?.mcp?.bridges ?? {}).length === 0) {
+  if (!sandbox) {
     return emptyMcpDestroyPreparation(runtimeSelection);
   }
   const preparation = sandboxConfirmedAbsent
@@ -145,13 +145,9 @@ async function prepareMcpDestroy(
       })
     : await prepareMcpBridgesForDestroy(sandboxName, {
         force,
+        sandbox,
         ...(runtimeSelection ? { runtimeSelection } : {}),
       });
-  if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
-    console.warn(
-      `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
-    );
-  }
   return preparation;
 }
 
@@ -185,24 +181,14 @@ async function finalizeMcpDestroy(
   preparation: McpDestroyPreparation,
   force: boolean,
 ): Promise<void> {
-  try {
-    await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
-  } catch (error) {
-    const detail = redactDestroyError(error);
-    console.error(
-      `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
-    );
-    console.error(
-      "  MCP cleanup state was preserved. Re-run destroy to finish without requiring the host MCP secret environment variable.",
-    );
-    throw error;
-  }
+  await finalizeMcpBridgesAfterSandboxDelete(sandboxName, preparation, { force });
 }
 
 export async function executeSandboxDestroy({
   force,
   getSandbox,
   listSandboxes,
+  deleteGatewayName,
   runOpenshell,
   mcpRuntimeSelection,
   sandbox,
@@ -311,9 +297,11 @@ export async function executeSandboxDestroy({
           };
         }
         try {
-          const actual = sandbox
-            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
-            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          const captureBySandbox = identityProvider.cleanup.captureDestroyIdentity;
+          const actual =
+            sandbox?.openshellDriver?.trim() && captureBySandbox
+              ? captureBySandbox({ sandbox, sandboxName })
+              : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
           if (!actual) {
             return {
               status: "probe-failed",
@@ -527,7 +515,7 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const detachProviders = (): DetachSandboxProvidersResult =>
+    const detachProviders = (): Promise<DetachSandboxProvidersResult> =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell: selectedRunOpenshell,
         redact,
@@ -545,8 +533,11 @@ export async function executeSandboxDestroy({
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
       : runtimeProvider?.cleanup.supported === true && sandbox
-        ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
-        : detachProviders();
+        ? await runtimeProvider.cleanup.prepareDestroy(
+            { sandbox, sandboxName },
+            { detachProviders },
+          )
+        : await detachProviders();
     // The final identity proof runs immediately before OpenShell delete. A
     // runtime administrator remains a trusted host authority; this closes the
     // multi-step window without claiming a cross-runtime transaction.
@@ -580,37 +571,63 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const deleteGatewayName =
-      pendingCreateIdentity?.gatewayName ?? destroyRuntimeSelection?.gatewayName;
-    const deleteArgs = deleteGatewayName
-      ? ["sandbox", "delete", "-g", deleteGatewayName, sandboxName]
-      : ["sandbox", "delete", sandboxName];
+    const effectiveDeleteGatewayName =
+      pendingCreateIdentity?.gatewayName ??
+      destroyRuntimeSelection?.gatewayName ??
+      deleteGatewayName;
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could
     // target a same-name replacement created after that observation.
-    const deleteResult: ReturnType<DestroyRunOpenshell> = sandboxConfirmedAbsent
-      ? { status: 0, stdout: "", stderr: "" }
-      : selectedRunOpenshell(deleteArgs, {
-          ignoreError: true,
-          killSignal: "SIGKILL",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+    const deleteResult: OpenShellSandboxDeleteSubmission = sandboxConfirmedAbsent
+      ? { kind: "absent", diagnostic: "", exitCode: 1 }
+      : await createCliOpenShellSandboxLifecycleFromRunner(runOpenshell).deleteSandbox({
+          sandboxName,
+          target: { kind: "named", gatewayName: effectiveDeleteGatewayName },
+          ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
+          timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
         });
-    const {
-      output: capturedDeleteOutput,
-      alreadyGone: deleteReportedAlreadyGone,
-      gatewayUnreachable,
-      timedOut,
-    } = getSandboxDeleteOutcome(deleteResult);
-    const alreadyGone = sandboxConfirmedAbsent || deleteReportedAlreadyGone;
-    const deleteOutput = timedOut
-      ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
-      : capturedDeleteOutput;
+    let alreadyGone = sandboxConfirmedAbsent || deleteResult.kind === "absent";
+    const gatewayUnreachable =
+      deleteResult.kind === "failed" && deleteResult.error.kind === "transport";
+    const timedOut = deleteResult.kind === "failed" && deleteResult.error.kind === "timeout";
+    const deleteOutput =
+      deleteResult.kind === "failed"
+        ? deleteResult.diagnostic || deleteResult.error.message
+        : deleteResult.diagnostic;
+    if (
+      !alreadyGone &&
+      (deleteResult.kind === "accepted" ||
+        (deleteResult.kind === "failed" && deleteResult.ambiguous))
+    ) {
+      const observed = await createCliOpenShellSandboxObserverFromRunner(
+        selectedRunOpenshell,
+      ).listSandboxes({
+        target: { kind: "named", gatewayName: effectiveDeleteGatewayName },
+      });
+      alreadyGone =
+        observed.ok &&
+        !observed.value.sandboxes.some((candidate) => candidate.name === sandboxName);
+      if (!alreadyGone && deleteResult.kind === "accepted") {
+        const mcpRecoveryFailure = await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation);
+        return {
+          ok: false as const,
+          deleteOutput: `OpenShell accepted deletion of sandbox '${sandboxName}', but did not confirm its absence.`,
+          exitCode: 1,
+          gatewayUnreachable: !observed.ok && observed.error.kind === "transport",
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          mcpRecoveryFailure,
+        };
+      }
+    }
+    const deleteFailed = deleteResult.kind === "failed" && !alreadyGone;
     // Exact MCP, host-local inference, and Portable lifecycle ownership must
     // survive an unconfirmed remote deletion. Force may discard only a local
     // record that retains none of those cleanup authorities.
     const forcedLocalCleanup =
-      deleteResult.status !== 0 &&
+      deleteFailed &&
+      deleteResult.kind === "failed" &&
+      !deleteResult.ambiguous &&
       !alreadyGone &&
       gatewayUnreachable &&
       !timedOut &&
@@ -619,14 +636,14 @@ export async function executeSandboxDestroy({
       !hasHostLocalInferenceOwnership &&
       portableContainerAuthority === undefined;
 
-    if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
+    if (deleteFailed && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation);
       return {
         ok: false as const,
         deleteOutput,
-        exitCode: deleteResult.status || 1,
+        exitCode: deleteResult.exitCode || 1,
         gatewayUnreachable,
         ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
@@ -641,7 +658,7 @@ export async function executeSandboxDestroy({
     if (!forcedLocalCleanup) {
       let portsReleased = false;
       try {
-        portsReleased = verifyForwardPortsReleased();
+        portsReleased = await verifyForwardPortsReleased();
       } catch {
         portsReleased = false;
       }

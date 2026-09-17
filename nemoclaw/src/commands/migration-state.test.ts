@@ -200,8 +200,8 @@ describe("commands/migration-state", () => {
       expect(result.configPath).toBeNull();
     });
 
-    it("detects existing state directory", () => {
-      const env = { HOME: "/home/user" };
+    it.each([undefined, "", "   ", "/home/user"])("detects state for HOME=%j", (home) => {
+      const env = { HOME: home, USERPROFILE: "/home/user" };
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
       const result = detectHostOpenClaw(env);

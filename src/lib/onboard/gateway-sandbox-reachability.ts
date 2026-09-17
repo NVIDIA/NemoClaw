@@ -14,6 +14,7 @@ import os from "node:os";
 
 import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
+import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import { parseDockerDaemonObservation } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
 import {
@@ -558,6 +559,7 @@ export function formatSandboxBridgeUnreachableMessage(
 }
 
 interface SandboxBridgeVerifierOptions {
+  output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   skip?: boolean;
   port?: number;
   reachabilityImpl?: (options?: {
@@ -593,8 +595,11 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   exitOnFailure: boolean,
   options: SandboxBridgeVerifierOptions = {},
 ): Promise<void> {
+  const log = options.output?.log ?? console.log;
+  const warn = options.output?.warn ?? console.warn;
+  const printError = options.output?.error ?? console.error;
   if (options.skip) {
-    console.log(
+    log(
       "  Docker-driver GPU host networking active; skipping sandbox bridge gateway reachability probe.",
     );
     return;
@@ -617,13 +622,13 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
     attempt <= retryAttempts && isRetriableHostGatewayFailure(reach);
     attempt += 1
   ) {
-    console.log(
+    log(
       `  OpenShell gateway reachability probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
     );
     await sleep(retryDelayMs);
     reach = await reachability({ port });
     if (reach.ok) {
-      console.log(`  ✓ OpenShell gateway reachable on attempt ${attempt}/${retryAttempts}`);
+      log(`  ✓ OpenShell gateway reachable on attempt ${attempt}/${retryAttempts}`);
       return;
     }
   }
@@ -639,11 +644,11 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
         reach.subnet && reach.gatewayIp
           ? `allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`
           : `allow sandbox bridge traffic to port ${port}/tcp`;
-      console.log(`  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): ${ruleDescription}`);
+      log(`  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): ${ruleDescription}`);
       reach = await reachability({ port });
       if (reach.ok) return;
     } else if (!SILENT_UFW_AUTO_APPLY_REASONS.has(autoApplyResult.reason)) {
-      console.warn(
+      warn(
         warnLine(
           `NEMOCLAW_AUTO_FIX_FIREWALL=1 set but could not auto-apply UFW rule (${autoApplyResult.reason}${autoApplyResult.detail ? `: ${autoApplyResult.detail}` : ""}); falling back to manual instructions.`,
         ),
@@ -653,11 +658,11 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
 
   const message = formatSandboxBridgeUnreachableMessage(reach, port);
   if (reach.reason === "probe_unavailable") {
-    console.warn(message);
+    warn(message);
     return;
   }
 
-  console.error(message);
+  printError(message);
   if (exitOnFailure) {
     process.exit(1);
   }

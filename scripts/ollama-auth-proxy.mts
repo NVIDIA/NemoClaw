@@ -342,7 +342,7 @@ function assertBackendBoundToLoopback(port: number): void {
 
 function buildProxyServer(token: string, backendUrl: URL): http.Server {
   const expectedBuf = Buffer.from(`Bearer ${token}`);
-  return http.createServer((clientReq, clientRes) => {
+  const server = http.createServer((clientReq, clientRes) => {
     // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
     // so the OpenShell sandbox container can reach it via the docker bridge —
     // which also means anything else with network reach to the host could,
@@ -363,6 +363,33 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
     if (!tokenMatch) {
       clientRes.writeHead(401, { "Content-Type": "text/plain" });
       clientRes.end("Unauthorized");
+      return;
+    }
+
+    if (clientReq.url === "/_nemoclaw/proxy-config") {
+      if (clientReq.method !== "GET") {
+        clientRes.writeHead(405, { Allow: "GET" });
+        clientRes.end();
+        return;
+      }
+      const listener = server.address();
+      if (Buffer.byteLength(backendUrl.origin) > 512) {
+        clientRes.writeHead(503);
+        clientRes.end();
+        return;
+      }
+      clientRes.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      clientRes.end(
+        JSON.stringify({
+          schemaVersion: 1,
+          pid: process.pid,
+          listener:
+            typeof listener === "object" && listener !== null
+              ? { address: listener.address, port: listener.port }
+              : null,
+          backendOrigin: backendUrl.origin,
+        }),
+      );
       return;
     }
 
@@ -407,6 +434,7 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
 
     clientReq.pipe(proxyReq);
   });
+  return server;
 }
 
 function shouldProbeBackendHostname(hostname: string): boolean {

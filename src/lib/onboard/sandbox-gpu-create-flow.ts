@@ -18,6 +18,7 @@ import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -72,6 +73,7 @@ import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 export {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -455,6 +457,7 @@ export async function runSandboxGpuCreateFlow(
               input.sandboxName,
               failure,
               {
+                gatewayName: input.gatewayName,
                 runOpenshell: deps.runOpenshell,
                 sleep: deps.sleep,
               },

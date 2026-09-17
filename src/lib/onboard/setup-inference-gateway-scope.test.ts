@@ -142,43 +142,15 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("registers the OpenAI profile before a routed resume provider mutation (#10155)", async () => {
+  it("binds a routed resume provider mutation to the selected gateway", async () => {
     const events: string[] = [];
-    const results = [
-      {
-        status: 1,
-        stdout: "",
-        stderr: "Error: status: 'NotFound', message: \"provider profile not found\"",
-      },
-      { status: 0, stdout: "", stderr: "" },
-      {
-        status: 0,
-        stdout: JSON.stringify({
-          id: "openai",
-          credentials: [],
-          endpoints: [],
-          binaries: [],
-          inference_capable: true,
-        }),
-        stderr: "",
-      },
-    ];
-    const run = vi.fn((args: string[]) => {
-      events.push(args.join(" "));
-      return results.shift()!;
-    });
     const upsert = vi.fn(async () => {
       events.push("provider mutation");
       return { ok: true };
     });
     const reupsertRoutedProvider = createRoutedResumeProviderUpsert({
       upsertProvider: upsert,
-      runGatewayOpenshell: createGatewayScopedOpenshellRunner(run, GATEWAY),
       hydrateCredentialEnv: () => "test-secret",
-      error: vi.fn(),
-      exitProcess: (code): never => {
-        throw new Error(`exit ${code}`);
-      },
     });
 
     expect(
@@ -195,12 +167,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       status: undefined,
     });
 
-    expect(events[0]).toBe(`provider profile -g ${GATEWAY} export openai --output json`);
-    expect(events[1]).toMatch(
-      new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
-    );
-    expect(events[2]).toBe(`provider profile -g ${GATEWAY} export openai --output json`);
-    expect(events[3]).toBe("provider mutation");
+    expect(events).toEqual(["provider mutation"]);
     expect(upsert).toHaveBeenCalledWith(
       "nvidia-router",
       "openai",
@@ -211,62 +178,49 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("blocks a routed resume provider mutation when OpenAI profile import fails (#10155)", async () => {
-    const sensitiveDiagnostic = "unauthorized nvapi-TEST-NOT-A-REAL-VALUE";
-    const results = [
-      {
-        status: 1,
-        stdout: "",
-        stderr: "Error: status: 'NotFound', message: \"provider profile not found\"",
-      },
-      { status: 13, stdout: "", stderr: sensitiveDiagnostic },
-    ];
-    const run = vi.fn(() => results.shift()!);
-    const upsert = vi.fn(async () => ({ ok: true }));
-    const error = vi.fn();
-    const reupsertRoutedProvider = createRoutedResumeProviderUpsert({
-      upsertProvider: upsert,
-      runGatewayOpenshell: createGatewayScopedOpenshellRunner(run, GATEWAY),
-      hydrateCredentialEnv: () => "test-secret",
-      error,
-      exitProcess: (code): never => {
-        throw new Error(`exit ${code}`);
-      },
-    });
-
-    await expect(
-      reupsertRoutedProvider(
-        GATEWAY,
-        "nvidia-router",
-        "http://host.openshell.internal:4000/v1",
-        "NVIDIA_INFERENCE_API_KEY",
-      ),
-    ).rejects.toThrow("exit 1");
-
-    expect(upsert).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalledTimes(2);
-    const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain("OpenShell could not import");
-    expect(output).toContain("available and authorized");
-    expect(output).not.toContain(sensitiveDiagnostic);
-  });
-
-  it("selects the managed gateway for follow-up commands and fails closed on error", () => {
-    const run = vi.fn().mockReturnValueOnce({ status: 0 }).mockReturnValueOnce({ status: 17 });
+  it("selects the managed gateway for follow-up commands and fails closed on error", async () => {
+    const selectGateway = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, state: "completed" })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: { kind: "command", reason: "failed", message: "Denied" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        ambiguous: false,
+        unsupported: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The named gateway is not registered.",
+        },
+      });
+    const lifecycle = { selectGateway };
     const error = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     });
 
-    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).not.toThrow();
-    expect(() => selectGatewayForFollowupOrExit(GATEWAY, run, error, exitProcess)).toThrow(
-      "exit 17",
-    );
-    expect(run).toHaveBeenNthCalledWith(1, ["gateway", "select", GATEWAY], {
-      ignoreError: true,
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).resolves.toBeUndefined();
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    await expect(
+      selectGatewayForFollowupOrExit(GATEWAY, lifecycle, error, exitProcess),
+    ).rejects.toThrow("exit 1");
+    expect(selectGateway).toHaveBeenNthCalledWith(1, {
+      target: { kind: "named", gatewayName: GATEWAY },
     });
-    expect(run).toHaveBeenNthCalledWith(2, ["gateway", "select", GATEWAY], {
-      ignoreError: true,
+    expect(selectGateway).toHaveBeenNthCalledWith(2, {
+      target: { kind: "named", gatewayName: GATEWAY },
+    });
+    expect(selectGateway).toHaveBeenNthCalledWith(3, {
+      target: { kind: "named", gatewayName: GATEWAY },
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining("No follow-up operations"));
   });

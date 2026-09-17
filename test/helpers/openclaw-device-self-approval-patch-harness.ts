@@ -784,14 +784,10 @@ export function writeFixtureDist(dist: string): void {
 }
 
 export function runPatch(dist: string, audit = false) {
-  return spawnSync(
-    process.execPath,
-    [PATCH_SCRIPT, ...(audit ? ["--audit"] : []), dist],
-    {
-      encoding: "utf8",
-      timeout: 10_000,
-    },
-  );
+  return spawnSync(process.execPath, [PATCH_SCRIPT, ...(audit ? ["--audit"] : []), dist], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
 }
 
 export function runFixture<T>(source: string, expression: string): T {

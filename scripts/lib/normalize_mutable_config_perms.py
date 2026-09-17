@@ -9,6 +9,7 @@ from __future__ import annotations
 import array
 import grp
 import hashlib
+import importlib.util
 import os
 import pwd
 import secrets
@@ -28,7 +29,6 @@ BASELINE_NAME = "openclaw.json.nemoclaw-baseline"
 CONFIG_NAME = "openclaw.json"
 HASH_NAME = ".config-hash"
 LAST_GOOD_NAME = "openclaw.json.last-good"
-LEGACY_UPDATE_CHECK_NAME = "update-check.json"
 
 JSON5_VALIDATOR = r"""
 const fs = require("fs");
@@ -50,6 +50,18 @@ try {
 
 class UnsafeTree(Exception):
     """The mutable tree changed identity or violated its ownership contract."""
+
+
+def runtime_config_modes() -> tuple[int, int]:
+    spec = importlib.util.spec_from_file_location(
+        "nemoclaw_openclaw_config_guard",
+        "/usr/local/lib/nemoclaw/openclaw-config-guard.py",
+    )
+    guard = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = guard
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(guard)
+    return guard.mutable_config_modes(guard._production_identity())
 
 
 def inode_key(metadata: os.stat_result) -> tuple[int, int, int]:
@@ -120,10 +132,14 @@ def set_mode(child_fd: int, mode: int, *, required: bool = False) -> None:
             raise
 
 
-def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
+def normalize_dir(
+    directory_fd: int, *, top_level: bool = False, modes: tuple[int, int]
+) -> None:
     with os.scandir(directory_fd) as entries:
         names = sorted(entry.name for entry in entries)
     for name in names:
+        if modes[0] == 0o700 and name not in (*FIXED_FILES, BASELINE_NAME):
+            continue
         try:
             before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         except OSError as exc:
@@ -137,7 +153,7 @@ def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
                 directory_fd, name, directory_flags(), before
             )
             try:
-                normalize_dir(child_fd)
+                normalize_dir(child_fd, modes=modes)
                 current_mode = stat.S_IMODE(os.fstat(child_fd).st_mode)
                 set_mode(child_fd, (current_mode | 0o2070) & ~0o007)
                 verify_still_linked(directory_fd, name, opened)
@@ -163,7 +179,7 @@ def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
                     or opened.st_nlink != 1
                 ):
                     raise UnsafeTree()
-                set_mode(child_fd, 0o660, required=True)
+                set_mode(child_fd, modes[1], required=True)
             elif top_level and name == BASELINE_NAME:
                 if opened.st_uid == os.geteuid():
                     # Root promotes multiply-linked content through a fresh
@@ -457,6 +473,8 @@ def config_dir_matches(
     config_dir: str,
     expected_uid: int,
     expected_gid: int,
+    *,
+    modes: tuple[int, int],
 ) -> bool:
     opened = os.fstat(root_fd)
     try:
@@ -470,8 +488,8 @@ def config_dir_matches(
         and opened.st_gid == expected_gid
         and current.st_uid == expected_uid
         and current.st_gid == expected_gid
-        and stat.S_IMODE(opened.st_mode) == 0o2770
-        and stat.S_IMODE(current.st_mode) == 0o2770
+        and stat.S_IMODE(opened.st_mode) == modes[0]
+        and stat.S_IMODE(current.st_mode) == modes[0]
     )
 
 
@@ -571,6 +589,8 @@ def open_baseline_capture_source(
     expected_gid: int,
     node_binary: str,
     json5_module: str,
+    *,
+    modes: tuple[int, int],
 ) -> int | None:
     root_metadata = os.fstat(root_fd)
     existing_baseline: os.stat_result | None = None
@@ -632,7 +652,7 @@ def open_baseline_capture_source(
         or before.st_dev != root_metadata.st_dev
         or before.st_uid != expected_uid
         or before.st_gid != expected_gid
-        or stat.S_IMODE(before.st_mode) != 0o660
+        or stat.S_IMODE(before.st_mode) != modes[1]
         or before.st_nlink != 1
         or before.st_size > MAX_BASELINE_BYTES
     ):
@@ -666,7 +686,7 @@ def open_baseline_capture_source(
             stable_file_key(final_source) != stable_file_key(opened)
             or stable_file_key(current_source) != stable_file_key(opened)
             or not config_dir_matches(
-                root_fd, config_dir, expected_uid, expected_gid
+                root_fd, config_dir, expected_uid, expected_gid, modes=modes
             )
         ):
             raise UnsafeTree()
@@ -810,106 +830,13 @@ def cleanup_staged_file(
         os.close(temp_fd)
 
 
-def remove_legacy_update_check(config_dir: str) -> int:
-    """Remove only a stable regular legacy update-check cache file."""
-
-    parent_fd = -1
-    root_fd = -1
-    target_fd = -1
-    try:
-        (
-            parent_fd,
-            parent_metadata,
-            root_fd,
-            root_metadata,
-            config_name,
-        ) = open_config_binding(config_dir)
-        try:
-            before = os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
-                dir_fd=root_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            return 0
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_dev != root_metadata.st_dev
-            or before.st_nlink != 1
-            or before.st_size > MAX_BASELINE_BYTES
-        ):
-            raise UnsafeTree()
-
-        target_fd, opened = open_pinned(
-            root_fd, LEGACY_UPDATE_CHECK_NAME, file_flags(), before
-        )
-        if (
-            stable_file_key(opened) != stable_file_key(before)
-            or opened.st_size > MAX_BASELINE_BYTES
-        ):
-            raise UnsafeTree()
-        remaining = opened.st_size
-        while remaining:
-            chunk = os.read(target_fd, min(1024 * 1024, remaining))
-            if not chunk:
-                raise UnsafeTree()
-            remaining -= len(chunk)
-        if os.read(target_fd, 1):
-            raise UnsafeTree()
-
-        normalized = os.path.normpath(config_dir)
-        current_parent = os.stat(
-            os.path.dirname(normalized), follow_symlinks=False
-        )
-        current_root = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
-        current_target = os.stat(
-            LEGACY_UPDATE_CHECK_NAME,
-            dir_fd=root_fd,
-            follow_symlinks=False,
-        )
-        if (
-            inode_key(current_parent) != inode_key(parent_metadata)
-            or inode_key(current_root) != inode_key(root_metadata)
-            or stable_file_key(os.fstat(target_fd)) != stable_file_key(opened)
-            or stable_file_key(current_target) != stable_file_key(opened)
-        ):
-            raise UnsafeTree()
-
-        os.unlink(LEGACY_UPDATE_CHECK_NAME, dir_fd=root_fd)
-        os.fsync(root_fd)
-
-        try:
-            os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
-                dir_fd=root_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            pass
-        else:
-            raise UnsafeTree()
-        print(
-            f"[migration] Removed legacy {config_dir}/{LEGACY_UPDATE_CHECK_NAME} "
-            "before the OpenClaw startup checkpoint",
-            file=sys.stderr,
-        )
-        return 0
-    except (OSError, UnsafeTree):
-        return 1
-    finally:
-        if target_fd >= 0:
-            os.close(target_fd)
-        if root_fd >= 0:
-            os.close(root_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
-
-
 def recover_empty_config(
     root_fd: int,
     config_dir: str,
     expected_uid: int,
     expected_gid: int,
+    *,
+    modes: tuple[int, int],
 ) -> None:
     root_metadata = os.fstat(root_fd)
     active = read_stable_content(
@@ -918,7 +845,7 @@ def recover_empty_config(
         root_metadata,
         (expected_uid,),
         expected_gid,
-        expected_mode=0o660,
+        expected_mode=modes[1],
     )
     if active is None or active[0].strip():
         return
@@ -974,7 +901,7 @@ def recover_empty_config(
             source_content,
             expected_uid,
             expected_gid,
-            0o660,
+            modes[1],
         )
         digest = hashlib.sha256(source_content).hexdigest()
         hash_content = f"{digest}  {CONFIG_NAME}\n".encode("ascii")
@@ -984,7 +911,7 @@ def recover_empty_config(
             hash_content,
             expected_uid,
             expected_gid,
-            0o660,
+            modes[1],
         )
 
         current_active = os.stat(
@@ -1001,7 +928,7 @@ def recover_empty_config(
             or inode_key(current_config_temp) != config_temp_identity
             or inode_key(current_hash_temp) != hash_temp_identity
             or not config_dir_matches(
-                root_fd, config_dir, expected_uid, expected_gid
+                root_fd, config_dir, expected_uid, expected_gid, modes=modes
             )
         ):
             raise UnsafeTree()
@@ -1021,7 +948,7 @@ def recover_empty_config(
         )
         hash_temp_name = None
         os.fsync(root_fd)
-        verify_fixed_files(root_fd, expected_uid, expected_gid)
+        verify_fixed_files(root_fd, expected_uid, expected_gid, expected_mode=modes[1])
         installed_config = os.stat(
             CONFIG_NAME, dir_fd=root_fd, follow_symlinks=False
         )
@@ -1032,7 +959,7 @@ def recover_empty_config(
             inode_key(installed_config) != inode_key(os.fstat(config_temp_fd))
             or inode_key(installed_hash) != inode_key(os.fstat(hash_temp_fd))
             or not config_dir_matches(
-                root_fd, config_dir, expected_uid, expected_gid
+                root_fd, config_dir, expected_uid, expected_gid, modes=modes
             )
         ):
             raise UnsafeTree()
@@ -1065,6 +992,7 @@ def normalize_owner_tree(
     recover_config: bool = False,
     node_binary: str = "",
     json5_module: str = "",
+    modes: tuple[int, int],
 ) -> tuple[int, int | None]:
     root_fd = -1
     capture_source_fd: int | None = None
@@ -1085,15 +1013,12 @@ def normalize_owner_tree(
             expected_gid,
             expected_mode=None,
         )
-        normalize_dir(root_fd, top_level=True)
-        set_mode(root_fd, 0o2770, required=True)
-        verify_fixed_files(root_fd, expected_uid, expected_gid)
+        normalize_dir(root_fd, top_level=True, modes=modes)
+        set_mode(root_fd, modes[0], required=True)
+        verify_fixed_files(root_fd, expected_uid, expected_gid, expected_mode=modes[1])
         if recover_config:
             recover_empty_config(
-                root_fd,
-                config_dir,
-                expected_uid,
-                expected_gid,
+                root_fd, config_dir, expected_uid, expected_gid, modes=modes
             )
         if capture_baseline:
             capture_source_fd = open_baseline_capture_source(
@@ -1103,8 +1028,11 @@ def normalize_owner_tree(
                 expected_gid,
                 node_binary,
                 json5_module,
+                modes=modes,
             )
-        if not config_dir_matches(root_fd, config_dir, expected_uid, expected_gid):
+        if not config_dir_matches(
+            root_fd, config_dir, expected_uid, expected_gid, modes=modes
+        ):
             raise UnsafeTree()
         return root_fd, capture_source_fd
     except Exception:
@@ -1161,6 +1089,8 @@ def lock_recovery_baseline(
     config_dir: str,
     sandbox_uid: int,
     sandbox_gid: int,
+    *,
+    modes: tuple[int, int],
 ) -> None:
     root_metadata = os.fstat(root_fd)
     baseline_fd = -1
@@ -1169,9 +1099,11 @@ def lock_recovery_baseline(
     temp_identity: tuple[int, int, int] | None = None
     locked_baseline_fd = -1
     try:
-        if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
+        if not config_dir_matches(
+            root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
+        ):
             raise UnsafeTree()
-        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
+        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid, expected_mode=modes[1])
         try:
             before = os.stat(
                 BASELINE_NAME, dir_fd=root_fd, follow_symlinks=False
@@ -1249,7 +1181,7 @@ def lock_recovery_baseline(
                     stable_file_key(after_read) != stable_file_key(opened)
                     or stable_file_key(current) != stable_file_key(opened)
                     or not config_dir_matches(
-                        root_fd, config_dir, sandbox_uid, sandbox_gid
+                        root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
                     )
                 ):
                     raise UnsafeTree()
@@ -1274,7 +1206,7 @@ def lock_recovery_baseline(
                     stable_file_key(final_source) != stable_file_key(opened)
                     or stable_file_key(current) != stable_file_key(opened)
                     or not config_dir_matches(
-                        root_fd, config_dir, sandbox_uid, sandbox_gid
+                        root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
                     )
                 ):
                     raise UnsafeTree()
@@ -1318,8 +1250,10 @@ def lock_recovery_baseline(
                 or final_baseline.st_nlink != 1
             ):
                 raise UnsafeTree()
-        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
-        if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
+        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid, expected_mode=modes[1])
+        if not config_dir_matches(
+            root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
+        ):
             raise UnsafeTree()
     finally:
         if baseline_fd >= 0:
@@ -1356,10 +1290,14 @@ def capture_recovery_baseline(
     source_fd: int | None,
     node_binary: str,
     json5_module: str,
+    *,
+    modes: tuple[int, int],
 ) -> None:
     if source_fd is None:
-        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
-        if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
+        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid, expected_mode=modes[1])
+        if not config_dir_matches(
+            root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
+        ):
             raise UnsafeTree()
         return
 
@@ -1378,7 +1316,7 @@ def capture_recovery_baseline(
             or source.st_dev != root_metadata.st_dev
             or source.st_uid != sandbox_uid
             or source.st_gid != sandbox_gid
-            or stat.S_IMODE(source.st_mode) != 0o660
+            or stat.S_IMODE(source.st_mode) != modes[1]
             or source.st_nlink != 1
             or source.st_size <= 0
             or source.st_size > MAX_BASELINE_BYTES
@@ -1420,7 +1358,7 @@ def capture_recovery_baseline(
             stable_file_key(after_read) != stable_file_key(source)
             or stable_file_key(current_source) != stable_file_key(source)
             or not config_dir_matches(
-                root_fd, config_dir, sandbox_uid, sandbox_gid
+                root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
             )
             or not validate_json5(
                 bytes(content),
@@ -1454,7 +1392,7 @@ def capture_recovery_baseline(
             or stable_file_key(final_source) != stable_file_key(source)
             or stable_file_key(current_source) != stable_file_key(source)
             or not config_dir_matches(
-                root_fd, config_dir, sandbox_uid, sandbox_gid
+                root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
             )
         ):
             raise UnsafeTree()
@@ -1479,8 +1417,10 @@ def capture_recovery_baseline(
             or installed.st_nlink != 1
         ):
             raise UnsafeTree()
-        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
-        if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
+        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid, expected_mode=modes[1])
+        if not config_dir_matches(
+            root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
+        ):
             raise UnsafeTree()
     finally:
         os.close(pinned_source_fd)
@@ -1603,6 +1543,7 @@ def run_root_supervisor(
     recover_config: bool = False,
     node_binary: str = "",
     json5_module: str = "",
+    modes: tuple[int, int],
 ) -> None:
     try:
         if os.getgroups() != [sandbox_gid]:
@@ -1640,6 +1581,7 @@ def run_root_supervisor(
                 recover_config=recover_config,
                 node_binary=node_binary,
                 json5_module=json5_module,
+                modes=modes,
             )
             rights_fds = [root_fd]
             if capture_baseline:
@@ -1693,9 +1635,11 @@ def run_root_supervisor(
             or os.WEXITSTATUS(child_status) != 0
         ):
             raise UnsafeTree()
-        if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
+        if not config_dir_matches(
+            root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
+        ):
             raise UnsafeTree()
-        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
+        verify_fixed_files(root_fd, sandbox_uid, sandbox_gid, expected_mode=modes[1])
         if capture_baseline:
             capture_recovery_baseline(
                 root_fd,
@@ -1705,13 +1649,11 @@ def run_root_supervisor(
                 capture_source_fd,
                 node_binary,
                 json5_module,
+                modes=modes,
             )
         else:
             lock_recovery_baseline(
-                root_fd,
-                config_dir,
-                sandbox_uid,
-                sandbox_gid,
+                root_fd, config_dir, sandbox_uid, sandbox_gid, modes=modes
             )
     finally:
         if not child_reaped:
@@ -1727,11 +1669,6 @@ def run_root_supervisor(
 
 
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "remove-legacy-update-check":
-        if len(sys.argv) != 3:
-            return 1
-        return remove_legacy_update_check(sys.argv[2])
-
     if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
         if len(sys.argv) != 5:
             return 1
@@ -1779,6 +1716,7 @@ def main() -> int:
         json5_module = ""
 
     try:
+        modes = runtime_config_modes()
         if os.geteuid() == 0:
             sandbox_uid = pwd.getpwnam("sandbox").pw_uid
             sandbox_gid = grp.getgrnam("sandbox").gr_gid
@@ -1792,6 +1730,7 @@ def main() -> int:
                 recover_config=recover_config,
                 node_binary=node_binary,
                 json5_module=json5_module,
+                modes=modes,
             )
         else:
             if (expected_uid, expected_gid) != (os.geteuid(), os.getegid()):
@@ -1804,18 +1743,19 @@ def main() -> int:
                 recover_config=recover_config,
                 node_binary=node_binary,
                 json5_module=json5_module,
+                modes=modes,
             )
             try:
-                verify_fixed_files(root_fd, expected_uid, expected_gid)
+                verify_fixed_files(root_fd, expected_uid, expected_gid, expected_mode=modes[1])
                 if not config_dir_matches(
-                    root_fd, config_dir, expected_uid, expected_gid
+                    root_fd, config_dir, expected_uid, expected_gid, modes=modes
                 ):
                     raise UnsafeTree()
             finally:
                 if capture_source_fd is not None:
                     os.close(capture_source_fd)
                 os.close(root_fd)
-    except (AttributeError, KeyError, OSError, UnsafeTree):
+    except (AttributeError, KeyError, OSError, RuntimeError, UnsafeTree):
         return 1
     return 0
 

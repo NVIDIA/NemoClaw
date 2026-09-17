@@ -6,7 +6,7 @@
 ## v0.0.117
 
 NemoClaw v0.0.117 makes OpenShell the sole durable network-policy authority.
-It improves fail-closed recovery for sandboxes, Shields, the installer, Portable runtimes, and messaging channels.
+It improves fail-closed recovery for sandboxes, Shields, the installer, and messaging channels.
 It also removes the deprecated Brev deploy wrapper and adds contributor and maintainer analysis tools.
 
 - OpenShell is now the sole durable source of sandbox policy state.
@@ -27,12 +27,6 @@ It also removes the deprecated Brev deploy wrapper and adds contributor and main
   Managed startup also transfers protected receipts through read-only Docker volumes, so VM-backed Docker daemons such as Colima do not need access to a client-only temporary path.
   Failed verification retains the recovery receipts, and successful finalization reports any exact volume that cleanup cannot remove.
   Related changes: [PR #10484](https://github.com/NVIDIA/NemoClaw/pull/10484) and [PR #10534](https://github.com/NVIDIA/NemoClaw/pull/10534).
-- Hermes Portable `connect --probe-only` now recovers published Ollama only for the `ollama-local` provider.
-  Descriptor-backed compatible endpoints keep verification-only routing without requiring an Ollama receipt.
-  Routine recovery reuses a healthy published runtime or performs one lifecycle recovery for a stopped runtime before it proves published Ollama readiness.
-  Onboarding and explicit deep validation retain generated completion, tool-call, and model-placement qualification.
-  OpenClaw Portable recovery uses one bounded in-sandbox gateway observer and a shorter OpenShell registration poll while preserving the existing readiness statuses and outer lifecycle deadline.
-  Related changes: [PR #10556](https://github.com/NVIDIA/NemoClaw/pull/10556), [PR #10612](https://github.com/NVIDIA/NemoClaw/pull/10612), and [PR #10614](https://github.com/NVIDIA/NemoClaw/pull/10614).
 - Experimental OpenClaw WeChat setup now writes the exact revision-scoped OpenShell placeholder to the Tencent plugin account file and binds both authorized iLink endpoints to the channel provider.
   Channel removal clears durable account state before provider, policy, or registry teardown, and raw bot tokens remain outside sandbox files, process arguments, and diagnostics.
   Related change: [PR #10601](https://github.com/NVIDIA/NemoClaw/pull/10601).

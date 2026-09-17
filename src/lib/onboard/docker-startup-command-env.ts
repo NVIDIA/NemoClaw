@@ -7,14 +7,14 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
-import {
-  appendHermesDashboardEnvArgs,
-  type HermesDashboardOnboardState,
-} from "./hermes-dashboard";
+import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 
-const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
+const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-[\]]+$/u;
+export const OPENSHELL_MAIN_PROCESS_SPEC_ENV = "OPENSHELL_MAIN_PROCESS_SPEC";
+const OPENSHELL_MAIN_PROCESS_SPEC_VERSION = 1;
+const MAX_MAIN_PROCESS_ARGV_BYTES = 128 * 1024;
 const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
@@ -25,6 +25,7 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
 ] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_GATEWAY_URL_ENV = "OPENCLAW_GATEWAY_URL";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
 
@@ -38,6 +39,16 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
     const value = env[key]?.trim();
     if (value) envArgs.push(formatEnvAssignment(key, value));
   }
+}
+
+function appendOpenClawGatewayUrlRuntimeEnvArg(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  const value = env[OPENCLAW_GATEWAY_URL_ENV]?.trim();
+  if (value) envArgs.push(formatEnvAssignment(OPENCLAW_GATEWAY_URL_ENV, value));
 }
 
 function appendOpenClawDiagnosticRuntimeEnvArgs(
@@ -110,6 +121,7 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, agent);
+  appendOpenClawGatewayUrlRuntimeEnvArg(envArgs, agent, env);
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
@@ -119,7 +131,6 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
       input.hermesApiPort ??
       resolveOnboardHermesApiPort(input.sandboxName, {
         env,
-        warn: console.warn,
         allowRegisteredOverride: input.allowHermesApiPortOverride,
       });
     envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));
@@ -182,4 +193,77 @@ export function openshellSandboxCommandEnvValue(
     );
   }
   return parts.join(" ");
+}
+
+export type OpenShellMainProcessSpec = Readonly<{
+  version: 1;
+  command: readonly string[];
+  tty: boolean;
+}>;
+
+function exactMainProcessCommand(command: unknown): readonly string[] {
+  if (
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    command.some(
+      (entry) =>
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.includes("\0") ||
+        Buffer.byteLength(entry, "utf8") > 64 * 1024,
+    )
+  ) {
+    throw new Error("OpenShell main-process spec contains an invalid command argv.");
+  }
+  const result = command.map(String);
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_MAIN_PROCESS_ARGV_BYTES) {
+    throw new Error("OpenShell main-process spec command exceeds its bounded argv transport.");
+  }
+  return Object.freeze(result);
+}
+
+/** Decode the exact Docker-driver main-process transport introduced in OpenShell 0.0.116. */
+export function parseOpenShellMainProcessSpecEnvValue(value: string): OpenShellMainProcessSpec {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("OpenShell main-process spec is not valid JSON.");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("OpenShell main-process spec is not an object.");
+  }
+  const record = parsed as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "command" ||
+    keys[1] !== "tty" ||
+    keys[2] !== "version" ||
+    record.version !== OPENSHELL_MAIN_PROCESS_SPEC_VERSION ||
+    typeof record.tty !== "boolean"
+  ) {
+    throw new Error("OpenShell main-process spec does not match the 0.0.116 Docker contract.");
+  }
+  return Object.freeze({
+    version: OPENSHELL_MAIN_PROCESS_SPEC_VERSION,
+    command: exactMainProcessCommand(record.command),
+    tty: record.tty,
+  });
+}
+
+export function openshellMainProcessSpecEnvValue(command: readonly string[], tty: boolean): string {
+  return JSON.stringify({
+    version: OPENSHELL_MAIN_PROCESS_SPEC_VERSION,
+    command: exactMainProcessCommand(command),
+    tty,
+  });
+}
+
+export function replaceOpenShellMainProcessSpecCommand(
+  value: string,
+  command: readonly string[],
+): string {
+  const spec = parseOpenShellMainProcessSpecEnvValue(value);
+  return openshellMainProcessSpecEnvValue(command, spec.tty);
 }

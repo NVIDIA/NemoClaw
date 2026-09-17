@@ -7,18 +7,21 @@ import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -31,33 +34,29 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
-import { listMessagingProviderSuffixes } from "../../messaging/channels";
-import {
-  findAvailableDashboardPort,
-  getRegistryOccupiedDashboardPorts,
-  getRegistryOccupiedHermesApiPorts,
-  withDashboardPortReservationLock,
-} from "../../onboard/dashboard-port";
+import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
+import { withDashboardPortReservationLock } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   cleanupTempDir,
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -72,10 +71,7 @@ import {
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
-import {
-  establishRestoredSandboxGatewayPairing,
-  waitForRestoredSandboxGatewaySupervisor,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -93,7 +89,6 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
-  getMcpProviderInspectionRuntimeSelection,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -104,10 +99,13 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
-  restoreDeepAgentsManagedMcpProjection,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
+import {
+  allocateSnapshotCloneForwardPorts,
+  snapshotCloneHermesApiEnvArgs,
+} from "./snapshot/forward-port-allocation";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -117,18 +115,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string {
-  const script = [
-    "projection=/sandbox/.deepagents/.nemoclaw-mcp.json",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Managed MCP projection recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    "recovery_dir=$(mktemp -d /sandbox/.nemoclaw-mcp.json.recovery.XXXXXX)",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Managed MCP projection recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    'mv -- "$projection" "$recovery_dir/projection"',
-    'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
-  ].join(" && ");
-  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
-}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -280,71 +266,6 @@ function resolveSrcPodImage(
   }
 }
 
-// Allocate the clone's own dashboard port. Dashboard ports are per-sandbox
-// host resources: the host forward for src's port is owned by src, so a clone
-// that inherits the port gets a dashboard URL that points at src's dashboard
-// and a rebuild preflight that rejects the clone forever (#6746). Allocate
-// dst's own port instead, from the same per-gateway forward list +
-// cross-gateway registry occupancy view as onboard's `ensureDashboardForward`.
-// Sources without a dashboard port (non-dashboard-managed agents) return null
-// so the clone's field stays unset. Callers must invoke this before any
-// destructive step (e.g. deleting a `--force` destination) so port-range
-// exhaustion aborts before, not after, the mutation.
-function allocateCloneDashboardPort(
-  dstName: string,
-  srcEntry: {
-    name?: string;
-    dashboardPort?: number | null;
-    hermesDashboardEnabled?: boolean;
-    hermesDashboardInternalPort?: number | null;
-  },
-): number | null {
-  const srcPort = srcEntry.dashboardPort;
-  if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  const occupied = getRegistryOccupiedDashboardPorts(dstName);
-  const hermesInternalPort = srcEntry.hermesDashboardInternalPort;
-  if (srcEntry.hermesDashboardEnabled === true && isValidForwardPort(hermesInternalPort)) {
-    occupied.set(
-      String(hermesInternalPort),
-      `${srcEntry.name ?? "source"} (Hermes dashboard internal)`,
-    );
-  }
-  try {
-    return findAvailableDashboardPort(dstName, srcPort, forwards.output || "", undefined, occupied);
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
-// Allocate the clone's own API port. The source owns the host forward for its
-// port, and the sandbox exposes the API on the same number it is forwarded on,
-// so a clone that inherits the source's port gets no inference forward, and its
-// gateway restart never converges. Returns null for an agent that has no
-// per-sandbox API port, so the clone's field stays unset. Callers must invoke
-// this before any destructive step so range exhaustion aborts before the
-// mutation.
-function allocateCloneHermesApiPort(
-  dstName: string,
-  srcEntry: { name?: string; agent?: string | null },
-): number | null {
-  if (srcEntry.agent !== "hermes") return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  try {
-    return findAvailableHermesApiPort(
-      dstName,
-      undefined,
-      forwards.output || "",
-      undefined,
-      getRegistryOccupiedHermesApiPorts(dstName),
-    );
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -397,7 +318,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  const policyRead = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",
@@ -418,7 +339,11 @@ async function prepareSnapshotClonePolicy(
   }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
-    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(policyPath, policy, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
       policyPath,
       cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
@@ -472,7 +397,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
-    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
+    ...snapshotCloneHermesApiEnvArgs(dstHermesApiPort),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -656,12 +581,6 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
-  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
   // The pending registry row now owns any host-local inference reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
@@ -680,8 +599,8 @@ async function autoCreateSandboxFromSource(
 // `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
-function deleteSandboxForRestore(name: string): void {
-  withMcpLifecycleLockSync(name, () => {
+async function deleteSandboxForRestore(name: string): Promise<void> {
+  await withMcpLifecycleLock(name, async () => {
     const sbMeta = registry.getSandbox(name);
     if (!sbMeta) {
       console.error(
@@ -715,16 +634,31 @@ function deleteSandboxForRestore(name: string): void {
       }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
-    const deleteResult = runOpenshell(["sandbox", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
+    const gatewayName = resolveSandboxGatewayName(sbMeta);
+    const deleteResult = await createCliOpenShellSandboxLifecycleFromRunner(
+      runOpenshell,
+    ).deleteSandbox({
+      sandboxName: name,
+      target: { kind: "named", gatewayName },
     });
-    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-    if (deleteResult.status !== 0 && !alreadyGone) {
+    if (deleteResult.kind === "failed" && !deleteResult.ambiguous) {
       console.error(
-        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+        `  Failed to delete '${name}' (exit ${deleteResult.exitCode ?? 1}). Aborting restore.`,
       );
       snapshotExit(1);
+    }
+    if (deleteResult.kind !== "absent") {
+      const observed = await createCliOpenShellSandboxObserverFromRunner(
+        runOpenshell,
+      ).listSandboxes({
+        target: { kind: "named", gatewayName },
+      });
+      if (!observed.ok || observed.value.sandboxes.some((candidate) => candidate.name === name)) {
+        console.error(
+          `  OpenShell did not confirm that destination '${name}' is absent. Aborting restore.`,
+        );
+        snapshotExit(1);
+      }
     }
     if (hostLocalInferenceAuthority) {
       try {
@@ -758,27 +692,27 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-    }
+    await deleteSandboxProviderRegistrations(name, "messaging", {
+      runOpenshell,
+    });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
-  if (!probeGatewayRunning(sandboxName)) return null;
+async function listLiveSandboxesOnSandboxGateway(sandboxName: string): Promise<Set<string> | null> {
+  if (!(await selectSandboxGatewayIfRegistered(sandboxName))) return null;
+  if (!(await probeGatewayRunning(sandboxName))) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
   return parseLiveSandboxNames(isLive.output || "");
 }
 
-function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
-  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+async function requireLiveSandboxesOnSandboxGateway(
+  sandboxName: string,
+  error: string,
+): Promise<Set<string>> {
+  const liveNames = await listLiveSandboxesOnSandboxGateway(sandboxName);
   if (!liveNames) {
     console.error(error);
     snapshotExit(1);
@@ -786,8 +720,8 @@ function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string
   return liveNames;
 }
 
-function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     targetSandbox,
     `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
@@ -802,11 +736,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 
 type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
 
-function reconcilePendingSnapshotClone(
+async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
-): PendingSnapshotCloneRecovery {
+): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
   if (
     !pending ||
@@ -836,7 +770,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveNames = parseLiveSandboxNames(list.output || "");
   if (!liveNames.has(targetSandbox)) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
 
@@ -850,20 +784,13 @@ function reconcilePendingSnapshotClone(
   }
   const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
   if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!isSandboxReady(list.output || "", targetSandbox)) {
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
-  }
-  if (
-    (pending.agent || "openclaw") === "openclaw" &&
-    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
-  ) {
-    deleteSandboxForRestore(targetSandbox);
-    return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(
@@ -947,11 +874,11 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
   );
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1007,7 +934,7 @@ function runSnapshotCreate(
 
 function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
-  result: ReturnType<typeof sandboxState.restoreSandboxState>,
+  result: Awaited<ReturnType<typeof sandboxState.restoreSandboxState>>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
   let failure: string;
@@ -1077,7 +1004,7 @@ async function runSnapshotRestoreUnlocked(
   request: Extract<SnapshotRequest, { kind: "restore" }>,
   targetSandbox: string,
 ): Promise<void> {
-  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+  const sourceLiveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1360,7 +1287,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
-      const pendingRecovery = reconcilePendingSnapshotClone(
+      const pendingRecovery = await reconcilePendingSnapshotClone(
         targetSandbox,
         lockedSourceEntry,
         lockedGatewayName,
@@ -1381,8 +1308,20 @@ async function runSnapshotRestoreUnlocked(
       // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
-      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
-      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
+      let clonePorts: Awaited<ReturnType<typeof allocateSnapshotCloneForwardPorts>>;
+      try {
+        clonePorts = await allocateSnapshotCloneForwardPorts({
+          destinationName: targetSandbox,
+          executable: getOpenshellBinary(),
+          gatewayName: lockedGatewayName,
+          gatewayPort: lockedGatewayPort,
+          source: lockedSourceEntry,
+        });
+      } catch (error) {
+        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+        snapshotExit(1);
+      }
+      const { dashboardPort: dstDashboardPort, hermesApiPort: dstHermesApiPort } = clonePorts;
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
@@ -1401,10 +1340,10 @@ async function runSnapshotRestoreUnlocked(
         clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+            await verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
-          deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
+          await deleteSandboxForRestore(targetSandbox);
+          await requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
@@ -1478,21 +1417,12 @@ async function runSnapshotRestoreUnlocked(
         console.error(
           `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
         );
-        deleteSandboxForRestore(targetSandbox);
+        await deleteSandboxForRestore(targetSandbox);
         snapshotExit(1);
       }
     }
   }
-  withMcpLifecycleLockSync(targetSandbox, () => {
-    const snapshotTarget = registry.getSandbox(targetSandbox);
-    const repairsManagedDeepAgentsProjection =
-      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
-    const managedDeepAgentsEntries = repairsManagedDeepAgentsProjection
-      ? Object.values(snapshotTarget.mcp?.bridges ?? {}).filter(
-          (entry) =>
-            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
-        )
-      : [];
+  await withMcpLifecycleLock(targetSandbox, async () => {
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1540,43 +1470,6 @@ async function runSnapshotRestoreUnlocked(
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
     }
-    if (
-      repairsManagedDeepAgentsProjection &&
-      snapshotRestoreAuthority &&
-      validateProviderRestoreBeforeMutation
-    ) {
-      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
-        authority: snapshotRestoreAuthority,
-        validateBeforeMutation: validateProviderRestoreBeforeMutation,
-      });
-      if (authorityError) {
-        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
-        console.error(`  Destination '${targetSandbox}' was not changed.`);
-        snapshotExit(1);
-      }
-    }
-    if (repairsManagedDeepAgentsProjection) {
-      try {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          throw new Error(`target '${targetSandbox}' is no longer registered`);
-        }
-        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        restoreDeepAgentsManagedMcpProjection(
-          targetSandbox,
-          managedDeepAgentsEntries,
-          runtimeSelection,
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const recoveryCommand = deepAgentsManagedProjectionRecoveryCommand(targetSandbox);
-        throw new SnapshotCommandError([
-          `Snapshot files were not restored into '${targetSandbox}'.`,
-          `The managed Deep Agents MCP projection at '/sandbox/.deepagents/.nemoclaw-mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
-        ]);
-      }
-    }
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
     } else {
@@ -1584,11 +1477,11 @@ async function runSnapshotRestoreUnlocked(
     }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+        ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
             authority: snapshotRestoreAuthority,
             validateBeforeMutation: validateProviderRestoreBeforeMutation,
           })
-        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
+        : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
       if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
         const currentTarget = registry.getSandbox(targetSandbox);

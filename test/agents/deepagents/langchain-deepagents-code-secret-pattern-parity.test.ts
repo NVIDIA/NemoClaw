@@ -106,9 +106,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
   it.each(Array.from(CANONICAL_SECRET_POSITIVE_VECTORS, (value) => [value]))(
     "matches every shared positive vector with its designated canonical regex [case %#] (#6195)",
     (vector) => {
-      (Object.entries(canonicalPatterns) as Array<
-        [CanonicalSecretPatternGroup, readonly RegExp[]]
-      >).forEach(([group, patterns]) => {
+      (
+        Object.entries(canonicalPatterns) as Array<[CanonicalSecretPatternGroup, readonly RegExp[]]>
+      ).forEach(([group, patterns]) => {
         const coveredIndices = new Set(
           CANONICAL_SECRET_POSITIVE_VECTORS.filter((vector) => vector.patternGroup === group).map(
             (vector) => vector.patternIndex,
@@ -144,17 +144,19 @@ describe("Deep Agents Code secret-pattern parity", () => {
     "bounds assignment separators and rejects credential-word substrings [case %#] (#6452)",
     (value) => {
       const assignmentPattern = CONTEXT_PATTERNS[1];
-      expect([
-            "COMPASS=opaqueNonSecretPayload123",
-            "BYPASS=allowedValue123",
-            "TOPSECRET=opaqueNonSecretPayload123",
-            "SUBTOKEN=opaqueNonSecretPayload123",
-            "public-key=opaqueVerificationMaterial123",
-            "custom-key=opaqueNonSecretPayload123",
-            '{"key":"agent:main:main"}',
-            `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
-            `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
-          ].every((value) => Object.is(matches(assignmentPattern, value), false))).toBe(true);
+      expect(
+        [
+          "COMPASS=opaqueNonSecretPayload123",
+          "BYPASS=allowedValue123",
+          "TOPSECRET=opaqueNonSecretPayload123",
+          "SUBTOKEN=opaqueNonSecretPayload123",
+          "public-key=opaqueVerificationMaterial123",
+          "custom-key=opaqueNonSecretPayload123",
+          '{"key":"agent:main:main"}',
+          `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
+          `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
+        ].every((value) => Object.is(matches(assignmentPattern, value), false)),
+      ).toBe(true);
       expect(
         matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
       ).toBe(true);

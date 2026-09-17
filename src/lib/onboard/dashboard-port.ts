@@ -16,7 +16,13 @@
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
+import { isDeepStrictEqual } from "node:util";
 
+import type {
+  OpenShellForwardAdapter,
+  OpenShellForwardIdentity,
+  OpenShellForwardObservation,
+} from "../adapters/openshell/forward";
 import {
   DASHBOARD_PORT,
   DASHBOARD_PORT_RANGE_END,
@@ -39,6 +45,40 @@ type SandboxRegistryEntry = {
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
 
+/**
+ * Read-only OpenShell forward observation bound to one authoritative runtime
+ * scope by the caller. Keeping identity construction outside the allocator
+ * lets the authority boundary evolve without teaching port-selection code how
+ * to derive gateway credentials or endpoints.
+ */
+export type OpenShellForwardPortObserver = (
+  ports: readonly number[],
+) => Promise<readonly OpenShellForwardObservation[]>;
+
+export function createOpenShellForwardPortObserver(input: {
+  adapter: Pick<OpenShellForwardAdapter, "observeForwards">;
+  forwardForPort(port: number): OpenShellForwardIdentity;
+  assertCurrent?: () => Promise<void>;
+}): OpenShellForwardPortObserver {
+  return async (ports) => {
+    const forwards = ports.map((port) => input.forwardForPort(port));
+    const observations = await input.adapter.observeForwards({
+      forwards,
+      ...(input.assertCurrent ? { assertCurrent: input.assertCurrent } : {}),
+    });
+    if (
+      observations.length !== forwards.length ||
+      observations.some((observation, index) => {
+        const expected = forwards[index];
+        return !("forward" in observation) || !isDeepStrictEqual(observation.forward, expected);
+      })
+    ) {
+      throw new Error("OpenShell returned incomplete forward ownership evidence.");
+    }
+    return observations;
+  };
+}
+
 const DASHBOARD_PORT_RESERVATION_LOCK = "dashboard-port-reservation:host";
 
 /**
@@ -58,48 +98,11 @@ export function withDashboardPortReservationLock<T>(
   return withMcpLifecycleLock(DASHBOARD_PORT_RESERVATION_LOCK, operation, options);
 }
 
-// Match the broader pattern used by onboard.ts (covers CSI, OSC, and Fe escapes)
-// so colorised `openshell forward list` output parses correctly.
-const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
-
-/** OpenShell forward statuses that hold a port (and therefore block reuse). */
-export function isLiveForwardStatus(status: string): boolean {
-  return status === "running" || status === "active";
-}
-
-/**
- * Parse `openshell forward list` output into a Map<port, sandboxName>.
- * Only includes running forwards — stopped/stale entries are ignored so
- * they don't block port allocation or cause false "range exhausted" errors.
- *
- * ANSI escape codes (the openshell CLI colourises status columns when
- * stdout is a TTY) are stripped per-line before tokenising so port numbers
- * and status words are matched cleanly.
- *
- * Output format (columns separated by whitespace):
- *   SANDBOX  BIND  PORT  PID  STATUS
- */
-export function getOccupiedPorts(forwardListOutput: string | null): Map<string, string> {
-  const occupied = new Map<string, string>();
-  if (!forwardListOutput) return occupied;
-  for (const rawLine of forwardListOutput.split("\n")) {
-    const line = rawLine.replace(ANSI_RE, "");
-    if (/^\s*SANDBOX\s/i.test(line)) continue;
-    const parts = line.trim().split(/\s+/);
-    // parts: [sandbox, bind, port, pid, status...]
-    if (parts.length < 3 || !/^\d+$/.test(parts[2])) continue;
-    const status = (parts[4] || "").toLowerCase();
-    if (!isLiveForwardStatus(status)) continue;
-    occupied.set(parts[2], parts[0]);
-  }
-  return occupied;
-}
-
 /**
  * Synchronous Node `net` bind probe — tries to listen on the port and
  * reports whether the bind would have failed with EADDRINUSE. Spawned via
- * spawnSync of `node -e` because `findAvailableDashboardPort` runs deep in
- * a sync allocation flow and `net.createServer().listen()` is async.
+ * spawnSync of `node -e` because the preflight scan is synchronous while
+ * `net.createServer().listen()` is async.
  *
  * Exit codes: 0 = bind succeeded (port free); 1 = EADDRINUSE; anything
  * else = inconclusive (treated as free for safety — the forward-start
@@ -163,26 +166,6 @@ export function isPortBoundOnHost(port: number): boolean {
 }
 
 /**
- * Find the next available dashboard port for the given sandbox.
- * Returns the preferred port if free or already owned by this sandbox,
- * otherwise scans DASHBOARD_PORT_RANGE_START..END for a free port.
- * Validates host-port availability (via the proactive probe chain in
- * isPortBoundOnHost) so ports bound by non-OpenShell processes are
- * skipped (#3260).
- * Throws if the entire range is exhausted.
- *
- * `isPortBoundCheck` is an injectable seam for tests so they don't have
- * to spawn real lsof / Node probes; production callers leave it at the
- * default.
- */
-export function findDashboardForwardOwner(
-  forwardListOutput: string | null | undefined,
-  portToStop: string,
-): string | null {
-  return getOccupiedPorts(forwardListOutput ?? null).get(portToStop) ?? null;
-}
-
-/**
  * Merge per-gateway forward-list occupancy with cross-gateway registry
  * occupancy. `openshell forward list` only reports forwards owned by the
  * currently selected gateway, so a second NemoClaw gateway on a different
@@ -197,7 +180,7 @@ export function findDashboardForwardOwner(
  * forward-list value still wins for sandboxes whose forward exists on the
  * currently selected gateway.
  */
-function mergeOccupiedPorts(
+function mergeRegistryOccupiedPorts(
   forwardOccupied: Map<string, string>,
   registryOccupied: ReadonlyMap<string, string> | undefined,
 ): Map<string, string> {
@@ -333,86 +316,141 @@ const DASHBOARD_RANGE: HostPortRange = {
   remedy: "Free a sandbox or use --control-ui-port <N> with a port outside this range.",
 };
 
+function portCandidates(preferredPort: number, range: HostPortRange): number[] {
+  return [
+    preferredPort,
+    ...Array.from(
+      { length: range.end - range.start + 1 },
+      (_, index) => range.start + index,
+    ).filter((port) => port !== preferredPort),
+  ];
+}
+
+export type ObservedForwardPortAvailability = "absent" | "owned" | "blocked";
+
+export function observedForwardPortAvailability(
+  sandboxName: string,
+  port: number,
+  observations: readonly OpenShellForwardObservation[],
+): ObservedForwardPortAvailability {
+  const matches = observations.filter(
+    (observation) => "forward" in observation && observation.forward.port === port,
+  );
+  if (matches.length !== 1) return "blocked";
+  const [observation] = matches;
+  if (!observation || !("forward" in observation)) return "blocked";
+  if (observation.forward.sandboxName !== sandboxName) return "blocked";
+  if (observation.state === "absent") return "absent";
+  if (observation.state === "owned" || observation.state === "stale") return "owned";
+  return "blocked";
+}
+
 /**
- * Find the next available port in `range` for the given sandbox. Returns the
- * preferred port when it is free or already owned by this sandbox, otherwise
- * scans the range. Shared by the dashboard allocator and the Hermes API-port
- * allocator so both apply the same forward-list, registry, and host-bind view.
+ * Select a port from typed OpenShell ownership evidence. Only an exact owned
+ * or authority-proved stale forward is reusable. Foreign, indeterminate, and
+ * missing observations stay occupied so allocation never converts uncertainty
+ * into permission to bind.
  */
-export function findAvailablePortInRange(
+export function findAvailablePortInRangeFromObservations(
   sandboxName: string,
   preferredPort: number,
-  forwardListOutput: string | null,
+  observations: readonly OpenShellForwardObservation[],
   range: HostPortRange,
-  isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
   registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
-  const hostBoundPorts: number[] = [];
-  // Try the preferred port first (it may be outside the range when a caller
-  // passes --control-ui-port), then the rest of the range. Each port is probed
-  // at most once so we don't pay for `lsof` + `sudo lsof` + Node bind multiple
-  // times per port.
-  const portsToScan = [
-    preferredPort,
-    ...Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i).filter(
-      (p) => p !== preferredPort,
-    ),
-  ];
-  for (const p of portsToScan) {
-    const pStr = String(p);
-    const pOwner = occupied.get(pStr) ?? null;
-    if (pOwner === sandboxName) return p;
-    if (pOwner === null) {
-      if (!isPortBoundCheck(p)) return p;
-      hostBoundPorts.push(p);
+  const indeterminate = observations.find((observation) => observation.state === "indeterminate");
+  if (indeterminate) {
+    const message =
+      "error" in indeterminate ? indeterminate.error.message : "Invalid forward request.";
+    throw new Error(`Cannot allocate ${range.label} port: ${message}`);
+  }
+  const occupied = new Map<string, string>();
+  const portsToScan = portCandidates(preferredPort, range);
+  for (const port of portsToScan) {
+    const availability = observedForwardPortAvailability(sandboxName, port, observations);
+    if (availability === "owned") {
+      occupied.set(String(port), sandboxName);
+    } else if (availability === "blocked") {
+      occupied.set(String(port), "unverified OpenShell forward ownership");
     }
   }
+  mergeRegistryOccupiedPorts(occupied, registryOccupiedPorts);
 
-  const ownerLines = [...occupied.entries()]
-    .filter(([p]) => Number(p) >= range.start && Number(p) <= range.end)
-    .map(([p, s]) => `  ${p} → ${s}`);
-  const hostLines = hostBoundPorts
-    .filter((p) => p >= range.start && p <= range.end)
-    .map((p) => `  ${p} → non-OpenShell host listener`);
-  const lines = [...ownerLines, ...hostLines].join("\n");
+  for (const port of portsToScan) {
+    const owner = occupied.get(String(port)) ?? null;
+    if (owner === sandboxName) return port;
+    if (owner === null) return port;
+  }
+
+  const lines = [...occupied.entries()]
+    .filter(([port]) => Number(port) >= range.start && Number(port) <= range.end)
+    .map(([port, owner]) => `  ${port} → ${owner}`)
+    .join("\n");
   throw new Error(
     `All ${range.label} ports in range ${range.start}-${range.end} are occupied:\n${lines}\n` +
       range.remedy,
   );
 }
 
-export function findAvailableDashboardPort(
+export async function findAvailablePortInRangeFromObserver(
   sandboxName: string,
   preferredPort: number,
-  forwardListOutput: string | null,
-  isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
-  // Default to an empty map so unit tests of this allocator do not become
-  // dependent on whatever sandboxes happen to live in the caller's real
-  // `~/.nemoclaw/sandboxes.json`. Production wrappers
-  // (`resolveCreateSandboxDashboardPort`, `ensureDashboardForward`) pass an
-  // explicit `getRegistryOccupiedDashboardPorts(sandboxName)` result.
+  observeForwardPorts: OpenShellForwardPortObserver,
+  range: HostPortRange,
+  registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
+): Promise<{ port: number; observations: readonly OpenShellForwardObservation[] }> {
+  const observations = await observeForwardPorts(portCandidates(preferredPort, range));
+  return {
+    port: findAvailablePortInRangeFromObservations(
+      sandboxName,
+      preferredPort,
+      observations,
+      range,
+      registryOccupiedPorts,
+    ),
+    observations,
+  };
+}
+
+export function findAvailableDashboardPortFromObservations(
+  sandboxName: string,
+  preferredPort: number,
+  observations: readonly OpenShellForwardObservation[],
   registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  return findAvailablePortInRange(
+  return findAvailablePortInRangeFromObservations(
     sandboxName,
     preferredPort,
-    forwardListOutput,
+    observations,
     DASHBOARD_RANGE,
-    isPortBoundCheck,
     registryOccupiedPorts,
   );
 }
 
-export interface CreateSandboxDashboardPortInput {
+export async function findAvailableDashboardPortFromObserver(
+  sandboxName: string,
+  preferredPort: number,
+  observeForwardPorts: OpenShellForwardPortObserver,
+  registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
+): Promise<{ port: number; observations: readonly OpenShellForwardObservation[] }> {
+  return findAvailablePortInRangeFromObserver(
+    sandboxName,
+    preferredPort,
+    observeForwardPorts,
+    DASHBOARD_RANGE,
+    registryOccupiedPorts,
+  );
+}
+
+export interface ObservedCreateSandboxDashboardPortInput {
   sandboxName: string;
   controlUiPort: number | null;
   chatUiUrlEnv: string | null | undefined;
   persistedPort: number | null;
   agentForwardPort: number | null | undefined;
-  forwardListOutput: string | null;
+  forwardObservations: readonly OpenShellForwardObservation[];
   defaultPort?: number;
-  findAvailablePort?: typeof findAvailableDashboardPort;
+  findAvailablePort?: typeof findAvailableDashboardPortFromObservations;
   warn?: (message: string) => void;
   // Cross-gateway occupancy view derived from the sandbox registry. Lets the
   // allocator avoid handing out a dashboard port that already belongs to a
@@ -420,6 +458,13 @@ export interface CreateSandboxDashboardPortInput {
   // forward-list view cannot see.
   registryOccupiedPorts?: ReadonlyMap<string, string>;
 }
+
+export type ReserveCreateSandboxDashboardPortInput = Omit<
+  ObservedCreateSandboxDashboardPortInput,
+  "forwardObservations"
+> & {
+  observeForwardPorts: OpenShellForwardPortObserver;
+};
 
 export interface CreateSandboxDashboardPortResult {
   preferredPort: number;
@@ -434,6 +479,8 @@ export interface DashboardPortReservation {
 
 export interface DashboardPortReservationScope {
   current: DashboardPortReservation | null;
+  deferOwnedForwardPort(port: number): void;
+  rebindAfterOwnedForwardDelete(options?: ReservePortAfterOwnedForwardDeleteOptions): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -473,30 +520,29 @@ function buildCreateSandboxChatUiUrl(
   return `http://127.0.0.1:${effectivePort}`;
 }
 
-export function resolveCreateSandboxDashboardPort(
-  input: CreateSandboxDashboardPortInput,
-): CreateSandboxDashboardPortResult {
-  const preferredPort =
+function preferredCreateSandboxDashboardPort(
+  input: Pick<
+    ObservedCreateSandboxDashboardPortInput,
+    "agentForwardPort" | "chatUiUrlEnv" | "controlUiPort" | "defaultPort" | "persistedPort"
+  >,
+): number {
+  return (
     input.controlUiPort ??
     parseChatUiUrlPort(input.chatUiUrlEnv) ??
     input.persistedPort ??
     input.agentForwardPort ??
     input.defaultPort ??
-    DASHBOARD_PORT;
-  // When a caller does not supply an explicit cross-gateway view, read the
-  // persisted registry here so the allocator never silently hands out a
-  // dashboard port that already belongs to a sibling sandbox on a different
-  // NemoClaw gateway. The allocator itself defaults to an empty map to keep
-  // its unit tests independent of the caller's real `~/.nemoclaw/` state.
-  const registryOccupiedPorts =
-    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName);
-  const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPort)(
-    input.sandboxName,
-    preferredPort,
-    input.forwardListOutput,
-    undefined,
-    registryOccupiedPorts,
+    DASHBOARD_PORT
   );
+}
+
+function createSandboxDashboardPortResult(
+  input: Pick<ObservedCreateSandboxDashboardPortInput, "chatUiUrlEnv" | "controlUiPort"> & {
+    warn?: (message: string) => void;
+  },
+  preferredPort: number,
+  effectivePort: number,
+): CreateSandboxDashboardPortResult {
   if (effectivePort !== preferredPort) {
     input.warn?.(`  ! Port ${preferredPort} is taken. Using port ${effectivePort} instead.`);
   }
@@ -505,6 +551,21 @@ export function resolveCreateSandboxDashboardPort(
     effectivePort,
     chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, input.controlUiPort, effectivePort),
   };
+}
+
+export function resolveCreateSandboxDashboardPortFromObservations(
+  input: ObservedCreateSandboxDashboardPortInput,
+): CreateSandboxDashboardPortResult {
+  const preferredPort = preferredCreateSandboxDashboardPort(input);
+  const registryOccupiedPorts =
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName);
+  const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPortFromObservations)(
+    input.sandboxName,
+    preferredPort,
+    input.forwardObservations,
+    registryOccupiedPorts,
+  );
+  return createSandboxDashboardPortResult(input, preferredPort, effectivePort);
 }
 
 /**
@@ -558,6 +619,45 @@ function isAddressInUse(error: unknown): boolean {
   return typeof error === "object" && error !== null && Reflect.get(error, "code") === "EADDRINUSE";
 }
 
+const OWNED_FORWARD_RELEASE_ATTEMPTS = 6;
+const OWNED_FORWARD_RELEASE_INTERVAL_MS = 1_000;
+
+export interface ReservePortAfterOwnedForwardDeleteOptions {
+  reservePort?: (port: number) => Promise<DashboardPortReservation>;
+  sleep?: (milliseconds: number) => void | Promise<void>;
+}
+
+function sleepForOwnedForwardRelease(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * Rebind a port after deleting the sandbox that owned its direct ForwardTcp
+ * listener. Sandbox absence and detached-listener exit are separate events, so
+ * tolerate only the bounded EADDRINUSE convergence window; every other bind
+ * error remains immediately fatal.
+ */
+export async function reservePortAfterOwnedForwardDelete(
+  port: number,
+  options: ReservePortAfterOwnedForwardDeleteOptions = {},
+): Promise<DashboardPortReservation> {
+  const reservePort = options.reservePort ?? reserveDashboardPort;
+  const sleep = options.sleep ?? sleepForOwnedForwardRelease;
+  let lastCollision: unknown;
+  for (let attempt = 1; attempt <= OWNED_FORWARD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      return await reservePort(port);
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+      lastCollision = error;
+    }
+    if (attempt < OWNED_FORWARD_RELEASE_ATTEMPTS) {
+      await sleep(OWNED_FORWARD_RELEASE_INTERVAL_MS);
+    }
+  }
+  throw lastCollision;
+}
+
 /**
  * Select and bind a dashboard port before sandbox preparation begins. If a
  * listener wins the gap between the allocation probe and bind, classify that
@@ -567,20 +667,33 @@ function isAddressInUse(error: unknown): boolean {
  * caller decides whether to reuse or recreate that sandbox.
  */
 export async function reserveCreateSandboxDashboardPort(
-  input: CreateSandboxDashboardPortInput,
+  input: ReserveCreateSandboxDashboardPortInput,
   reservePort: (port: number) => Promise<DashboardPortReservation> = reserveDashboardPort,
 ): Promise<ReservedCreateSandboxDashboardPortResult> {
+  const preferredPort = preferredCreateSandboxDashboardPort(input);
+  const observed = await findAvailableDashboardPortFromObserver(
+    input.sandboxName,
+    preferredPort,
+    input.observeForwardPorts,
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName),
+  );
   const occupied = new Map(
     input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName),
   );
-  const forwardOwner = getOccupiedPorts(input.forwardListOutput);
   while (true) {
-    const result = resolveCreateSandboxDashboardPort({
+    const result = resolveCreateSandboxDashboardPortFromObservations({
       ...input,
+      forwardObservations: observed.observations,
       registryOccupiedPorts: occupied,
       warn: undefined,
     });
-    if (forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
+    if (
+      observedForwardPortAvailability(
+        input.sandboxName,
+        result.effectivePort,
+        observed.observations,
+      ) === "owned"
+    ) {
       if (result.effectivePort !== result.preferredPort) {
         input.warn?.(
           `  ! Port ${result.preferredPort} is taken. Using port ${result.effectivePort} instead.`,
@@ -607,11 +720,21 @@ export async function reserveCreateSandboxDashboardPort(
 export async function withDashboardPortReservationScope<T>(
   operation: (scope: DashboardPortReservationScope) => Promise<T>,
 ): Promise<T> {
+  let deferredOwnedForwardPort: number | null = null;
   const scope: DashboardPortReservationScope = {
     current: null,
+    deferOwnedForwardPort: (port) => {
+      if (scope.current === null) deferredOwnedForwardPort = port;
+    },
+    rebindAfterOwnedForwardDelete: async (options) => {
+      if (scope.current !== null || deferredOwnedForwardPort === null) return;
+      scope.current = await reservePortAfterOwnedForwardDelete(deferredOwnedForwardPort, options);
+      deferredOwnedForwardPort = null;
+    },
     release: async () => {
       const reservation = scope.current;
       scope.current = null;
+      deferredOwnedForwardPort = null;
       await reservation?.release();
     },
   };
@@ -688,13 +811,13 @@ export function createDashboardPortScopedSandboxEntryPoints<
  * Preflight scan of the dashboard port range. If every port in
  * [DASHBOARD_PORT_RANGE_START, DASHBOARD_PORT_RANGE_END] is bound on
  * the host, print the same "All dashboard ports in range … are
- * occupied" error that `findAvailableDashboardPort` would eventually
- * raise during sandbox creation and exit non-zero. Calling this from
+ * occupied" error that typed dashboard allocation would eventually raise
+ * during sandbox creation and exit non-zero. Calling this from
  * `preflight()` surfaces the failure before any side effects (gateway
  * start, inference setup), matching the contract reporters expect
  * (#3953).
  *
- * Intentionally narrower than `findAvailableDashboardPort`: it does not
+ * Intentionally narrower than typed dashboard allocation: it does not
  * consult OpenShell forward state, never reserves a port, and treats
  * every bound port as a non-OpenShell listener. That is sound here —
  * if every port is bound, the host either has no free port for a new

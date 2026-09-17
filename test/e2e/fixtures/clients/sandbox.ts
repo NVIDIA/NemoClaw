@@ -74,6 +74,11 @@ export type TrustedSandboxShellScript = string & {
   readonly [trustedSandboxShellScriptBrand]: true;
 };
 
+// OpenShell records the create argv as the sandbox's canonical main process.
+// Historical rebuild fixtures therefore need a non-terminal process until the
+// real rebuild flow takes ownership of the sandbox lifecycle.
+export const HISTORICAL_SANDBOX_MAIN_PROCESS = ["sleep", "infinity"] as const;
+
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
   if (script.length === 0) {
     throw new Error("sandbox shell script must not be empty");
@@ -120,6 +125,75 @@ export class SandboxClient {
       artifactName: `sandbox-status-${name}`,
       ...options,
     });
+  }
+
+  /** Initial cleanup may run before onboarding registers the isolated job's gateway. */
+  async hasGatewayForInitialCleanup(
+    gatewayName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<boolean> {
+    validateSandboxName(gatewayName);
+    const result = await this.openshell(["gateway", "info", "-g", gatewayName, "-o", "json"], {
+      ...options,
+      artifactName: `${options.artifactName ?? "precleanup"}-gateway-info`,
+    });
+    const lines = result.stderr
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => line.trim());
+    const diagnostic = lines
+      .shift()
+      ?.replace(/^Error:\s*/u, "")
+      .replace(/^×\s*/u, "");
+    // Pinned OpenShell gateway info maps an unresolved explicit -g lookup to
+    // this diagnostic; other commands' generic absence messages are not evidence here.
+    const notConfigured = diagnostic === "No gateway configured.";
+    const missing = diagnostic === `Unknown gateway '${gatewayName}'.` || notConfigured;
+    const expectedGuidance = notConfigured
+      ? ["│ Register a gateway with: openshell gateway add <endpoint>"]
+      : [
+          `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}`,
+          "│ Or list available gateways: openshell gateway select",
+        ];
+    const guidanceOnly =
+      lines.length === expectedGuidance.length &&
+      lines.every((line, index) => line === expectedGuidance[index]);
+    if (
+      result.exitCode === 1 &&
+      !result.timedOut &&
+      result.signal === null &&
+      result.stdout.trim() === "" &&
+      missing &&
+      guidanceOnly
+    )
+      return false;
+    assertExitZero(result, `inspect initial cleanup gateway ${gatewayName}`);
+    const info: unknown = JSON.parse(result.stdout);
+    if (
+      result.timedOut ||
+      result.signal !== null ||
+      result.stderr.trim() !== "" ||
+      !info ||
+      typeof info !== "object" ||
+      Array.isArray(info) ||
+      !("gateway" in info) ||
+      info.gateway !== gatewayName ||
+      "error" in info
+    ) {
+      throw new Error(`Initial cleanup could not verify gateway ${gatewayName}`);
+    }
+    return true;
+  }
+
+  async cleanupSandboxBeforeOnboard(
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    validateSandboxName(name);
+    const gatewayName = options.env?.OPENSHELL_GATEWAY ?? "nemoclaw";
+    if (await this.hasGatewayForInitialCleanup(gatewayName, options)) {
+      await this.cleanupSandbox(name, options);
+    }
   }
 
   async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
@@ -209,6 +283,16 @@ export class SandboxClient {
     return result;
   }
 
+  async expectAbsent(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list still included '${name}'.`);
+    }
+    return result;
+  }
+
   /**
    * Disruption helper: simulate the post-pod-recreate /tmp wipe by removing
    * the guard chain files. After this, a sandbox containing a running gateway
@@ -217,7 +301,7 @@ export class SandboxClient {
    *
    * Used exclusively by recovery E2E targets (#2701). Removes:
    *   - /tmp/nemoclaw-proxy-env.sh (the NODE_OPTIONS chain export file)
-   *   - the five --require preload guard scripts written by the entrypoint
+   *   - the four --require preload guard scripts written by the entrypoint
    */
   async wipeGuardChain(
     name: string,
@@ -229,7 +313,6 @@ export class SandboxClient {
       "-f",
       "/tmp/nemoclaw-proxy-env.sh",
       "/tmp/nemoclaw-sandbox-safety-net.js",
-      "/tmp/nemoclaw-ciao-network-guard.js",
       "/tmp/nemoclaw-slack-channel-guard.js",
       "/tmp/nemoclaw-http-proxy-fix.js",
       "/tmp/nemoclaw-nemotron-inference-fix.js",

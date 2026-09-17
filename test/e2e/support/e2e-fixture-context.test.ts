@@ -106,7 +106,7 @@ describe("E2E fixture primitives", () => {
 
   it("forces local BuildKit when the candidate Dockerfile is already selected", () => {
     const environment = resolveLiveE2eWorkloadSourceEnv({
-      E2E_TARGET_ID: "ubuntu-repo-cloud-hermes",
+      E2E_TARGET_ID: "hermes-e2e",
       E2E_WORKLOAD_SOURCE: "local-dockerfile",
       NEMOCLAW_FROM_DOCKERFILE: "/workspace/agents/hermes/Dockerfile",
       NEMOCLAW_SANDBOX_PREBUILD: "false",
@@ -395,7 +395,10 @@ describe("E2E fixture primitives", () => {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
       artifacts.addRedactionValues([secret]);
-      await artifacts.writeText("retained-install.log", `${result.stdout}\n${result.stderr}\n${secret}`);
+      await artifacts.writeText(
+        "retained-install.log",
+        `${result.stdout}\n${result.stderr}\n${secret}`,
+      );
       const retained = fs.readFileSync(artifacts.pathFor("retained-install.log"), "utf8");
       expect(retained).toContain("[REDACTED]");
       expect(retained).not.toContain(secret);

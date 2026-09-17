@@ -26,7 +26,10 @@ export type OpenShellSandboxErrorKind =
   | "timeout"
   | "transport";
 
-export type OpenShellSandboxTransportReason = "identity_mismatch" | "unreachable";
+export type OpenShellSandboxTransportReason =
+  | "endpoint_override"
+  | "identity_mismatch"
+  | "unreachable";
 
 export type OpenShellSandboxError =
   | Readonly<{

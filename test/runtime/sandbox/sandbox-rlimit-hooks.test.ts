@@ -608,15 +608,13 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
     const tirithMarkerFinalizer = path.join(localLib, "finalize-tirith-marker.py");
-    const buildMcpDigest = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
-      "openshell-child-visible-credentials.v0.0.106.json",
+      "openshell-child-visible-credentials.v0.0.116.json",
     );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
-    const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControl = path.join(localLib, "hermes-cron-restore-control.py");
@@ -642,15 +640,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
       fs.writeFileSync(tirithMarkerFinalizer, "# Tirith marker finalizer fixture\n");
-      fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
       fs.mkdirSync(preloadDir, { mode: 0o777 });
       fs.writeFileSync(safetyNet, "module.exports = 'safety net fixture';\n", { mode: 0o666 });
-      fs.writeFileSync(ciaoGuard, "module.exports = 'ciao guard fixture';\n", { mode: 0o666 });
       fs.chmodSync(preloadDir, 0o777);
       fs.chmodSync(safetyNet, 0o666);
-      fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(hermesCronRestoreControl, "# Hermes cron restore control fixture\n");
@@ -692,14 +687,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
         .replaceAll("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", tirithMarkerFinalizer)
-        .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
-          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json",
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json",
           mcpCredentialBoundary,
         )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
-        .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
         .replaceAll("/opt/hermes/.venv/bin/python3", "python3")
         .replaceAll("/usr/local/lib/nemoclaw/managed-gateway-control.py", managedGatewayControl)
@@ -724,21 +717,16 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookIsSilentWhenVerificationFails(bashrc, rlimitLib);
       const hardenedDir = fs.statSync(preloadDir);
       const hardenedSafetyNet = fs.statSync(safetyNet);
-      const hardenedCiaoGuard = fs.statSync(ciaoGuard);
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
-      expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
       expect(fs.statSync(discordRecoveryPatcher).mode & 0o777).toBe(0o755);
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
-      expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
       expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);
       expect(hardenedSafetyNet.gid).toBe(fixtureOwner.gid);
-      expect(hardenedCiaoGuard.uid).toBe(fixtureOwner.uid);
-      expect(hardenedCiaoGuard.gid).toBe(fixtureOwner.gid);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

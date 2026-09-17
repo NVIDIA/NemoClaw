@@ -125,7 +125,7 @@ describe("DGX Station Express resume (#7048)", () => {
   it("turns an ambiguous dual-Station runtime lookup into a structured conflict", () => {
     const model = VLLM_MODELS.find(({ envValue }) => envValue === "nemotron-3-ultra-550b-a55b")!;
     const originalVariants = model.runtimeVariants;
-    const stationVariant = originalVariants?.find(
+    const stationVariant = (originalVariants ?? []).find(
       ({ orchestrationRef }) => orchestrationRef === "vllm.station-pair-optional/v1",
     )!;
     const mutableModel = model as { runtimeVariants?: readonly VllmRuntimeVariant[] };

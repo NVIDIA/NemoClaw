@@ -13,6 +13,7 @@ export type PullRequestFile = {
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
+  readonly pullRequestNumber: number | null;
   readBase(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
   readHead(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
 };
@@ -67,9 +68,7 @@ function readFilesCached(
   read: (file: string) => string | null,
 ): ReadonlyMap<string, string | null> {
   const uniquePaths = [...new Set(paths)];
-  uniquePaths
-    .filter((file) => !cache.has(file))
-    .forEach((file) => cache.set(file, read(file)));
+  uniquePaths.filter((file) => !cache.has(file)).forEach((file) => cache.set(file, read(file)));
   return new Map(uniquePaths.map((file) => [file, cache.get(file) ?? null]));
 }
 
@@ -140,6 +139,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
 
   return {
     files,
+    pullRequestNumber: null,
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
@@ -183,15 +183,20 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
   fetchPullHead(prNumber, headSha);
-  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
+  const changed = execFileSync(
+    "git",
+    ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    },
+  );
   const baseCache = new Map<string, string | null>();
   const headCache = new Map<string, string | null>();
 
   return {
     files: parseChangedFiles(changed),
+    pullRequestNumber: Number(prNumber),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },

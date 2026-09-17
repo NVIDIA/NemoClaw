@@ -24,7 +24,13 @@ export const MetadataSchema = Type.Object({
 });
 
 // Validate only consumed fields. Credential values and unrequested config remain opaque.
-const OpaqueMapSchema = Type.Record(Type.String(), Type.Unknown());
+const OpaqueMapSchema = Type.Unsafe<Record<string, unknown>>(
+  Type.Refine(Type.Unknown(), (value) => {
+    if (typeof value !== "object" || value === null) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }),
+);
 export const ProviderResponseSchema = Type.Object({
   provider: Type.Object({
     metadata: MetadataSchema,
@@ -47,6 +53,81 @@ export const BuiltinNvidiaProfileResponseSchema = Type.Object({
     endpoints: Type.Tuple([
       Type.Object({ host: Type.Literal("integrate.api.nvidia.com"), port: Type.Literal(443) }),
     ]),
+  }),
+});
+const NoUnknownProfileFields = { $unknown: Type.Optional(Type.Tuple([])) };
+const ManagedProfileIdentity = {
+  ...NoUnknownProfileFields,
+  source: Type.Union([Type.Literal("builtin"), Type.Literal("user")]),
+  scope: Type.Union([Type.Literal(""), Type.Literal("platform"), Type.Literal("workspace")]),
+  resourceVersion: VersionSchema,
+  discovery: Type.Optional(Type.Undefined()),
+};
+// Match the current checked-in profiles, including credential rewriting and egress.
+export const ManagedBraveProfileResponseSchema = Type.Object({
+  profile: Type.Object({
+    ...ManagedProfileIdentity,
+    id: Type.Literal("brave"),
+    inferenceCapable: Type.Literal(false),
+    endpoints: Type.Tuple([
+      Type.Object({
+        ...NoUnknownProfileFields,
+        host: Type.Literal("api.search.brave.com"),
+        port: Type.Literal(443),
+        ports: Type.Union([Type.Tuple([]), Type.Tuple([Type.Literal(443)])]),
+        protocol: Type.Literal("rest"),
+        tls: Type.Literal(""),
+        enforcement: Type.Literal("enforce"),
+        access: Type.Literal("read-write"),
+        rules: Type.Tuple([]),
+        allowedIps: Type.Tuple([]),
+        denyRules: Type.Tuple([]),
+        allowEncodedSlash: Type.Literal(false),
+        persistedQueries: Type.Literal(""),
+        graphqlPersistedQueries: Type.Object({}, { additionalProperties: false }),
+        graphqlMaxBodyBytes: Type.Literal(0),
+        path: Type.Literal(""),
+        websocketCredentialRewrite: Type.Literal(false),
+        requestBodyCredentialRewrite: Type.Literal(false),
+        advisorProposed: Type.Literal(false),
+        credentialSigning: Type.Literal(""),
+        signingService: Type.Literal(""),
+        signingRegion: Type.Literal(""),
+        jsonRpcMaxBodyBytes: Type.Literal(0),
+        mcp: Type.Optional(Type.Undefined()),
+        credentialBinding: Type.Optional(Type.Undefined()),
+      }),
+    ]),
+    credentials: Type.Tuple([
+      Type.Object({
+        ...NoUnknownProfileFields,
+        name: Type.Literal("api_key"),
+        envVars: Type.Tuple([Type.Literal("BRAVE_API_KEY")]),
+        required: Type.Literal(true),
+        authStyle: Type.Literal("header"),
+        headerName: Type.Literal("x-subscription-token"),
+        queryParam: Type.Literal(""),
+        pathTemplate: Type.Literal(""),
+        refresh: Type.Optional(Type.Undefined()),
+        tokenGrant: Type.Optional(Type.Undefined()),
+      }),
+    ]),
+    binaries: Type.Tuple([
+      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/local/bin/node") }),
+      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/bin/node") }),
+      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/local/bin/curl") }),
+      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/bin/curl") }),
+    ]),
+  }),
+});
+export const ManagedOpenAiProfileResponseSchema = Type.Object({
+  profile: Type.Object({
+    ...ManagedProfileIdentity,
+    id: Type.Literal("openai"),
+    inferenceCapable: Type.Literal(true),
+    credentials: Type.Tuple([]),
+    endpoints: Type.Tuple([]),
+    binaries: Type.Tuple([]),
   }),
 });
 export const SandboxResponseSchema = Type.Object({

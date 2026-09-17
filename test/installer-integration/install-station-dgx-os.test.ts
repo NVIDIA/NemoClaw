@@ -260,10 +260,7 @@ dgx_station_release_state "$DGX_RELEASE"
     ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
-    [
-      "different platform",
-      writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" }),
-    ],
+    ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
     [
       "partial OTA identity",
       writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
@@ -1045,6 +1042,7 @@ station_sudo_local_default_docker() {
     *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
   esac
 }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 sudo() {
   case "$*" in
     'nvidia-ctk cdi list') printf 'nvidia.com/gpu=all\n' ;;
@@ -1097,6 +1095,7 @@ station_sudo_local_default_docker() {
     *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
   esac
 }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
 sudo() {
   case "$*" in

@@ -79,15 +79,11 @@ describe("Pi managed model catalog generation", () => {
     stderr: string;
   } {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
-    const result = spawnSync(
-      process.execPath,
-      [path.join(root, "agents/pi/generate-config.ts")],
-      {
-        cwd: root,
-        encoding: "utf8",
-        env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
-      },
-    );
+    const result = spawnSync(process.execPath, [path.join(root, "agents/pi/generate-config.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
+    });
     return { home, status: result.status, stderr: result.stderr };
   }
 

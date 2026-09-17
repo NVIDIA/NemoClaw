@@ -115,7 +115,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
-  readonly managedGatewayOutputs: readonly string[];
+  readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;
   readonly trustedGatewayBin: string | null;
@@ -166,7 +166,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }
@@ -347,6 +351,8 @@ export type RuntimeProviderCommandCapture = {
 };
 
 export interface RuntimeProviderLifecycleInput {
+  /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
@@ -495,7 +501,9 @@ export type RuntimeProviderWorkloadCleanupResult =
     };
 
 export interface RuntimeProviderCleanupOperations {
-  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
+  readonly detachProviders: () =>
+    | RuntimeProviderProviderDetachResult
+    | Promise<RuntimeProviderProviderDetachResult>;
 }
 
 /**
@@ -623,7 +631,9 @@ export type RuntimeProviderLifecycleSurface =
       /** Provider-owned timeout for direct container lifecycle mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      start(
+        input: RuntimeProviderLifecycleInput,
+      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
         verifyGateway: (sandboxName: string) => Promise<void>,
@@ -631,7 +641,7 @@ export type RuntimeProviderLifecycleSurface =
       stop(
         input: RuntimeProviderLifecycleInput,
         hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome;
+      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -692,6 +702,11 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -724,7 +739,7 @@ export type RuntimeProviderCleanupSurface =
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
-      ): RuntimeProviderProviderDetachResult;
+      ): RuntimeProviderProviderDetachResult | Promise<RuntimeProviderProviderDetachResult>;
       /**
        * Produce a side-effect-free cleanup plan before any destructive
        * sandbox action. Providers must revalidate the same authority inside

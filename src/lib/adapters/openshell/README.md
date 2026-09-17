@@ -8,7 +8,7 @@ issue #10938 and PR #11065. They do not complete the capability migrations in th
 
 | Read | Owner | Transport and reason |
 | --- | --- | --- |
-| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
+| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides and requested managed Brave/OpenAI contracts; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
 | Sandbox identity, image, and attachments | `sandboxes.ts` | SDK `raw.getSandbox`; curated `sandbox.get` omits workspace, image, and active policy version. |
 | Configuration identity and effective policy | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID returns both in one response; curated `sandbox.getConfig` does a new name lookup and omits workspace. Policy reads for other consumers remain with #9805 and #9826. |
 | Inference route | `inference/live.ts` | Retains the CLI read with an explicit gateway. The separate generated inference client remains with #9809 and #9828. |
@@ -18,6 +18,13 @@ Use a curated SDK method when it preserves all fields and scope required by its 
 Production access to the raw client and generated messages must stay inside this directory. The SDK connection in
 `sdk.ts` is shared with sandbox execution. It retains the existing managed state-root check,
 explicit loopback gateway, and bounded local mTLS file reads. No second credential loader is needed.
+
+`sdk-import.mts` keeps the SDK's public entry points behind native ESM imports when
+the CLI compiles to CommonJS. Both connection and policy serialization use this
+lazy boundary because the reviewed SDK exposes import-only package conditions.
+The bridge has no top-level await, so the supported Node runtime can load its
+emitted `.mjs` from CommonJS. Compiled package tests cover both consumers with an
+import-only SDK fixture; SDK installation and gateway qualification remain separate.
 
 The read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
 not-found response returns `null`. Other failures use the existing sandbox error categories and
@@ -38,6 +45,25 @@ The pinned OpenShell native resolver uses `/v1` on that host. Export records the
 as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
 cannot use this derivation.
 
+Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
+The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
+same gateway. Brave onboarding imports its checked-in profile in the `default` workspace.
+User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
+must have global binding, empty scope, and revision zero. Matching the profile name is insufficient.
+
+The pinned OpenAI provider type can also exist without a profile. A confirmed not-found read at
+its global or same-workspace binding returns `managedProfile: null`. Ollama export accepts that
+evidence; managed vLLM still requires a qualified profile. Other read failures remain terminal.
+
+Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
+and inference capability. Brave permits its single header credential and search endpoint;
+OpenAI requires the endpointless inference contract. Credential refresh, token grants, discovery,
+changed rewriting rules, and unknown protobuf fields in the profile's semantic messages fail.
+Provider credential values and handles remain opaque. The reader returns profile identity,
+source, scope, revision, and binding for inclusion in complete export observations. A changed
+binding or profile revision therefore prevents publication until observations agree. Hosted
+consumers that do not request this qualification retain their existing endpoint semantics.
+
 Provider reads retain the complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
 environment values. Configuration reads return revision metadata and a credential-free effective policy document, without settings values.
 The policy conversion follows the reviewed OpenShell release: filesystem defaults, compact ports,
@@ -52,4 +78,23 @@ detachment, deletion, replacement cleanup, and other lifecycle operations keep t
 adapters until the remaining #9806 migration slices land. This does not claim SDK qualification for
 those operations.
 
-Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.0.106 does not expose a transport receive-size option.
+Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.0.116 does not expose a transport receive-size option.
+
+## User file transfers
+
+`sandbox-transfer.ts` defines the asynchronous upload/download contract used by the public commands
+under #9810. `sandbox-transfer-cli.ts` owns CLI arguments, gateway targeting, environment filtering,
+and process supervision. It preserves inherited stdin, stdout, and stderr, including the existing
+machine-output redirection. Typed results contain no raw subprocess errors or output. Inherited
+OpenShell diagnostics remain unchanged; this adapter does not filter them.
+
+Transfer completion waits for child close. A completed command can have a nonzero exit code, and
+exit zero does not prove a download artifact exists. Actions retain source validation, private
+staging, artifact verification, publication, and cleanup. Transfers have no fixed timeout; source
+probes retain their existing timeout through the buffered command executor.
+
+Callers must retain the completion until staging cleanup and their outer lifecycle lock settle,
+then call `release()` in `finally`. Check `wasInterrupted()` before publication and before returning
+success, since interruption can arrive during post-transfer verification or lock release. Do not
+retry an interrupted or indeterminate transfer. Session exports, onboarding downloads, and plugin
+copy remain assigned to later #9810 deliveries.

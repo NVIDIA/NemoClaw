@@ -48,7 +48,7 @@ const ADVERSARIAL_E2E_TEXT = [
   "nice gh secret list",
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
-const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
+const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "full-e2e", "security-posture"]);
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -62,7 +62,7 @@ function metadata(
   return {
     baseRef: "origin/main",
     headRef: "HEAD",
-    changedFiles: ["test/e2e/registry/runtime-support.ts"],
+    changedFiles: ["test/e2e/registry/execution.ts"],
     ...overrides,
   };
 }
@@ -77,6 +77,7 @@ describe("E2E recommendation normalizer", () => {
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
         "openclaw-skill-cli",
+        "sandbox-survival",
         "security-posture",
       ]),
     );
@@ -130,11 +131,11 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/execution-coverage.mts",
         "tools/e2e/full-e2e-timeout-contract.mts",
         "tools/e2e/gateway-runtime.mts",
+        "tools/e2e/hermes-acp-owning-paths.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
-        "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
@@ -151,15 +152,11 @@ describe("E2E recommendation normalizer", () => {
         path.join(tmp, "tools/advisors/e2e-recommendations.mts"),
       ).href;
       const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("vllm-docker-storage")) process.exit(2);`;
-      const result = spawnSync(
-        process.execPath,
-        ["--input-type=module", "--eval", script],
-        {
-          cwd: tmp,
-          encoding: "utf8",
-          env: { PATH: process.env.PATH ?? "" },
-        },
-      );
+      const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "" },
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(tmp, "node_modules"))).toBe(false);
     } finally {
@@ -299,7 +296,7 @@ describe("E2E recommendation normalizer", () => {
           { domain: "runtime", reason: command, confidence: "high", matchedFiles: [] },
         ],
         requiredTests: [{ id: "security-posture", reason: command }],
-        optionalTests: [{ id: "cloud-inference", reason: command }],
+        optionalTests: [{ id: "full-e2e", reason: command }],
         newE2eRecommendations: [
           { domain: "runtime", reason: "Add coverage.", suggestedTest: command, priority: "high" },
         ],
@@ -421,7 +418,7 @@ describe("E2E recommendation normalizer", () => {
   it("preserves valid selector-only recommendations", () => {
     const raw = {
       version: 1,
-      relevantChangedFiles: ["test/e2e/registry/runtime-support.ts"],
+      relevantChangedFiles: ["test/e2e/registry/execution.ts"],
       required: [
         {
           id: "e2e-all",
@@ -517,7 +514,7 @@ describe("E2E recommendation normalizer", () => {
         ],
         optional: [
           {
-            id: "ubuntu-repo-docker-post-reboot-recovery",
+            id: "ubuntu-policy-custom-missing-presets-negative",
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             // Model claims this optional item is actually required.
@@ -600,7 +597,7 @@ describe("E2E recommendation normalizer", () => {
     ]);
   });
 
-  it("drops unknown or unsupported registry ids while preserving live-supported ids and fan-out", () => {
+  it("drops unknown or removed registry ids while preserving executable ids and fan-out", () => {
     const raw = {
       required: [
         {
@@ -613,7 +610,7 @@ describe("E2E recommendation normalizer", () => {
           id: "ubuntu-repo-cloud-hermes",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
-          reason: "registry target not wired for live Vitest fixtures",
+          reason: "removed registry placeholder",
         },
         {
           id: "e2e-all",
@@ -1052,7 +1049,7 @@ jobs:
           reason: "duplicate fallback",
         },
         {
-          id: "ubuntu-repo-docker-post-reboot-recovery",
+          id: "ubuntu-policy-custom-missing-presets-negative",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           required: false,
@@ -1064,22 +1061,22 @@ jobs:
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
     expect(normalized.optional.map((item) => item.id)).toEqual([
-      "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-policy-custom-missing-presets-negative",
     ]);
   });
 
   it("filters relevantChangedFiles to the metadata changedFiles set", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
-        relevantChangedFiles: ["test/e2e/registry/runtime-support.ts", "fabricated/file.txt"],
+        relevantChangedFiles: ["test/e2e/registry/execution.ts", "fabricated/file.txt"],
         required: [],
         optional: [],
         noTargetE2eReason: "no impact",
         confidence: "low",
       },
-      metadata({ changedFiles: ["test/e2e/registry/runtime-support.ts"] }),
+      metadata({ changedFiles: ["test/e2e/registry/execution.ts"] }),
     );
-    expect(normalized.relevantChangedFiles).toEqual(["test/e2e/registry/runtime-support.ts"]);
+    expect(normalized.relevantChangedFiles).toEqual(["test/e2e/registry/execution.ts"]);
   });
 
   it("supplies a default noTargetE2eReason when none provided and there are no recommendations", () => {
@@ -1093,5 +1090,30 @@ jobs:
   it("rejects non-object advisor output", () => {
     expect(() => normalizeE2eTargetAdvisorResult("nope", metadata())).toThrow(/non-object/);
     expect(() => normalizeE2eTargetAdvisorResult([], metadata())).toThrow(/non-object/);
+  });
+});
+
+describe("Brev recommendation normalization", () => {
+  it("preserves the Brev floor when the model selects no E2E coverage", () => {
+    const changed = metadata({ changedFiles: ["src/lib/actions/sandbox/forward-recovery.ts"] });
+    const emptyAdvice = {
+      required: [],
+      optional: [],
+      confidence: "low",
+      noTargetE2eReason: "No tests needed.",
+    };
+    const targets = normalizeE2eTargetAdvisorResult(emptyAdvice, changed);
+    const coverage = normalizeE2eCoverageResult({}, changed);
+    expect(trustedE2eRecommendationInventory().allowedJobIds).toContain("staging-brev-launchable");
+    expect(targets.required).toContainEqual(
+      expect.objectContaining({
+        id: "staging-brev-launchable",
+        workflow: "e2e.yaml",
+        selectorType: "job",
+        required: true,
+      }),
+    );
+    expect(coverage.requiredTests.map(({ id }) => id)).toContain("staging-brev-launchable");
+    expect(targets.noTargetE2eReason).toBeNull();
   });
 });

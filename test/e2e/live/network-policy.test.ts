@@ -9,7 +9,7 @@ import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
@@ -329,6 +329,12 @@ test(
       apiKey,
       scenarioLabel: "network-policy",
       scenarioSlug: "network-policy",
+      extraOnboardEnv: {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "researcher", tools: { allow: ["read"] } },
+          { id: "reviewer", tools: { allow: ["read"] } },
+        ]),
+      },
       preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-network-policy",
       onboardArtifactPrefix: "onboard-restricted-network-policy",
       onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
@@ -345,7 +351,7 @@ test(
     );
     const registry = load();
     const entry = registry.sandboxes[SANDBOX_NAME];
-    const policy = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
       target: namedOpenShellGateway(entry.gatewayName ?? ""),
       sandboxName: SANDBOX_NAME,
       scope: "effective",
@@ -360,13 +366,24 @@ test(
     const raw = fs.readFileSync(outputPath, "utf8");
     expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
     const document = validateNemoClawConfig(YAML.parse(raw));
-    expect(document.spec.sandboxes[0].name).toBe(SANDBOX_NAME);
+    const exportedSandbox = document.spec.sandboxes[0];
+    const [primary] = exportedSandbox.agents;
+    const primaryInference = JSON.stringify(primary?.inference);
+    const roster = exportedSandbox.agents.map((agent) => {
+      const toolsConfig = "tools" in agent ? agent.tools : undefined;
+      const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
+      const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
+      return `${agent.name}:${tools}:${route}`;
+    });
+    expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
+      `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
+    );
     expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
       entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
     );
-    expect(document.spec.inferenceProviders[0].endpoint).toBe(
-      requireHostedInferenceConfig(secrets).endpointUrl,
-    );
+    const exportedProvider = document.spec.inferenceProviders[0];
+    const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
+    expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
     expect(document.spec.sandboxes[0].network.policy.explicit).toEqual(
       policy.ok ? YAML.parse(policy.value.document) : null,
     );
@@ -396,8 +413,9 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
+      agentNames: exportedSandbox.agents.map((agent) => agent.name),
       image: document.spec.sandboxes[0].runtime.image.ref,
-      endpoint: document.spec.inferenceProviders[0].endpoint,
+      endpoint: exportedEndpoint,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
     });

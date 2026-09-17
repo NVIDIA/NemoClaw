@@ -27,11 +27,9 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
-  verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { executeGatewaySupervisorAction } from "./runtime/hermes-lifecycle";
 import {
   type McpRebuildPreparation,
   postRestoreCompleted,
@@ -97,7 +95,7 @@ export interface RebuildPostRestorePhaseInput {
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
-  versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
+  versionCheck: sandboxVersion.VersionCheckResult;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -128,7 +126,7 @@ function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: s
 }
 
 /**
- * Repair agent state, restore MCP/forwarding, reconcile the registry, and report
+ * Repair agent state, restore MCP/forwarding, reconcile non-MCP registry state, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
  * rebuild-config-hash.test.ts cover the complete/incomplete post-restore paths;
  * rebuild-post-restore-phase.test.ts covers forwarding recovery reports.
@@ -188,15 +186,10 @@ export async function runRebuildPostRestorePhase(
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
   // Rebuild freezes the OpenShell target before deletion and revalidates the
-  // recreated registry binding above. That exact binding can safely authorize
-  // the provider-scoped root controller while every OpenShell operation stays
-  // pinned to the selected runtime. The ordinary gateway restart command keeps
-  // its fail-closed selected-runtime fence.
+  // recreated registry binding above. Native restart and health checks remain
+  // pinned to that selected runtime.
   const hermesPostRestoreGatewayDeps = mcpRuntimeSelection
     ? {
-        ...(targetAgentName === "hermes"
-          ? { frozenTargetGatewaySupervisorAction: executeGatewaySupervisorAction }
-          : {}),
         runtimeSelection: mcpRuntimeSelection,
       }
     : {};
@@ -258,7 +251,7 @@ export async function runRebuildPostRestorePhase(
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
-    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
+    await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
       await reapplyMessagingManifestAfterOpenClawDoctor(
@@ -307,14 +300,16 @@ export async function runRebuildPostRestorePhase(
     return;
   }
 
-  // Restart before restoring MCP. The Hermes MCP transaction performs an
-  // acknowledged reload of its own; restarting afterwards would replace the
-  // only runtime whose managed MCP configuration was proven to have loaded.
-  const hermesGatewayRestartState = await restartHermesGatewayAfterStateRestore(
-    sandboxName,
-    targetAgentName,
-    hermesPostRestoreGatewayDeps,
-  );
+  // The managed image owns the ordinary Hermes process lifecycle. Only an
+  // active cron-restore gate requires the bounded replacement transaction that
+  // keeps dispatch drained across a process identity change.
+  const hermesGatewayRestartState = hermesCronRestoreIdentity
+    ? await restartHermesGatewayAfterStateRestore(
+        sandboxName,
+        targetAgentName,
+        hermesPostRestoreGatewayDeps,
+      )
+    : "not-applicable";
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
     sandboxName,
     mcpEntries,
@@ -333,10 +328,16 @@ export async function runRebuildPostRestorePhase(
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
     if (
-      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log, mcpRuntimeSelection)
+      !(await refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+        sandboxName,
+        log,
+        mcpRuntimeSelection,
+      ))
     ) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)) {
+    } else if (
+      !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
+    ) {
       finalMutableConfigHashUnverified = true;
     }
   }
@@ -348,15 +349,7 @@ export async function runRebuildPostRestorePhase(
         hermesCronRestoreIdentity,
         hermesPostRestoreGatewayDeps,
       )
-    : {
-        state: await verifyHermesGatewayAfterStateRestore(
-          sandboxName,
-          targetAgentName,
-          hermesGatewayRestartState,
-          hermesPostRestoreGatewayDeps,
-        ),
-        replacementIdentity: undefined,
-      };
+    : { state: "not-applicable" as const, replacementIdentity: undefined };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   let verifiedAgentVersion: string | null = null;
@@ -365,7 +358,7 @@ export async function runRebuildPostRestorePhase(
     // version. Clear create-time bookkeeping before the forced live probe so a
     // failed probe cannot leave the requested version recorded as observed.
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    const rebuiltVersion = await probeRebuiltAgentVersion(sandboxName);
     if (
       rebuiltVersion.verificationFailed ||
       rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
@@ -391,10 +384,7 @@ export async function runRebuildPostRestorePhase(
     }
     verifiedAgentVersion = rebuiltVersion.sandboxVersion;
   }
-  if (
-    targetAgentName === "hermes" &&
-    (hermesGatewayRestoreState === "healthy" || hermesGatewayRestoreState === "recovered")
-  ) {
+  if (targetAgentName === "hermes") {
     const mutableConfigVerification = inspectMutableHermesConfigPerms(sandboxName);
     mutableConfigPermissionsVerified = mutableConfigVerification.verified;
     if (mutableConfigPermissionsVerified) {
@@ -472,11 +462,11 @@ export async function runRebuildPostRestorePhase(
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
   if (
-    !ensureMessagingHostForwardAfterRebuild(
+    !(await ensureMessagingHostForwardAfterRebuild(
       sandboxName,
       effectiveMessagingPlan,
       mcpRuntimeSelection,
-    )
+    ))
   ) {
     messagingHostForwardUnverified = true;
   }
@@ -484,7 +474,7 @@ export async function runRebuildPostRestorePhase(
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)
+    !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
   ) {
     finalMutableConfigHashUnverified = true;
   }

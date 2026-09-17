@@ -154,42 +154,6 @@ function runCapturingConsoleError<T>(fn: () => T): { result: T; stderr: string }
   }
 }
 
-function writeWeChatPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "openclaw-weixin");
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPackageMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
-  return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
-}
-
 function writeRegistryManifest(
   blueprintDir: string,
   relativeManifestPath: string,
@@ -777,14 +741,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.heartbeat).toBeUndefined();
   });
 
-  it("propagates heartbeat cadence into agents.defaults.heartbeat.every", () => {
+  it("runs a configured heartbeat in an isolated session (#10262)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m", isolatedSession: true });
   });
 
   it("disables heartbeat when set to 0m (#2880)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m", isolatedSession: true });
   });
 
   it("rejects malformed heartbeat values, preserves OpenClaw default, and warns on stderr", () => {

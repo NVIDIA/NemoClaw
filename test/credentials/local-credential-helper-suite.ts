@@ -660,18 +660,16 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
         },
       );
 
-      it.each([
-        { executable: "node" },
-        { executable: "./node" },
-      ])("rejects non-absolute approved executable $executable before listening (#5048)", ({
-        executable,
-      }) => {
-        expect(() =>
-          parseCliArguments(
-            helperCliArguments(["OPENAI_API_KEY:secret"], [executable, "-e", "process.exit(0)"]),
-          ),
-        ).toThrow("approved command executable must use an absolute path");
-      });
+      it.each([{ executable: "node" }, { executable: "./node" }])(
+        "rejects non-absolute approved executable $executable before listening (#5048)",
+        ({ executable }) => {
+          expect(() =>
+            parseCliArguments(
+              helperCliArguments(["OPENAI_API_KEY:secret"], [executable, "-e", "process.exit(0)"]),
+            ),
+          ).toThrow("approved command executable must use an absolute path");
+        },
+      );
 
       it.each([
         {
@@ -694,22 +692,22 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
           options: ["--execution-profile", "isolated", "--cwd", REPO_ROOT],
           expected: "--execution-profile isolated does not accept --cwd",
         },
-      ])("rejects an unsafe or ambiguous execution profile before listening (#5048)", ({
-        expected,
-        options,
-      }) => {
-        expect(() =>
-          parseCliArguments([
-            ...options,
-            "--field",
-            "OPENAI_API_KEY:secret",
-            "--",
-            process.execPath,
-            "-e",
-            "process.exit(0)",
-          ]),
-        ).toThrow(expected);
-      });
+      ])(
+        "rejects an unsafe or ambiguous execution profile before listening (#5048)",
+        ({ expected, options }) => {
+          expect(() =>
+            parseCliArguments([
+              ...options,
+              "--field",
+              "OPENAI_API_KEY:secret",
+              "--",
+              process.execPath,
+              "-e",
+              "process.exit(0)",
+            ]),
+          ).toThrow(expected);
+        },
+      );
     }
 
     if (group === "contract") {

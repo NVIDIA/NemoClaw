@@ -72,8 +72,8 @@ describe("getRuntimeSummary", () => {
     mockedLoadState.mockReturnValue(blankState());
   });
 
-  it("returns static deny-by-default context for the configured sandbox", async () => {
-    const summary = await getRuntimeSummary(defaultConfig);
+  it("returns static deny-by-default context for the configured sandbox", () => {
+    const summary = getRuntimeSummary(defaultConfig);
 
     expect(summary.sandboxName).toBe("openclaw");
     expect(summary.sandboxPhase).toBeNull();
@@ -85,20 +85,20 @@ describe("getRuntimeSummary", () => {
     );
   });
 
-  it("prefers the persisted sandbox name when available", async () => {
+  it("prefers the persisted sandbox name when available", () => {
     mockedLoadState.mockReturnValue(blankState({ sandboxName: "my-assistant" }));
 
-    const summary = await getRuntimeSummary(defaultConfig);
+    const summary = getRuntimeSummary(defaultConfig);
 
     expect(summary.sandboxName).toBe("my-assistant");
   });
 
-  it("falls back to plugin config when state cannot be read", async () => {
+  it("falls back to plugin config when state cannot be read", () => {
     mockedLoadState.mockImplementation(() => {
       throw new Error("state unavailable");
     });
 
-    const summary = await getRuntimeSummary(defaultConfig);
+    const summary = getRuntimeSummary(defaultConfig);
 
     expect(summary.sandboxName).toBe("openclaw");
   });

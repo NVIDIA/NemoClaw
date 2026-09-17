@@ -236,7 +236,7 @@ describe("provider-neutral host-local inference startup routing", () => {
         },
         requireToolCalling: true,
         publishedRoute: true,
-  });
+      });
 
       expect(route.gatewayProvider).toBe("llama-cpp-local");
       expect(route.gatewayProviderBaseUrl).toBe("http://host.openshell.internal:8081/v1");

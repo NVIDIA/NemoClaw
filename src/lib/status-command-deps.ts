@@ -223,10 +223,10 @@ function readGatewayLog(rootDir: string, sandboxName: string): string | null {
   }
 }
 
-function probeGatewayHealth(): GatewayHealth {
+async function probeGatewayHealth(): Promise<GatewayHealth> {
   try {
     const expectedGateway = resolveGatewayName(GATEWAY_PORT);
-    const lifecycle = getNamedGatewayLifecycleState(expectedGateway);
+    const lifecycle = await getNamedGatewayLifecycleState(expectedGateway);
     if (lifecycle.state === "healthy_named") {
       return { healthy: true, state: lifecycle.state };
     }
@@ -239,7 +239,7 @@ function probeGatewayHealth(): GatewayHealth {
     return {
       healthy: false,
       state: lifecycle.state,
-      reason: reasonByState[lifecycle.state],
+      reason: lifecycle.error?.message ?? reasonByState[lifecycle.state],
     };
   } catch {
     // A transient probe failure must not mask a real gateway problem, but
@@ -275,9 +275,9 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
 
   return {
     listSandboxes: () => registry.listSandboxes(),
-    getPolicyPresets: (sandboxName) => {
+    getPolicyPresets: async (sandboxName) => {
       try {
-        return policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+        return await policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
       } catch {
         return [];
       }

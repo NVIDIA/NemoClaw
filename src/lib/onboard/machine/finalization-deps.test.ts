@@ -25,6 +25,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   ordinaryOpenClawPairingIncompleteMessage,
+  restartNativeGatewayForInitialSetup,
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
 
@@ -760,5 +761,148 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
     });
 
     expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBeNull();
+  });
+});
+
+describe("finalization process-recovery refusal propagation", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("passes the scope-validated portable environment to process recovery", async () => {
+    const recover = vi.fn(async () => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    const environment = { HOME: "/home/kiosk", PATH: "/usr/bin" };
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+        "fresh-hermes",
+        { quiet: true },
+        environment,
+      ),
+    ).resolves.toBe(true);
+    expect(recover).toHaveBeenCalledExactlyOnceWith("fresh-hermes", {
+      quiet: true,
+      portableSupervisorEnvironment: environment,
+    });
+  });
+
+  it("pauses when process inspection cannot complete (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(false);
+  });
+
+  it("pauses onboarding when the stopped gateway could not be recovered", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses(
+        "fresh-hermes",
+        { quiet: true },
+        { HOME: "/home/kiosk" },
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("allows checked terminal recovery without a gateway process (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+        runtime: "terminal" as const,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+  });
+
+  it.each([
+    "raw-secret",
+    "exec-failed",
+    "validator-missing",
+    "unexpected-marker",
+    "agent-missing",
+  ] as const)(
+    "preserves %s refusal for the onboarding state machine (#11758)",
+    async (secretBoundaryReason) => {
+      const recover = vi.fn(async () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason,
+      }));
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recover,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
+      await expect(
+        finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+      ).resolves.toBe(false);
+      expect(recover).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
+    },
+  );
+
+  it("allows final verification when recovery did not refuse the boundary (#11758)", async () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+    });
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+  });
+});
+
+describe("initial native gateway startup", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses the native agent restart path without restoring supervisor authority", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
+      ok: true as const,
+      restarted: true as const,
+      healthPassed: true as const,
+      forwardRecovered: true,
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway,
+    });
+
+    await expect(restartNativeGatewayForInitialSetup("alpha")).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
   });
 });

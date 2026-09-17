@@ -8,18 +8,11 @@ import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/san
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
-import type {
-  OpenClawImagePluginInstall,
-  OpenClawManagedExtensionDiscoveryResult,
-} from "../state/openclaw-plugin-restore";
-import * as openClawPluginRestore from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
-import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import * as sandboxState from "../state/sandbox";
 import {
   MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
-  OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
@@ -59,7 +52,6 @@ export type CreatedSandboxFinalizationOptions = {
   preUpgradeBackup: boolean;
   targetAgentType: string;
   customImage?: boolean;
-  discoverOpenClawImagePluginInstalls?: boolean;
   validateManagedDcode: boolean;
   provider: string;
   model: string;
@@ -69,15 +61,12 @@ export type CreatedSandboxFinalizationOptions = {
 
 export type CreatedSandboxFinalizationDeps = {
   revalidateSandboxIdentity?(operation: string): void;
-  discoverFreshOpenClawImagePluginInstalls(
-    sandboxName: string,
-  ): OpenClawManagedExtensionDiscoveryResult;
   restoreRecreatedSandboxState(
     sandboxName: string,
     backupPath: string,
     options: RecreatedSandboxRestoreOptions,
-    resolveTarget?: () => SandboxEntry,
-  ): RestoreResult;
+    resolveTarget?: () => SandboxEntry | Promise<SandboxEntry>,
+  ): RestoreResult | Promise<RestoreResult>;
   getDcodeSelectionDrift(
     sandboxName: string,
     provider: string,
@@ -85,17 +74,9 @@ export type CreatedSandboxFinalizationDeps = {
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
   ): Promise<SelectionDrift>;
-  prepareRegistration?(
-    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  ): SandboxEntry;
-  revalidatePreparedRegistration?(
-    prepared: SandboxEntry,
-    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  ): SandboxEntry;
-  register(
-    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-    prepared?: SandboxEntry,
-  ): SandboxEntry | void;
+  prepareRegistration?(): SandboxEntry | Promise<SandboxEntry>;
+  revalidatePreparedRegistration?(prepared: SandboxEntry): SandboxEntry | Promise<SandboxEntry>;
+  register(prepared?: SandboxEntry): SandboxEntry | void | Promise<SandboxEntry | void>;
   note(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -108,7 +89,6 @@ type RegistrationSeed = Omit<
   CreatedSandboxRegistrationInput,
   | "imageTag"
   | "workload"
-  | "openclawImagePluginInstalls"
   | "hermesDashboardState"
   | "dashboardPort"
   | "lifecycleGeneration"
@@ -175,7 +155,9 @@ export interface CreatedSandboxCompletionActions {
     providerGpuDisposition: "disabled" | "created" | "hermes",
     manageDashboard: boolean,
     resolveLifecycleRegistrationFields: () => Pick<SandboxEntry, "lifecycleGeneration">,
-    lifecycle: CreatedSandboxLifecycle,
+    lifecycle:
+      | CreatedSandboxLifecycle
+      | ReturnType<typeof createHermesPortableCreatedSandboxLifecycle>,
     inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
   ): Promise<SandboxEntry | void>;
 }
@@ -184,7 +166,7 @@ type OnboardCreatedSandboxRegistration = (
   created: SandboxGpuCreateFlowResult | null,
   configuredReceipt: HermesPortableConfiguredReceipt | null,
   configuredLiveIdentityFingerprint?: string,
-  revalidateHermesAuthority?: () => string,
+  revalidateHermesAuthority?: () => string | Promise<string>,
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
 ) => Promise<SandboxEntry | void>;
 
@@ -321,29 +303,29 @@ export async function completeOrdinaryOnboardSandboxCreation(
 /** Revalidate the configuring receipt at both registry-publication checks. */
 export function createHermesPortableCreatedSandboxLifecycle(
   receipt: HermesPortableConfiguredReceipt,
-  revalidate: () => string,
-): CreatedSandboxLifecycle {
-  const requireCurrent = () => ({
+  revalidate: () => string | Promise<string>,
+) {
+  const requireCurrent = async () => ({
     lifecycleGeneration: receipt.lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: revalidate(),
+    lifecycleLiveIdentityFingerprint: await revalidate(),
   });
   return {
     generation: receipt.lifecycleGeneration,
-    recordExactIdentity: (liveIdentityFingerprint) => {
-      const current = requireCurrent();
+    recordExactIdentity: async (liveIdentityFingerprint: string) => {
+      const current = await requireCurrent();
       if (current.lifecycleLiveIdentityFingerprint !== liveIdentityFingerprint) {
         throw new Error("Hermes portable created identity disagrees with receipt authority.");
       }
       return current;
     },
-    capture: (fields) => {
+    capture: async (fields: Pick<SandboxEntry, "lifecycleGeneration">) => {
       if (fields.lifecycleGeneration !== receipt.lifecycleGeneration) {
         throw new Error("Hermes portable registry generation disagrees with receipt authority.");
       }
       return requireCurrent();
     },
-    revalidate: (registration) => {
-      const current = requireCurrent();
+    revalidate: async (registration: CreatedSandboxLifecycleRegistration) => {
+      const current = await requireCurrent();
       if (
         registration.lifecycleGeneration !== current.lifecycleGeneration ||
         registration.lifecycleLiveIdentityFingerprint !== current.lifecycleLiveIdentityFingerprint
@@ -416,8 +398,8 @@ export function createCreatedSandboxCompletionActions(
       lifecycle,
       inferenceRouteReservation,
     ) => {
-      const verifiedLifecycle = lifecycle.revalidate(
-        lifecycle.capture(resolveLifecycleRegistrationFields()),
+      const verifiedLifecycle = await lifecycle.revalidate(
+        await lifecycle.capture(resolveLifecycleRegistrationFields()),
       );
       const verifiedCreateBoundary = options.policy.getVerifiedCreateBoundary();
       assertVerifiedCreateBoundaryMatchesLifecycle(
@@ -453,7 +435,7 @@ export function createCreatedSandboxCompletionActions(
         firstCreateOutput: created?.origin === "created" ? created.firstCreateOutput : "",
         createOutput: created?.origin === "created" ? created.createResult.output : "",
       });
-      const finalLifecycle = lifecycle.revalidate(verifiedLifecycle);
+      const finalLifecycle = await lifecycle.revalidate(verifiedLifecycle);
       assertVerifiedCreateBoundaryMatchesLifecycle(
         verifiedCreateBoundary,
         options.finalization.sandboxName,
@@ -464,12 +446,11 @@ export function createCreatedSandboxCompletionActions(
       deps.revalidateSandboxIdentity?.(
         `publishing sandbox '${options.finalization.sandboxName}' registry authority`,
       );
-      const registrationInput = (
-        openclawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined,
+      const registrationInput = async (
         revalidateLifecycle: boolean,
-      ): CreatedSandboxRegistrationInput => {
+      ): Promise<CreatedSandboxRegistrationInput> => {
         const currentLifecycle = revalidateLifecycle
-          ? lifecycle.revalidate(finalLifecycle)
+          ? await lifecycle.revalidate(finalLifecycle)
           : finalLifecycle;
         assertVerifiedCreateBoundaryMatchesLifecycle(
           verifiedCreateBoundary,
@@ -504,7 +485,6 @@ export function createCreatedSandboxCompletionActions(
           hermesPortableLifecycle: configuredReceipt !== null,
           imageTag: resolved.resolvedImageTag,
           workload: resolved.workloadReceipt,
-          openclawImagePluginInstalls,
           hermesDashboardState,
           dashboardPort,
           ...currentLifecycle,
@@ -519,17 +499,17 @@ export function createCreatedSandboxCompletionActions(
         },
         {
           ...deps,
-          prepareRegistration: (openclawImagePluginInstalls) =>
+          prepareRegistration: async () =>
             (deps.prepareCreatedSandboxRegistration ?? prepareCreatedSandboxRegistration)(
-              registrationInput(openclawImagePluginInstalls, true),
+              await registrationInput(true),
             ),
-          revalidatePreparedRegistration: (prepared, openclawImagePluginInstalls) =>
+          revalidatePreparedRegistration: async (prepared) =>
             (
               deps.revalidatePreparedCreatedSandboxRegistration ??
               revalidatePreparedCreatedSandboxRegistration
-            )(registrationInput(openclawImagePluginInstalls, true), prepared),
-          register: (openclawImagePluginInstalls, prepared) => {
-            const input = registrationInput(openclawImagePluginInstalls, prepared !== undefined);
+            )(await registrationInput(true), prepared),
+          register: async (prepared) => {
+            const input = await registrationInput(prepared !== undefined);
             return prepared
               ? (deps.registerPreparedCreatedSandbox ?? registerPreparedCreatedSandbox)(
                   input,
@@ -603,7 +583,6 @@ type OnboardInferenceSelection = {
 };
 type OnboardMessagingRegistration = {
   readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
-  readonly preservedMcpState: RegistrationSeed["preservedMcpState"];
   readonly hermesToolGateways: string[];
 };
 type OnboardCreationFidelity = {
@@ -647,13 +626,13 @@ const currentRestoreSnapshotDependencies: CurrentRestoreSnapshotDependencies = {
 };
 
 /** Re-read latest snapshot authority at the state-restoration boundary. */
-export function restoreSelectedOnboardSnapshot(
+export async function restoreSelectedOnboardSnapshot(
   sandboxName: string,
   backupPath: string,
   restoreOptions: RecreatedSandboxRestoreOptions,
-  resolveTarget?: () => SandboxEntry,
+  resolveTarget?: () => SandboxEntry | Promise<SandboxEntry>,
   dependencies: CurrentRestoreSnapshotDependencies = currentRestoreSnapshotDependencies,
-): RestoreResult {
+): Promise<RestoreResult> {
   const latest = dependencies.getLatestBackup(sandboxName);
   if (latest?.backupPath !== backupPath) {
     return {
@@ -724,7 +703,6 @@ export function createOnboardCreatedSandboxCompletion(
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
         customImage: Boolean(fromDockerfile),
-        discoverOpenClawImagePluginInstalls: agentFlags.customOpenClawImage,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -798,12 +776,6 @@ export function createOnboardCreatedSandboxCompletion(
       },
     },
     {
-      discoverFreshOpenClawImagePluginInstalls: (name) =>
-        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(
-          name,
-          sandboxState,
-          agent?.configPaths.dir,
-        ),
       restoreRecreatedSandboxState: (name, backupPath, restoreOptions, resolveTarget) =>
         restoreSelectedOnboardSnapshot(name, backupPath, restoreOptions, resolveTarget),
       getDcodeSelectionDrift: createDcodeSelectionDriftReader(
@@ -831,22 +803,6 @@ export async function finalizeCreatedSandbox(
       `  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run '${cliName()} ${options.sandboxName} destroy' to check for authoritative absence.`,
     );
   };
-  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
-  if (options.discoverOpenClawImagePluginInstalls === true) {
-    const discovery = deps.discoverFreshOpenClawImagePluginInstalls(options.sandboxName);
-    if (!discovery.ok) {
-      deps.error(
-        `  OpenClaw image plugin discovery failed for sandbox '${options.sandboxName}': ${discovery.error}`,
-      );
-      deps.error("  State was not restored and registry metadata was not updated.");
-      reportUnregisteredSandboxRecovery();
-      deps.error("  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.");
-      if (options.restoreBackupPath) deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
-      return deps.exitProcess(1);
-    }
-    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
-  }
-
   let preparedRegistration: SandboxEntry | undefined;
   if (options.restoreBackupPath) {
     deps.note(
@@ -864,22 +820,16 @@ export async function finalizeCreatedSandbox(
       deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
     }
-    preparedRegistration = deps.prepareRegistration(freshOpenClawImagePluginInstalls);
+    preparedRegistration = await deps.prepareRegistration();
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
-      ...(freshOpenClawImagePluginInstalls !== undefined
-        ? { freshOpenClawImagePluginInstalls }
-        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
-    const resolveTarget = () => {
-      preparedRegistration = deps.revalidatePreparedRegistration!(
-        preparedRegistration!,
-        freshOpenClawImagePluginInstalls,
-      );
+    const resolveTarget = async () => {
+      preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
       return preparedRegistration;
     };
-    const restore = deps.restoreRecreatedSandboxState(
+    const restore = await deps.restoreRecreatedSandboxState(
       options.sandboxName,
       options.restoreBackupPath,
       restoreOptions,
@@ -899,18 +849,6 @@ export async function finalizeCreatedSandbox(
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
-        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
-        return deps.exitProcess(1);
-      }
-      if (restore.error === OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR) {
-        deps.error(
-          `  OpenClaw image plugin provenance validation failed for sandbox '${options.sandboxName}': ${restore.error}`,
-        );
-        deps.error(
-          "  The sandbox still exists, but registry metadata was not updated because a future rebuild would be unsafe.",
-        );
-        reportUnregisteredSandboxRecovery();
-        deps.error("  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.");
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
         return deps.exitProcess(1);
       }
@@ -965,12 +903,7 @@ export async function finalizeCreatedSandbox(
 
   deps.revalidateSandboxIdentity?.(`registering sandbox '${options.sandboxName}'`);
   if (preparedRegistration) {
-    preparedRegistration = deps.revalidatePreparedRegistration!(
-      preparedRegistration,
-      freshOpenClawImagePluginInstalls,
-    );
+    preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration);
   }
-  return preparedRegistration
-    ? deps.register(freshOpenClawImagePluginInstalls, preparedRegistration)
-    : deps.register(freshOpenClawImagePluginInstalls);
+  return preparedRegistration ? deps.register(preparedRegistration) : deps.register();
 }

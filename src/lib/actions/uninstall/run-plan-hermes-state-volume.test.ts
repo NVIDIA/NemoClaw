@@ -32,8 +32,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(
     options,
     withSuccessfulPreUninstallBackup({
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({

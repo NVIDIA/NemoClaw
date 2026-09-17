@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
+import { RECORD_ADVISOR_FINDINGS_TOOL } from "./finding-ledger.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
-import { ADVISOR_SPECIALISTS, type AdvisorInterest, type AdvisorSpecialist } from "./specialist-catalog.mts";
+import {
+  ADVISOR_SPECIALISTS,
+  type AdvisorInterest,
+  type AdvisorSpecialist,
+} from "./specialist-catalog.mts";
 import { specialistToolNames } from "./specialist-tools.mts";
+import { E2E_RECEIPT_TOOL } from "./e2e-receipt.mts";
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
@@ -73,7 +79,13 @@ const COMMON_PROMPT = `Call every deterministic context tool supplied to this tu
 
 Reach a conclusion for the assigned area. Support it with repository evidence. Report each issue that requires a change, its effect, and the change that would resolve it. If you find no issue, explain why the change satisfies the assignment.
 
-This is an investigation-only specialist turn. Do not emit a final result schema, canonical finding ID, merge recommendation, or GitHub comment. Do not call recording, E2E recommendation, or submission tools. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
+Record every additional E2E recommendation, including optional coverage, with pr_review_record_e2e_recommendations before your final Markdown review. Give an explicit reason when no additional E2E is needed. Record needed coverage without a supported selector as unresolved; that unresolved coverage is sufficient when the recommendation list is empty. The recorded recommendations must include every E2E recommendation in your Markdown review.
+
+This is an investigation-only specialist turn. Do not invent a finding ID, merge recommendation, or GitHub comment. After writing the human-readable analysis, call \`${RECORD_ADVISOR_FINDINGS_TOOL}\` exactly once as the terminal action. Record only P0/P1 issues that require a repository change; the trusted host derives exact-head IDs. For each blocker, name one exact repository path and disclose every applicable exclusion. Use an empty finding list with a concrete reason when no blocker remains. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
+
+const FOLLOW_UP_PROMPT = `This is a bounded follow-up review. Treat the trusted human review as the frozen review contract. Read the exact follow-up delta first, recheck every contract item against the current files, and inspect only that delta plus the caller, callee, recovery, security, and test seams it materially changes. Do not restart the original full review.
+
+A new blocker is eligible only when the follow-up delta introduces it or new repository evidence proves a concrete material failure that could not reasonably have been established in the frozen review. Never turn optional hardening, cleanup, wording, test-shape, or design preferences into a new blocker. Keep an unresolved contract item in the blocker ledger and omit resolved items. If every contract item is resolved and the delta introduces no material blocker, record a clear ledger so the separate maintainer workflow can proceed to readiness and approval.`;
 
 export function buildSpecialistInvestigateTurn(
   interest: AdvisorInterest,
@@ -84,11 +96,24 @@ export function buildSpecialistInvestigateTurn(
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames: specialistToolNames(interest),
-    requiredReadOneOfPaths: [context.diffPath],
+    activeToolNames: [
+      ...specialistToolNames(interest),
+      RECORD_ADVISOR_FINDINGS_TOOL,
+      E2E_RECEIPT_TOOL,
+    ],
+    requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
+    requiredReadOneOfPaths: [context.followUp?.diffPath ?? context.diffPath],
+    terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
+    terminalSubmitRepairToolNames: [E2E_RECEIPT_TOOL],
+    terminalSubmitRepairPrompt:
+      `If E2E recommendations have not been recorded, call ${E2E_RECEIPT_TOOL} first, including an explicit reason when none are needed. ` +
+      `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
+      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}
+
+${context.followUp ? FOLLOW_UP_PROMPT : ""}
 
 Assignment:
 ${specialist.prompt}`,
