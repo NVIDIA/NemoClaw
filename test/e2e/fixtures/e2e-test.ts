@@ -302,8 +302,8 @@ export const test = base.extend<E2ETargetFixtures>({
   stateValidation: async ({ artifacts, host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox, {}, artifacts));
   },
-  configExportValidation: async ({ artifacts, cleanup, host, sandbox, secrets }, use) => {
-    await use(new ConfigExportValidationPhaseFixture(host, sandbox, secrets, cleanup, artifacts));
+  configExportValidation: async ({ artifacts, cleanup, host, secrets }, use) => {
+    await use(new ConfigExportValidationPhaseFixture(host, secrets, cleanup, artifacts));
   },
 });
 

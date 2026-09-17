@@ -8,6 +8,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
+import {
+  cliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+} from "../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import type {
   NemoClawAgentConfig,
   NemoClawSandboxConfig,
@@ -26,11 +30,9 @@ import type {
   TargetDefinition,
 } from "../../registry/types.ts";
 import type { ArtifactSink } from "../artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { CleanupRegistry } from "../cleanup.ts";
 import { resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
-import type { SandboxClient } from "../clients/sandbox.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
@@ -164,7 +166,7 @@ export interface ConfigExportValidationDependencies {
   parseConfig(raw: string): ConfigExportDocument;
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
-  readPolicy?(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
+  readPolicy(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
   removeDirectory(directory: string): void;
 }
 
@@ -197,6 +199,13 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     }
     return buffer.subarray(0, offset).toString("utf8");
   },
+  readPolicy: (gatewayName, sandboxName) =>
+    cliOpenShellSandboxPolicyReader.readSandboxPolicy({
+      target: namedOpenShellGateway(gatewayName),
+      sandboxName,
+      scope: "effective",
+      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+    }),
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
@@ -310,7 +319,6 @@ async function expectedSemantics(
   target: TargetDefinition,
   instance: NemoClawInstance,
   dependencies: ConfigExportValidationDependencies,
-  readPolicy: (gatewayName: string, sandboxName: string) => Promise<PolicyReadResult>,
 ): Promise<ConfigExportSemantics> {
   const manifest = dependencies.loadManifest(path.join(REPO_ROOT, target.manifestPath));
   const entry = dependencies.loadRegistry().sandboxes[instance.sandboxName];
@@ -320,7 +328,7 @@ async function expectedSemantics(
   }
   const imageRef = requiredString(entry.workload.reference, "registry workload reference");
   if (!entry.gatewayName) throw new Error("the live sandbox is missing its gateway binding");
-  const policy = await readPolicy(entry.gatewayName, instance.sandboxName);
+  const policy = await dependencies.readPolicy(entry.gatewayName, instance.sandboxName);
   if (!policy.ok || !policy.value) {
     throw new Error("the effective sandbox policy could not be read");
   }
@@ -429,13 +437,19 @@ function encodedSensitiveValues(values: readonly string[]): string[] {
 }
 
 function decodePercentEncodedText(raw: string): string {
-  return raw.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
-    try {
-      return decodeURIComponent(encoded);
-    } catch {
-      return encoded;
-    }
-  });
+  let decoded = raw;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = decoded.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+      try {
+        return decodeURIComponent(encoded);
+      } catch {
+        return encoded;
+      }
+    });
+    if (next === decoded) return decoded;
+    decoded = next;
+  }
+  return decoded;
 }
 
 function normalizedSecretScanText(raw: string): string {
@@ -472,33 +486,11 @@ function containsInternalTransportText(raw: string): boolean {
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
-    private readonly sandbox: SandboxClient,
     private readonly secrets: SecretStore,
     private readonly cleanup: CleanupRegistry,
     private readonly artifacts: ArtifactSink,
     private readonly dependencies: ConfigExportValidationDependencies = DEFAULT_DEPENDENCIES,
   ) {}
-
-  private async readPolicy(gatewayName: string, sandboxName: string): Promise<PolicyReadResult> {
-    if (this.dependencies.readPolicy) {
-      return this.dependencies.readPolicy(gatewayName, sandboxName);
-    }
-    const result = await this.sandbox.openshell(["policy", "get", "--full", sandboxName], {
-      artifactName: "config-export-effective-policy",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        OPENSHELL_GATEWAY: gatewayName,
-      },
-      redactionValues: this.secrets.redactionValues(),
-      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
-    });
-    if (result.exitCode !== 0 || result.signal !== null || result.timedOut) return { ok: false };
-    const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(result.stdout);
-    const document = separator
-      ? result.stdout.slice(separator.index + separator[0].length)
-      : result.stdout;
-    return document.trim() === "" ? { ok: false } : { ok: true, value: { document } };
-  }
 
   async from(
     target: TargetDefinition,
@@ -552,12 +544,7 @@ export class ConfigExportValidationPhaseFixture {
 
     try {
       if (expectation === "required") {
-        expected = await expectedSemantics(
-          target,
-          instance,
-          this.dependencies,
-          this.readPolicy.bind(this),
-        );
+        expected = await expectedSemantics(target, instance, this.dependencies);
       }
       const result = await this.host.nemoclaw(
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],

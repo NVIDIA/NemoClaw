@@ -961,6 +961,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const requireConfigExportEvidence = findStep(live, "Require automatic config export evidence");
   const upload = findStep(live, "Upload E2E artifacts");
   const uploadPaths = String(upload.with?.path ?? "")
     .split("\n")
@@ -985,6 +986,18 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
     errors.push("live E2E must upload automatic config export evidence");
+  }
+  if (
+    requireConfigExportEvidence.if !== "${{ success() }}" ||
+    requireConfigExportEvidence.shell !== "bash" ||
+    !String(requireConfigExportEvidence.run ?? "").includes(
+      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+    ) ||
+    liveSteps.indexOf(requireConfigExportEvidence) <=
+      liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)
+  ) {
+    errors.push("live E2E must require automatic config export evidence before upload");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");

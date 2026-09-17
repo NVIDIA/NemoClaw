@@ -56,7 +56,8 @@ Live execution happens through shared fixtures:
   - `expected-refusal` must complete with its declared category without
     creating a file.
   - `no-usable-sandbox` must record an expected preflight or onboarding
-    failure. It does not invoke config export.
+    failure. State validation must also prove that the sandbox is absent. This
+    expectation does not invoke config export.
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
@@ -115,8 +116,10 @@ cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
 secrets and internal credential transport markers before publication.
 
-The E2E workflow uploads `config-export-evidence.v1.json` with each target's
-retained artifacts.
+After a live target succeeds, the E2E workflow requires
+`config-export-evidence.v1.json` before artifact upload. A missing file fails
+the target job. The workflow uploads the file with the target's retained
+artifacts.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.

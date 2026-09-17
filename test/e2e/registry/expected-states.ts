@@ -60,6 +60,7 @@ const preflightFailureNoSandbox: ExpectedState = {
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   id: "onboarding-failure-policy-presets-required",
   cli: { installed: true },
+  sandbox: { expected: "absent" },
 };
 
 const REGISTRY: readonly ExpectedState[] = [

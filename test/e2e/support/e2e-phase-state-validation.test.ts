@@ -314,6 +314,30 @@ describe("state-validation phase fixture", () => {
     expect(result.probes.find((probe) => probe.id === "gateway-absent")?.results).toHaveLength(2);
   });
 
+  it("proves a policy-presets onboarding failure leaves no usable sandbox (#11485)", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
+    runner.enqueue(shellResult(0, "other-sandbox\n"));
+
+    const result = await fixture(runner).from(
+      "onboarding-failure-policy-presets-required",
+      instance({
+        expectedFailure: {
+          phase: "onboarding",
+          errorClass: "policy-presets-required",
+        },
+      }),
+    );
+
+    expect(result.probes.map((probe) => probe.id)).toEqual(["cli-installed", "sandbox-absent"]);
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["--version"],
+      ["list"],
+      ["sandbox", "list"],
+    ]);
+  });
+
   it("fails a gateway-absent probe if the gateway is running", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));

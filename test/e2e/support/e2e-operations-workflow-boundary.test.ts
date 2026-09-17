@@ -70,6 +70,17 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload automatic config export evidence",
     );
   });
+  it("fails a successful live run when automatic config export evidence is missing (#11485)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const requirement = workflow.jobs.live.steps!.find(
+      (step) => step.name === "Require automatic config export evidence",
+    )!;
+    requirement.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must require automatic config export evidence before upload",
+    );
+  });
   it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];

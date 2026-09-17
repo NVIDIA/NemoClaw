@@ -8,11 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CONFIG_EXPORT_POLICY_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
-import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
   type ConfigExportDocument,
@@ -306,7 +303,6 @@ function fixture(
     artifacts?: ArtifactSink;
     dependencies?: ConfigExportValidationDependencies;
     host?: ReturnType<typeof successfulHost>;
-    sandbox?: Pick<SandboxClient, "openshell">;
     secret?: string;
   } = {},
 ) {
@@ -321,7 +317,6 @@ function fixture(
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
-  const sandbox = options.sandbox ?? { openshell: vi.fn() };
   const secrets = new SecretStore(
     options.secret ? { FIXTURE_API_KEY: options.secret } : {},
     (message) => {
@@ -331,10 +326,8 @@ function fixture(
   return {
     cleanup,
     host,
-    sandbox,
     phase: new ConfigExportValidationPhaseFixture(
       host as never,
-      sandbox as SandboxClient,
       secrets,
       cleanup,
       artifacts,
@@ -359,7 +352,6 @@ afterEach(() => {
     fs.rmSync(directory, { force: true, recursive: true });
   }
 });
-
 describe("automatic config export validation phase", () => {
   it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
@@ -393,34 +385,39 @@ describe("automatic config export validation phase", () => {
     expect((await test.cleanup.runAll()).failures).toEqual([]);
   });
 
-  it("observes the effective policy through the sandbox client boundary (#11485)", async () => {
+  it("observes the effective policy through the injected policy reader (#11485)", async () => {
     const livePolicyDependencies = dependencies();
-    delete livePolicyDependencies.readPolicy;
-    const sandbox = {
-      openshell: vi.fn(async () => ({
-        command: [],
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-        stdout: `OpenShell policy output\n---\n${JSON.stringify(POLICY)}\n`,
-        stderr: "",
-        artifacts: { stdout: "", stderr: "", result: "" },
-      })),
-    };
-    const test = fixture({ dependencies: livePolicyDependencies, sandbox });
+    const readPolicy = vi.fn(async () => ({
+      ok: true,
+      value: { document: JSON.stringify(POLICY) },
+    }));
+    livePolicyDependencies.readPolicy = readPolicy;
+    const test = fixture({ dependencies: livePolicyDependencies });
 
     const evidence = await test.phase.from(target("required"), instance());
 
-    expect(sandbox.openshell).toHaveBeenCalledWith(["policy", "get", "--full", "sandbox"], {
-      artifactName: "config-export-effective-policy",
-      env: { ...buildAvailabilityProbeEnv(), OPENSHELL_GATEWAY: "nemoclaw" },
-      redactionValues: [],
-      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
-    });
+    expect(readPolicy).toHaveBeenCalledWith("nemoclaw", "sandbox");
     expect(evidence.verifications).toContainEqual(
       expect.objectContaining({ id: "policySha256", passed: true }),
     );
     expect(evidence).toMatchObject({ classification: "success", passed: true });
+  });
+
+  it("fails before export when the effective policy cannot be observed (#11485)", async () => {
+    const livePolicyDependencies = dependencies();
+    livePolicyDependencies.readPolicy = async () => ({ ok: false });
+    const host = successfulHost(JSON.stringify(document()));
+    const test = fixture({ dependencies: livePolicyDependencies, host });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "observation",
+      passed: false,
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(host.nemoclaw).not.toHaveBeenCalled();
   });
 
   it("fails when export omits an enabled scenario feature (#11485)", async () => {
@@ -576,6 +573,30 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
+  });
+
+  it("withholds export metadata when a comment contains a doubly encoded fixture secret (#11485)", async () => {
+    const encodedSecret = [...Buffer.from(SECRET, "utf8")]
+      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+      .join("");
+    const doublyEncodedSecret = encodedSecret.replace(/%/gu, "%25");
+    const raw = `${JSON.stringify(document())}\n# ${doublyEncodedSecret}\n`;
+    expect(raw).not.toContain(SECRET);
+    expect(raw).not.toContain(encodedSecret);
+    const test = fixture({ host: successfulHost(raw), secret: SECRET });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "security",
+      security: { knownSecretsAbsent: false },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    const serializedEvidence = JSON.stringify(test.writes.at(-1));
+    expect(serializedEvidence).not.toContain(SECRET);
+    expect(serializedEvidence).not.toContain(encodedSecret);
+    expect(serializedEvidence).not.toContain(doublyEncodedSecret);
   });
 
   it.each(["wrapped", "escaped"] as const)(
