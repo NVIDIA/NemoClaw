@@ -2977,6 +2977,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                         supervisorReady: true,
                       });
                     if (!sharedState.supervisorReady || sharedState.failure) {
+                      console.error(
+                        `  Managed startup shared-state commit failed: ${
+                          sharedState.failure?.message ?? "startup supervisor was not ready"
+                        }`,
+                      );
                       throw (
                         sharedState.failure ??
                         new Error("Managed startup shared-state commit failed.")
