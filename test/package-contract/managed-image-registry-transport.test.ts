@@ -39,7 +39,13 @@ describe("managed image registry transport package contract", () => {
 
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-managed-registry-pack-",
-      entries: ["dist"],
+      entries: [
+        "dist",
+        "node_modules/@nvidia/openshell-sdk",
+        "node_modules/@bufbuild/protobuf",
+        "node_modules/@connectrpc/connect",
+        "node_modules/@connectrpc/connect-node",
+      ],
     });
     const archiveRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-managed-registry-archive-"),

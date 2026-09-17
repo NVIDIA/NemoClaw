@@ -69,6 +69,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const verifyGateway = vi.fn<NonNullable<SandboxStartDeps["verifyGateway"]>>(async () => {
     order.push("native-health");
   });
+  const probeGatewayProcess = vi.fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>(
+    async () => true,
+  );
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
@@ -91,6 +94,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     runtimeProviders,
     observer,
     verifyGateway,
+    probeGatewayProcess,
     log,
     withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
@@ -103,6 +107,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     log,
     observer,
     order,
+    probeGatewayProcess,
     recoverDockerDriverSandbox,
     recoverPortableSandbox,
     updateSandbox,
@@ -199,6 +204,75 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+    expect(h.probeGatewayProcess).not.toHaveBeenCalled();
+  });
+
+  it("waits for the Hermes gateway process to settle before checking gateway health", async () => {
+    const probeGatewayProcess = vi
+      .fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    h.getSandbox.mockReturnValue(
+      sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
+      exitCode: 0,
+    });
+
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
+    expect(probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw-19080");
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
+      probeGatewayProcess.mock.invocationCallOrder[2],
+    );
+  });
+
+  it("returns nonzero when the Hermes gateway stays stopped", async () => {
+    const probeGatewayProcess = vi.fn(async () => false);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const h = harness({
+      probeGatewayProcess,
+      delayGatewayProcessProbe,
+      probeInferenceInvocation,
+    });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        stopped: true,
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
+      exitCode: 1,
+    });
+
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+  });
+
+  it("passes an unavailable Hermes process observation to gateway verification", async () => {
+    const probeGatewayProcess = vi.fn(async () => null);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
+    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "native gateway route unavailable",
+    );
+
+    expect(probeGatewayProcess).toHaveBeenCalledOnce();
+    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
   });
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
