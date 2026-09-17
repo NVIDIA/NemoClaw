@@ -735,8 +735,40 @@ describe("sandbox destroy host-local inference transaction", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      deleteOutput: expect.stringContaining("did not confirm its absence"),
+      deleteOutput: expect.stringContaining(
+        "final probe still observed it in phase 'Ready' on gateway 'nemoclaw'",
+      ),
     });
+    expect(result.deleteOutput).toContain("Local recovery state was preserved");
+    expect(result.deleteOutput).toContain(
+      "Inspect the sandbox on that gateway, then retry destroy",
+    );
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("reports the final gateway failure after an accepted delete", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      lookupResults: [
+        {
+          status: 1,
+          stdout: "",
+          stderr: "tcp connect error: Connection refused (os error 61)",
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      gatewayUnreachable: true,
+      deleteOutput: expect.stringContaining(
+        "final absence probe could not reach gateway 'nemoclaw'",
+      ),
+    });
+    expect(result.deleteOutput).toContain("Local recovery state was preserved");
+    expect(result.deleteOutput).toContain("Restore gateway access, then retry destroy");
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();

@@ -214,7 +214,8 @@ describe("CLI OpenShell sandbox observer", () => {
       .fn()
       .mockResolvedValueOnce(captured(1, "", diagnostic))
       .mockResolvedValueOnce(captured(0, sandboxListJson()));
-    const lookup = createCliOpenShellSandboxLookup({ capture });
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(1_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
 
     await expect(
       lookup({
@@ -239,9 +240,37 @@ describe("CLI OpenShell sandbox observer", () => {
         ignoreError: true,
         includeStderr: true,
         includeStreams: true,
-        timeout: 1_234,
+        timeout: 1_000,
       },
     );
+  });
+
+  it("does not start legacy inventory fallback after the lookup deadline", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(
+        captured(1, "", 'status: Internal, message: "sandbox has no spec", details: []'),
+      );
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(2_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
+
+    await expect(
+      lookup({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw"),
+        timeoutMs: 1_234,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "timeout",
+          message: "OpenShell sandbox observation timed out.",
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 
   it("does not report deletion when legacy inventory lacks the sandbox", async () => {
