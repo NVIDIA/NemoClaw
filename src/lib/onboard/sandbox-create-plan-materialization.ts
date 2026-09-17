@@ -168,7 +168,6 @@ export function prepareSandboxCreatePolicy(
   intent: SandboxCreateIntent,
   prepareInitialSandboxCreatePolicy: PrepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
   messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"],
-  managedStartupRelease = false,
 ): {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly compatibilityPolicyPath: string | null;
@@ -188,7 +187,6 @@ export function prepareSandboxCreatePolicy(
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       messagingConfig,
-      managedStartupRelease,
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -305,7 +303,6 @@ function assertDeferredProviderPlanSupported(
 export async function materializeSandboxCreatePlan({
   intent,
   fromRef,
-  managedStartupRelease = false,
   managedStateMounts,
   managedStateMountDriverId,
   policylessCreate = false,
@@ -329,7 +326,6 @@ export async function materializeSandboxCreatePlan({
     intent,
     prepareInitialSandboxCreatePolicy,
     messagingConfig,
-    managedStartupRelease,
   );
   const createArgs = [
     "--from",

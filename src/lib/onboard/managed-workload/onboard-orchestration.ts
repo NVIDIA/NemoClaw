@@ -478,7 +478,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = await input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
-    managedStartupRelease: input.workload.source.kind === "managed-image",
     policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,

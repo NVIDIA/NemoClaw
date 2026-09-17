@@ -11,7 +11,6 @@ import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
 import {
   MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_MERGED_CA_FILE,
-  MANAGED_STARTUP_RELEASE_FILE,
   MANAGED_STARTUP_RUNTIME_ENV_FILE,
 } from "./managed-startup/image-runtime";
 import {
@@ -107,11 +106,6 @@ describe("initial sandbox policy real preset merge", () => {
       issue: "#9357",
       purpose: "runtime environment",
     },
-    {
-      path: MANAGED_STARTUP_RELEASE_FILE,
-      issue: "#11905",
-      purpose: "startup release marker",
-    },
   ] as const;
   const protectedManagedStartupPaths = [
     MANAGED_STARTUP_COMPLETION_FILE,
@@ -131,7 +125,6 @@ describe("initial sandbox policy real preset merge", () => {
     expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
       MANAGED_STARTUP_MERGED_CA_FILE,
       MANAGED_STARTUP_RUNTIME_ENV_FILE,
-      MANAGED_STARTUP_RELEASE_FILE,
     ]);
   });
 
@@ -160,7 +153,6 @@ describe("initial sandbox policy real preset merge", () => {
     ({ policyCase, trustedPath }) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
-        managedStartupRelease: true,
       });
       const policy = readPreparedPolicy(prepared);
       const readOnly = policy.filesystem_policy?.read_only ?? [];

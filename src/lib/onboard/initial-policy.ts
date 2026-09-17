@@ -25,7 +25,6 @@ import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
-import { MANAGED_STARTUP_RELEASE_FILE } from "./managed-startup/image-runtime";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
@@ -331,43 +330,9 @@ type InitialPolicyOptions = {
   sandboxName?: string;
   policyTier?: string | null;
   messagingConfig?: MessagingChannelConfig | null;
-  managedStartupRelease?: boolean;
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
-
-function addManagedStartupReleasePolicy(
-  policyContent: string,
-  agentName: string | null | undefined,
-  enabled: boolean,
-): string {
-  if (!enabled) return policyContent;
-  if (!agentName || !["openclaw", "hermes", "langchain-deepagents-code"].includes(agentName)) {
-    return policyContent;
-  }
-  const parsed = YAML.parse(policyContent);
-  if (!isObjectRecord(parsed)) {
-    throw new Error("Cannot prepare managed startup sandbox policy; policy is not a mapping.");
-  }
-  if (!isObjectRecord(parsed.filesystem_policy)) {
-    throw new Error(
-      "Cannot prepare managed startup sandbox policy; filesystem policy is not a mapping.",
-    );
-  }
-  const readOnly = parsed.filesystem_policy.read_only;
-  const readWrite = parsed.filesystem_policy.read_write;
-  if (!Array.isArray(readOnly) || !Array.isArray(readWrite)) {
-    throw new Error(
-      "Cannot prepare managed startup sandbox policy; filesystem grants are not lists.",
-    );
-  }
-  if (readWrite.includes(MANAGED_STARTUP_RELEASE_FILE)) {
-    throw new Error("Cannot grant write access to the managed startup release marker.");
-  }
-  if (readOnly.includes(MANAGED_STARTUP_RELEASE_FILE)) return policyContent;
-  readOnly.push(MANAGED_STARTUP_RELEASE_FILE);
-  return YAML.stringify(parsed);
-}
 
 function createTempPolicyMaterializer(exactCleanup: boolean): PolicyMaterializer {
   return (content, prefix) => {
@@ -486,14 +451,6 @@ function resolveInitialSandboxCreatePolicy(
     effectivePolicy = next;
     basePolicy = content;
   };
-  const managedStartupPolicy = addManagedStartupReleasePolicy(
-    basePolicy,
-    options.agentName,
-    options.managedStartupRelease === true,
-  );
-  if (managedStartupPolicy !== basePolicy) {
-    adoptPolicy(managedStartupPolicy, "nemoclaw-managed-startup-policy");
-  }
   if (options.directGpu) {
     adoptPolicy(
       buildDirectGpuPolicyYaml(basePolicy, {

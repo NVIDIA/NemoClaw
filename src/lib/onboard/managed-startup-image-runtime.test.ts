@@ -22,9 +22,10 @@ import {
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
+  MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_PROFILE_ENV,
-  MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
-  serializeManagedStartupReleaseMarker,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
+  publishManagedStartupCompletionAfterCommit,
   type ManagedStartupImageActionPlanInput,
   main as mainManagedStartupImageRuntime,
 } from "./managed-startup/image-runtime";
@@ -349,22 +350,55 @@ describe("managed startup image runtime", () => {
     ).rejects.toThrow(/bootstrap identity argument is missing or invalid/u);
   });
 
-  it("serializes the root-owned startup release identity canonically", () => {
-    expect(
-      serializeManagedStartupReleaseMarker({
-        schemaVersion: MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
-        agent: "openclaw",
-        profileFingerprint: "a".repeat(64),
-        bootstrapIdentity: "b".repeat(64),
-      }),
-    ).toBe(
-      `${JSON.stringify({
-        agent: "openclaw",
-        bootstrapIdentity: "b".repeat(64),
-        profileFingerprint: "a".repeat(64),
-        schemaVersion: MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
-      })}\n`,
+  it("publishes the authorized completion marker only after shared state commits", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const runtimeWrites: string[] = [];
+    const filesystem = mockRootReplayFilesystem(runtimeWrites);
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    const transactionStatus = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("pending");
+    const beginTransaction = vi
+      .spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction")
+      .mockReturnValue(true);
+
+    const applied = await applyManagedStartupRootRequest(
+      createManagedStartupRootApplyRequest({ agent: "openclaw", encodedProfile }),
+      {},
+      { bootstrapIdentity },
     );
+
+    expect(applied.transactionPending).toBe(true);
+    expect(beginTransaction).toHaveBeenCalledWith(expect.objectContaining({ agent: "openclaw" }), {
+      bootstrapIdentity,
+    });
+    expect(filesystem.hasFile(MANAGED_STARTUP_RUNTIME_ENV_FILE)).toBe(true);
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(false);
+    expect(() =>
+      publishManagedStartupCompletionAfterCommit("openclaw", fingerprint, bootstrapIdentity),
+    ).toThrow(/requires a committed shared-state transaction/u);
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(false);
+
+    transactionStatus.mockReturnValue("committed");
+    publishManagedStartupCompletionAfterCommit("openclaw", fingerprint, bootstrapIdentity);
+
+    expect(filesystem.hasFile(MANAGED_STARTUP_COMPLETION_FILE)).toBe(true);
+    expect(filesystem.readFile(MANAGED_STARTUP_COMPLETION_FILE)).toContain(fingerprint);
   });
 
   it("verifies copied transaction status only through a read-only receipt mount", async () => {
