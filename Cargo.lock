@@ -2014,7 +2014,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=7e7a8d5610f336f5f7f9f60da0951adbf295475d#7e7a8d5610f336f5f7f9f60da0951adbf295475d"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2048,7 +2048,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=7e7a8d5610f336f5f7f9f60da0951adbf295475d#7e7a8d5610f336f5f7f9f60da0951adbf295475d"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
 dependencies = [
  "hyper-util",
  "serde",
@@ -2061,7 +2061,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=7e7a8d5610f336f5f7f9f60da0951adbf295475d#7e7a8d5610f336f5f7f9f60da0951adbf295475d"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -2075,7 +2075,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=7e7a8d5610f336f5f7f9f60da0951adbf295475d#7e7a8d5610f336f5f7f9f60da0951adbf295475d"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=1fe79f53991debf32776853a60f0cbd4e127dcfb#1fe79f53991debf32776853a60f0cbd4e127dcfb"
 dependencies = [
  "miette",
  "noyalib",
@@ -3185,7 +3185,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

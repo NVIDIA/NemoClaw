@@ -27,6 +27,7 @@ impl OpenShell {
             .create_workspace(self.request(proto::CreateWorkspaceRequest {
                 name: name.into(),
                 labels: labels(want),
+                ..Default::default()
             }))
             .await
             .map_err(|error| remote_error(&error))?
@@ -43,6 +44,7 @@ impl OpenShell {
             .create_provider(self.request(proto::CreateProviderRequest {
                 provider: Some(self.provider(want).await?),
                 workspace_scope: Some(proto::workspace_selector(workspace)),
+                ..Default::default()
             }))
             .await
             .map_err(|error| remote_error(&error))?
