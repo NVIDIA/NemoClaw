@@ -53,6 +53,7 @@ import {
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
+import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary.ts";
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
@@ -215,6 +216,7 @@ export default plugin;
   ].join("\n");
 }
 
+/** Invoke the installed native weather plugin and verify its versioned response. */
 async function invokeNativeWeatherPlugin(
   sandbox: SandboxClient,
   version: NativePluginVersion,
@@ -227,7 +229,6 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
-  expect(result.exitCode, resultText(result)).toBe(0);
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
@@ -235,7 +236,8 @@ async function invokeNativeWeatherPlugin(
       }
     | undefined;
   expect(
-    document?.ok === true &&
+    result.exitCode === 0 &&
+      document?.ok === true &&
       document.result?.details?.fixtureVersion === version &&
       document.result.details.location === "Santa Clara",
     resultText(result),
@@ -665,6 +667,7 @@ test(
         "install and onboard OpenClaw sandbox",
         "validate CLI sandbox and policy state",
         "exercise hosted, sandbox, and launch inference",
+        "scan sandbox state for credentials",
         "exercise native plugin package and update lifecycle",
         "inspect runtime logs and security posture",
         "remove full-E2E sandbox",
@@ -714,6 +717,7 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "direct hosted inference and sandbox inference.local both respond",
+        "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
               "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
@@ -945,6 +949,27 @@ test(
     expect(
       finalInferenceAttempt.result.exitCode === 0 && sandboxInference.outcome === "passed",
       sandboxInferenceDiagnostic,
+    ).toBe(true);
+
+    progress.phase("scan sandbox state for credentials");
+    const credentialBoundary = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        [
+          "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
+          buildSandboxCredentialScanCommand(),
+        ].join("\n"),
+      ),
+      {
+        artifactName: "phase-4-sandbox-credential-boundary",
+        env: env(),
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expect(
+      credentialBoundary.exitCode === 0 && credentialBoundary.stdout.trim() === "",
+      `sandbox state must contain neither auth-profiles.json nor secret-shaped credentials\n${resultText(credentialBoundary)}`,
     ).toBe(true);
 
     await (process.platform === "linux"
