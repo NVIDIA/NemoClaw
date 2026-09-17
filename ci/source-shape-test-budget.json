@@ -312,6 +312,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
+      "test": "routes Windows pull requests through credential-free controls only (#8178)",
+      "category": "security"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"

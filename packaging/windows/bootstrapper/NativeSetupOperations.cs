@@ -10,6 +10,8 @@ using System.Text.Json;
 
 namespace Nvidia.NemoClaw.Bootstrapper;
 
+internal delegate Task<string> NativeSetupHelperRunner(string launcher, string[] arguments, byte[] input, bool captureOutput);
+
 internal static class NativeSetupOperations
 {
     internal static async Task SaveAsync(NativeSetupConfiguration configuration, SecureString password, NativeServiceCredentials? serviceCredentials = null, Action<NativeExpressProgress>? progress = null, CancellationToken cancellation = default)
@@ -17,6 +19,11 @@ internal static class NativeSetupOperations
         var launcher = InstalledLauncher();
         if (!NativeMaintenance.SupportsDataRemoval())
             throw new InvalidOperationException("Install this preview before configuring its native agent settings.");
+        await SaveWithHelperAsync(configuration, password, serviceCredentials, progress, cancellation, launcher, RunSetupHelperAsync);
+    }
+
+    internal static async Task SaveWithHelperAsync(NativeSetupConfiguration configuration, SecureString password, NativeServiceCredentials? serviceCredentials, Action<NativeExpressProgress>? progress, CancellationToken cancellation, string launcher, NativeSetupHelperRunner runSetupHelper)
+    {
         cancellation.ThrowIfCancellationRequested();
         var configurationBytes = Encoding.UTF8.GetBytes(configuration.Serialize());
         var requiredServices = configuration.Options.RequiredServices();
@@ -30,16 +37,25 @@ internal static class NativeSetupOperations
             credential = configuration.ReadCredential(password);
             foreach (var service in requiredServices)
                 serviceBytes[service] = NativeSetupConfiguration.ReadServiceCredential(service, serviceCredentials![service]);
-            // Validate the complete metadata and every binding before replacing any credential.
-            var preparation = await RunSetupHelperAsync(launcher, new[] { "--configure-native", "--prepare-all" }, configurationBytes, captureOutput: true);
+            // Preparation validates the complete metadata and every binding without mutating
+            // configuration. Cancellation is intentionally deferred until that helper exits.
+            if (configuration.LocalModel is not null)
+                progress?.Invoke(new NativeExpressProgress("verification", "Checking the installed model and runtime before saving your settings.", null, null));
+            var preparation = await runSetupHelper(launcher, new[] { "--configure-native", "--prepare-all" }, configurationBytes, true);
             var bindings = ReadBindings(preparation, requiredServices, configuration.LocalModel);
+            cancellation.ThrowIfCancellationRequested();
+            if (configuration.LocalModel is not null)
+                progress?.Invoke(new NativeExpressProgress("configuration", "Saving your choices and protecting the API key in Windows Credential Manager.", null, null));
+            // The progress callback disables cancellation in the UI. This second check is the
+            // commit boundary; once it passes, finish every credential and configuration write.
+            cancellation.ThrowIfCancellationRequested();
             var binding = bindings.Inference;
             var serviceBindings = bindings.Services;
             if (binding is not null)
-                await RunSetupHelperAsync(launcher, new[] { credential.Length == 0 ? "--credential-delete" : "--credential-write", configuration.Inference, "--binding", binding }, credential);
+                await runSetupHelper(launcher, new[] { credential.Length == 0 ? "--credential-delete" : "--credential-write", configuration.Inference, "--binding", binding }, credential, false);
             foreach (var service in requiredServices)
-                await RunSetupHelperAsync(launcher, new[] { "--credential-write", service, "--binding", serviceBindings[service] }, serviceBytes[service]);
-            await RunSetupHelperAsync(launcher, new[] { "--configure-native" }, configurationBytes);
+                await runSetupHelper(launcher, new[] { "--credential-write", service, "--binding", serviceBindings[service] }, serviceBytes[service], false);
+            await runSetupHelper(launcher, new[] { "--configure-native" }, configurationBytes, false);
             NativeDesktopIntegration.Ensure(configuration.Agent, launcher);
         }
         finally

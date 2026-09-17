@@ -6,6 +6,18 @@ name: CI / Native Windows Installer Candidate
 # Finished installer publication requires explicit dispatch.
 # The pinned legacy payload is used only by isolated diagnostic/profiling lanes.
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/actions/setup-reviewed-npm/**"
+      - ".github/workflows/windows-native-installer.yaml"
+      - "bin/nemoclaw.js"
+      - "ci/reviewed-npm-audit.json"
+      - "packaging/windows/**"
+      - "scripts/checks/*windows-native*"
+      - "scripts/install-windows-native.ps1"
+      - "test/security/windows-native-*.test.ts"
+      - "test/support/windows-native-*.ts"
   workflow_dispatch:
     inputs:
       finished_windows_agent:
@@ -94,8 +106,8 @@ permissions:
 
 concurrency:
   group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat' && '-bash-compat' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-browser-first' && '-hermes-personal-browser-first' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-postmortem' && '-hermes-personal-postmortem' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-renderer-wer' && '-hermes-personal-renderer-wer' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-cold-job' && '-hermes-personal-cold-job' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && '-hermes-personal-candidate' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'trace-analysis' && '-hermes-trace-analysis' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
-  # Finish the in-flight artifact/evidence; keep only the latest queued request.
-  cancel-in-progress: false
+  # Preserve explicit evidence runs while replacing stale pull request controls.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   windows-personal-trace-analysis:
@@ -1658,7 +1670,9 @@ jobs:
 
   windows-runtime-controls:
     name: Native Windows ownership and isolated MSI controls
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.test_native_windows_runtime }}
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.test_native_windows_runtime) }}
+    permissions:
+      contents: read
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
@@ -1766,6 +1780,23 @@ jobs:
             packaging/windows/tests/maintenance-wait/Maintenance.Wait.Controls.csproj
           if ($LASTEXITCODE -ne 0) { throw 'The cached maintenance wait controls failed.' }
 
+      - name: Verify setup cancellation checkpoints before configuration mutation
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $log = Join-Path $output 'setup-cancellation-controls.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & dotnet run --configuration Release --project `
+              packaging/windows/tests/setup-cancellation/Setup.Cancellation.Controls.csproj `
+              2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0) { throw 'The setup cancellation checkpoint controls failed.' }
+
       - name: Set up actual ARM64 Node for the shared-file fixture
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -1785,6 +1816,28 @@ jobs:
         env:
           RUNNER_TEMP: ${{ steps.reviewed-npm-temp.outputs.path }}
           TAR_OPTIONS: --force-local
+
+      - name: Exercise installed acceptance controller compatibility
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $log = Join-Path $output 'installed-acceptance-controller-tests.log'
+          $tests = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/control-installed-openclaw-input.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/run-installed-acceptance.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/qualify-finished-package.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-ui-tunnel.test.mts')
+          )
+          try {
+            $ErrorActionPreference = 'Continue'
+            & node --experimental-strip-types --no-warnings --test --test-reporter=tap @tests `
+              2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0) { throw 'The installed acceptance controller controls failed.' }
 
       - name: Exercise actual browser request channel cleanup
         shell: powershell

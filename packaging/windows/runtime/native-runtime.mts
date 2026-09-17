@@ -300,7 +300,7 @@ export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, wo
   // to canonicalize their entry point. Keep filesystem policy and dependency
   // resolution unchanged; this option applies only to the main module.
   const command =
-    runtime.purpose === "hermes" || runtime.purpose === "pi"
+    runtime.purpose === "hermes" || runtime.purpose === "pi" || runtime.purpose === "openclaw"
       ? [runtime.node, "--preserve-symlinks-main", workload]
       : [runtime.node, workload];
   if (runtime.purpose !== "hermes") return command;

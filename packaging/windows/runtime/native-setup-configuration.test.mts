@@ -108,7 +108,7 @@ test("Hermes compatibility paths and prebuilt command bind the live sealed lease
   assert.throws(() => nativeRuntimeWorkerCommand(runtime, worker), /lease revoked/u);
 });
 
-test("Pi avoids main-entry parent traversal without changing other agents or dependency resolution", () => {
+test("sealed Node workers avoid main-entry parent traversal without changing dependency resolution", () => {
   const runtime = heldHermesRuntime("pi");
   const worker = path.win32.join(runtime.runtimeRoot, "workers", "native-runtime.cjs");
   assert.deepEqual(nativeRuntimeWorkerCommand(runtime, worker), [
@@ -116,11 +116,23 @@ test("Pi avoids main-entry parent traversal without changing other agents or dep
     "--preserve-symlinks-main",
     worker,
   ]);
-  for (const purpose of ["openclaw", "langchain-deepagents-code", "nemocua", "inference"] as const)
+  assert.deepEqual(nativeRuntimeWorkerCommand({ ...runtime, purpose: "openclaw" }, worker), [
+    runtime.node,
+    "--preserve-symlinks-main",
+    worker,
+  ]);
+  for (const purpose of ["langchain-deepagents-code", "nemocua", "inference"] as const)
     assert.deepEqual(nativeRuntimeWorkerCommand({ ...runtime, purpose }, worker), [
       runtime.node,
       worker,
     ]);
+  const webUi = fs.readFileSync(
+    new URL("./run-installed-native-web-ui.mts", import.meta.url),
+    "utf8",
+  );
+  const turn = fs.readFileSync(new URL("./run-installed-native-turn.mts", import.meta.url), "utf8");
+  assert(webUi.includes("command: nativeRuntimeWorkerCommand(runtimeLease, gatewayScript)"));
+  assert(turn.includes("command: nativeRuntimeWorkerCommand(runtimeLease, probePath)"));
   runtime.assertHeld = () => {
     throw new Error("lease revoked");
   };

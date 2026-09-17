@@ -42,6 +42,7 @@ import {
   withNativeRuntimeSession,
   usingNativeRuntimeSession,
   bindNativeRuntimeGuard,
+  nativeRuntimeWorkerCommand,
   type NativeRuntimeSession,
 } from "./native-runtime.mts";
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
@@ -1340,7 +1341,6 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       const relayRoot = path.join(shareRoot, "ui-relay");
       uiRelay = await startFileTcpRelay(relayRoot, relayToken, launcherPath);
       runtimeLease.assertHeld();
-      const node = installedNode;
       const openClawRoot = installedOpenClawRoot;
       const openClawEntry = installedOpenClawEntry;
       console.log("WEB UI> Opening the installed OpenClaw runtime");
@@ -1492,7 +1492,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         JSON.stringify({
           mxc: {
             windows_ui: true,
-            command: [node, gatewayScript],
+            command: nativeRuntimeWorkerCommand(runtimeLease, gatewayScript),
             cwd: shareRoot,
             host_loopback: configuredIdentity !== null,
             personal_network: configuredIdentity !== null,

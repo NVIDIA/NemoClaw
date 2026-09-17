@@ -4,7 +4,11 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets } from "./native-assets.mts";
-import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+import {
+  withNativeRuntimeSession,
+  nativeRuntimeWorkerCommand,
+  type NativeRuntimeSession,
+} from "./native-runtime.mts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -405,7 +409,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
     "NemoClaw installation root",
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
-  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+  requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
@@ -438,7 +442,6 @@ async function main(runtimeLease: NativeRuntimeSession) {
   const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
   runtimeLease.assertHeld();
   console.log("NEMOCLAW> Selecting the sealed installed Node/OpenClaw runtime without copying");
-  const node = installedNode;
   const openClawRoot = installedOpenClawRoot;
   const openClawEntry = requiredFile(
     path.join(openClawRoot, "openclaw-app.cjs"),
@@ -564,7 +567,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
       "--driver-config-json",
       JSON.stringify({
         mxc: {
-          command: [node, probePath],
+          command: nativeRuntimeWorkerCommand(runtimeLease, probePath),
           cwd: shareRoot,
           windows_ui: true,
           ...nativeQualificationLoopbackConfig(
