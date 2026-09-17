@@ -94,7 +94,6 @@ const BREV_LAUNCHABLE_SCENARIO_FILE =
   /^test\/e2e\/(?:fixtures|live)\/full-e2e(?:[./-].*)?\.[cm]?[jt]s$/;
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
-  "device-auth-health",
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
@@ -621,7 +620,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["cloud-inference", "security-posture"],
+    requiredJobs: ["full-e2e", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -639,7 +638,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
+    requiredJobs: ["cloud-onboard", "full-e2e", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",
