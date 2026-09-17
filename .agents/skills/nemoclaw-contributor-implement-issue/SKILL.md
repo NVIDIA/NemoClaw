@@ -46,12 +46,10 @@ Implement the smallest complete requested outcome in its existing owner. Split a
 into useful increments without treating the first increment as completion of the whole request.
 Add mechanisms only for a current requirement. Preserve meaningful regression coverage.
 
-For each changed live E2E assertion, record whether it stayed live, moved to a lower layer, or was
-removed. Record its semantic outcome and distinct regression, or state that it protects no product
-contract. Name the lower-layer owner when evidence moves. For retained live evidence, name the real
-boundary, canonical live test, and smallest live assertion. Explain why the dispositions preserve
-semantic coverage. Do not replace one live assertion with equivalent evidence in another helper,
-snapshot, receipt, or shell condition.
+For each changed live E2E assertion, record the complete disposition required by
+[E2E selection and authoring](../../references/e2e-authoring.md#move-or-remove-evidence). Do not
+replace one live assertion with equivalent evidence in another helper, snapshot, receipt, or shell
+condition.
 
 Run the narrowest checks that prove the changed behavior, including relevant denial, failure,
 recovery, and cleanup cases. Fix failures caused by the change and rerun affected checks. Broaden

@@ -88,7 +88,8 @@ For each changed live assertion, record:
 - whether it stayed live, moved to a lower layer, or was removed;
 - its semantic outcome and distinct regression, or that it protects no product contract;
 - its lower-layer owner when moved; and
-- the real boundary, canonical live test, and smallest live assertion when it stayed live.
+- the lower-layer evidence owner or a statement that no deterministic behavior applies, real
+  boundary, canonical live test, and smallest live assertion when it stayed live.
 
 Explain why the complete set of dispositions preserves semantic coverage.
 

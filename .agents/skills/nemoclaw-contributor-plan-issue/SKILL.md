@@ -47,8 +47,8 @@ accepted boundary and the condition that requires re-planning.
 
 Describe observable acceptance and the shortest stable validation for each applicable behavior.
 Include denied, ambiguous, failure, recovery, or cleanup cases when the changed contract needs them.
-For each test change, name the canonical test owner and evidence layer. Justify live E2E with the
-real boundary, distinct regression, and smallest live assertion that protects it.
+For each test change, record the planned evidence owner and live contract required by
+[E2E selection and authoring](../../references/e2e-authoring.md#define-the-live-contract).
 
 For a larger change, propose independently useful slices with their dependencies, acceptance
 criteria, tests, and deferred scope. Keep implementation, tests, and owning guidance for each
