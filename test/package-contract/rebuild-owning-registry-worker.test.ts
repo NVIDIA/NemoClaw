@@ -246,10 +246,9 @@ describe("compiled rebuild owning-registry worker", () => {
 
   it("reports an unreaped worker as potentially active", async () => {
     const kill = process.kill.bind(process);
-    vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-      if (pid < 0 && signal === 0) return true;
-      return kill(pid, signal);
-    });
+    vi.spyOn(process, "kill").mockImplementation((pid, signal) =>
+      pid < 0 && signal === 0 ? true : kill(pid, signal),
+    );
 
     await expect(
       rebuildOwningRegistryDependencies.runWorker(
