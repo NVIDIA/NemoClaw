@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
   finishOpenClawPostRestoreDoctor: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -32,11 +33,12 @@ vi.mock("./runtime/openclaw-lifecycle", () => ({
   abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
 }));
 
 import {
-  releaseRebuildSourceOpenClawWindow,
   type RebuildBackupPhaseInput,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
@@ -53,6 +55,7 @@ beforeEach(() => {
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
   mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -84,15 +87,16 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
-  it("returns the retained source healthy before the delete edge", async () => {
-    const window = { sandboxName: "alpha", kind: "backup" as const };
+  it("retires the retained source window before the delete edge", async () => {
+    const window = { sandboxName: "alpha" };
 
-    await expect(releaseRebuildSourceOpenClawWindow(window)).resolves.toEqual({
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
       ok: true,
     });
 
-    expect(mocks.finishOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
     expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it("captures the current OpenShell base policy in a private transaction file", async () => {

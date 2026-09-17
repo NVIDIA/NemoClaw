@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { setTimeout as sleep } from "node:timers/promises";
-
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
-import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -21,8 +18,7 @@ import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
-  resolveGatewayRecoveryWaitSeconds,
-  waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess as waitForStartedNativeGatewayProcessImpl,
 } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
@@ -70,9 +66,7 @@ export interface SandboxStartDeps {
   log?: (message: string) => void;
 }
 
-const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
-
-/** Observe native startup only after an intentional stop; never relaunch the agent here. */
+/** Observe native startup without relaunching the agent. */
 async function waitForStartedNativeGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
@@ -84,33 +78,13 @@ async function waitForStartedNativeGatewayProcess(
     return undefined;
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
-  const delay = async (delayMs: number) => {
-    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
-    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
-  };
-  if (nativeAgent === "hermes") {
-    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
-      probe,
-      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
-      log,
-    });
-  }
-
-  const now = deps.now ?? (() => performance.now());
-  const deadline =
-    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
-  while (now() < deadline) {
-    const remaining = Math.floor(deadline - now());
-    if (remaining < 1) break;
-    const running = await probe(sandboxName, gatewayName, {
-      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
-    });
-    if (now() >= deadline) break;
-    if (running !== false) return running;
-    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
-  }
-  return false;
+  return await waitForStartedNativeGatewayProcessImpl(sandboxName, nativeAgent, gatewayName, {
+    environment: deps.environment,
+    probe: deps.probeGatewayProcess,
+    delay: deps.delayGatewayProcessProbe,
+    now: deps.now,
+    log,
+  });
 }
 
 /**
