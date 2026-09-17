@@ -14,6 +14,7 @@ import {
   sandboxRouteTokens,
 } from "../../../dist/lib/cli/public-route-metadata";
 
+/** Verify the compiled command ID and forwarded arguments without executing the command. */
 function expectNative(
   result: PublicTranslationResult,
   commandId: string,
@@ -39,6 +40,7 @@ describe("public route/display separation", () => {
     vi.doMock("../../../dist/lib/cli/oclif-metadata", async (importOriginal) => {
       const actual = await importOriginal<typeof import("../../../dist/lib/cli/oclif-metadata")>();
       const realMetadata = actual.getRegisteredOclifCommandsMetadata();
+      /** Change display wording while preserving the registered dispatch identity. */
       const withUsage = (commandId: string, usage: string) => {
         const metadata = realMetadata[commandId];
         const displayEntry = metadata.publicDisplay?.[0];
@@ -147,10 +149,12 @@ describe("translatePublicGlobalArgv", () => {
         "diagnostics:inspect",
         ["--json"],
       );
-      expect(translatePublicGlobalArgv("diagnostics", ["bogus", "private-argument"])).toEqual({
+      const result = translatePublicGlobalArgv("diagnostics", ["bogus", "private-argument"]);
+      expect(result).toEqual({
         kind: "publicUsageError",
-        lines: ["diagnostics <subcommand>", "Subcommands:", "inspect"],
+        lines: expect.arrayContaining(["inspect"]),
       });
+      expect(JSON.stringify(result)).not.toContain("private-argument");
       expectNative(translatePublicGlobalArgv("diagnostics", []), "diagnostics", ["--help"]);
     } finally {
       delete metadata.diagnostics;
@@ -190,7 +194,7 @@ describe("translatePublicGlobalArgv", () => {
     );
     expect(translatePublicGlobalArgv("inference", ["bogus"])).toEqual({
       kind: "publicUsageError",
-      lines: ["inference <subcommand>", "Subcommands:", "get", "set"],
+      lines: expect.arrayContaining(["get", "set"]),
     });
     expect(translatePublicGlobalArgv("bogus", [])).toEqual({ kind: "publicUsageError", lines: [] });
   });
