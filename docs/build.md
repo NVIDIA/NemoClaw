@@ -82,7 +82,9 @@ docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
-Examples that omit `image` use the SDK's default OpenClaw pin from `versions.json`; that image must still exist on the selected compute daemon.
+Examples that omit `image` use the SDK pin for their selected harness from `versions.json`.
+Hermes uses `images.hermes`; other harnesses use `images.agent`.
+The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
 Build metadata records the exported digest separately under the target's `containerimage.digest` key.
 The commands build and load local images; they do not publish images or launch a deployment.

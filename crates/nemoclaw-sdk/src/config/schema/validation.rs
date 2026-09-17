@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Conditional input rules supplement the structure derived from Rust types.
 use crate::config::network as n;
-use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
+use crate::config::{API_VERSION, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
 fn property(schema: &mut Value, field: &str, extra: Value) {
@@ -134,11 +134,13 @@ pub(super) fn constrain(root: &mut Value) {
         "if": at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true),
         "then": at("harness/kind", json!({"enum":["openclaw","pi"]}), false)
     }]);
-    optional_string(
+    property(
         &mut defs["Image"],
         "ref",
-        DEFAULT_AGENT_IMAGE,
-        &json!({"pattern": c::IMAGE}),
+        json!({
+            "anyOf": [{"const": ""}, {"pattern": c::IMAGE}],
+            "x-nemoclaw-default-rule": "Omitted or empty selects the SDK pin for the selected harness."
+        }),
     );
     optional_string(
         &mut defs["Runtime"],

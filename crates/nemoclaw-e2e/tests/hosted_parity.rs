@@ -42,10 +42,12 @@ fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str
     assert!(provider.ollama.is_none());
 
     let sandbox = &document.spec.sandboxes[0];
-    assert_eq!(
-        sandbox.image.ref_,
+    let expected_image = if harness == "hermes" {
+        nemoclaw_sdk::config::DEFAULT_HERMES_IMAGE
+    } else {
         nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
-    );
+    };
+    assert_eq!(sandbox.image.ref_, expected_image);
     assert_eq!(sandbox.runtime.provider, "docker");
     assert!(sandbox.network.tier.is_empty());
     let explicit = &sandbox.network.policy.as_ref().unwrap().explicit;
@@ -290,6 +292,10 @@ mod live {
         validate_immutable_image(
             "default agent image",
             nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE,
+        );
+        validate_immutable_image(
+            "default Hermes image",
+            nemoclaw_sdk::config::DEFAULT_HERMES_IMAGE,
         );
         validate_gateway_image(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
         assert!(

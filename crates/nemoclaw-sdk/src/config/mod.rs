@@ -36,6 +36,7 @@ pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
+pub use crate::artifact_pins::DEFAULT_HERMES_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -259,8 +260,19 @@ impl Document {
                 service.defaults();
             }
         }
+        let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
-            default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
+            let harness = match (&sandbox.harness, &sandbox.harness_ref) {
+                (Some(harness), None) => Some(harness),
+                (None, Some(name)) => harnesses.get(name).or_else(|| sandbox.harnesses.get(name)),
+                _ => None,
+            };
+            let default_image = if harness.is_some_and(|harness| harness.kind == "hermes") {
+                DEFAULT_HERMES_IMAGE
+            } else {
+                DEFAULT_AGENT_IMAGE
+            };
+            default_string(&mut sandbox.image.ref_, default_image);
             default_string(&mut sandbox.runtime.provider, constraints::RUNTIME);
             if sandbox.network.policy.is_none() {
                 default_string(&mut sandbox.network.tier, constraints::NETWORK_TIER);
