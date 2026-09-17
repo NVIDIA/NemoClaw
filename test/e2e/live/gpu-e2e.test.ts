@@ -423,16 +423,17 @@ test(
       credentialBoundary:
         "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
+    const extraAgents = [
+      { id: "researcher", tools: { allow: ["read"] } },
+      { id: "reviewer", tools: { allow: ["read"] } },
+    ];
     const exportEnv = env({
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
       NEMOCLAW_MODEL: "qwen2.5:0.5b",
-      NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
-        { id: "researcher", tools: { allow: ["read"] } },
-        { id: "reviewer", tools: { allow: ["read"] } },
-      ]),
+      NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(extraAgents),
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
@@ -550,10 +551,15 @@ exec ollama pull qwen2.5:0.5b`,
     expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
     expect(serving?.model.servedName).toBe("qwen2.5:0.5b");
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
-    expect(document.spec.sandboxes[0].agents.map(({ name }) => name)).toEqual([
-      "primary",
-      "researcher",
-      "reviewer",
+    const agents = document.spec.sandboxes[0].agents;
+    expect(agents).toEqual([
+      { ...agents[0], name: "primary" },
+      ...extraAgents.map(({ id, tools }) => ({
+        name: id,
+        type: "openclaw",
+        tools,
+        inference: agents[0].inference,
+      })),
     ]);
     const repeatPath = path.join(directory, "repeat.yaml");
     await host.command(
