@@ -195,7 +195,7 @@ test(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
       ),
     );
-    await gateway.expectHealthy({
+    await gateway.expectOpenshellStatusConnected(gatewayName, {
       artifactName: "sandbox-operations-gateway-preserved",
       env,
       redactionValues: redactions,
