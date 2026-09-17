@@ -79,7 +79,41 @@ fn malformed_execution_fails_before_planning() {
     let mut value = input();
     let sandbox = &mut value["spec"]["sandboxes"][0];
     sandbox["harness"]["kind"] = json!("hermes");
-    sandbox["harness"]["execution"] = json!({"timeoutSeconds":900});
+    sandbox["harness"]["execution"] = json!({"heartbeatEvery":"30m"});
     assert!(parse(&value).is_err());
     assert!(!schema.is_valid(&value));
+}
+
+#[test]
+fn fabric_timeout_is_available_to_every_harness() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for harness in [
+        "deepagents",
+        "hermes",
+        "pi",
+        "claude",
+        "codex",
+        "mini-swe-agent",
+        "nooa",
+        "nooa-bench",
+        "remote-agent",
+    ] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["harness"] =
+            json!({"kind":harness,"execution":{"timeoutSeconds":45}});
+        if harness == "claude" {
+            value["spec"]["inferenceProviders"][0]["provider"] = json!("anthropic");
+        }
+        let document = parse(&value).unwrap();
+        assert!(schema.is_valid(&value), "{harness}");
+        let generations: Generations = ["workspace", "provider", "sandbox"]
+            .map(|k| (k.into(), "a".repeat(32)))
+            .into();
+        let rows = targets(&document, &generations).unwrap();
+        let runtime: Value = serde_json::from_str(
+            &rows.iter().find(|r| r.kind == "sandbox").unwrap().values["inference_json"],
+        )
+        .unwrap();
+        assert_eq!(runtime["execution"]["timeoutSeconds"], 45);
+    }
 }

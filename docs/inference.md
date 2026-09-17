@@ -288,8 +288,8 @@ Explicit `false` remains distinct from omission in the exported document.
 Choose limits and reasoning capabilities that your model supports; the parser checks bounds, not model capabilities.
 See the generated [field reference](reference/configuration.md) for accepted ranges.
 
-Route tuning is currently supported only by OpenClaw.
-Other harnesses reject these fields; Pi has its separate native model metadata interface.
+Deep Agents, mini-swe-agent, and remote-agent also accept `maxTokens`, which is passed through Fabric to the native model client.
+The other tuning fields remain OpenClaw-specific; Pi accepts its native model metadata through `piModel`.
 The SDK verifies the configured OpenClaw API, model limits, and explicitly selected thinking level without rewriting drifted configuration.
 Unrelated native settings, including channels and plugins, remain owned by OpenClaw.
 

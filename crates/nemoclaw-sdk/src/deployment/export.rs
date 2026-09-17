@@ -54,7 +54,11 @@ impl Deployment {
             ))?;
             verify_identity(&expected, &observed)?;
             match target.kind.as_str() {
-                "provider" if target.address == "nemoclaw_provider.web_search" => {
+                "provider"
+                    if expected
+                        .get("provider_type")
+                        .is_some_and(|kind| kind == "brave") =>
+                {
                     if expected
                         .iter()
                         .any(|(key, value)| observed.get(key) != Some(value))

@@ -162,7 +162,6 @@ impl Document {
             validate_provider(definition, gateway)?;
         }
         let mut sandbox_names = std::collections::BTreeSet::new();
-        let mut search_credential = None;
         for sandbox in &self.spec.sandboxes {
             require(
                 sandbox_names.insert(&sandbox.name),
@@ -191,19 +190,12 @@ impl Document {
             let web_search = self.web_search(sandbox)?;
             sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
             if let Some(search) = web_search {
-                if let Some(expected) = &search_credential {
-                    require(
-                        expected == &search.credential.env,
-                        "sandboxes sharing web search must use the same provider credential",
-                    )?;
-                } else {
-                    search_credential = Some(search.credential.env.clone());
-                }
                 require(
-                    selected_providers
-                        .iter()
-                        .all(|provider| provider.name != "brave-search"),
-                    "brave-search is reserved for web search",
+                    selected_providers.iter().all(|provider| {
+                        provider.name != "brave-search"
+                            && !provider.name.starts_with("brave-search-")
+                    }),
+                    "brave-search names are reserved for web search",
                 )?;
                 search.validate(
                     &harness.kind,

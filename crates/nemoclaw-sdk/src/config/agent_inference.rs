@@ -34,7 +34,7 @@ pub enum ReasoningEffort {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Optional OpenClaw model limits and reasoning defaults. Omission preserves native defaults.
+/// Optional model limits and OpenClaw reasoning defaults. Omission preserves native defaults.
 pub struct RouteTuning {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 4194304))]
@@ -42,7 +42,7 @@ pub struct RouteTuning {
     pub context_window: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 1000000000))]
-    /// Maximum output tokens advertised to OpenClaw.
+    /// Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent.
     pub max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "bool")]
@@ -55,7 +55,13 @@ pub struct RouteTuning {
 }
 impl RouteTuning {
     pub fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if (self != &Self::default() && harness != "openclaw")
+        let supported = harness == "openclaw"
+            || (matches!(harness, "deepagents" | "mini-swe-agent" | "remote-agent")
+                && self.context_window.is_none()
+                && self.reasoning.is_none()
+                && self.reasoning_effort.is_none())
+            || self == &Self::default();
+        if !supported
             || self
                 .context_window
                 .is_some_and(|n| !(1..=4194304).contains(&n))
@@ -64,7 +70,7 @@ impl RouteTuning {
                 .is_some_and(|n| !(1..=1000000000).contains(&n))
         {
             return Err(ConfigError::new(
-                "route tuning requires OpenClaw and supported token bounds",
+                "route tuning requires a supported harness, option, and token bounds",
             ));
         }
         Ok(())

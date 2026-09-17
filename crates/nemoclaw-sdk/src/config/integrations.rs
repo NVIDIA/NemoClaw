@@ -206,3 +206,12 @@ impl RuntimeWebSearch {
         super::validation::credential(&Some(self.credential.clone()))
     }
 }
+
+/// Stable registration identity for a search credential reference, never its value.
+pub(crate) fn search_provider_name(reference: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "brave-search-{}",
+        &super::hex(&Sha256::digest(reference))[..24]
+    )
+}

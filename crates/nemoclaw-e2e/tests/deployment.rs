@@ -413,6 +413,12 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             document.workspace(),
             document.spec.sandboxes[0].name
         );
+        let attached = fixture.state.lock().unwrap().sandboxes[&sandbox_key]
+            .spec
+            .as_ref()
+            .unwrap()
+            .providers
+            .clone();
         fixture
             .state
             .lock()
@@ -437,10 +443,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .spec
             .as_mut()
             .unwrap()
-            .providers = vec![
-            document.inference_provider().unwrap().name.clone(),
-            "brave-search".into(),
-        ];
+            .providers = attached;
         assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     }
     if document.spec.sandboxes[0].agents.len() > 1 {

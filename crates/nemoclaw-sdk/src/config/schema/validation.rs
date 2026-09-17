@@ -335,7 +335,7 @@ pub(super) fn constrain(root: &mut Value) {
         "heartbeatEvery",
         json!({"pattern":"^[0-9]+[smh]$(?![\\s\\S])"}),
     );
-    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["execution"]},"then":{"properties":{"kind":{"const":"openclaw"}}}}));
+    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["execution"],"properties":{"execution":{"required":["heartbeatEvery"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}));
     defs["HermesInterfaces"]["minProperties"] = json!(1);
     for field in ["port", "internalPort"] {
         property(
@@ -401,7 +401,9 @@ pub(super) fn constrain(root: &mut Value) {
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "codex"}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-responses"}), false)},
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "hermes", "claude", "codex"]}}), true), "then": at(&format!("{provider}/api"), json!({"const": "openai-completions"}), false)},
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "openclaw"}}), true),
-             "then": at(&route, forbid(&["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]), false)},
+             "then": at(&route, forbid(&["contextWindow", "reasoning", "reasoningEffort"]), false)},
+            {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "deepagents", "mini-swe-agent", "remote-agent"]}}), true),
+             "then": at(&route, forbid(&["maxTokens"]), false)},
             {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "pi"}}), true),
              "then": at(&route, forbid(&["piModel"]), false)},

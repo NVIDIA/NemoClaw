@@ -163,7 +163,7 @@ execution:
   heartbeatEvery: 30m
 ```
 
-`timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
+For OpenClaw, `timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
 Fabric's outer deadline includes time for the gateway response and cleanup.
 Startup, readiness, and explicit inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
 
@@ -174,7 +174,8 @@ See the [execution field reference](reference/configuration.md#agentexecution) f
 
 Execution settings apply to the shared OpenClaw gateway defaults.
 Select these settings once on the sandbox; use `harnessRef` to reuse a named configuration.
-Other harnesses and empty `execution` objects are rejected.
+Other harnesses accept `execution.timeoutSeconds` as the Fabric invocation timeout, defaulting to 300 seconds; they reject `heartbeatEvery`.
+Empty `execution` objects are rejected.
 Export preserves explicit settings and leaves omitted fields absent.
 
 Build the updated image using the [runtime build procedure](#runtime-lifecycle) and use its immutable digest in a fresh deployment.
@@ -313,6 +314,8 @@ Unused enclosing definitions create no provider, policy grant, or secret require
 
 Set the referenced environment variable on the host running `nemoclaw apply`.
 NemoClaw resolves that reference locally and creates a workspace-scoped Brave provider profile and credential-bearing provider in OpenShell.
+Different sandboxes can use different credential references; each sandbox receives only its selected provider.
+Sandboxes using the same reference share one provider registration.
 The agent receives OpenShell's placeholder through `BRAVE_API_KEY`; OpenShell's supervisor proxy replaces it with the real key in requests to Brave.
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the managed provider and profile without revoking the key at Brave.
@@ -325,7 +328,7 @@ Other harnesses are rejected.
 
 The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node executable to GET `/res/v1/web/search` at `api.search.brave.com:443`.
 The supervisor proxy terminates TLS there to inject `X-Subscription-Token`.
-An explicit policy cannot reuse this rule name, and the inference provider cannot be named `brave-search`.
+An explicit policy cannot reuse this rule name, and inference provider names cannot be `brave-search` or start with `brave-search-`.
 The integration owns its profile, provider attachment, native plugin settings, and agent tool grants.
 Export preserves authored definition scope and references; the adapter's internal agent grants are derived from those attachments.
 Profile, attachment, or native configuration drift stops refresh and export without overwriting the conflicting configuration.

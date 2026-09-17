@@ -55,8 +55,8 @@ pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, O
     selected.remove(&settings.provider);
     let mut providers = vec![settings.provider];
     providers.extend(selected);
-    if settings.web_search.is_some() {
-        providers.push("brave-search".into());
+    if let Some(search) = &settings.web_search {
+        providers.push(crate::config::search_provider_name(&search.credential.env));
     }
     Ok(providers)
 }
