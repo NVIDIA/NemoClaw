@@ -8,10 +8,10 @@
  * NemoClaw's native OpenClaw lifecycle runs the gateway, doctor, auto-pair,
  * one-shot, and agent paths as the sandbox identity. OpenClaw 2026.9.1 makes
  * shared and per-agent SQLite state part of gateway startup and hardens those
- * paths to owner-only modes. Preserve those private modes, leave generic
- * credential and identity store enforcement unchanged, and ignore only the
- * obsolete pinned-version update cache when its migration cannot archive
- * through a root-owned parent.
+ * paths to owner-only modes. Generic credential and identity stores remain owner-only.
+ * Preserve those private modes and ignore only the obsolete
+ * pinned-version update cache when its migration cannot archive through a
+ * root-owned parent.
  *
  * Remove this patch once upstream no longer needs these managed-runtime
  * permission and legacy-cache compatibility changes.

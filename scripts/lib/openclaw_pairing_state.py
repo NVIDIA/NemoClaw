@@ -369,8 +369,7 @@ def _read_records(connection, *, local_device_only=False):
     if local_device_only:
         local_device_id = identity_row["device_id"]
         pending_rows = connection.execute(
-            "SELECT * FROM device_pairing_pending WHERE device_id = ? ORDER BY request_id",
-            (local_device_id,),
+            "SELECT * FROM device_pairing_pending ORDER BY request_id"
         ).fetchall()
         paired_rows = connection.execute(
             "SELECT * FROM device_pairing_paired WHERE device_id = ? ORDER BY device_id",

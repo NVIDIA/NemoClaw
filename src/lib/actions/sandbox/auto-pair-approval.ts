@@ -1174,14 +1174,12 @@ if local_approval_auth_mode is None:
     ${exitWithReceipt("request-rejected")}
 pending = related_pending
 if local_approval_auth_mode == 'paired-token':
-    # The approval child needs exactly one pending request, one local paired
-    # record, and the matching local identity. Re-serialize those projections
-    # into anonymous descriptors so unrelated devices and their bearer tokens
-    # are not inherited by the child.
+    # The approval child needs the credential-free pending set to preserve
+    # concurrent requests, but only one local paired record and the matching
+    # identity. Re-serialize those projections into anonymous descriptors so
+    # unrelated device credentials never cross the child boundary.
     try:
-        clone_pending_snapshot_fd = open_clone_snapshot_descriptor({
-            local_request_id: related_pending[0],
-        })
+        clone_pending_snapshot_fd = open_clone_snapshot_descriptor(local_pending_by_id)
         clone_paired_snapshot_fd = open_clone_snapshot_descriptor({
             local_device_id: paired_device,
         })
