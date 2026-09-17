@@ -47,6 +47,18 @@ function scan(root: string): string {
   });
 }
 
+/** Run the scan without root's permission bypass when the test runner is privileged. */
+function scanWithoutRootPrivileges(root: string): string {
+  const command = buildSandboxCredentialScanCommand([root]);
+  return process.getuid?.() === 0
+    ? execFileSync(
+        "setpriv",
+        ["--reuid=65534", "--regid=65534", "--clear-groups", "sh", "-c", command],
+        { encoding: "utf8" },
+      )
+    : execFileSync("sh", ["-lc", command], { encoding: "utf8" });
+}
+
 describe("sandbox credential scan", () => {
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
@@ -85,10 +97,26 @@ describe("sandbox credential scan", () => {
   it("fails closed when an existing sandbox state root cannot be inspected", () => {
     const root = createScanRoot();
     const blocked = path.dirname(writeFixture(root, "blocked/state.txt", "ordinary state\n"));
+    fs.chmodSync(root, 0o755);
     fs.chmodSync(blocked, 0o000);
 
     try {
-      expect(() => scan(blocked)).toThrow();
+      expect(() => scanWithoutRootPrivileges(blocked)).toThrow();
+    } finally {
+      fs.chmodSync(blocked, 0o700);
+    }
+  });
+
+  it("fails closed when a missing root cannot be verified through its parent", () => {
+    const root = createScanRoot();
+    const blocked = path.join(root, "blocked");
+    const missing = path.join(blocked, "missing");
+    fs.mkdirSync(blocked);
+    fs.chmodSync(root, 0o755);
+    fs.chmodSync(blocked, 0o000);
+
+    try {
+      expect(() => scanWithoutRootPrivileges(missing)).toThrow();
     } finally {
       fs.chmodSync(blocked, 0o700);
     }
