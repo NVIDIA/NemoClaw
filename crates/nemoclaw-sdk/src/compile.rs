@@ -24,7 +24,7 @@ fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, C
         .get(kind)
         .filter(|value| !value.is_empty())
         .map(String::as_str)
-        .ok_or(ConfigError("missing resource generation"))
+        .ok_or(ConfigError::new("missing resource generation"))
 }
 pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, ConfigError> {
     document.validate()?;
@@ -84,9 +84,9 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 &provider.provider,
                 false,
             )
-            .map_err(|_| ConfigError("invalid native inference policy"))?;
+            .map_err(|_| ConfigError::new("invalid native inference policy"))?;
             if policy.network_policies.contains_key(&profile.id) {
-                return Err(ConfigError("inference policy name is reserved"));
+                return Err(ConfigError::new("inference policy name is reserved"));
             }
             policy.network_policies.insert(
                 profile.id.clone(),
@@ -100,7 +100,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         values.insert(
             "policy_json".into(),
             crate::openshell::policy_json(&policy)
-                .map_err(|_| ConfigError("cannot encode sandbox policy"))?,
+                .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?,
         );
         if let Some(proxy) = &sandbox.network.proxy {
             values.insert("proxy_host".into(), proxy.host.clone());
@@ -140,7 +140,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 };
                 if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                     if previous != &target {
-                        return Err(ConfigError(
+                        return Err(ConfigError::new(
                             "sandboxes sharing web search must use the same provider credential",
                         ));
                     }
@@ -157,15 +157,15 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         .is_some_and(|s| s.authentication.is_some())
     {
         let spec = runtime_targets(document, generations)
-            .map_err(|_| ConfigError("invalid managed credential source"))?
+            .map_err(|_| ConfigError::new("invalid managed credential source"))?
             .into_iter()
             .find(|t| t.kind == crate::managed::SERVICE_KIND)
-            .ok_or(ConfigError("missing managed credential source"))?
+            .ok_or(ConfigError::new("missing managed credential source"))?
             .values["spec"]
             .clone();
         let source = crate::inference_auth::Source::ManagedService {
             spec: serde_json::from_str(&spec)
-                .map_err(|_| ConfigError("invalid managed credential source"))?,
+                .map_err(|_| ConfigError::new("invalid managed credential source"))?,
         };
         result
             .iter_mut()
@@ -176,7 +176,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     }
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
-            .map_err(|_| ConfigError("invalid Ollama proxy specification"))?;
+            .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;
         let source = crate::inference_auth::Source::OllamaProxy {
             engine: proxy.engine.clone(),
             spec: Box::new(spec),
@@ -189,7 +189,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             .insert("credential_source".into(), source.json()?);
         result.extend(
             crate::ollama::proxy::targets(document, generations)
-                .map_err(|_| ConfigError("invalid proxy resources"))?,
+                .map_err(|_| ConfigError::new("invalid proxy resources"))?,
         );
     }
     Ok(result)
@@ -277,7 +277,7 @@ pub fn compile(
         let authority = inference
             .endpoint
             .strip_prefix("http://")
-            .ok_or(ConfigError("invalid Ollama endpoint"))?
+            .ok_or(ConfigError::new("invalid Ollama endpoint"))?
             .split('/')
             .next()
             .unwrap_or("");

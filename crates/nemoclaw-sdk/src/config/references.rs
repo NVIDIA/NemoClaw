@@ -8,7 +8,7 @@ impl Document {
             .sandboxes
             .iter()
             .find(|sandbox| sandbox.name == name)
-            .ok_or(ConfigError("sandbox name has no definition"))
+            .ok_or(ConfigError::new("sandbox name has no definition"))
     }
 
     /// Resolve an agent's inference without replacing its authored reference.
@@ -26,7 +26,7 @@ impl Document {
             .sandboxes
             .iter()
             .find(|sandbox| sandbox.agents.iter().any(|item| std::ptr::eq(item, agent)))
-            .ok_or(ConfigError("agent does not belong to this document"))?;
+            .ok_or(ConfigError::new("agent does not belong to this document"))?;
         match (&agent.inference, &agent.inference_ref) {
             (Some(inference), None) => Ok((inference, Some(sandbox))),
             (None, Some(name)) => {
@@ -37,9 +37,24 @@ impl Document {
                     .inferences
                     .get(name)
                     .map(move |inference| (inference, Some(sandbox)))
-                    .ok_or(ConfigError("inference reference has no visible definition"))
+                    .ok_or_else(|| {
+                        missing_reference(
+                            &format!(
+                                "spec.sandboxes[{}].agents[{}].inferenceRef",
+                                diagnostic_name(&sandbox.name),
+                                diagnostic_name(&agent.name)
+                            ),
+                            "inference",
+                            name,
+                            self.spec
+                                .inferences
+                                .keys()
+                                .chain(sandbox.inferences.keys())
+                                .map(String::as_str),
+                        )
+                    })
             }
-            _ => Err(ConfigError(
+            _ => Err(ConfigError::new(
                 "agent requires exactly one of inference or inferenceRef",
             )),
         }
@@ -70,7 +85,9 @@ impl Document {
         for sandbox in &self.spec.sandboxes {
             for name in self.spec.inferences.keys().chain(sandbox.inferences.keys()) {
                 if !super::validation::SLUG.is_match(name) {
-                    return Err(ConfigError("inference definitions require lowercase names"));
+                    return Err(ConfigError::new(
+                        "inference definitions require lowercase names",
+                    ));
                 }
             }
             if sandbox
@@ -78,7 +95,7 @@ impl Document {
                 .keys()
                 .any(|name| self.spec.inferences.contains_key(name))
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "inference names must not shadow enclosing definitions",
                 ));
             }
@@ -106,8 +123,22 @@ impl Document {
                 .harnesses
                 .get(name)
                 .or_else(|| sandbox.harnesses.get(name))
-                .ok_or(ConfigError("harness reference has no visible definition")),
-            _ => Err(ConfigError(
+                .ok_or_else(|| {
+                    missing_reference(
+                        &format!(
+                            "spec.sandboxes[{}].harnessRef",
+                            diagnostic_name(&sandbox.name)
+                        ),
+                        "harness",
+                        name,
+                        self.spec
+                            .harnesses
+                            .keys()
+                            .chain(sandbox.harnesses.keys())
+                            .map(String::as_str),
+                    )
+                }),
+            _ => Err(ConfigError::new(
                 "sandbox requires exactly one of harness or harnessRef",
             )),
         }
@@ -117,7 +148,9 @@ impl Document {
         for sandbox in &self.spec.sandboxes {
             for name in self.spec.harnesses.keys().chain(sandbox.harnesses.keys()) {
                 if !super::validation::SLUG.is_match(name) {
-                    return Err(ConfigError("harness definitions require lowercase names"));
+                    return Err(ConfigError::new(
+                        "harness definitions require lowercase names",
+                    ));
                 }
             }
             if sandbox
@@ -125,7 +158,7 @@ impl Document {
                 .keys()
                 .any(|name| self.spec.harnesses.contains_key(name))
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "harness names must not shadow enclosing definitions",
                 ));
             }
@@ -151,7 +184,7 @@ impl Harness {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         if !super::is_fabric_harness(&self.kind) {
-            return Err(ConfigError("harness requires a supported kind"));
+            return Err(ConfigError::new("harness requires a supported kind"));
         }
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(&self.kind)?;
@@ -162,7 +195,7 @@ impl Harness {
         if let Some(observability) = &self.observability {
             observability.validate(&self.kind)?;
             if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "Hermes Relay tracing cannot be combined with native Hermes interfaces",
                 ));
             }
@@ -179,11 +212,11 @@ impl Inference {
                 routes
                     .iter()
                     .find(|route| &route.name == name)
-                    .ok_or(ConfigError(
+                    .ok_or(ConfigError::new(
                         "default inference choice has no matching route",
                     ))
             }
-            _ => Err(ConfigError(
+            _ => Err(ConfigError::new(
                 "multiple inference choices require an explicit default",
             )),
         }
@@ -192,7 +225,7 @@ impl Inference {
     fn validate_choices(&self) -> Result<(), ConfigError> {
         self.default_route()?;
         if self.routes.len() > 32 {
-            return Err(ConfigError("at most 32 model choices are supported"));
+            return Err(ConfigError::new("at most 32 model choices are supported"));
         }
         let mut names = std::collections::BTreeSet::new();
         for route in &self.routes {
@@ -200,7 +233,7 @@ impl Inference {
                 || !names.insert(&route.name)
                 || !super::validation::valid_model(&route.overrides.model)
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "inference choices require unique lowercase names and valid models",
                 ));
             }
@@ -212,7 +245,7 @@ impl Inference {
                     .reasoning_effort
                     .is_some_and(|effort| effort != super::ReasoningEffort::Default)
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "reasoningEffort configures the initial default model; omit it on other choices",
                 ));
             }
@@ -225,7 +258,72 @@ impl Sandbox {
     pub(crate) fn sole_agent(&self) -> Result<&Agent, ConfigError> {
         match self.agents.as_slice() {
             [agent] => Ok(agent),
-            _ => Err(ConfigError("harness requires exactly one agent")),
+            _ => Err(ConfigError::new("harness requires exactly one agent")),
         }
+    }
+}
+
+// Only bounded schema identifiers may appear in diagnostics; never echo arbitrary YAML.
+pub(super) fn diagnostic_name(name: &str) -> &str {
+    if name.len() <= 64 && super::validation::SLUG.is_match(name) {
+        name
+    } else {
+        "<invalid name>"
+    }
+}
+pub(super) fn missing_reference<'a>(
+    path: &str,
+    kind: &str,
+    name: &str,
+    visible: impl Iterator<Item = &'a str>,
+) -> ConfigError {
+    let names: std::collections::BTreeSet<_> = visible.map(diagnostic_name).collect();
+    let choices = if names.is_empty() {
+        "(none)".into()
+    } else {
+        names.into_iter().collect::<Vec<_>>().join(", ")
+    };
+    ConfigError(format!(
+        "{path}: unknown {kind} {name:?}; visible definitions: {choices}",
+        name = diagnostic_name(name)
+    ))
+}
+impl Document {
+    pub(super) fn route_path(&self, route: &Route) -> String {
+        for (name, inference) in &self.spec.inferences {
+            if inference.routes.iter().any(|r| std::ptr::eq(r, route)) {
+                return format!(
+                    "spec.inferences[{}].routes[{}]",
+                    diagnostic_name(name),
+                    diagnostic_name(&route.name)
+                );
+            }
+        }
+        for sandbox in &self.spec.sandboxes {
+            let base = format!("spec.sandboxes[{}]", diagnostic_name(&sandbox.name));
+            for (name, inference) in &sandbox.inferences {
+                if inference.routes.iter().any(|r| std::ptr::eq(r, route)) {
+                    return format!(
+                        "{base}.inferences[{}].routes[{}]",
+                        diagnostic_name(name),
+                        diagnostic_name(&route.name)
+                    );
+                }
+            }
+            for agent in &sandbox.agents {
+                if agent
+                    .inference
+                    .as_ref()
+                    .is_some_and(|i| i.routes.iter().any(|r| std::ptr::eq(r, route)))
+                {
+                    return format!(
+                        "{base}.agents[{}].inference.routes[{}]",
+                        diagnostic_name(&agent.name),
+                        diagnostic_name(&route.name)
+                    );
+                }
+            }
+        }
+        "inference.routes".into()
     }
 }

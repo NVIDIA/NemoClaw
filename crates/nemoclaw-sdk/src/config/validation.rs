@@ -20,7 +20,7 @@ fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
         Ok(())
     } else {
-        Err(ConfigError(reason))
+        Err(ConfigError::new(reason))
     }
 }
 fn private(ip: IpAddr) -> bool {
@@ -47,7 +47,8 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         !raw.contains(['\r', '\n', '\t', '$', '%', '{', '}', '\\']),
         "endpoint contains unsupported characters",
     )?;
-    let url = Url::parse(raw).map_err(|_| ConfigError("expected an HTTP or HTTPS endpoint"))?;
+    let url =
+        Url::parse(raw).map_err(|_| ConfigError::new("expected an HTTP or HTTPS endpoint"))?;
     require(
         url.has_host()
             && url.username().is_empty()
@@ -282,7 +283,7 @@ impl Document {
                     }
                     if let Some(ollama) = &provider.ollama {
                         let url = Url::parse(&provider.endpoint)
-                            .map_err(|_| ConfigError("invalid Ollama endpoint"))?;
+                            .map_err(|_| ConfigError::new("invalid Ollama endpoint"))?;
                         let authority = provider
                             .endpoint
                             .strip_prefix("http://")
@@ -322,7 +323,7 @@ impl Document {
 impl Gateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         let url =
-            Url::parse(&self.endpoint).map_err(|_| ConfigError("invalid gateway endpoint"))?;
+            Url::parse(&self.endpoint).map_err(|_| ConfigError::new("invalid gateway endpoint"))?;
         let authority = self
             .endpoint
             .strip_prefix("http://")
@@ -368,7 +369,7 @@ impl Service {
             let network: ipnet::Ipv4Net = placement
                 .network_cidr
                 .parse()
-                .map_err(|_| ConfigError("invalid service network"))?;
+                .map_err(|_| ConfigError::new("invalid service network"))?;
             require(
                 network.prefix_len() == 24
                     && network.addr() == network.network()
@@ -380,7 +381,7 @@ impl Service {
             let address: std::net::Ipv4Addr = publication
                 .bind_address
                 .parse()
-                .map_err(|_| ConfigError("invalid service bind address"))?;
+                .map_err(|_| ConfigError::new("invalid service bind address"))?;
             require(
                 private(address.into())
                     && !address.is_loopback()

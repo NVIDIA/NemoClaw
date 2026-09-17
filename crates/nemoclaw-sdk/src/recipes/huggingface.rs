@@ -31,7 +31,7 @@ pub(crate) fn validate_model(service: &Service) -> Result<(), ConfigError> {
             .unwrap()
             .is_match(&service.model.revision)
     {
-        return Err(ConfigError(
+        return Err(ConfigError::new(
             "model requires a repository and immutable commit revision",
         ));
     }

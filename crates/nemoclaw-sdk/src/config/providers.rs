@@ -51,7 +51,7 @@ impl Document {
         match (&route.provider, &route.provider_ref) {
             (Some(provider), None) => {
                 if enclosing().any(|definition| definition.name == provider.name) {
-                    return Err(ConfigError(
+                    return Err(ConfigError::new(
                         "inline provider names must not shadow enclosing definitions",
                     ));
                 }
@@ -59,8 +59,15 @@ impl Document {
             }
             (None, Some(name)) => enclosing()
                 .find(|provider| &provider.name == name)
-                .ok_or(ConfigError("provider reference has no visible definition")),
-            _ => Err(ConfigError(
+                .ok_or_else(|| {
+                    super::references::missing_reference(
+                        &format!("{}.providerRef", self.route_path(route)),
+                        "provider",
+                        name,
+                        enclosing().map(|p| p.name.as_str()),
+                    )
+                }),
+            _ => Err(ConfigError::new(
                 "route requires exactly one of provider or providerRef",
             )),
         }
@@ -71,7 +78,7 @@ impl Document {
         let providers = self.selected_inference_providers()?;
         match providers.as_slice() {
             [provider] => Ok(provider),
-            _ => Err(ConfigError(
+            _ => Err(ConfigError::new(
                 "select an explicit provider in a multi-provider deployment",
             )),
         }
@@ -91,7 +98,7 @@ impl Document {
                 if !super::validation::SLUG.is_match(&definition.name)
                     || !names.insert(&definition.name)
                 {
-                    return Err(ConfigError(
+                    return Err(ConfigError::new(
                         "provider names must be unique lowercase names without shadowing",
                     ));
                 }
@@ -103,7 +110,7 @@ impl Document {
                     if let Some(previous) = selected.insert(self.provider_key(provider), provider)
                         && !std::ptr::eq(previous, provider)
                     {
-                        return Err(ConfigError(
+                        return Err(ConfigError::new(
                             "selected provider definitions must have distinct names",
                         ));
                     }
@@ -111,7 +118,7 @@ impl Document {
             }
         }
         if selected.is_empty() || selected.len() > 32 {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "a deployment requires between one and 32 selected providers",
             ));
         }
@@ -144,7 +151,7 @@ impl Document {
         });
         let selected = managed.next();
         if managed.next().is_some() {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "a deployment supports at most one provider with managed inference dependencies",
             ));
         }
@@ -153,7 +160,7 @@ impl Document {
                 self.selected_inference_providers()?
                     .into_iter()
                     .min_by_key(|p| &p.name)
-                    .ok_or(ConfigError("no selected providers"))
+                    .ok_or(ConfigError::new("no selected providers"))
             },
             Ok,
         )
@@ -176,7 +183,7 @@ impl Document {
                 }
             }
         }
-        Err(ConfigError("provider has no selected model"))
+        Err(ConfigError::new("provider has no selected model"))
     }
 
     pub(crate) fn selected_provider_mut(
@@ -187,7 +194,7 @@ impl Document {
             .selected_inference_providers()?
             .into_iter()
             .find(|provider| self.provider_key(provider) == name)
-            .ok_or(ConfigError("provider is not selected"))?;
+            .ok_or(ConfigError::new("provider is not selected"))?;
         let index = self
             .provider_definitions()
             .position(|provider| std::ptr::eq(provider, selected))

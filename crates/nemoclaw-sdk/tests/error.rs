@@ -5,7 +5,7 @@ use std::error::Error as _;
 
 #[test]
 fn wrapped_sdk_errors_preserve_their_typed_sources_and_messages() {
-    let configuration = Error::from(ConfigError("invalid configuration"));
+    let configuration = Error::from(ConfigError::new("invalid configuration"));
     assert_eq!(configuration.to_string(), "invalid configuration");
     assert!(configuration.source().unwrap().is::<ConfigError>());
     let observation = Error::from(ObservationError::Incomplete);

@@ -23,7 +23,7 @@ pub(crate) fn validate_memory(
         if condition {
             Ok(())
         } else {
-            Err(crate::config::ConfigError(message))
+            Err(crate::config::ConfigError::new(message))
         }
     }
     require(

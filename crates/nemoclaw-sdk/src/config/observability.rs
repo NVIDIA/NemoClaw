@@ -55,7 +55,7 @@ impl AgentObservability {
                         .is_some_and(|n| (0.0..=1.0).contains(&n)) => {}
             (None, Some(relay)) if harness == "hermes" && relay.enabled => {}
             _ => {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "observability requires exactly one supported harness-native integration",
                 ));
             }

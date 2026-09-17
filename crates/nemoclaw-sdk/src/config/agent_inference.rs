@@ -63,7 +63,7 @@ impl RouteTuning {
                 .max_tokens
                 .is_some_and(|n| !(1..=1000000000).contains(&n))
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "route tuning requires OpenClaw and supported token bounds",
             ));
         }
@@ -119,7 +119,7 @@ impl ToolDisclosure {
                 None => Self::Progressive,
             };
             if selected.is_some_and(|prior| prior != mode) {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "OpenClaw agents must share a tool disclosure mode; omission means progressive",
                 ));
             }
@@ -207,7 +207,7 @@ impl RuntimeConnection {
             &self.provider,
             self.api_key_env != "NEMOCLAW_ANONYMOUS_API_KEY",
         )
-        .map_err(|_| ConfigError("invalid native inference connection"))?;
+        .map_err(|_| ConfigError::new("invalid native inference connection"))?;
         if profile
             .credentials
             .first()
@@ -215,7 +215,7 @@ impl RuntimeConnection {
             .unwrap_or("NEMOCLAW_ANONYMOUS_API_KEY")
             != self.api_key_env
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "inference credential does not match its provider",
             ));
         }
@@ -225,7 +225,7 @@ impl RuntimeConnection {
                 .as_deref()
                 .is_some_and(|model| !super::validation::valid_model(model))
         {
-            return Err(ConfigError("invalid native inference model"));
+            return Err(ConfigError::new("invalid native inference model"));
         }
         Ok(())
     }
@@ -246,7 +246,7 @@ impl SandboxRuntimeSettings {
         if let Some(observability) = &self.observability {
             observability.validate(harness)?;
             if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "Hermes Relay tracing cannot be combined with native Hermes interfaces",
                 ));
             }
@@ -266,7 +266,7 @@ impl SandboxRuntimeSettings {
                     .iter()
                     .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
         {
-            return Err(ConfigError("invalid OpenClaw agent roster"));
+            return Err(ConfigError::new("invalid OpenClaw agent roster"));
         }
         let explicit_choices = self.agents.iter().any(|agent| agent.inference.is_some());
         if explicit_choices {
@@ -274,16 +274,16 @@ impl SandboxRuntimeSettings {
                 let selection = agent
                     .inference
                     .as_ref()
-                    .ok_or(ConfigError("every agent requires model choices"))?;
+                    .ok_or(ConfigError::new("every agent requires model choices"))?;
                 if selection.models.is_empty()
                     || selection.models.len() > 32
                     || !selection.models.contains_key(&selection.default)
                 {
-                    return Err(ConfigError("invalid default model choice"));
+                    return Err(ConfigError::new("invalid default model choice"));
                 }
                 for (name, model) in &selection.models {
                     if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
-                        return Err(ConfigError("invalid native model choice"));
+                        return Err(ConfigError::new("invalid native model choice"));
                     }
                     model.connection.validate(&model.provider, harness)?;
                     model.tuning.validate(harness)?;
@@ -303,7 +303,7 @@ impl SandboxRuntimeSettings {
                 || primary.api != self.api
                 || primary.tuning != self.tuning
             {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "runtime inference envelope differs from the canonical agent selection",
                 ));
             }
@@ -314,7 +314,7 @@ impl SandboxRuntimeSettings {
                 .as_ref()
                 .is_some_and(|a| harness != "hermes" || a.provider_ref.is_empty())
         {
-            return Err(ConfigError("unsupported agent inference settings"));
+            return Err(ConfigError::new("unsupported agent inference settings"));
         }
         Ok(())
     }
@@ -333,7 +333,7 @@ impl Document {
             &provider.provider,
             provider.authenticated(),
         )
-        .map_err(|_| ConfigError("invalid native inference profile"))?;
+        .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {
             provider: self.provider_key(provider),
             connection: RuntimeConnection {
@@ -382,7 +382,7 @@ impl Document {
         resolved.sort_by_key(|resolved| &resolved.agent.name);
         let first = resolved
             .first()
-            .ok_or(ConfigError("at least one agent is required"))?;
+            .ok_or(ConfigError::new("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
             || resolved

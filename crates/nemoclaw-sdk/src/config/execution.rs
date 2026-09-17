@@ -37,7 +37,7 @@ impl AgentExecution {
                     || !matches!(value.as_bytes().last(), Some(b's' | b'm' | b'h'))
             })
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "execution requires OpenClaw, a positive timeout or a heartbeat duration ending in s, m, or h",
             ));
         }

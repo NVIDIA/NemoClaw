@@ -52,7 +52,7 @@ impl Service {
                 || !(1..=9999).contains(&h.min_driver_major)
                 || self.recipe.is_some())
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "dedicated GPU requirements must be valid and exclude an inline recipe",
             ));
         }
@@ -63,7 +63,7 @@ impl Service {
                 || self.memory.kv_cache_gib != 0
                 || r.as_f64().is_none_or(|r| !(0.05..=0.95).contains(&r)))
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "GPU utilization requires dedicated hardware and excludes fixed GPU and KV-cache budgets",
             ));
         }
@@ -72,7 +72,9 @@ impl Service {
             .as_ref()
             .is_some_and(|c| !(1..=64).contains(&c.shared_memory_gi_b))
         {
-            return Err(ConfigError("shared memory must be between 1 and 64 GiB"));
+            return Err(ConfigError::new(
+                "shared memory must be between 1 and 64 GiB",
+            ));
         }
         Ok(())
     }
