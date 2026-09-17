@@ -207,6 +207,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .mockResolvedValueOnce({ status: 26, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
     const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
       status: 0,
@@ -261,12 +262,17 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     );
     expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-ready-v1");
     expect(execute.mock.calls[3]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
-    expect(execute.mock.calls[4]?.[1]).toContain("curl");
+    expect(execute.mock.calls[4]?.[1]).not.toContain("curl");
+    expect(execute.mock.calls[5]?.[1]).toContain("curl");
     expect(sleep).toHaveBeenCalledOnce();
   });
 
-  it("releases a delete-edge maintenance gate without waiting for gateway health", async () => {
-    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+  it("proves delete-edge release consumption without waiting for gateway health", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 41, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
     const deps = {
       captureOpenshell: vi.fn() as never,
       executeSandboxExecCommand: execute,
@@ -278,15 +284,18 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       releaseOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha" }, deps),
     ).resolves.toEqual({ ok: true });
 
-    expect(execute).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith(
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
       "alpha",
       buildOpenClawPostUpgradeDoctorReleaseCommand(),
       30_000,
       { localDockerFallbackPolicy: "never" },
     );
+    expect(execute.mock.calls[1]?.[1]).not.toContain("curl");
+    expect(execute.mock.calls[2]?.[1]).not.toContain("curl");
     expect(deps.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.sleep).not.toHaveBeenCalled();
+    expect(deps.sleep).toHaveBeenCalledOnce();
   });
 
   it("uses the pinned direct container while the OpenShell exec relay is intentionally offline", async () => {
@@ -318,13 +327,14 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     ).resolves.toEqual({ ok: true });
 
     expect(execute).toHaveBeenCalledOnce();
-    expect(executePrivileged).toHaveBeenCalledTimes(3);
+    expect(executePrivileged).toHaveBeenCalledTimes(4);
     const expectedDirectCall = [
       "alpha",
       ["/bin/sh", "-lc", expect.stringContaining('/usr/bin/setpriv --reuid="$uid" --regid="$gid"')],
       expect.any(Number),
     ];
     expect(executePrivileged.mock.calls).toEqual([
+      expectedDirectCall,
       expectedDirectCall,
       expectedDirectCall,
       expectedDirectCall,

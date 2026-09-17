@@ -460,6 +460,15 @@ function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): str
   ].join("; ");
 }
 
+function buildOpenClawPostUpgradeDoctorReleaseConsumptionProbe(): string {
+  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
+  return [
+    `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 40`,
+    `[ ! -e ${ready} ] && [ ! -L ${ready} ] || exit 41`,
+  ].join("; ");
+}
+
 function openClawDoctorSandboxLookup(
   deps: OpenClawPostRestoreDoctorDeps,
   runtimeSelection?: OpenShellRuntimeSelection,
@@ -713,10 +722,10 @@ export async function beginOpenClawPostRestoreDoctor(
 
 /**
  * Release a verified source maintenance gate immediately before deleting that
- * source sandbox. Rebuild has already captured its consistent backup, and the
- * next mutation is the pinned OpenShell delete, so waiting for a gateway that
- * will be discarded only widens the race. Keep the supervisor live instead of
- * forcing the source into OpenShell's terminal stopped lifecycle.
+ * source sandbox. Rebuild has already captured its consistent backup, so prove
+ * startup consumed the persistent request and ephemeral receipt without
+ * waiting for a gateway that will be discarded. Deleting before consumption
+ * can carry the one-shot request into the same-name replacement state volume.
  */
 export async function releaseOpenClawPostRestoreDoctorForDelete(
   window: OpenClawPostRestoreDoctorWindow,
@@ -737,7 +746,36 @@ export async function releaseOpenClawPostRestoreDoctorForDelete(
       detail: "could not release the verified post-upgrade maintenance window",
     };
   }
-  return { ok: true };
+
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const consumed = await waitUntilAsync(
+    async () => {
+      const remainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      const result = await executeOpenClawDoctorGateCommand(
+        deps,
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorReleaseConsumptionProbe(),
+        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        runtimeSelection,
+      );
+      return result?.status === 0;
+    },
+    {
+      deadlineMs: reconciliationDeadlineMs,
+      initialIntervalMs: 1_000,
+      maxIntervalMs: 1_000,
+      backoffFactor: 1,
+      now: deps.now,
+      sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
+    },
+  );
+  if (consumed) return { ok: true };
+  return {
+    ok: false,
+    stage: "release",
+    detail: "the released maintenance request was not consumed before source deletion",
+  };
 }
 
 /** Release the doctor-owned maintenance gate, then prove final gateway health. */
