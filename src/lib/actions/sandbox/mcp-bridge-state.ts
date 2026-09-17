@@ -108,7 +108,7 @@ export function assertNoAmbiguousMcpCredentialTarget(
   ]);
   if (!ambiguous) return;
   throw new McpBridgeError(
-    `MCP server '${ambiguous.entry.server}' targets the same URL as credential-bound server '${ambiguous.conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
+    `MCP servers '${ambiguous.entry.server}' and '${ambiguous.conflict.server}' target the same URL with different credential bindings. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Use one managed server definition for this URL or a distinct endpoint.`,
     2,
   );
 }

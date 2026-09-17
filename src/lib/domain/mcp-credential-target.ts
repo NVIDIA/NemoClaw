@@ -23,8 +23,9 @@ export function findAmbiguousMcpCredentialTarget(
         (candidate) =>
           candidate.server !== entry.server &&
           candidate.url === entry.url &&
-          candidate.providerName !== entry.providerName &&
-          (candidate.providerName !== undefined || entry.providerName !== undefined),
+          candidate.providerName !== undefined &&
+          entry.providerName !== undefined &&
+          candidate.providerName !== entry.providerName,
       );
     if (conflict) return { entry, conflict };
   }

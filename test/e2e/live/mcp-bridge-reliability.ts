@@ -91,7 +91,7 @@ export async function captureRejectedOpenClawCredentialAliasState(
     artifactName: "mcp-negative-ambiguous-credential-alias-list",
   });
   const providers = await host.command(
-    "openshell",
+    host.openshellCommandPath,
     ["sandbox", "provider", "list", options.sandboxName],
     {
       ...commandOptions,

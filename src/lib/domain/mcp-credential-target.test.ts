@@ -28,5 +28,11 @@ describe("managed MCP credential targets", () => {
         { server: "beta", url: "https://mcp.example.test/" },
       ]),
     ).toBeNull();
+    expect(
+      findAmbiguousMcpCredentialTarget([
+        { server: "alpha", url: "https://mcp.example.test/" },
+        { server: "beta", url: "https://mcp.example.test/", providerName: "beta-provider" },
+      ]),
+    ).toBeNull();
   });
 });
