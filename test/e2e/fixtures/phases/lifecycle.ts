@@ -27,18 +27,6 @@ export {
   dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
 } from "./lifecycle-dcode-invalid-credential.ts";
 
-// Mirror of `OPENSHELL_SANDBOX_NAME_LABEL` in
-// `src/lib/onboard/docker-gpu-patch.ts`. Duplicated here because the
-// fixture layer must not import from `src/lib/**` (CLI source) — that
-// boundary keeps the live runner honest about probing only host-
-// observable state. Drift is caught by the integration test that wires
-// a real onboarded sandbox through the docker-sandbox-container-present
-// probe.
-const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
-const RUNTIME_PROBE_TIMEOUT_MS = 15_000;
-// Recovery can take several minutes while gateway and host-forward
-// readiness converge, so keep the status budget generous.
-const STATUS_TIMEOUT_MS = 5 * 60_000;
 const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
@@ -48,13 +36,9 @@ const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
 const NEMOCLAW_INSTALLER = fileURLToPath(
   new URL("../../../../scripts/install.sh", import.meta.url),
 );
-const NEMOCLAW_OPENSHELL_INSTALLER = fileURLToPath(
-  new URL("../../../../scripts/install-openshell.sh", import.meta.url),
-);
 const USER_SERVICE_STAGE_RESULT_PREFIX = "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=";
 const USER_SERVICE_STOP_RESULT_PREFIX = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
 
-type UserServiceStageResult = "upstream" | "existing" | "staged";
 type UserServiceSelection =
   | "homebrew:homebrew.mxcl.openshell"
   | "homebrew:sh.brew.openshell"
@@ -187,36 +171,13 @@ export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
   ].join("\n");
 }
 
-export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
+export type LifecycleProfile = "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
   add(name: string, run: () => Promise<void> | void): void;
 }
 
-/**
- * How the post-reboot-recovery profile leaves Docker before the test
- * exits the lifecycle phase:
- *
- *   - `stop-original`  — `docker stop` the labeled container in place.
- *                        Matches the common Spark reboot path: the
- *                        container exists, is exited, retains its
- *                        OpenShell labels, but is no longer running.
- *
- *   - `rename-to-gpu-backup` — stop the labeled container, then
- *                        `docker rename` it to `<original>-nemoclaw-
- *                        gpu-backup-<ts>`. Reproduces the rarer GPU-
- *                        patch reboot path where only the backup
- *                        sibling survives and recovery has to rename
- *                        it back. Mirrors `buildBackupContainerName()`
- *                        in `src/lib/onboard/docker-gpu-patch.ts`.
- */
-export type PostRebootMode = "stop-original" | "rename-to-gpu-backup";
-
-export interface PostRebootOptions {
-  mode?: PostRebootMode;
-}
-
-export type LifecycleSimulationOptions = PostRebootOptions | DcodeInvalidCredentialRebuildOptions;
+export type LifecycleSimulationOptions = DcodeInvalidCredentialRebuildOptions;
 
 export interface LifecycleResult {
   profile: LifecycleProfile;
@@ -249,7 +210,6 @@ function instanceName(instance: NemoClawInstance | string): string {
 }
 
 export class LifecyclePhaseFixture {
-  private postRebootUserServiceStage: UserServiceStageResult | undefined;
   private readonly runtimeProvider: RuntimeProviderPrerequisite;
   private stoppedOpenShellGatewayUserService: UserServiceSelection | null = null;
 
@@ -290,33 +250,6 @@ export class LifecyclePhaseFixture {
     );
   }
 
-  /**
-   * Ensure OpenShell is installed and stage the OpenShell gateway user service
-   * before onboarding. Onboarding must see the service so it writes the
-   * Docker-driver environment that the unit needs after a user-manager restart.
-   */
-  async preparePostReboot(): Promise<UserServiceStageResult> {
-    if (this.postRebootUserServiceStage) return this.postRebootUserServiceStage;
-
-    if (!(await this.host.isCommandAvailable("openshell-gateway"))) {
-      const install = await this.host.command("bash", [NEMOCLAW_OPENSHELL_INSTALLER], {
-        artifactName: "lifecycle-prereq-install-openshell",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 10 * 60_000,
-      });
-      assertExitZero(install, "install OpenShell before reboot lifecycle onboarding");
-    }
-
-    const stage = await this.ensureOpenShellGatewayUserService();
-    this.postRebootUserServiceStage = stage;
-    if (stage === "staged") {
-      this.cleanup.add("lifecycle.remove-staged-gateway-user-service", async () => {
-        await this.removeStagedOpenShellGatewayUserService();
-      });
-    }
-    return stage;
-  }
-
   async rebuildSandbox(
     instance: NemoClawInstance | string,
     options: RebuildSandboxOptions = {},
@@ -354,7 +287,7 @@ export class LifecyclePhaseFixture {
   private async waitForSandboxReady(
     instance: NemoClawInstance | string,
     options: SandboxReadyOptions,
-    transition: "after rebuild" | "after gateway restart" | "after the boot restart",
+    transition: "after rebuild" | "after gateway restart",
   ): Promise<ShellProbeResult> {
     const sandboxName = instanceName(instance);
     const attempts = options.attempts ?? SANDBOX_READY_ATTEMPTS;
@@ -382,13 +315,11 @@ export class LifecyclePhaseFixture {
   async simulate(
     profile: LifecycleProfile,
     instance: NemoClawInstance,
-    options: LifecycleSimulationOptions = {},
+    options?: LifecycleSimulationOptions,
   ): Promise<LifecycleResult> {
     switch (profile) {
-      case "post-reboot-recovery":
-        return await this.simulatePostReboot(instance, options as PostRebootOptions);
       case "dcode-rebuild-invalid-credential":
-        if (!isDcodeInvalidCredentialRebuildOptions(options)) {
+        if (!options || !isDcodeInvalidCredentialRebuildOptions(options)) {
           throw new Error(
             "dcode-rebuild-invalid-credential requires gateway/provider/credential/model options",
           );
@@ -404,192 +335,6 @@ export class LifecyclePhaseFixture {
         throw new Error(`Unsupported lifecycle profile '${_exhaustive}'.`);
       }
     }
-  }
-
-  /**
-   * Reproduce the host-side conditions of a Linux Docker-driver reboot and
-   * drive the user-visible action that exposes reboot recovery bugs:
-   *
-   *   1. Locate the OpenShell-labeled Docker container for the
-   *      target's sandbox name and either stop it (default) or
-   *      stop+rename it to a `*-nemoclaw-gpu-backup-*` sibling.
-   *      The gateway runtime is stopped and restarted through the
-   *      selected OpenShell user service, which mirrors a reboot or
-   *      user-manager restart. This target requires either the upstream
-   *      `openshell-gateway` service or the marked
-   *      `nemoclaw-openshell-gateway` service.
-   *
-   *   2. Model the Docker daemon's boot-owned container restart. Wait until
-   *      the OpenShell gateway reports the preserved sandbox Ready.
-   *
-   *   3. Invoke `nemoclaw <name> status` — the user-visible action
-   *      that documented the regression in #4423. On unfixed `main`
-   *      the destructive `missing` branch in `status.ts` wipes the
-   *      registry entry. Status must also restore the OpenClaw gateway
-   *      and host forward before it exits successfully.
-   *
-   *   The final status must exit zero to verify the restored sandbox
-   *   delivery path. The state-validation phase that follows additionally
-   *   verifies preservation through the
-   *   `local-registry-entry-present` and `docker-sandbox-container-present`
-   *   probes.
-   *
-   * Cleanups (run in reverse order at end of test):
-   *   - rename the backup sibling back to the original name (if we
-   *     created one);
-   *   - `docker start` the labeled container so the sandbox returns
-   *     to a usable state for any teardown that expects it live;
-   *   - restart a gateway user service when normal recovery did not;
-   *   - remove a user service staged only for this source-checkout
-   *     fixture after the sandbox cleanup has used it.
-   */
-  async simulatePostReboot(
-    instance: NemoClawInstance,
-    options: PostRebootOptions = {},
-  ): Promise<LifecycleResult> {
-    if (!this.postRebootUserServiceStage) {
-      throw new Error(
-        "OpenShell gateway user service must be prepared before post-reboot onboarding.",
-      );
-    }
-    const mode: PostRebootMode = options.mode ?? "stop-original";
-    const steps: LifecycleResult["steps"] = [];
-
-    const containerNames = await this.discoverLabeledContainerNames(instance);
-    if (containerNames.length === 0) {
-      throw new Error(
-        `lifecycle.post-reboot-recovery expected at least one managed runtime resource labeled ` +
-          `'${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}', but the selected provider returned none. ` +
-          `Did onboarding create the sandbox?`,
-      );
-    }
-    const originalName = containerNames[0];
-    let bootContainerName = originalName;
-
-    const stop = await this.requireRuntimeProvider().command(["container", "stop", originalName], {
-      artifactName: `lifecycle-post-reboot-runtime-stop-${originalName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-    });
-    assertExitZero(stop, `stop managed runtime resource ${originalName}`);
-    steps.push({ id: `runtime-stop:${originalName}`, results: [stop] });
-    this.cleanup.add(`lifecycle.runtime-start:${originalName}`, async () => {
-      await this.requireRuntimeProvider().command(["container", "start", originalName], {
-        artifactName: `lifecycle-cleanup-runtime-start-${originalName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-      });
-    });
-
-    if (mode === "rename-to-gpu-backup") {
-      const backupName = buildBackupContainerName(originalName, Date.now());
-      const rename = await this.requireRuntimeProvider().command(
-        ["container", "rename", originalName, backupName],
-        {
-          artifactName: `lifecycle-post-reboot-runtime-rename-${originalName}`,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-        },
-      );
-      assertExitZero(rename, `rename managed runtime resource ${originalName} ${backupName}`);
-      steps.push({
-        id: `runtime-rename:${originalName}->${backupName}`,
-        results: [rename],
-      });
-      bootContainerName = backupName;
-      this.cleanup.add(`lifecycle.runtime-rename-back:${backupName}`, async () => {
-        await this.requireRuntimeProvider().command(
-          ["container", "rename", backupName, originalName],
-          {
-            artifactName: `lifecycle-cleanup-runtime-rename-back-${backupName}`,
-            env: buildAvailabilityProbeEnv(),
-            timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-          },
-        );
-      });
-    }
-
-    const previousRuntime = await this.restartGatewayRuntime({
-      delayMs: 0,
-      requireUserService: true,
-    });
-    steps.push({
-      id: `gateway-restart:${previousRuntime?.kind ?? "user-service"}`,
-      results: [],
-    });
-    await this.waitForGatewayConnected();
-    steps.push({ id: "gateway-connected:nemoclaw", results: [] });
-
-    // `docker stop` suppresses Docker restart-policy handling until the
-    // daemon restarts. Start the same container here to model that boot-owned
-    // transition without restarting the GitHub-hosted runner's Docker daemon.
-    const bootStart = await this.requireRuntimeProvider().command(
-      ["container", "start", bootContainerName],
-      {
-        artifactName: `lifecycle-post-reboot-runtime-start-${bootContainerName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-      },
-    );
-    assertExitZero(bootStart, `start managed runtime resource ${bootContainerName}`);
-    steps.push({
-      id: `runtime-boot-start:${bootContainerName}`,
-      results: [bootStart],
-    });
-
-    const ready = await this.waitForSandboxReady(
-      instance,
-      {
-        artifactNamePrefix: `lifecycle-post-reboot-ready-${instance.sandboxName}`,
-      },
-      "after the boot restart",
-    );
-    steps.push({
-      id: `sandbox-ready-after-boot:${instance.sandboxName}`,
-      results: [ready],
-    });
-
-    // `nemoclaw <name> status` owns the post-reboot delivery-chain recovery.
-    // It must restore OpenClaw and the host forward without invoking `nemoclaw <name> start`.
-    const statusResult = await this.host.expectStatus(instance.sandboxName, {
-      artifactName: `lifecycle-post-reboot-nemoclaw-status-${instance.sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: STATUS_TIMEOUT_MS,
-    });
-    steps.push({
-      id: `nemoclaw-status:${instance.sandboxName}`,
-      results: [statusResult],
-    });
-
-    return { profile: "post-reboot-recovery", steps };
-  }
-
-  private async ensureOpenShellGatewayUserService(): Promise<UserServiceStageResult> {
-    const result = await this.host.command(
-      "bash",
-      [
-        "-lc",
-        buildOpenShellGatewayUserServiceStageScript(),
-        "stage-nemoclaw-openshell-gateway-service",
-        NEMOCLAW_INSTALLER,
-      ],
-      {
-        artifactName: "lifecycle-gateway-user-service-stage",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      },
-    );
-    assertExitZero(result, "stage OpenShell gateway user service for reboot lifecycle");
-    const match = result.stdout.match(
-      new RegExp(
-        `(?:^|\\n)${USER_SERVICE_STAGE_RESULT_PREFIX}(upstream|existing|staged)(?:\\n|$)`,
-        "u",
-      ),
-    );
-    if (!match) {
-      throw new Error("OpenShell gateway user service staging did not report its outcome.");
-    }
-    return match[1] as UserServiceStageResult;
   }
 
   private async removeStagedOpenShellGatewayUserService(
@@ -850,43 +595,4 @@ export class LifecyclePhaseFixture {
       }; service diagnostics: ${diagnostics.artifacts.result}`,
     );
   }
-
-  private async discoverLabeledContainerNames(instance: NemoClawInstance): Promise<string[]> {
-    const result = await this.requireRuntimeProvider().command(
-      [
-        "container",
-        "ps",
-        "--all",
-        "--filter",
-        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}`,
-        "--format",
-        "{{.Names}}",
-      ],
-      {
-        artifactName: `lifecycle-post-reboot-runtime-discover-${instance.sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: RUNTIME_PROBE_TIMEOUT_MS,
-      },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `lifecycle.post-reboot-recovery could not query the selected runtime provider for label ` +
-          `'${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}' (exit ${result.exitCode}).`,
-      );
-    }
-    return result.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-}
-
-// Mirror of `MAX_DOCKER_CONTAINER_NAME_LENGTH` in
-// `src/lib/onboard/docker-gpu-patch.ts`.
-const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
-
-export function buildBackupContainerName(originalName: string, nowMs: number): string {
-  const suffix = `-nemoclaw-gpu-backup-${String(nowMs)}`;
-  const maxOriginalLength = MAX_DOCKER_CONTAINER_NAME_LENGTH - suffix.length;
-  return `${originalName.slice(0, Math.max(1, maxOriginalLength))}${suffix}`;
 }

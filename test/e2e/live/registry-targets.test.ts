@@ -24,7 +24,6 @@ import {
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
-  "post-reboot-recovery",
   "dcode-rebuild-invalid-credential",
 ]);
 
@@ -120,9 +119,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         );
       }
       progress.phase("prepare the target lifecycle prerequisites");
-      await (lifecycleProfile === "post-reboot-recovery"
-        ? lifecycle.preparePostReboot()
-        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,

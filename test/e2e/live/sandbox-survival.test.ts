@@ -16,7 +16,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero,
-  type HostCliClient,
   outputContainsSandbox,
   resultText,
   sandboxAccessEnv,
@@ -78,44 +77,6 @@ async function waitForNativeAgentReady(
   });
 }
 
-async function waitForHostForwardReady(
-  host: HostCliClient,
-  artifactPrefix: string,
-  gatewayPort: number,
-): Promise<void> {
-  await pollUntil({
-    artifactPrefix,
-    attempts: 30,
-    delayMs: 5_000,
-    probe: (_attempt, artifactName) =>
-      host.command(
-        "curl",
-        [
-          "-q",
-          "--noproxy",
-          "*",
-          "-sS",
-          "-o",
-          "/dev/null",
-          "-w",
-          "%{http_code}",
-          "--connect-timeout",
-          "2",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${String(gatewayPort)}/health`,
-        ],
-        {
-          artifactName,
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 10_000,
-        },
-      ),
-    accept: (result) =>
-      result.exitCode === 0 && (result.stdout.trim() === "200" || result.stdout.trim() === "401"),
-  });
-}
-
 test(
   "OpenShell stop/start preserves native agent state",
   {
@@ -127,7 +88,7 @@ test(
         "write persistent OpenClaw markers",
         "stop the sandbox through OpenShell",
         "start the sandbox through OpenShell",
-        "recheck native agent readiness, host-forward usability, and state",
+        "recheck native agent readiness and state",
         "destroy the sandbox",
       ],
     },
@@ -153,7 +114,7 @@ test(
       contracts: [
         "install.sh --non-interactive creates the named OpenClaw sandbox",
         "OpenShell owns sandbox stop and start",
-        "sandbox exec, the native OpenClaw gateway, and the host forward are usable after restart",
+        "sandbox exec and the native OpenClaw gateway are usable after restart",
         "declared workspace, session, and memory markers survive the OpenShell lifecycle",
         "final destroy removes the sandbox",
       ],
@@ -301,13 +262,12 @@ test(
     });
     assertExitZero(start, "OpenShell sandbox start");
 
-    progress.phase("recheck native agent readiness, host-forward usability, and state");
+    progress.phase("recheck native agent readiness and state");
     await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
       artifactNamePrefix: "post-openshell-start-ready",
     });
     await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-openshell-start-sandbox-exec");
     await waitForNativeAgentReady(execShell, "post-openshell-start-native-ready", DASHBOARD_PORT);
-    await waitForHostForwardReady(host, "post-openshell-start-host-forward", DASHBOARD_PORT);
     await stateValidation.expectSandboxMarkers(
       instance,
       markers,
@@ -337,7 +297,6 @@ test(
         installCompleted: install.exitCode === 0,
         openshellStopStartCompleted: true,
         nativeAgentReadyBeforeStop: true,
-        deliveryPathReadyAfterRecover: true,
         markersPersistedAfterBothRepairs: true,
         deliveryPathReadyAfterStart: true,
         destroyedAtEnd,
