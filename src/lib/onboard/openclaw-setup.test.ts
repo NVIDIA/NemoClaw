@@ -74,19 +74,35 @@ describe("OpenClaw sandbox setup", () => {
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
       restartNativeGateway,
+      shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
     });
 
-    await setup("spark-box", "model", "provider", null, revalidateSandboxIdentity);
+    await setup("spark-box", "model", "nvidia-router", null, revalidateSandboxIdentity);
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "model",
-      "provider",
+      "nvidia-router",
       null,
       revalidateSandboxIdentity,
     );
     expect(restartNativeGateway).toHaveBeenCalledExactlyOnceWith("spark-box");
     expect(configureOpenclawSandbox).toHaveBeenCalledBefore(restartNativeGateway);
+  });
+
+  it("leaves ordinary providers on their initial native gateway", async () => {
+    const restartNativeGateway = vi.fn(async () => ({ ok: true as const }));
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox: vi.fn(async () => undefined),
+      restartNativeGateway,
+      shouldRestartNativeGateway: (provider) => provider === "nvidia-router",
+    });
+
+    await setup("spark-box", "model", "compatible-endpoint", null);
+
+    expect(restartNativeGateway).not.toHaveBeenCalled();
   });
 
   it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
@@ -99,6 +115,7 @@ describe("OpenClaw sandbox setup", () => {
           throw new Error("sandbox identity changed");
         },
         restartNativeGateway: vi.fn(),
+        shouldRestartNativeGateway: () => false,
       });
 
       await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
@@ -123,9 +140,10 @@ describe("OpenClaw sandbox setup", () => {
           failureLayer: "native agent command",
           detail: "restart rejected",
         })),
+        shouldRestartNativeGateway: () => true,
       });
 
-      await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
+      await expect(setup("spark-box", "model", "nvidia-router", null)).rejects.toThrow(
         /native gateway restart failed.*restart rejected/,
       );
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");

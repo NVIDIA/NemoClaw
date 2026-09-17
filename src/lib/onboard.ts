@@ -2449,7 +2449,6 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
@@ -2461,6 +2460,7 @@ const setupOpenclaw = openclawSetup.createOpenclawSetup({
   agentProductName,
   configureOpenclawSandbox,
   restartNativeGateway: restartNativeGatewayForInitialSetup,
+  shouldRestartNativeGateway: isRoutedInferenceProvider,
 });
 const {
   buildChain,
