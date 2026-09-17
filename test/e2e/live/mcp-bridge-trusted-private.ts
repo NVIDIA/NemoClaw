@@ -149,6 +149,14 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       timeoutMs: 60_000,
     },
   );
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-status-requests.json`,
+    buildMcpStatusRequestEvidence(
+      rebindMcp.requests.slice(trustedPrivateRequestOffset),
+      REBIND_HOST_SECRET,
+      MCP_PROBE_CONTROL_BEARER,
+    ),
+  );
   expectExitZero(status, `${options.artifactPrefix} inspects trusted-private route after add`);
   const controlProbe = rebindMcp.requests
     .slice(trustedPrivateRequestOffset)
@@ -182,14 +190,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     expectedSecret: REBIND_HOST_SECRET,
     label: `${options.artifactPrefix} trusted-private status discovery`,
   });
-  await options.artifacts.writeJson(
-    `${options.artifactPrefix}-mcp-trusted-private-status-requests.json`,
-    buildMcpStatusRequestEvidence(
-      rebindMcp.requests.slice(trustedPrivateRequestOffset),
-      REBIND_HOST_SECRET,
-      MCP_PROBE_CONTROL_BEARER,
-    ),
-  );
   const rebindingPolicy = await captureManagedMcpPolicy(sandbox, {
     artifactName: `${options.artifactPrefix}-mcp-trusted-private-policy-pinned-address`,
     label: `${options.artifactPrefix} validates the trusted-private add-time DNS pin`,

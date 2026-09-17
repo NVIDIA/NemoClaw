@@ -149,7 +149,7 @@ let compatibleMock: StartedHttpServer | undefined;
 const artifactRoots: string[] = [];
 
 describe("MCP status request evidence", () => {
-  it("classifies resolved and control requests without retaining bearer values", () => {
+  it("classifies resolved, control, and other requests without retaining bearer values", () => {
     const controlBearer = "probe-control-bearer";
     const evidence = buildMcpStatusRequestEvidence(
       [
@@ -157,6 +157,11 @@ describe("MCP status request evidence", () => {
         request("initialize", {
           auth: `Bearer ${controlBearer}`,
           responseStatus: 401,
+          responseHasResult: false,
+        }),
+        request("tools/list", {
+          auth: "Bearer unrelated-bearer",
+          responseStatus: 403,
           responseHasResult: false,
         }),
       ],
@@ -178,9 +183,17 @@ describe("MCP status request evidence", () => {
           responseStatus: 401,
           credentialKind: "control",
         },
+        {
+          httpMethod: "POST",
+          rpcMethod: "tools/list",
+          responseStatus: 403,
+          credentialKind: "other",
+        },
       ],
     });
-    expect(JSON.stringify(evidence)).not.toMatch(new RegExp(`${EXPECTED_SECRET}|${controlBearer}`));
+    expect(JSON.stringify(evidence)).not.toMatch(
+      new RegExp(`${EXPECTED_SECRET}|${controlBearer}|unrelated-bearer`),
+    );
   });
 });
 
