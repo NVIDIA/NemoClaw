@@ -22,7 +22,6 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   env?: Record<string, string>;
-  if?: string;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
@@ -213,17 +212,6 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
 
   it("pins the Docker-qualified GPU job to the Docker runtime provider", ({ expect }) => {
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
-  });
-
-  it("runs the loopback-only publish probe on the selected copied-PR lane (#11626)", ({
-    expect,
-  }) => {
-    const job = workflow().jobs["llama-cpp-loopback-publish"];
-    expect(job?.if).toBe("${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}");
-    expect(job?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
-    expect(
-      job?.steps?.find((step) => step.name === "Run llama.cpp loopback-only publish probe")?.run,
-    ).toContain("test/e2e/live/llama-cpp-loopback-publish.test.ts");
   });
 
   // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision

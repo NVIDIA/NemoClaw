@@ -36,15 +36,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/llama-cpp-loopback-publish.test.ts",
-      "fast": [
-        "src/lib/onboard/host-service-reachability.test.ts",
-        "src/lib/onboard/llama-cpp-selection/index.test.ts",
-        "src/lib/onboard/llama-cpp-selection/sandbox-reachability.test.ts",
-        "test/e2e/support/pr-self-hosted-llama-selector.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
