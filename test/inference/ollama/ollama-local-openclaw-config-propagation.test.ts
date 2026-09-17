@@ -176,12 +176,62 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     });
   });
 
+  it("gives the N1x managed-vLLM profile enough prompt and compaction time (#11805)", () => {
+    const config = buildConfig({
+      NEMOCLAW_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "vllm-local",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/Qwen3.6-35B-A3B-NVFP4",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_CONTEXT_WINDOW: "32768",
+      NEMOCLAW_MAX_TOKENS: "4096",
+      NEMOCLAW_AGENT_TIMEOUT: "600",
+    });
+
+    expect(config.agents.defaults.compaction).toEqual({
+      mode: "safeguard",
+      timeoutSeconds: 300,
+      maxHistoryShare: 0.35,
+      recentTurnsPreserve: 1,
+      qualityGuard: { enabled: true, maxRetries: 0 },
+      notifyUser: true,
+      truncateAfterCompaction: true,
+      reserveTokens: 4096,
+      reserveTokensFloor: 4096,
+    });
+  });
+
+  it("keeps the standard safeguard for the same vLLM model with a larger window (#11805)", () => {
+    expect(
+      buildManagedInferenceSafeguardCompaction(
+        "inference",
+        "vllm-local",
+        "https://inference.local/v1",
+        "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        262144,
+        4096,
+      ),
+    ).toEqual({
+      mode: "safeguard",
+      timeoutSeconds: 120,
+      maxHistoryShare: 0.35,
+      recentTurnsPreserve: 1,
+      qualityGuard: { enabled: true, maxRetries: 0 },
+      notifyUser: true,
+      truncateAfterCompaction: true,
+    });
+  });
+
   it("treats a missing legacy upstream provider as remote managed inference (#4781)", () => {
     expect(
       buildManagedInferenceSafeguardCompaction(
         "inference",
         undefined,
         "https://inference.local/v1",
+        "nvidia/nemotron-3-super-120b-a12b",
+        131072,
+        4096,
       ),
     ).toEqual({
       mode: "safeguard",
@@ -215,6 +265,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
         "inference",
         "nvidia-prod",
         "https://integrate.api.nvidia.com/v1",
+        "nvidia/nemotron-3-super-120b-a12b",
+        131072,
+        4096,
       ),
     ).toBeUndefined();
   });
@@ -223,7 +276,14 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     "rejects a confusing managed-inference hostname %s (#4781)",
     (baseUrl) => {
       expect(
-        buildManagedInferenceSafeguardCompaction("inference", "nvidia-prod", baseUrl),
+        buildManagedInferenceSafeguardCompaction(
+          "inference",
+          "nvidia-prod",
+          baseUrl,
+          "nvidia/nemotron-3-super-120b-a12b",
+          131072,
+          4096,
+        ),
       ).toBeUndefined();
     },
   );
@@ -234,6 +294,9 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
         "nvidia-prod",
         "nvidia-prod",
         "https://inference.local/v1",
+        "nvidia/nemotron-3-super-120b-a12b",
+        131072,
+        4096,
       ),
     ).toBeUndefined();
   });
