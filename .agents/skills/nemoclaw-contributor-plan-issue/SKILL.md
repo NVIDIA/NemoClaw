@@ -47,8 +47,11 @@ accepted boundary and the condition that requires re-planning.
 
 Describe observable acceptance and the shortest stable validation for each applicable behavior.
 Include denied, ambiguous, failure, recovery, or cleanup cases when the changed contract needs them.
-For each test change, record the planned evidence owner and live contract required by
-[E2E selection and authoring](../../references/e2e-authoring.md#define-the-live-contract).
+For each test change, record the planned evidence owner and applicable deterministic validation.
+When the plan adds, expands, or repairs live E2E evidence, also apply
+[Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). When it
+prunes or relocates live assertions, apply
+[Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence).
 
 For a larger change, propose independently useful slices with their dependencies, acceptance
 criteria, tests, and deferred scope. Keep implementation, tests, and owning guidance for each

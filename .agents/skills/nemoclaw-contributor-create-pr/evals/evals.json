@@ -548,5 +548,31 @@
       "Requires a rationale showing why the recorded dispositions leave semantic coverage complete.",
       "Does not publish until every required field is recorded and the handoff identifies distinct retained live evidence or proves that no live contract remains."
     ]
+  },
+  {
+    "id": "require-live-contract-for-added-evidence",
+    "question": "Publish my NemoClaw branch. It adds a new live E2E assertion but the implementation handoff only labels existing assertions as stayed, moved, or removed.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Added or expanded live evidence must define its live contract rather than use the pruning disposition schema.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the added assertion to identify its real boundary, semantic outcome, distinct regression, canonical live test, and smallest live assertion.",
+      "Requires its lower-layer evidence owner or a statement that no deterministic behavior applies.",
+      "Does not require the new assertion to be mislabeled as stayed, moved, or removed.",
+      "Routes an incomplete handoff back to implementation before publication."
+    ]
+  },
+  {
+    "id": "require-live-contract-for-repaired-evidence",
+    "question": "Publish my NemoClaw branch. It repairs a live E2E assertion but the implementation handoff only reports that the test passes.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Repaired live evidence must define the boundary and semantic contract that the repair restores.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Requires the repaired assertion to identify its real boundary, semantic outcome, distinct regression, canonical live test, and smallest live assertion.",
+      "Requires its lower-layer evidence owner or a statement that no deterministic behavior applies.",
+      "Does not treat a passing result alone as a complete live contract.",
+      "Routes an incomplete handoff back to implementation before publication."
+    ]
   }
 ]
