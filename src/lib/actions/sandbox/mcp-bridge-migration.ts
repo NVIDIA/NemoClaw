@@ -62,7 +62,7 @@ export type McpMigrationPlan = {
   applied: boolean;
 };
 
-function sameRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
+export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
     left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
   );
@@ -72,7 +72,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readCommittedLegacyRegistryEntries(
+export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
   currentAdapter: McpSourceEntry["adapter"],
@@ -179,6 +179,11 @@ function readCommittedLegacyRegistryEntries(
   return entries;
 }
 
+export function retireLegacyMcpRegistryProjection(sandboxName: string): void {
+  // A normal serialization omits the deprecated MCP registry projection.
+  registry.updateSandbox(sandboxName, {});
+}
+
 async function preflightMigrationOpenShellState(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -264,7 +269,7 @@ export async function migrateMcpBridges(
     }
     for (const [server, registryEntry] of Object.entries(rawRegistryEntries)) {
       const agentLegacy = observed.bridges[server];
-      if (agentLegacy && !sameRegistration(agentLegacy, registryEntry)) {
+      if (agentLegacy && !sameMcpRegistration(agentLegacy, registryEntry)) {
         throw new McpBridgeError(
           `Legacy agent and registry MCP definitions conflict for '${server}'. No source was changed.`,
           2,
@@ -281,13 +286,13 @@ export async function migrateMcpBridges(
     ]);
     if (ambiguousTarget) {
       throw new McpBridgeError(
-        `MCP servers '${ambiguousTarget.entry.server}' and '${ambiguousTarget.conflict.server}' target the same URL with different credential bindings. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. No source was changed.`,
+        `MCP servers '${ambiguousTarget.entry.server}' and '${ambiguousTarget.conflict.server}' target the same URL with different credential bindings. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. Remove one owned legacy registration with \`nemoclaw ${sandboxName} mcp remove <server>\`, then rerun migration. No source was changed.`,
         2,
       );
     }
     const conflicts = entries.filter((entry) => {
       const native = observed.sources.native[entry.server];
-      return native && !sameRegistration(native, entry);
+      return native && !sameMcpRegistration(native, entry);
     });
     if (conflicts.length > 0) {
       throw new McpBridgeError(
@@ -356,7 +361,7 @@ export async function migrateMcpBridges(
         }
         native = (await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection)).native;
         const missing = entries.filter(
-          (entry) => !native[entry.server] || !sameRegistration(native[entry.server], entry),
+          (entry) => !native[entry.server] || !sameMcpRegistration(native[entry.server], entry),
         );
         if (missing.length > 0) {
           throw new McpBridgeError(
@@ -382,7 +387,7 @@ export async function migrateMcpBridges(
         }
         throw error;
       }
-      registry.updateSandbox(sandboxName, {});
+      retireLegacyMcpRegistryProjection(sandboxName);
       return { sandbox: sandboxName, items, applied: true };
     }
 
@@ -406,7 +411,7 @@ export async function migrateMcpBridges(
         const current = (await inspectAgentMcpSources(sandbox, runtimeSelection)).native[
           entry.server
         ];
-        if (!current || !sameRegistration(current, entry)) {
+        if (!current || !sameMcpRegistration(current, entry)) {
           throw new McpBridgeError(
             `Native MCP verification failed after migrating '${entry.server}'.`,
           );
@@ -421,7 +426,7 @@ export async function migrateMcpBridges(
       }
       // Force a normal non-MCP registry serialization so legacy MCP fields are
       // omitted immediately after the explicit migration succeeds.
-      registry.updateSandbox(sandboxName, {});
+      retireLegacyMcpRegistryProjection(sandboxName);
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {
       if (!cleanupStarted) {

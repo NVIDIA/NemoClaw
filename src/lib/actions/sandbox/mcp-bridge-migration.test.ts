@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getAdapter: vi.fn(),
   updateSandbox: vi.fn(),
   inspectLegacy: vi.fn(),
+  inspectSource: vi.fn(),
   inspectSources: vi.fn(),
   joinEntries: vi.fn((_sandbox: unknown, entries: unknown) => entries),
   removeLegacy: vi.fn(),
@@ -31,6 +32,11 @@ const mocks = vi.hoisted(() => ({
   reloadOpenClaw: vi.fn(),
   unregister: vi.fn(),
   selectGateway: vi.fn(),
+  assertTeardown: vi.fn(),
+  removePolicy: vi.fn(),
+  inspectProvider: vi.fn(async () => ({ exists: false })),
+  detachProvider: vi.fn(),
+  waitForDetached: vi.fn(),
   preflightTargets: vi.fn().mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
   readConfig: vi.fn(),
 }));
@@ -46,6 +52,7 @@ vi.mock("../../state/config-io", () => ({
   readConfigFile: mocks.readConfig,
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
+  assertAgentMcpTeardownRuntimeCapability: mocks.assertTeardown,
   registerAgentAdapter: mocks.register,
   reloadOpenClawGatewayAfterMcpMutation: mocks.reloadOpenClaw,
   unregisterAgentAdapter: mocks.unregister,
@@ -58,9 +65,15 @@ vi.mock("./mcp-bridge-provider", () => ({
   }),
   providerAttached: () => true,
   preflightMcpEntryTargets: mocks.preflightTargets,
+  inspectMcpProvider: mocks.inspectProvider,
+  providerMatchesManagedCredential: () => false,
+  detachProvider: mocks.detachProvider,
+  waitForDetachedMcpCredential: mocks.waitForDetached,
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectLegacyBridgeState: mocks.inspectLegacy,
+  inspectSourceBridgeState: mocks.inspectSource,
+  inspectPolicyOnlyMcpEntry: vi.fn(),
   inspectAgentMcpSources: mocks.inspectSources,
   removeLegacyAgentMcpEntry: mocks.removeLegacy,
   joinMcpEntriesToOpenShell: mocks.joinEntries,
@@ -68,6 +81,7 @@ vi.mock("./mcp-bridge-source", () => ({
 vi.mock("./mcp-bridge-policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-policy")>()),
   getPolicyPresence: mocks.getPolicyPresence,
+  removeGeneratedPolicy: mocks.removePolicy,
 }));
 vi.mock("../../policy", () => ({
   getPresetContentGatewayState: mocks.getPolicyState,
@@ -76,9 +90,14 @@ vi.mock("./mcp-bridge-state", () => ({
   ensureSandboxGatewaySelected: mocks.selectGateway,
   getSandboxAgent: mocks.getAgent,
   getBridgeAdapter: mocks.getAdapter,
+  getSandboxOrThrow: mocks.getSandbox,
+}));
+vi.mock("../../onboard/experimental/portable-agent-lifecycle", () => ({
+  assertHermesPortableCommandUnavailable: vi.fn(),
 }));
 
 import { migrateMcpBridges } from "./mcp-bridge-migration";
+import { removeMcpBridge } from "./mcp-bridge-remove";
 
 describe("explicit MCP migration", () => {
   beforeEach(() => {
@@ -96,6 +115,10 @@ describe("explicit MCP migration", () => {
     mocks.getPolicyState.mockResolvedValue("match");
     mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => entries);
     mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: entry },
+      sources: { native: {}, legacy: { github: entry } },
+    });
+    mocks.inspectSource.mockReturnValue({
       bridges: { github: entry },
       sources: { native: {}, legacy: { github: entry } },
     });
@@ -327,6 +350,55 @@ describe("explicit MCP migration", () => {
     );
     expect(mocks.register).not.toHaveBeenCalled();
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
+  });
+
+  it("removes one owned conflicting legacy entry so the survivor can be migrated", async () => {
+    const secondEntry = {
+      ...entry,
+      server: "gitlab",
+      env: ["GITLAB_TOKEN"],
+      providerName: "alpha-mcp-gitlab",
+      providerId: "gitlab-provider-id",
+      policyName: "mcp-bridge-gitlab",
+    };
+    const legacy = { github: entry, gitlab: secondEntry };
+    mocks.inspectSource.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy },
+    });
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: legacy } } },
+    });
+    mocks.updateSandbox.mockImplementation(() => {
+      mocks.readConfig.mockReturnValue({});
+      return true;
+    });
+
+    await expect(removeMcpBridge("alpha", "gitlab")).resolves.toBeUndefined();
+    expect(mocks.removeLegacy).toHaveBeenCalledExactlyOnceWith(
+      { name: "alpha", agent: "openclaw" },
+      secondEntry,
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
+    expect(mocks.unregister).not.toHaveBeenCalled();
+
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: entry },
+      sources: { native: {}, legacy: { github: entry } },
+    });
+    await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
+      items: [{ server: "github", action: "migrate" }],
+    });
+  });
+
+  it("preserves a named legacy entry without matching registry ownership", async () => {
+    mocks.readConfig.mockReturnValue({});
+
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow(
+      /cannot be proven as registry-owned and was preserved/,
+    );
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.unregister).not.toHaveBeenCalled();
   });
 
   it("rejects a legacy target that aliases a differently credentialed native target", async () => {

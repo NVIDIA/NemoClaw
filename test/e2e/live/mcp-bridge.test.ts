@@ -875,18 +875,6 @@ test(
       ...bridge,
       expectedAdapter: "openclaw-config",
     });
-    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
-      artifacts,
-      sandboxName: OPENCLAW_SANDBOX_NAME,
-      artifactPrefix: "openclaw",
-      deniedSecret: ROTATED_HOST_SECRET,
-      hostSecret: HOST_SECRET,
-      progress,
-    });
-    await assertBridgeInfrastructure(host, sandbox, {
-      ...bridge,
-      providerName,
-    });
     await expectMcpCliFailure(
       host,
       OPENCLAW_SANDBOX_NAME,
@@ -903,6 +891,18 @@ test(
     expect(aliasState.providerAbsent).toBe(true);
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
+    await assertBridgeInfrastructure(host, sandbox, {
+      ...bridge,
+      providerName,
+    });
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
+      sandboxName: OPENCLAW_SANDBOX_NAME,
+      artifactPrefix: "openclaw",
+      deniedSecret: ROTATED_HOST_SECRET,
+      hostSecret: HOST_SECRET,
+      progress,
+    });
     await artifacts.writeText("mcp-provider-rewrite-proof.cjs", MCP_PROVIDER_REWRITE_PROBE_SOURCE);
     const runNodeMcpProbe = runMcpProviderRewriteProbe.bind(null, sandbox, OPENCLAW_SANDBOX_NAME);
 

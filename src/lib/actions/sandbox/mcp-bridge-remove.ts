@@ -10,6 +10,11 @@ import {
 import { isAgentMcpAdapter, McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
+  readCommittedLegacyRegistryEntries,
+  retireLegacyMcpRegistryProjection,
+  sameMcpRegistration,
+} from "./mcp-bridge-migration";
+import {
   detachProvider,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
@@ -22,7 +27,11 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
+import {
+  inspectPolicyOnlyMcpEntry,
+  inspectSourceBridgeState,
+  removeLegacyAgentMcpEntry,
+} from "./mcp-bridge-source";
 import {
   resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
@@ -41,14 +50,38 @@ export async function removeMcpBridge(
     const sandbox = getSandboxOrThrow(sandboxName);
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
     const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
-    if (Object.keys(observed.sources.legacy).length > 0) {
-      throw new McpBridgeError(
-        `Legacy MCP agent configuration requires explicit migration. Run \`nemoclaw ${sandboxName} mcp migrate\` first.`,
-        2,
-      );
-    }
     const agent = getSandboxAgent(sandbox);
-    let entry: McpSourceEntry | undefined = observed.bridges[server];
+    let entry: McpSourceEntry | undefined;
+    let removedLegacySource = false;
+    if (Object.keys(observed.sources.legacy).length > 0) {
+      const legacyEntry = observed.sources.legacy[server];
+      const committedEntry = readCommittedLegacyRegistryEntries(
+        sandboxName,
+        agent.name,
+        getBridgeAdapter(agent),
+      )[server];
+      if (!legacyEntry) {
+        throw new McpBridgeError(
+          `Legacy MCP agent configuration requires explicit migration. Remove a named owned legacy registration or run \`nemoclaw ${sandboxName} mcp migrate\`.`,
+          2,
+        );
+      }
+      if (!committedEntry || !sameMcpRegistration(legacyEntry, committedEntry)) {
+        throw new McpBridgeError(
+          `Legacy MCP server '${server}' cannot be proven as registry-owned and was preserved. No source was changed.`,
+          2,
+        );
+      }
+      await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+      await removeLegacyAgentMcpEntry(sandbox, legacyEntry, runtimeSelection);
+      // A normal serialization retires the deprecated registry projection. Any
+      // unrelated legacy agent entries remain authoritative and migratable.
+      retireLegacyMcpRegistryProjection(sandboxName);
+      entry = committedEntry;
+      removedLegacySource = true;
+    } else {
+      entry = observed.bridges[server];
+    }
     if (!entry && agent.mcpCapability.adapter) {
       entry =
         (await inspectPolicyOnlyMcpEntry(
@@ -75,11 +108,13 @@ export async function removeMcpBridge(
       : getBridgeAdapter(getSandboxAgent(sandbox));
 
     await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
-    const removal = await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
-      force: options.force === true,
-      envValues: resolvePersistedCredentialEnvForRedaction(entry.env),
-      teardown: true,
-    });
+    const removal = removedLegacySource
+      ? "removed"
+      : await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+          force: options.force === true,
+          envValues: resolvePersistedCredentialEnvForRedaction(entry.env),
+          teardown: true,
+        });
     if (removal === "unowned" && !options.force) {
       throw new McpBridgeError(
         `The native MCP server '${server}' changed before removal. Rerun against the current agent configuration.`,
