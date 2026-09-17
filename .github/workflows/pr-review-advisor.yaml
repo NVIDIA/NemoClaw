@@ -296,6 +296,7 @@ jobs:
       # commit that supplied the trusted workflow. It is still treated as
       # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
+        id: dispatch-checkout
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -307,6 +308,7 @@ jobs:
           submodules: false
 
       - name: Set default advisor workdir
+        id: default-workdir
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
 
@@ -314,6 +316,7 @@ jobs:
       # prepare helper (type-stripped .mts) runs from the pinned advisor
       # checkout, never from PR-controlled content.
       - name: Setup Node
+        id: setup-node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.18.1"
@@ -321,9 +324,11 @@ jobs:
           cache-dependency-path: advisor/package-lock.json
 
       - name: Install reviewed npm
+        id: setup-npm
         uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Load advisor runtime image
+        id: runtime-image
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
 
       # The source PR is fetched manually so no PR-controlled
@@ -332,6 +337,7 @@ jobs:
       # fetch/validation logic lives in the trusted, unit-tested helper and is
       # executed only from $ADVISOR_DIR (github.workflow_sha checkout).
       - name: Prepare isolated analysis workspace
+        id: prepare-analysis
         if: ${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
         env:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
@@ -348,6 +354,7 @@ jobs:
       # symlinks first so an untrusted link cannot redirect a read outside the
       # uploaded repository. Git still retains the committed link target.
       - name: Remove symlinks from analysis workspace
+        id: remove-symlinks
         shell: bash
         run: |
           while IFS= read -r -d '' link; do
@@ -355,18 +362,21 @@ jobs:
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
       - name: Download trusted advisor runtime
+        id: download-runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pr-review-advisor-runtime-${{ github.run_id }}
           path: ${{ runner.temp }}/shared-pr-review-advisor-runtime
 
       - name: Restore trusted advisor runtime
+        id: restore-runtime
         env:
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           EXPECTED_RUNTIME_SHA: ${{ needs.build-advisor-runtime.outputs.payload-sha }}
         run: bash "$ADVISOR_DIR/scripts/restore-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/shared-pr-review-advisor-runtime"
 
       - name: Download GitHub review context
+        id: download-context
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pr-review-advisor-context-${{ github.run_id }}
@@ -374,6 +384,7 @@ jobs:
 
       # Preparation reads the checked-out PR only before the model credential enters the environment.
       - name: Prepare advisor sandbox inputs
+        id: sandbox-inputs
         env:
           BASE_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'target/base' || needs.require-green-checks.outputs.base_sha }}
           HEAD_REF: ${{ needs.require-green-checks.outputs.pr_number != '' && 'HEAD' || needs.require-green-checks.outputs.head_sha }}
@@ -382,6 +393,7 @@ jobs:
 
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
+        id: install-openshell
         run: |
           env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
             NEMOCLAW_NON_INTERACTIVE=1 \
@@ -392,6 +404,26 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
+
+      - name: Preserve specialist failure status
+        if: ${{ failure() }}
+        env:
+          ADVISOR_PREPARATION_CLASSIFICATION: ${{ steps.prepare-analysis.outputs.classification }}
+          ADVISOR_DISPATCH_CHECKOUT_OUTCOME: ${{ steps.dispatch-checkout.outcome }}
+          ADVISOR_DEFAULT_WORKDIR_OUTCOME: ${{ steps.default-workdir.outcome }}
+          ADVISOR_NODE_SETUP_OUTCOME: ${{ steps.setup-node.outcome }}
+          ADVISOR_NPM_SETUP_OUTCOME: ${{ steps.setup-npm.outcome }}
+          ADVISOR_RUNTIME_IMAGE_OUTCOME: ${{ steps.runtime-image.outcome }}
+          ADVISOR_PREPARATION_OUTCOME: ${{ steps.prepare-analysis.outcome }}
+          ADVISOR_REMOVE_SYMLINKS_OUTCOME: ${{ steps.remove-symlinks.outcome }}
+          ADVISOR_RUNTIME_DOWNLOAD_OUTCOME: ${{ steps.download-runtime.outcome }}
+          ADVISOR_RUNTIME_RESTORE_OUTCOME: ${{ steps.restore-runtime.outcome }}
+          ADVISOR_CONTEXT_DOWNLOAD_OUTCOME: ${{ steps.download-context.outcome }}
+          ADVISOR_SANDBOX_INPUTS_OUTCOME: ${{ steps.sandbox-inputs.outcome }}
+          ADVISOR_OPENSHELL_INSTALL_OUTCOME: ${{ steps.install-openshell.outcome }}
+          ADVISOR_ANALYSIS_OUTCOME: ${{ steps.specialist-analysis.outcome }}
+          EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.head_sha }}
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"
 
       - name: Upload specialist review
         id: upload-specialist-session

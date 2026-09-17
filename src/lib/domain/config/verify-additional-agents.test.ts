@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -87,10 +87,10 @@ describe("read-only secondary-agent export", () => {
       });
       const result = await exportSnapshots([observed, observed]);
       expect(result.outcome.ok).toBe(true);
-      const document = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+      const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
       const [primary, secondary] = document.spec.sandboxes[0]!.agents;
-      expect(primary).toMatchObject({
-        name: "primary",
+      expect(primary).toMatchObject({ name: "primary" });
+      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
         observability: {
           otlp: {
             enabled: true,
@@ -102,7 +102,6 @@ describe("read-only secondary-agent export", () => {
       });
       expect(secondary).toEqual({
         name: "researcher",
-        type: "openclaw",
         tools: { allow: ["read"] },
         inference: primary!.inference,
       });
@@ -115,6 +114,50 @@ describe("read-only secondary-agent export", () => {
       expect(JSON.stringify(document)).not.toContain("workspace-researcher");
     },
   );
+
+  it("exports every read-only agent in manifest order without filesystem paths (#11854)", async () => {
+    const manifest = {
+      agents: [
+        { id: "researcher", tools: { allow: ["read"] } },
+        { id: "reviewer", tools: { allow: ["read"] } },
+      ],
+    };
+    const generated = generatedAdditionalAgentConfig(manifest);
+    expect(generated.agents.list).toEqual([
+      { id: "main", default: true },
+      {
+        id: "researcher",
+        workspace: "/sandbox/.openclaw/workspace-researcher",
+        agentDir: "/sandbox/.openclaw/agents/researcher",
+        tools: { allow: ["read"] },
+      },
+      {
+        id: "reviewer",
+        workspace: "/sandbox/.openclaw/workspace-reviewer",
+        agentDir: "/sandbox/.openclaw/agents/reviewer",
+        tools: { allow: ["read"] },
+      },
+    ]);
+
+    const observed = additionalAgentSnapshot(manifest);
+    const result = await exportSnapshots([observed, observed]);
+    expect(result.outcome.ok).toBe(true);
+    const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    const [primary, ...additional] = document.spec.sandboxes[0]!.agents;
+    expect(additional).toEqual([
+      {
+        name: "researcher",
+        tools: { allow: ["read"] },
+        inference: primary!.inference,
+      },
+      {
+        name: "reviewer",
+        tools: { allow: ["read"] },
+        inference: primary!.inference,
+      },
+    ]);
+    expect(JSON.stringify(document)).not.toMatch(/workspace-(?:researcher|reviewer)/u);
+  });
 
   it.each(
     [
@@ -145,7 +188,15 @@ describe("read-only secondary-agent export", () => {
       [{ id: "researcher", tools: { allow: ["read"] }, description: "unsupported" }],
       [
         { id: "researcher", tools: { allow: ["read"] } },
-        { id: "another", tools: { allow: ["read"] } },
+        { id: "reviewer", tools: { allow: ["write"] } },
+      ],
+      [
+        { id: "researcher", tools: { allow: ["read"] } },
+        { id: "researcher", tools: { allow: ["read"] } },
+      ],
+      [
+        { id: "researcher", tools: { allow: ["read"] } },
+        { id: "reviewer", tools: { allow: ["read"] }, model: "openai/other" },
       ],
     ].map((agents) => ({ agents })),
   )(
@@ -188,9 +239,11 @@ describe("read-only secondary-agent export", () => {
     },
   );
 
-  it("rejects changing secondary identity across both observation pairs (#11434)", async () => {
-    const first = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
-    const second = additionalAgentSnapshot([{ id: "reviewer", tools: { allow: ["read"] } }]);
+  it("rejects a reordered roster across both observation pairs (#11854)", async () => {
+    const researcher = { id: "researcher", tools: { allow: ["read"] } };
+    const reviewer = { id: "reviewer", tools: { allow: ["read"] } };
+    const first = additionalAgentSnapshot([researcher, reviewer]);
+    const second = additionalAgentSnapshot([reviewer, researcher]);
     const result = await exportSnapshots([first, second, first, second]);
     expect(result.outcome).toMatchObject({ ok: false });
     expect(result.writeStdout).not.toHaveBeenCalled();
@@ -201,7 +254,7 @@ describe("read-only secondary-agent export", () => {
     { defaults: { subagents: { maxSpawnDepth: 2 } } },
     { main: { tools: { allow: ["read"] } } },
     { main: { subagents: { model: "openai/gpt-5" } } },
-  ])("rejects primary and default overrides in a two-agent profile (#11434)", async (overrides) => {
+  ])("rejects primary and default overrides in a read-only roster (#11434)", async (overrides) => {
     const observed = additionalAgentSnapshot({
       agents: [{ id: "researcher", tools: { allow: ["read"] } }],
       ...overrides,

@@ -42,6 +42,7 @@ export type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;
+  waitForStartedHermesGatewayProcessSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
@@ -130,6 +131,7 @@ export type ConnectHarnessOptions = {
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
   };
+  gatewayProcessSettlement?: boolean | null;
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   preparedForwardRecovery?: {
     readonly kind?: "restored" | "verified";
@@ -600,6 +602,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  const waitForStartedHermesGatewayProcessSpy = vi
+    .spyOn(processRecovery, "waitForStartedHermesGatewayProcess")
+    .mockResolvedValue(
+      Object.hasOwn(options, "gatewayProcessSettlement")
+        ? (options.gatewayProcessSettlement ?? null)
+        : true,
+    );
   const forwardAdapterObserveSpy = vi.fn(async ({ forwards }) =>
     forwards.map((forward: object) => ({ state: "owned" as const, forward })),
   );
@@ -769,6 +778,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
     checkAndRecoverSpy,
+    waitForStartedHermesGatewayProcessSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,

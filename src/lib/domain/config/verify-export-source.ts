@@ -36,8 +36,6 @@ import {
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { validateManagedServing } from "./verify-managed-serving";
-import { validateOllamaServing } from "./verify-ollama-serving";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
@@ -259,11 +257,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
-    [
-      "spec.sandboxes[].agents.secondary",
-      entry.openclawImagePluginInstalls,
-      "secondary agents or added agent plugins",
-    ],
     [
       "spec.sandboxes[].agents[0].dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
@@ -579,13 +572,13 @@ function supportedAgentSettingsProfile(
 }
 
 function isSupportedAdditionalAgent(
-  secondary: NormalizedExtraAgent,
+  agent: NormalizedExtraAgent,
   primaryModelRef: string | null,
 ): boolean {
   return (
-    secondary.subagents === undefined &&
-    secondary.description === undefined &&
-    (secondary.model === undefined || secondary.model === primaryModelRef)
+    agent.subagents === undefined &&
+    agent.description === undefined &&
+    (agent.model === undefined || agent.model === primaryModelRef)
   );
 }
 
@@ -610,7 +603,7 @@ function supportsAdditionalAgents(
   return (
     entry.openshellDriver === "docker" &&
     entry.servingProfileProvenance === undefined &&
-    manifest.agents.length === 1 &&
+    manifest.agents.length > 0 &&
     Object.keys(manifest.defaults.subagents).length === 0 &&
     Object.keys(manifest.main).length === 0
   );
@@ -628,15 +621,19 @@ function projectAdditionalAgents(
       profile.inference.routeProvider,
     );
     if (manifest.agents.length === 0) return undefined;
-    const [secondary] = manifest.agents;
-    if (!secondary || !supportsAdditionalAgents(entry, manifest)) return null;
-    const exported = { name: secondary.id, tools: secondary.tools };
-    if (
-      !isSupportedAdditionalAgent(secondary, profile.inference.primaryModelRef) ||
-      !Check(NemoClawAdditionalAgentSchema, exported)
-    )
-      return null;
-    return [exported];
+    if (!supportsAdditionalAgents(entry, manifest)) return null;
+    const exported: Array<NonNullable<VerifiedExportSource["additionalAgents"]>[number]> = [];
+    for (const agent of manifest.agents) {
+      const candidate = { name: agent.id, tools: agent.tools };
+      if (
+        !isSupportedAdditionalAgent(agent, profile.inference.primaryModelRef) ||
+        !Check(NemoClawAdditionalAgentSchema, candidate)
+      ) {
+        return null;
+      }
+      exported.push(candidate);
+    }
+    return exported;
   } catch {
     return null;
   }
@@ -818,6 +815,14 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "V1 export requires the default workspace.",
       ),
     );
+  if (entry.openshellDriver !== "docker")
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.provider",
+        "unsupported",
+        "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+      ),
+    );
   if (entry.workload?.kind === "managed-image" && sandbox.imageRef !== entry.workload.reference)
     findings.push(
       finding(
@@ -926,7 +931,11 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
     );
   if (entry.gatewayName !== gateway.name || entry.gatewayPort !== gateway.port)
     findings.push(finding("spec.gateway", "drifted", "Registry and live gateway bindings differ."));
-  if (!isValidNemoClawLocalResourceName(gateway.name) || !isValidNemoClawPort(gateway.port)) {
+  if (
+    !isValidNemoClawLocalResourceName(gateway.name) ||
+    !isValidNemoClawPort(gateway.port) ||
+    gateway.port < 1024
+  ) {
     findings.push(
       finding(
         "spec.gateway",
@@ -950,7 +959,7 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "This local inference topology is not represented by v1 export.",
+        "This local inference topology is not represented by v1alpha1 export.",
       ),
     );
 
@@ -996,9 +1005,6 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.provider === "ollama-local" || inference.ollamaServing)
-    return validateOllamaServing(snapshot);
-  if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -1032,6 +1038,23 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
       ),
     );
   return findings;
+}
+
+function validateInitialCompatibility(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  if (
+    inference.topology === "managed" ||
+    inference.provider === "ollama-local" ||
+    inference.ollamaServing
+  )
+    return [
+      finding(
+        "spec.inferenceProviders",
+        "unsupported",
+        "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+      ),
+    ];
+  return [];
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -1102,6 +1125,14 @@ function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportF
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
+  if (inference.credentialEnv !== null && inference.endpoint?.toLowerCase().startsWith("http:"))
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].credential",
+        "unsupported",
+        "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+      ),
+    );
   return findings;
 }
 
@@ -1140,10 +1171,41 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
   return findings;
 }
 
+function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  if (snapshot.policy.kind !== "verified") return [];
+  const policy = snapshot.policy.canonical;
+  const process = policy.process as Record<string, unknown> | undefined;
+  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
+  const findings: ExportFinding[] = [];
+  if (
+    !process ||
+    !["sandbox", "1000"].includes(String(process.run_as_user)) ||
+    !["sandbox", "1000"].includes(String(process.run_as_group))
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.process",
+        "unsupported",
+        "The source process principal cannot be projected to the v1 Fabric 1000:1000 principal.",
+      ),
+    );
+  if (!filesystem)
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.filesystem_policy",
+        "unsupported",
+        "An explicit filesystem policy is required to grant the v1 Fabric runtime roots.",
+      ),
+    );
+  return findings;
+}
+
 function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
+  const compatibilityFindings = validateInitialCompatibility(snapshot);
+  if (compatibilityFindings.length > 0) return compatibilityFindings;
   return [
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
@@ -1156,6 +1218,7 @@ function validateAgreement(
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
+    ...validateTargetPolicy(snapshot),
   ];
 }
 

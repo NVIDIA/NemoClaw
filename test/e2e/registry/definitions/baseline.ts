@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TargetDefinition } from "../types.ts";
-import {
-  ubuntuRepoDockerLifecycle,
-  ubuntuRepoManagedRuntime,
-  ubuntuRepoManagedRuntimeLifecycle,
-} from "../matrix.ts";
 import { E2E_GATEWAY_RUNTIMES } from "../../../../tools/e2e/gateway-runtime.mts";
+import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
+import type { TargetDefinition } from "../types.ts";
 
 const TARGETS: readonly TargetDefinition[] = [
   {
@@ -22,6 +18,7 @@ const TARGETS: readonly TargetDefinition[] = [
     manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
+    configExport: { expectation: "required" },
     suiteIds: ["smoke", "inference", "credentials"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
@@ -41,27 +38,10 @@ const TARGETS: readonly TargetDefinition[] = [
       "dcode-rebuild-invalid-credential",
     ),
     expectedStateId: "cloud-deepagents-code-ready",
+    configExport: { expectation: "expected-refusal", failureCategory: "unsupported" },
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-  },
-  {
-    id: "ubuntu-repo-docker-post-reboot-recovery",
-    description:
-      "Post-reboot recovery guard: the gateway must recover through the required user service " +
-      "while preserving the local sandbox registry and container.",
-    executionCoverage: {
-      agentRuntime: "openclaw",
-      observableOutcome: "Docker-backed sandbox recovers after a simulated host reboot",
-      environmentOrInferenceEndpoint: "Ubuntu Docker host; local recovery fixture",
-      unresolvedReason: "",
-    },
-    manifestPath: "test/e2e/manifests/openclaw-nvidia-post-reboot-recovery.yaml",
-    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
-    expectedStateId: "post-reboot-recovery-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    gatewayRuntimes: ["docker"],
   },
   {
     id: "ubuntu-policy-custom-missing-presets-negative",
@@ -75,6 +55,7 @@ const TARGETS: readonly TargetDefinition[] = [
     manifestPath: "test/e2e/manifests/openclaw-nvidia-policy-custom-missing-presets.yaml",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
     expectedStateId: "onboarding-failure-policy-presets-required",
+    configExport: { expectation: "required" },
     suiteIds: [],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,

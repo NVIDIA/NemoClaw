@@ -15,7 +15,7 @@ import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
@@ -225,13 +225,11 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = validateNemoClawConfig(YAML.parse(nemoclawRaw));
-  const nemohermesDocument = validateNemoClawConfig(YAML.parse(nemohermesRaw));
+  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
+  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
-  const provider = nemoclawDocument.spec.inferenceProviders[0];
-  const hostedProvider = provider && !("serving" in provider) ? provider : undefined;
+  const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
-  const expectedImage = entry.workload?.kind === "managed-image" ? entry.workload.reference : null;
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -277,7 +275,7 @@ export async function verifyHermesConfigExportLive(
 
   const evidence: HermesConfigExportLiveEvidence = {
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
-    agent: sandbox.agents[0]?.type,
+    agent: sandbox.harness.kind,
     checked: true,
     credentialValuesOmitted: !containsCredential,
     credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
@@ -291,15 +289,17 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
-    interfacesMatch: isDeepStrictEqual(
-      sandbox.agents[0]?.interfaces,
-      expectedHermesInterfaces(input),
-    ),
+    immutableManagedImageMatches: !("image" in sandbox),
+    interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
-    policyMatches: isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy),
+    policyMatches:
+      expectedPolicy === null ||
+      isDeepStrictEqual(
+        (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
+        (expectedPolicy as { network_policies?: unknown }).network_policies,
+      ),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);

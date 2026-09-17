@@ -9,8 +9,6 @@ import {
 } from "../../../../test/support/config-export-harness";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
-import { validateNemoClawConfig } from "../../config/schema";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
@@ -140,38 +138,29 @@ describe("attached Ollama export pipeline", () => {
   ])(
     "exports the $name binding without reading gateway credentials (#11857)",
     async ({ workspace, credentialEnv, readProfile, model = "qwen3.5:9b" }) => {
-      const { source, observed, probe, readCredential, localProvider, effectivePolicy } =
-        mockOllamaSource(model);
+      const { source, probe, readCredential, localProvider } = mockOllamaSource(model);
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-      const yaml = writeStdout.mock.calls[0]![0];
-      const document = validateNemoClawConfig(YAML.parse(yaml));
-      expect(document.spec.inferenceProviders).toEqual([
-        {
-          name: "local-ollama",
-          provider: "ollama-local",
-          api: "openai-completions",
-          serving: observed.serving,
+      expect(result).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: [
+            {
+              field: "spec.inferenceProviders",
+              category: "unsupported",
+              diagnostic:
+                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+            },
+          ],
         },
-      ]);
-      expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes).toEqual([
-        {
-          name: "primary",
-          providerRef: "local-ollama",
-          overrides: { model },
-        },
-      ]);
+      });
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
-      expect(yaml).not.toMatch(/NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value/u);
-      expect(JSON.stringify(document.spec.inferenceProviders)).not.toContain(
-        "host.openshell.internal",
-      );
-      expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(effectivePolicy);
+      expect(writeStdout).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
@@ -245,33 +234,6 @@ describe("attached Ollama export pipeline", () => {
     expect(writeStdout).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      { endpointUrl: "http://host.openshell.internal:11435/v1" },
-      { field: "spec.inferenceProviders[].endpoint", category: "drifted" },
-    ],
-    [
-      { credentialEnv: "OTHER_TOKEN" },
-      { field: "source.live", category: "live-verification-failed" },
-    ],
-    [{ agent: "hermes" }, { field: "spec.inferenceProviders[].serving", category: "drifted" }],
-    [
-      { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
-      { field: "spec.sandboxes[].runtime.gpu", category: "unsupported" },
-    ],
-  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change, finding) => {
-    const { source } = mockOllamaSource();
-    Object.assign(source, change);
-    expectExportRefusal(await exportLiveSource(), finding);
-  });
-  it("refuses an absent provider attachment (#11435)", async () => {
-    mockOllamaSource();
-    raw.getSandbox.mockResolvedValue(inventory());
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
   it.each([
     {
       field: "pid",
