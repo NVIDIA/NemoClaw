@@ -46,6 +46,9 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | Native configuration or interface-token drift | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); configuration checks do not overwrite conflicts |
 
+For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
+NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
+
 The [SDK errors](../crates/nemoclaw-sdk/src/error.rs), [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs), and [lifecycle tests](../crates/nemoclaw-sdk/tests/deployment.rs) define these failure boundaries.
 
 An ownership error is not fixed by renaming a resource, deleting `intent.json`, editing OpenTofu state, or rerunning with a fresh state path against the same resources.
