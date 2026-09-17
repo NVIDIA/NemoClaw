@@ -15,7 +15,7 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
 const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]: "5bbb0af04fa24bb66e2fe3efdb6af4d1081e1350ffffcdcaba1be4150f198109",
+  [managedStartupRuntimeBundle]: "f00a03aa854a37e94ac3d592ad75470e89530a20956c5e59473fedf6affdb775",
 };
 const dockerfiles = [
   "Dockerfile",
@@ -215,11 +215,11 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "267ee27b72024dfe3eab16140e110a45811c17d82d4b7e714e4a14d24b7dcbb5",
+      expectedHash: "dd0c2047b09cc1e88424fddec506cab98fbd72a42e35fc571c533a2687ee5a41",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
-      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "f00a03aa854a37e94ac3d592ad75470e89530a20956c5e59473fedf6affdb775",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
