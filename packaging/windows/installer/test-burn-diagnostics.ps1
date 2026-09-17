@@ -48,9 +48,7 @@ try {
         $probeText=$probeOut.GetAwaiter().GetResult(); $probeError=$probeErr.GetAwaiter().GetResult()
         if ([Text.Encoding]::UTF8.GetByteCount($probeText) -gt 8192 -or [Text.Encoding]::UTF8.GetByteCount($probeError) -gt 8192) { throw 'The MXC preparation-tier probe exceeded its output bound.' }
         $selection=$probeText|ConvertFrom-Json
-        $names=@($selection.psobject.Properties.Name)
-        if (@($names|Where-Object{$_ -notin @('tier','needsDaclAugmentation')}).Count -ne 0 -or $names.Count -ne 2 -or
-            ($selection.tier -ceq 'base-container' -and $selection.needsDaclAugmentation -cne $false) -or
+        if (($selection.tier -ceq 'base-container' -and $selection.needsDaclAugmentation -cne $false) -or
             ($selection.tier -ceq 'appcontainer-dacl' -and $selection.needsDaclAugmentation -cne $true) -or
             $selection.tier -notin @('base-container','appcontainer-dacl')) { throw 'The exact MXC preparation-tier result is invalid.' }
         $record.preparationTier=[string]$selection.tier

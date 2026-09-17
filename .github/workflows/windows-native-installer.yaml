@@ -483,7 +483,7 @@ jobs:
 
   windows-finished-setup-migration:
     name: Native setup failure and published-preview migration (ARM64)
-    needs: windows-finished-installer
+    needs: [windows-finished-installer, windows-finished-installed-acceptance]
     if: ${{ always() && needs.windows-finished-installer.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && inputs.finished_windows_validation_scope != 'startup-only' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 35
@@ -889,7 +889,9 @@ jobs:
         shell: pwsh
         run: |
           & "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" --experimental-strip-types --no-warnings `
-            --test --test-reporter=tap packaging/windows/installer/run-installed-acceptance.test.mts
+            --test --test-reporter=tap `
+            packaging/windows/installer/control-installed-openclaw-input.test.mts `
+            packaging/windows/installer/run-installed-acceptance.test.mts
           if ($LASTEXITCODE -ne 0) { throw 'The Windows acceptance-controller shell controls failed.' }
       - name: Preserve fixed-purpose preparation evidence
         if: ${{ always() }}
