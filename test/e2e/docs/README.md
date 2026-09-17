@@ -58,6 +58,10 @@ Live execution happens through shared fixtures:
   - `no-usable-sandbox` must record an expected preflight or onboarding
     failure. State validation must also prove that the sandbox is absent. This
     expectation does not invoke config export.
+
+  The missing-custom-presets target fails after creating its sandbox. It must
+  validate that retained sandbox and export its configuration with `required`.
+
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
@@ -99,6 +103,12 @@ then queries the effective policy through the OpenShell CLI. It captures these
 expectations before it invokes config export, so exporter-side mutations cannot
 redefine the expected deployment state. It rejects an unsafe registry inference
 endpoint before invoking export or publishing endpoint data in evidence.
+Policy reads and config export use the same filtered host environment as
+onboarding and state validation, preserving configuration paths and runtime
+selection without passing undeclared credentials. When the hosted inference
+adapter is active, its `compatible-endpoint` binding maps the manifest's
+`NVIDIA_INFERENCE_API_KEY` reference to `COMPATIBLE_API_KEY`; other credential
+references must still be declared by the manifest.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets

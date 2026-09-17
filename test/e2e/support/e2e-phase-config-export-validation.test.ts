@@ -120,7 +120,7 @@ function manifest(
 }
 
 function document(
-  overrides: { model?: string; observability?: boolean } = {},
+  overrides: { model?: string; observability?: boolean; credentialReference?: string } = {},
 ): ConfigExportDocument {
   return {
     apiVersion: "nemoclaw.nvidia.com/v1",
@@ -137,7 +137,7 @@ function document(
           provider: "compatible-endpoint",
           api: "openai-completions",
           endpoint: "https://inference.example/v1",
-          credential: { env: "NVIDIA_INFERENCE_API_KEY" },
+          credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
         },
       ],
       sandboxes: [
@@ -390,6 +390,120 @@ afterEach(() => {
   }
 });
 describe("automatic config export validation phase", () => {
+  it.each([
+    {
+      hosted: "1",
+      provider: "compatible-endpoint",
+      credential: "COMPATIBLE_API_KEY",
+      passed: true,
+    },
+    {
+      hosted: "0",
+      provider: "compatible-endpoint",
+      credential: "COMPATIBLE_API_KEY",
+      passed: false,
+    },
+    { hosted: "1", provider: "nvidia-prod", credential: "COMPATIBLE_API_KEY", passed: false },
+    {
+      hosted: "1",
+      provider: "compatible-endpoint",
+      credential: "UNDECLARED_API_KEY",
+      passed: false,
+    },
+  ])(
+    "binds the hosted adapter credential: hosted=$hosted provider=$provider credential=$credential (#11485)",
+    async ({ hosted, provider, credential, passed }) => {
+      const exported = document({ credentialReference: credential });
+      const deps = dependencies({ parsedDocument: exported });
+      const registry = deps.loadRegistry();
+      registry.sandboxes.sandbox!.provider = provider;
+      registry.sandboxes.sandbox!.credentialEnv = credential;
+      deps.loadRegistry = () => registry;
+      const test = fixture({
+        dependencies: deps,
+        host: successfulHost(JSON.stringify(exported)),
+      });
+      vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", hosted);
+      try {
+        await test.phase.from(target("required"), instance()).catch(() => undefined);
+        expect(test.writes.at(-1)).toMatchObject({
+          passed,
+          ...(passed
+            ? { classification: "success" }
+            : {
+                failureStage: "observation",
+                diagnostic: "the live credential reference is not declared by the target manifest",
+              }),
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it.each(["required", "expected-refusal"] as const)(
+    "preserves the isolated runtime environment for %s subprocesses (#11485)",
+    async (expectation) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-runtime-env-"));
+      createdDirectories.push(directory);
+      const cliPath = path.join(directory, "fixture-cli.cjs");
+      fs.writeFileSync(
+        cliPath,
+        `#!${process.execPath}
+const fs = require("node:fs");
+if (process.env.HOME !== ${JSON.stringify(process.env.HOME)} ||
+    process.env.XDG_CONFIG_HOME !== ${JSON.stringify(directory)} ||
+    process.env.NEMOCLAW_GATEWAY_RUNTIME !== "docker" ||
+    process.env.UNDECLARED_API_KEY !== undefined) {
+  process.stderr.write("The child cannot find the selected sandbox runtime.");
+  process.exit(1);
+}
+if (process.argv.includes("--output")) {
+  if (${JSON.stringify(expectation)} === "expected-refusal") {
+    process.stderr.write("Config export failed (unsupported). Unsupported agent.");
+    process.exit(1);
+  }
+  fs.writeFileSync(process.argv[process.argv.indexOf("--output") + 1], ${JSON.stringify(JSON.stringify(document()))});
+} else {
+  process.stdout.write(${JSON.stringify(`Version: 1\n---\n${JSON.stringify(POLICY)}`)});
+}
+`,
+        { mode: 0o700 },
+      );
+      const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+      const progress = startTestProgress(
+        "runtime environment",
+        ["validate export", "verify evidence"],
+        { logLine: () => undefined },
+      );
+      const host = new HostCliClient(
+        new ShellProbe({
+          artifacts,
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        }),
+        { cliPath, openshellPath: cliPath },
+      );
+      vi.stubEnv("XDG_CONFIG_HOME", directory);
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
+      vi.stubEnv("UNDECLARED_API_KEY", "ambient-secret-must-not-reach-child");
+      try {
+        progress.phase("validate export");
+        const test = fixture({ artifacts, host });
+        const evidence = await test.phase.from(target(expectation), instance());
+        progress.phase("verify evidence");
+        expect(evidence).toMatchObject({
+          passed: true,
+          classification: expectation === "required" ? "success" : "expected-refusal",
+        });
+      } finally {
+        vi.unstubAllEnvs();
+        progress.stop();
+      }
+    },
+  );
+
   it("publishes the exact validated bytes and digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(document())}\n`;
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));

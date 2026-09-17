@@ -55,7 +55,7 @@ const TARGETS: readonly TargetDefinition[] = [
     manifestPath: "test/e2e/manifests/openclaw-nvidia-policy-custom-missing-presets.yaml",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
     expectedStateId: "onboarding-failure-policy-presets-required",
-    configExport: { expectation: "no-usable-sandbox" },
+    configExport: { expectation: "required" },
     suiteIds: [],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,

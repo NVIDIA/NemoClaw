@@ -27,9 +27,15 @@ import type {
   TargetDefinition,
 } from "../../registry/types.ts";
 import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { CleanupRegistry } from "../cleanup.ts";
 import { resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
+import {
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_PROVIDER_NAME,
+  HOSTED_INFERENCE_SECRET,
+} from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
@@ -307,6 +313,7 @@ async function readEffectivePolicyDocument(
     capture: async (args, options) => {
       const result = await host.command(host.openshellCommandPath, args, {
         artifactName: "config-export-effective-policy",
+        env: buildAvailabilityProbeEnv(),
         captureLimitBytes: options.outputLimitBytes,
         persistArtifacts: false,
         redactionValues: secrets.redactionValues(),
@@ -396,7 +403,16 @@ async function expectedSemantics(
     instance.sandboxName,
   );
   const credentialReference = entry.credentialEnv ?? null;
-  const declaredCredentialReferences = manifest.document.spec.state?.credentialRefs ?? [];
+  const usesHostedAdapter =
+    process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1" &&
+    manifest.document.spec.onboarding.provider === "nvidia" &&
+    entry.provider === HOSTED_INFERENCE_PROVIDER_NAME;
+  const declaredCredentialReferences = (manifest.document.spec.state?.credentialRefs ?? []).map(
+    (reference) =>
+      usesHostedAdapter && reference === HOSTED_INFERENCE_SECRET
+        ? HOSTED_INFERENCE_CREDENTIAL_ENV
+        : reference,
+  );
   if (credentialReference && !declaredCredentialReferences.includes(credentialReference)) {
     throw new Error("the live credential reference is not declared by the target manifest");
   }
@@ -630,6 +646,7 @@ export class ConfigExportValidationPhaseFixture {
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
         {
           artifactName: "config-export-automatic",
+          env: buildAvailabilityProbeEnv(),
           captureLimitBytes: CONFIG_EXPORT_CAPTURE_LIMIT_BYTES,
           persistArtifacts: false,
           redactionValues: this.secrets.redactionValues(),
