@@ -296,3 +296,25 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
     let exported = Document::parse(doc.yaml().unwrap().as_bytes()).unwrap();
     assert_eq!(exported, doc);
 }
+
+#[test]
+fn deep_agents_search_preserves_explicit_grants_and_rejects_read_only_agents() {
+    let mut value = input();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("deepagents");
+    let document = Document::parse(value.to_string().as_bytes()).expect("Deep Agents search");
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&document, &generations).unwrap();
+    let settings: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values["inference_json"],
+    )
+    .unwrap();
+    assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"]));
+    value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"allow":["read"]});
+    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+}

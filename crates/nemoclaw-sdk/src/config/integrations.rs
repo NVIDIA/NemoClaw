@@ -13,7 +13,7 @@ pub enum Integration {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Web search through the native OpenClaw Brave plugin.
+/// Brave web search through OpenClaw or Deep Agents native tool configuration.
 pub struct WebSearch {
     /// Supported search service.
     pub provider: SearchProvider,
@@ -191,7 +191,7 @@ impl RuntimeWebSearch {
     ) -> Result<(), ConfigError> {
         let agents: std::collections::BTreeMap<_, _> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
-        if harness != "openclaw"
+        if !matches!(harness, "openclaw" | "deepagents")
             || self.agent_refs.is_empty()
             || self.agent_refs.iter().any(|name| {
                 !names.insert(name)
@@ -200,7 +200,7 @@ impl RuntimeWebSearch {
             })
         {
             return Err(ConfigError::new(
-                "web search requires unique unrestricted OpenClaw agent references",
+                "web search requires unique unrestricted OpenClaw or Deep Agents references",
             ));
         }
         super::validation::credential(&Some(self.credential.clone()))

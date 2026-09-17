@@ -57,6 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && cat "/build/$LOCKFILE" /own-requirements.txt > /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && python3 /build/provenance.py > /provenance.json
+RUN --network=none if [ "$HARNESS" = deepagents ]; then /opt/fabric/bin/python -m unittest discover -s /build -p test_brave_search.py; fi
 
 FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
@@ -64,7 +65,7 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/health.py image/fabric/inference-probe.mts /opt/nemoclaw/
+COPY image/fabric/fabric.py image/fabric/health.py image/fabric/brave_search.py image/fabric/inference-probe.mts /opt/nemoclaw/
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic

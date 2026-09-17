@@ -3,6 +3,7 @@
 """Start one sandbox-owned Fabric runtime and expose a private readiness probe."""
 
 import asyncio
+import copy
 import json
 import os
 import re
@@ -283,6 +284,30 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             if agent["tools"] != {"allow": ["read"]}:
                 raise ValueError("unsupported native tool policy")
             config["tools"] = {"enabled": ["read_file" if harness == "deepagents" else "read"]}
+    if harness == "deepagents" and name in (inference or {}).get("webSearch", {}).get(
+        "agentRefs", []
+    ):
+        config["mcp"] = {
+            "servers": {
+                "brave": {
+                    "transport": "stdio",
+                    "url": "/opt/fabric/bin/python",
+                    "args": ["/opt/nemoclaw/brave_search.py"],
+                    "env": {
+                        key: os.environ[key]
+                        for key in (
+                            "BRAVE_API_KEY",
+                            "SSL_CERT_FILE",
+                            "HTTPS_PROXY",
+                            "HTTP_PROXY",
+                            "ALL_PROXY",
+                            "NO_PROXY",
+                        )
+                        if key in os.environ
+                    },
+                }
+            }
+        }
     if harness == "pi" and (inference or {}).get("agents"):
         choices = agent["inference"]
         for alias, route in choices["models"].items():
@@ -299,6 +324,21 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             raise ValueError("Pi configured default differs from the declared choice")
         config["models"]["default"] = dict(config["models"][f"route_{choices['default']}"])
     return config
+
+
+def configuration_matches(observed, expected):
+    def intent(config):
+        config = copy.deepcopy(config)
+        env = config.get("mcp", {}).get("servers", {}).get("brave", {}).get("env", {})
+        value = env.get("BRAVE_API_KEY")
+        # Snapshot revisions are OpenShell runtime handles, not desired credential changes.
+        if isinstance(value, str) and re.fullmatch(
+            r"openshell:resolve:env:v[0-9]+_BRAVE_API_KEY", value
+        ):
+            env["BRAVE_API_KEY"] = {"env": "BRAVE_API_KEY"}
+        return config
+
+    return isinstance(observed, dict) and intent(observed) == intent(expected)
 
 
 async def serve():
@@ -417,7 +457,7 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
                 if (
                     result.get("ready")
                     and result.get("runtime_id")
-                    and result.get("config") == expected
+                    and configuration_matches(result.get("config"), expected)
                     and result.get("inference") == inference
                 )
                 else 2

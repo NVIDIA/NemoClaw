@@ -278,7 +278,7 @@ Only `kind: webSearch` with Brave is currently supported; VoiceClaw and other ki
 
 ## Brave Web Search
 
-Declare a shared search integration and attach it to the selected OpenClaw agents.
+Declare a shared search integration and attach it to selected OpenClaw or Deep Agents agents.
 This fragment omits the deployment's other required fields; the [complete example](../examples/openclaw-web-search.yaml) includes them:
 
 ```yaml
@@ -326,23 +326,26 @@ Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the managed provider and profile without revoking the key at Brave.
 Unchanged apply does not rotate a changed value behind the same environment reference.
 
-Every attached agent must be an unrestricted OpenClaw agent.
-Selected agents receive `web_search`; other unrestricted agents explicitly deny it, and read-only agents retain only `read`.
+Every attached agent must be an unrestricted OpenClaw or Deep Agents agent.
+Selected agents receive `web_search`; OpenClaw explicitly denies it for other agents, while Deep Agents only configures its MCP tool for selected agents.
+Read-only policies cannot attach search.
 These are native tool restrictions within a shared sandbox, not separate process or filesystem boundaries.
 Other harnesses are rejected.
 
-The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node executable to GET `/res/v1/web/search` at `api.search.brave.com:443`.
+The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node and Python 3.14 executables to GET `/res/v1/web/search` at `api.search.brave.com:443`.
 The supervisor proxy terminates TLS there to inject `X-Subscription-Token`.
 An explicit policy cannot reuse this rule name, and inference provider names cannot be `brave-search` or start with `brave-search-`.
-The integration owns its profile, provider attachment, native plugin settings, and agent tool grants.
+OpenClaw uses its native Brave plugin; Deep Agents uses Fabric’s native MCP tool support with a local stdio server.
+The integration owns its profile, provider attachment, native tool settings, and agent grants.
+Build the selected harness image from this revision and use a fresh deployment; older profiles and images lack the Python search grant and MCP configuration.
 Export preserves authored definition scope and references; the adapter's internal agent grants are derived from those attachments.
 Profile, attachment, or native configuration drift stops refresh and export without overwriting the conflicting configuration.
 Restore the declared settings before retrying.
 
 Build an updated image using the [runtime build procedure](#runtime-lifecycle) and use a fresh deployment when changing integration intent.
-The builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
+For OpenClaw, the builder installs the matching, checksum-pinned Brave plugin; older images do not contain it.
 Changing YAML does not update an image or migrate retained native configuration.
-Offline tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
+Offline OpenClaw tests exercise the native plugin against a disposable HTTP fixture; they do not establish that your Brave key is valid or has quota.
 
 The former `integrations.webSearch.agentRefs` input is rejected.
 Move its provider and credential fields into a named `kind: webSearch` definition and put `integrationRefs` on the selected agents.

@@ -15,7 +15,7 @@ fn definition(owner: &str, generation: &str) -> proto::ProviderProfile {
     proto::ProviderProfile {
         id: "nemoclaw-brave".into(),
         display_name: "NemoClaw Brave Search".into(),
-        description: "Native OpenClaw web search".into(),
+        description: "Declared Brave web search".into(),
         category: proto::ProviderProfileCategory::Knowledge as i32,
         credentials: vec![proto::ProviderProfileCredential {
             name: "BRAVE_API_KEY".into(),
