@@ -55,6 +55,23 @@ export function isDisplayedHermesSessionTitleForContinuation(
   );
 }
 
+export function isHermesFailedUsageEvidence(rawJson: string, expectedFailure: string): boolean {
+  try {
+    const value: unknown = JSON.parse(rawJson);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const evidence = value as Record<string, unknown>;
+    return (
+      evidence.failed === true &&
+      evidence.failure === expectedFailure &&
+      evidence.estimated_cost_usd === null &&
+      evidence.input_tokens === null &&
+      evidence.output_tokens === null
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
   const created = [...after].filter((id) => !before.has(id));
   expect(created).toHaveLength(1);
@@ -231,11 +248,8 @@ export async function assertHermesCliAdapterLiveContract({
       [
         "set -eu",
         `usage_file=${shellQuote(usageFilePath)}`,
-        `expected=${shellQuote(`session not found: ${seedSessionId}`)}`,
         'test -f "$usage_file"',
-        `jq -e --arg expected "$expected" ${shellQuote(
-          ".failed == true and .failure == $expected and .estimated_cost_usd == null and .input_tokens == null and .output_tokens == null",
-        )} "$usage_file" >/dev/null`,
+        'cat -- "$usage_file"',
         'rm -f -- "$usage_file"',
       ].join("; "),
     ),
@@ -245,7 +259,11 @@ export async function assertHermesCliAdapterLiveContract({
       timeoutMs: 30_000,
     },
   );
-  expect(guardedUsageFile.exitCode, resultText(guardedUsageFile)).toBe(0);
+  expect(
+    guardedUsageFile.exitCode === 0 &&
+      isHermesFailedUsageEvidence(guardedUsageFile.stdout, `session not found: ${seedSessionId}`),
+    resultText(guardedUsageFile),
+  ).toBe(true);
 
   const profileName = "nemoclaw-cli-adapter-e2e";
   await runHermesCli(
