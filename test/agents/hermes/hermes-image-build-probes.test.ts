@@ -153,6 +153,60 @@ module.verify_compatibility_retirement(
   }
 }
 
+function runCronRuntimeSourceProbe() {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-source-probe-"));
+  const source = `
+import importlib.util
+import pathlib
+import sqlite3
+import sys
+import types
+
+home = pathlib.Path(sys.argv[2])
+database = home / "runtime" / "cron-executions.db"
+database.parent.mkdir(parents=True)
+
+cron = types.ModuleType("cron")
+cron.__path__ = []
+executions = types.ModuleType("cron.executions")
+executions.EXECUTIONS_FILE = None
+def connect():
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    return connection
+executions._connect = connect
+
+hermes_cli = types.ModuleType("hermes_cli")
+hermes_cli.__path__ = []
+backup = types.ModuleType("hermes_cli.backup")
+backup._QUICK_STATE_FILES = ["runtime/cron-executions.db"]
+
+constants = types.ModuleType("hermes_constants")
+constants.get_hermes_home = lambda: home
+
+sys.modules.update({
+    "cron": cron,
+    "cron.executions": executions,
+    "hermes_cli": hermes_cli,
+    "hermes_cli.backup": backup,
+    "hermes_constants": constants,
+})
+
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_cron_runtime_source()
+`;
+  try {
+    return spawnSync("python3", ["-I", "-c", source, probes, temporaryRoot], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
 function runGeneratedConfigPreparation(doctorExit = 0) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-prepare-"));
   const hermesHome = path.join(temporaryRoot, ".hermes");
@@ -238,6 +292,13 @@ describe("Hermes image build probes", () => {
     expect(dockerfile).toContain(
       "grep -Fqx '  - \"hindsight-client==0.6.1\"' /opt/hermes/plugins/memory/hindsight/plugin.yaml",
     );
+  });
+
+  it("accepts the Hermes SQLite row factory when verifying the cron database path", () => {
+    const result = runCronRuntimeSourceProbe();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {

@@ -236,7 +236,7 @@ def verify_cron_runtime_source() -> None:
     assert EXECUTIONS_FILE is None
     connection = _connect()
     try:
-        databases = connection.execute("PRAGMA database_list").fetchall()
+        databases = [tuple(row) for row in connection.execute("PRAGMA database_list").fetchall()]
     finally:
         connection.close()
     assert databases == [(0, "main", str(expected))], databases
