@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -130,6 +131,33 @@ describe("public route/display separation", () => {
 
 /** Verify that the compiled CLI preserves public dispatch and usage-error results. */
 describe("translatePublicGlobalArgv", () => {
+  it("derives parent usage and dispatch from an additional registered group", () => {
+    // The compiled CommonJS translator reads this registry through require, not Vitest's ESM mocks.
+    const metadataModule = createRequire(import.meta.url)(
+      "../../../dist/lib/cli/oclif-metadata.js",
+    ) as typeof import("../../../dist/lib/cli/oclif-metadata");
+    const metadata = metadataModule.getRegisteredOclifCommandsMetadata();
+    expect(metadata).not.toHaveProperty("diagnostics");
+    expect(metadata).not.toHaveProperty("diagnostics:inspect");
+    try {
+      metadata.diagnostics = { id: "diagnostics" };
+      metadata["diagnostics:inspect"] = { id: "diagnostics:inspect" };
+      expectNative(
+        translatePublicGlobalArgv("diagnostics", ["inspect", "--json"]),
+        "diagnostics:inspect",
+        ["--json"],
+      );
+      expect(translatePublicGlobalArgv("diagnostics", ["bogus", "private-argument"])).toEqual({
+        kind: "publicUsageError",
+        lines: ["diagnostics <subcommand>", "Subcommands:", "inspect"],
+      });
+      expectNative(translatePublicGlobalArgv("diagnostics", []), "diagnostics", ["--help"]);
+    } finally {
+      delete metadata.diagnostics;
+      delete metadata["diagnostics:inspect"];
+    }
+  });
+
   it("translates simple and nested global commands to native oclif argv", () => {
     expectNative(translatePublicGlobalArgv("list", ["--json"]), "list", ["--json"]);
     expectNative(translatePublicGlobalArgv("update", ["--check"]), "update", ["--check"]);

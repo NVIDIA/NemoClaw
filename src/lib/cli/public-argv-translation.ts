@@ -118,21 +118,19 @@ function isHelpToken(token: string | undefined): boolean {
   return token === "help" || token === "--help" || token === "-h";
 }
 
-/** Show registered subcommands when a global parent receives an unknown action. */
-function nativeGlobalParentArgv(cmd: string, args: string[]): PublicTranslationResult {
+/** Use registered action names in diagnostics so untrusted arguments stay private. */
+function nativeGlobalParentArgv(
+  cmd: string,
+  args: string[],
+  subcommands: string[],
+): PublicTranslationResult {
   const subcommand = args[0];
   if (!subcommand || isHelpToken(subcommand)) {
     return nativeArgv(cmd, ["--help"], [cmd, "--help"]);
   }
   return {
     kind: "publicUsageError",
-    lines: [
-      `${cmd} <subcommand>`,
-      "Subcommands:",
-      ...globalRoutes()
-        .filter((route) => route.tokens[0] === cmd)
-        .map((route) => route.tokens.slice(1).join(" ")),
-    ],
+    lines: [`${cmd} <subcommand>`, "Subcommands:", ...subcommands],
   };
 }
 
@@ -158,15 +156,21 @@ function nativeSandboxParentArgv(
   );
 }
 
+/** Derive dispatch and parent usage from the same registered public routes. */
 export function translatePublicGlobalArgv(cmd: string, args: string[]): PublicTranslationResult {
   const inputTokens = [cmd, ...args];
+  const subcommands: string[] = [];
   for (const route of globalRoutes()) {
-    if (!startsWithTokens(inputTokens, route.tokens)) continue;
-    return nativeArgv(route.commandId, inputTokens.slice(route.tokens.length));
+    if (startsWithTokens(inputTokens, route.tokens)) {
+      return nativeArgv(route.commandId, inputTokens.slice(route.tokens.length));
+    }
+    if (route.tokens[0] === cmd && route.tokens.length > 1) {
+      subcommands.push(route.tokens.slice(1).join(" "));
+    }
   }
 
-  if (cmd === "agents" || cmd === "tunnel" || cmd === "inference" || cmd === "credentials") {
-    return nativeGlobalParentArgv(cmd, args);
+  if (subcommands.length > 0) {
+    return nativeGlobalParentArgv(cmd, args, subcommands);
   }
 
   return { kind: "publicUsageError", lines: [] };
