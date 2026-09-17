@@ -712,7 +712,7 @@ assert_status_mode disabled
     },
   );
 
-  it("gives the destructive fresh re-onboard check its onboarding budget", () => {
+  it("gives long-running Deep Agents checks their complete operation budgets", () => {
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
@@ -723,6 +723,11 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       ),
     ).toBe(180_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+      ),
+    ).toBe(7 * 60_000);
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",

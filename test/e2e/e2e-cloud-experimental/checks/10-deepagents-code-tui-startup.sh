@@ -19,6 +19,8 @@ SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-120}"
 PROCESS_CLEANUP_TIMEOUT=20
+SANDBOX_EXEC_TIMEOUT_SECONDS=45
+SANDBOX_EXEC_KILL_AFTER_SECONDS=5
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/agents/deepagents/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
@@ -51,7 +53,20 @@ pass() {
 }
 
 sandbox_exec() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+  local timeout_command
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_command="$(command -v timeout)"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_command="$(command -v gtimeout)"
+  else
+    printf '%s\n' "${PREFIX}: timeout or gtimeout is required for bounded sandbox execution" >&2
+    return 127
+  fi
+  "$timeout_command" \
+    --signal=TERM \
+    --kill-after="${SANDBOX_EXEC_KILL_AFTER_SECONDS}s" \
+    "${SANDBOX_EXEC_TIMEOUT_SECONDS}s" \
+    openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
 sandbox_quickjs_memfd_probe() {
@@ -246,6 +261,34 @@ proc submit_model_prompt {markers prompt} {
   append_marker $markers "NEMOCLAW_TUI_MODEL_PROMPT_SUBMITTED"
 }
 
+proc terminate_failed_tui {markers sandbox exit_code} {
+  # DCode arms quit on the first Ctrl-C and exits on the second. Always run the
+  # complete sequence before returning a failed session to the shell harness.
+  catch {send -- "\003"}
+  after 250
+  catch {send -- "\003"}
+
+  set timeout 20
+  expect {
+    -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:$expect_out(1,string)"
+      puts "\nNEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:$expect_out(1,string)"
+      exit $exit_code
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:$sandbox"
+      puts "\nNEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:$sandbox"
+      catch {send -- "\003"}
+      exit 29
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_CLEANUP_EOF:$sandbox"
+      puts "\nNEMOCLAW_TUI_FAILURE_CLEANUP_EOF:$sandbox"
+      exit 30
+    }
+  }
+}
+
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 
@@ -270,14 +313,12 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-      send -- "\003"
-      exit 24
+      terminate_failed_tui $markers $sandbox 24
     }
     timeout {
       append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
       puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
+      terminate_failed_tui $markers $sandbox 20
     }
     eof {
       append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -298,21 +339,18 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
-      send -- "\003"
-      exit 25
+      terminate_failed_tui $markers $sandbox 25
     }
     -nocase -re $first_run_pattern {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-      send -- "\003"
-      exit 24
+      terminate_failed_tui $markers $sandbox 24
     }
     timeout {
       append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
       puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
+      terminate_failed_tui $markers $sandbox 20
     }
     eof {
       append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -332,14 +370,12 @@ expect {
     append_marker $markers "$expect_out(0,string)"
     append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
     puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-    send -- "\003"
-    exit 24
+    terminate_failed_tui $markers $sandbox 24
   }
   timeout {
     append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
     puts "\nNEMOCLAW_TUI_TIMEOUT"
-    send -- "\003"
-    exit 20
+    terminate_failed_tui $markers $sandbox 20
   }
   eof {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -366,14 +402,12 @@ expect {
     append_marker $markers "$expect_out(0,string)"
     append_marker $markers "NEMOCLAW_TUI_RUNTIME_FAILURE"
     puts "\nNEMOCLAW_TUI_RUNTIME_FAILURE"
-    send -- "\003"
-    exit 26
+    terminate_failed_tui $markers $sandbox 26
   }
   timeout {
     append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
     puts "\nNEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
-    send -- "\003"
-    exit 27
+    terminate_failed_tui $markers $sandbox 27
   }
   eof {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_MODEL_RESPONSE"
@@ -562,6 +596,15 @@ main() {
     else
       fail_test "session ${session_index}: finite expect harness exited ${expect_rc}"
       print_sanitized_capture_excerpt "$plain_capture_file"
+    fi
+
+    if grep -Eq "NEMOCLAW_TUI_FAILURE_CLEANUP_(TIMEOUT|EOF):${SANDBOX_NAME}" "$plain_capture_file"; then
+      fail_test "session ${session_index}: failed TUI cleanup did not confirm exit for sandbox '${SANDBOX_NAME}'"
+      if ! wait_for_dcode_process_baseline "$baseline_process_count"; then
+        fail_test "session ${session_index}: DCode/LangGraph process count remained above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
+      fi
+      info "sanitized capture: ${plain_capture_file}"
+      break
     fi
 
     if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then

@@ -153,6 +153,8 @@ proc expect {branches} {
         set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
         set ::expect_out(0,string) "NEMOCLAW_TUI_EXIT:0"
         set ::expect_out(1,string) "0"
+        uplevel 1 [list set "expect_out(0,string)" "NEMOCLAW_TUI_EXIT:0"]
+        uplevel 1 [list set "expect_out(1,string)" "0"]
       }
       timeout {
         set branch_index [lsearch -exact $branches timeout]
@@ -219,7 +221,9 @@ proc exit {{code 0}} {
 
 const tuiModelPrompt = "What is 731 + 206? Reply only with the number.";
 
-function expectedTuiSendTrace(options: { includeNamePrompt?: boolean } = {}): string {
+function expectedTuiSendTrace(
+  options: { ctrlCCount?: number; includeNamePrompt?: boolean } = {},
+): string {
   const sends = [
     ...(options.includeNamePrompt ? ["\r"] : []),
     ..."/agents",
@@ -227,7 +231,7 @@ function expectedTuiSendTrace(options: { includeNamePrompt?: boolean } = {}): st
     "\u001b",
     ...tuiModelPrompt,
     "\r",
-    "\u0003",
+    ...Array.from({ length: options.ctrlCCount ?? 1 }, () => "\u0003"),
   ];
   return sends.map((value) => Buffer.from(value).toString("hex")).join(",");
 }
@@ -367,12 +371,13 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   });
 
   itWithTclsh("fails before readiness when a first-run model picker appears (#6410)", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine(["firstRun"]);
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["firstRun", "exit"]);
 
     expect(result.status, result.stderr).toBe(24);
-    expect(traceText).toBe("03");
+    expect(traceText).toBe("03,03");
     expect(markerText).toContain("Choose a Recommended Model");
     expect(markerText).toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
+    expect(markerText).toContain("NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:0");
     expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
@@ -398,13 +403,18 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   });
 
   itWithTclsh("still rejects the model picker when it appears after the name prompt", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine(["namePrompt", "firstRun"]);
+    const { markerText, result, traceText } = runTuiExpectStateMachine([
+      "namePrompt",
+      "firstRun",
+      "exit",
+    ]);
 
     expect(result.status, result.stderr).toBe(24);
-    expect(traceText).toBe("0d,2f,61,67,65,6e,74,73,0d,03");
+    expect(traceText).toBe("0d,2f,61,67,65,6e,74,73,0d,03,03");
     expect(markerText).toContain("NEMOCLAW_TUI_NAME_PROMPT");
     expect(markerText).toContain("Choose a Recommended Model");
     expect(markerText).toContain("NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN");
+    expect(markerText).toContain("NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:0");
     expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
@@ -426,15 +436,30 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   });
 
   itWithTclsh("reports the Wasmtime boundary before the TUI model turn completes (#11847)", () => {
-    const { markerText, result } = runTuiExpectStateMachine(["composer", "ready", "runtimeError"], {
-      closeAfterFirstCtrlC: true,
-      expectNamePrompt: false,
-    });
+    const { markerText, result, traceText } = runTuiExpectStateMachine(
+      ["composer", "ready", "runtimeError", "exit"],
+      { expectNamePrompt: false },
+    );
 
     expect(result.status, result.stderr).toBe(26);
+    expect(traceText).toBe(expectedTuiSendTrace({ ctrlCCount: 2 }));
     expect(markerText).toContain("WasmtimeError: cannot create a memfd");
     expect(markerText).toContain("NEMOCLAW_TUI_RUNTIME_FAILURE");
+    expect(markerText).toContain("NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:0");
     expect(markerText).not.toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
+  });
+
+  itWithTclsh("fails with sandbox identity when failed-session cleanup times out", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(
+      ["composer", "ready", "runtimeError", "timeout"],
+      { expectNamePrompt: false },
+    );
+
+    expect(result.status, result.stderr).toBe(29);
+    expect(traceText).toBe(expectedTuiSendTrace({ ctrlCCount: 3 }));
+    expect(markerText).toContain("NEMOCLAW_TUI_RUNTIME_FAILURE");
+    expect(markerText).toContain("NEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:fake-deepagents");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED");
   });
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
