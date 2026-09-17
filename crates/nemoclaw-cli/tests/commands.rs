@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use nemoclaw_sdk::config::Document;
 use std::{fs, process::Command};
 #[test]
 fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
@@ -101,4 +102,82 @@ fn verbose_reports_failed_steps_on_stderr_without_changing_stdout() {
         assert_eq!(stderr.contains("bundle.verify failed"), verbose, "{stderr}");
         assert!(!stderr.contains(directory.path().to_str().unwrap()));
     }
+}
+
+#[test]
+fn non_interactive_onboarding_publishes_without_lifecycle_dependencies() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("deployment.yaml");
+    let state_path = directory.path().join("state-must-not-exist");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args([
+            "onboard",
+            "--generate-only",
+            "--non-interactive",
+            "--output",
+        ])
+        .arg(&output_path)
+        .args(["--name", "direct-deployment", "--bundle"])
+        .arg(directory.path().join("missing-bundle"))
+        .arg("--state-dir")
+        .arg(&state_path)
+        .env("NVIDIA_INFERENCE_API_KEY", "nvapi-secret-sentinel")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!state_path.exists());
+    let bytes = fs::read(&output_path).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("secret-sentinel"));
+    let document = Document::parse(bytes.as_slice()).unwrap();
+    assert_eq!(document.metadata.name, "direct-deployment");
+    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Credential references: NVIDIA_INFERENCE_API_KEY")
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
+}
+
+#[test]
+fn interactive_onboarding_uses_the_same_published_contract() {
+    use std::{io::Write, process::Stdio};
+
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("deployment.yaml");
+    let state_path = directory.path().join("state-must-not-exist");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["onboard", "--generate-only", "--output"])
+        .arg(&output_path)
+        .arg("--bundle")
+        .arg(directory.path().join("missing-bundle"))
+        .arg("--state-dir")
+        .arg(&state_path)
+        .env_remove("NVIDIA_INFERENCE_API_KEY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"interactive-deployment\n\n\n\n\n\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!state_path.exists());
+    let document = Document::parse(fs::read(&output_path).unwrap().as_slice()).unwrap();
+    assert_eq!(document.metadata.name, "interactive-deployment");
+    assert_eq!(document.credential_names(), ["NVIDIA_INFERENCE_API_KEY"]);
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod args;
+mod authoring;
 mod dispatch;
 mod io;
 mod progress;
@@ -33,24 +34,34 @@ async fn main() -> ExitCode {
     });
     let output_path = match &cli.command {
         Command::Export { output } => output.clone(),
+        Command::Onboard { output, .. } => Some(output.clone()),
         _ => None,
     };
-    let result = dispatch::run(cli, tokio::io::stdin(), &cancel)
-        .await
-        .and_then(dispatch::CommandResult::render);
+    let result = dispatch::run(cli, tokio::io::stdin(), &cancel).await;
     signals.abort();
     match result {
-        Ok(output) => match io::write_output(
-            output_path.as_deref(),
-            output.as_bytes(),
-            std::io::stdout().lock(),
-        ) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("{error}");
-                ExitCode::FAILURE
+        Ok(result) => {
+            let notice = result.notice();
+            match result.render().and_then(|output| {
+                io::write_output(
+                    output_path.as_deref(),
+                    output.as_bytes(),
+                    std::io::stdout().lock(),
+                )?;
+                Ok(())
+            }) {
+                Ok(()) => {
+                    if let Some(notice) = notice {
+                        eprintln!("{notice}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Err(error) => {
             eprintln!("{}", dispatch::render_error(error.as_ref()));
             ExitCode::FAILURE

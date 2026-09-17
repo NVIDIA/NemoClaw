@@ -3,20 +3,33 @@
 
 use crate::{
     args::{Cli, Command},
+    authoring::{Answers, AuthoredDocument, Capabilities, Session},
     io::document,
 };
 use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
 use tokio::io::AsyncRead;
 
 pub(crate) enum CommandResult {
+    Onboard(Box<AuthoredDocument>),
     Export(Box<Document>),
     Operation(OperationResult),
 }
 impl CommandResult {
     pub(crate) fn render(self) -> Result<String, Box<dyn std::error::Error>> {
         match self {
+            Self::Onboard(authored) => Ok(authored.yaml().to_owned()),
             Self::Export(document) => Ok(document.yaml()?),
             Self::Operation(result) => Ok(format!("{}\n", serde_json::to_string(&result)?)),
+        }
+    }
+
+    pub(crate) fn notice(&self) -> Option<String> {
+        match self {
+            Self::Onboard(authored) => Some(format!(
+                "Credential references: {}",
+                authored.document().credential_names().join(", ")
+            )),
+            _ => None,
         }
     }
 }
@@ -41,6 +54,35 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
+    let command = match cli.command {
+        Command::Onboard {
+            generate_only: _,
+            output: _,
+            non_interactive,
+            name,
+            sandbox,
+            agent,
+            provider,
+            model,
+            credential_env,
+        } => {
+            return onboard(
+                non_interactive,
+                OnboardValues {
+                    name,
+                    sandbox,
+                    agent,
+                    provider,
+                    model,
+                    credential_env,
+                },
+                stdin,
+                cancel,
+            )
+            .await;
+        }
+        command => command,
+    };
     let bundle = match cli.bundle_dir {
         Some(path) => path,
         None => std::env::current_exe()?
@@ -59,7 +101,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             }
         }));
     }
-    let result = match cli.command {
+    let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
             file: Some(file), ..
@@ -83,8 +125,108 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             )));
         }
         Command::Destroy => deployment.destroy(cancel).await?,
+        Command::Onboard { .. } => unreachable!("onboarding returns before lifecycle setup"),
     };
     Ok(CommandResult::Operation(result))
+}
+
+struct OnboardValues {
+    name: Option<String>,
+    sandbox: Option<String>,
+    agent: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    credential_env: Option<String>,
+}
+
+async fn onboard<R: AsyncRead + Unpin>(
+    non_interactive: bool,
+    values: OnboardValues,
+    stdin: R,
+    cancel: &CancellationToken,
+) -> Result<CommandResult, Box<dyn std::error::Error>> {
+    let mut answers = Answers::first_slice();
+    if non_interactive {
+        answers.deployment_name = values.name.unwrap_or(answers.deployment_name);
+        answers.sandbox_name = values.sandbox.unwrap_or(answers.sandbox_name);
+        answers.agent_name = values.agent.unwrap_or(answers.agent_name);
+        answers.provider_name = values.provider.unwrap_or(answers.provider_name);
+        answers.model = values.model.unwrap_or(answers.model);
+        answers.credential_env = values.credential_env.unwrap_or(answers.credential_env);
+    } else {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(stdin).lines();
+        answers.deployment_name = value_or_prompt(
+            values.name,
+            "Deployment name",
+            &answers.deployment_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.sandbox_name = value_or_prompt(
+            values.sandbox,
+            "Sandbox name",
+            &answers.sandbox_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.agent_name = value_or_prompt(
+            values.agent,
+            "Agent name",
+            &answers.agent_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.provider_name = value_or_prompt(
+            values.provider,
+            "Provider name",
+            &answers.provider_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.model =
+            value_or_prompt(values.model, "Model", &answers.model, &mut lines, cancel).await?;
+        answers.credential_env = value_or_prompt(
+            values.credential_env,
+            "Credential environment variable",
+            &answers.credential_env,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+    }
+    let authored = Session::new()?.project(&Capabilities::first_slice(), &answers)?;
+    Ok(CommandResult::Onboard(Box::new(authored)))
+}
+
+async fn value_or_prompt<R: tokio::io::AsyncBufRead + Unpin>(
+    supplied: Option<String>,
+    label: &str,
+    default: &str,
+    lines: &mut tokio::io::Lines<R>,
+    cancel: &CancellationToken,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(value) = supplied {
+        return Ok(value);
+    }
+    use std::io::Write;
+    eprint!("{label} [{default}]: ");
+    std::io::stderr().flush()?;
+    let line = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Err(Error::Cancelled.into()),
+        line = lines.next_line() => line?,
+    }
+    .ok_or("interactive input ended before authoring completed")?;
+    Ok(if line.is_empty() {
+        default.into()
+    } else {
+        line
+    })
 }
 
 #[cfg(test)]

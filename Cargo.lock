@@ -1734,7 +1734,9 @@ name = "nemoclaw-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "getrandom 0.4.3",
  "nemoclaw-sdk",
+ "serde-saphyr",
  "serde_json",
  "tempfile",
  "tokio",
