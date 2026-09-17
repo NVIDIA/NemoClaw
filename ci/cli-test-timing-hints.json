@@ -196,7 +196,6 @@
     "test/skills/check-gates-compliance.test.ts": 22684,
     "test/skills/dependency-upgrade-skill-security.test.ts": 5353,
     "test/skills/dependency-upgrade-skill.test.ts": 19850,
-    "test/state/snapshot-openclaw-managed-extensions.test.ts": 18060,
     "test/state/snapshot-restore-existing-dest.test.ts": 17653,
     "test/state/snapshot-stale-directory-restore.test.ts": 7384,
     "test/state/snapshot.test.ts": 23861

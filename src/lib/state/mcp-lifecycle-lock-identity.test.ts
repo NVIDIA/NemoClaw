@@ -20,6 +20,13 @@ import {
 import {
   getMcpLifecycleLockPath,
   readMcpLifecycleLockObservation,
+  readMcpLifecycleLockObservationSync,
+  reclaimStaleMcpLifecycleLockGeneration,
+  reclaimStaleMcpLifecycleLockGenerationSync,
+  safelyReleaseMcpLifecycleLock,
+  safelyReleaseMcpLifecycleLockSync,
+  writeMcpLifecycleLockCandidateAndLink,
+  writeMcpLifecycleLockCandidateAndLinkSync,
 } from "./mcp-lifecycle-lock-storage";
 
 const PROPERTY_RUNS = 250;
@@ -495,6 +502,43 @@ describe("MCP lifecycle lock storage properties", () => {
 
   afterEach(() => {
     fs.rmSync(stateDir, { force: true, recursive: true });
+  });
+
+  it("leaves missing and foreign owner generations untouched during safe release", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const lockOwner = owner(4242, "linux:test-boot:10");
+
+    await safelyReleaseMcpLifecycleLock(lockPath, "missing");
+    safelyReleaseMcpLifecycleLockSync(lockPath, "missing");
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, `${JSON.stringify(lockOwner)}\n`);
+    await safelyReleaseMcpLifecycleLock(lockPath, "foreign-token");
+    safelyReleaseMcpLifecycleLockSync(lockPath, "foreign-token");
+
+    expect(readMcpLifecycleLockObservationSync(lockPath)?.owner).toEqual(lockOwner);
+  });
+
+  it("reports an already-missing generation as not reclaimed", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const expected = observation(owner(4242, "linux:test-boot:10"));
+
+    await expect(reclaimStaleMcpLifecycleLockGeneration(lockPath, expected)).resolves.toBe(false);
+    expect(reclaimStaleMcpLifecycleLockGenerationSync(lockPath, expected)).toBe(false);
+  });
+
+  it("rejects async and sync candidate publication over an existing owner", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const existingOwner = owner(4242, "linux:test-boot:10", { token: "existing" });
+    const candidateOwner = owner(4343, "linux:test-boot:11", { token: "candidate" });
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, `${JSON.stringify(existingOwner)}\n`);
+
+    await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, candidateOwner)).resolves.toBe(
+      false,
+    );
+    expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, candidateOwner)).toBe(false);
+    expect(readMcpLifecycleLockObservationSync(lockPath)?.owner).toEqual(existingOwner);
   });
 
   it(
