@@ -683,9 +683,9 @@ RUN printf '%s  %s\n' \
 # Apply the transaction at the single call site and fail if upstream moves it.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     && test "$(grep -Fc '_nemoclaw_normalize_shared_state_permissions(self.db_path)' /opt/hermes/hermes_state.py)" -eq 2 \
-    && test "$(grep -Fc 'conn.executescript(SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db.py)" -eq 1 \
-    && sed -i 's|conn.executescript(SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db.py \
-    && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db.py \
+    && test "$(grep -Fc 'conn.executescript(_kb.SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db_connect.py)" -eq 1 \
+    && sed -i 's|conn.executescript(_kb.SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + _kb.SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db_connect.py \
+    && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db_connect.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
 

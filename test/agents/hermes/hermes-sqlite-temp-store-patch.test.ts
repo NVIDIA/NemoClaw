@@ -200,4 +200,17 @@ print(f"unrelated={stat.S_IMODE(unrelated.stat().st_mode):03o}")
       "RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
     );
   });
+
+  it("wraps the Hermes 0.21.3 kanban schema in one write transaction", () => {
+    expect(dockerfile).toContain(
+      "grep -Fc 'conn.executescript(_kb.SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db_connect.py",
+    );
+    expect(dockerfile).toContain(
+      'conn.executescript("BEGIN IMMEDIATE;\\\\n" + _kb.SCHEMA_SQL + "\\\\nCOMMIT;")',
+    );
+    expect(dockerfile).toContain(
+      "/opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db_connect.py",
+    );
+    expect(dockerfile).not.toContain("conn.executescript(SCHEMA_SQL)");
+  });
 });
