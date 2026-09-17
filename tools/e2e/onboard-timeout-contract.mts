@@ -15,6 +15,14 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
+// The typed DCode target runs onboarding, its invalid-credential lifecycle,
+// state validation, and the ordered cloud checks. Those checks can consume 96
+// minutes of command deadlines; retain the same 20-minute job headroom used by
+// the catalogue timeout contracts after the complete test budget.
+export const DCODE_TYPED_TARGET_TEST_TIMEOUT_MS = 130 * MINUTE_MS;
+export const DCODE_TYPED_TARGET_TIMEOUT_MINUTES =
+  (DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+
 export type LiveTargetTimeoutContract = Readonly<{
   commandTimeoutMs?: number;
   testTimeoutMs?: number;
@@ -22,8 +30,14 @@ export type LiveTargetTimeoutContract = Readonly<{
 }>;
 
 export function liveTargetTimeoutContract(
-  _lifecycle: string | undefined,
+  lifecycle: string | undefined,
 ): LiveTargetTimeoutContract {
+  if (lifecycle === "dcode-rebuild-invalid-credential") {
+    return {
+      testTimeoutMs: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+      targetTimeoutMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
+    };
+  }
   return { targetTimeoutMinutes: 45 };
 }
 

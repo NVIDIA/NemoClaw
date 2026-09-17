@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import {
+  DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+  DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
@@ -57,6 +59,8 @@ describe("onboard final-handoff timeout contract", () => {
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      dcodeTypedTargetTestMinutes: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS / MINUTE_MS,
+      dcodeTypedTargetMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
       finalHandoffCommandMinutes: 40,
       singleFinalHandoffTestMinutes: 50,
@@ -64,6 +68,8 @@ describe("onboard final-handoff timeout contract", () => {
       noRecreateCommandMinutes: 15,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
+      dcodeTypedTargetTestMinutes: 130,
+      dcodeTypedTargetMinutes: 150,
     });
   });
 
@@ -92,10 +98,17 @@ describe("onboard final-handoff timeout contract", () => {
     ).toEqual([...affectedTargetIds].sort());
   });
 
-  it("applies the default contract to typed registry targets", () => {
+  it("reserves job headroom after the ordered Deep Agents target plan", () => {
     expect(liveTargetTimeoutContract("dcode-rebuild-invalid-credential")).toEqual({
-      targetTimeoutMinutes: 45,
+      testTimeoutMs: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+      targetTimeoutMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     });
+    expect(DCODE_TYPED_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      DCODE_TYPED_TARGET_TEST_TIMEOUT_MS + jobHeadroomMs,
+    );
+  });
+
+  it("applies the default contract to typed targets without the DCode lifecycle", () => {
     expect(liveTargetTimeoutContract(undefined)).toEqual({ targetTimeoutMinutes: 45 });
   });
 
@@ -111,6 +124,8 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it.each([
+    DCODE_TYPED_TARGET_TEST_TIMEOUT_MS,
+    DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,

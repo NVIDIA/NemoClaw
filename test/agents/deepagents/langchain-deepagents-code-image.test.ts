@@ -486,10 +486,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "/opt/venv/bin/pip3 check",
         "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+        "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
       ].every((s) => dockerfile.includes(s)),
     ).toBe(true);
+    const quickjsPatchIndex = dockerfile.indexOf(
+      "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+    );
+    const quickjsProbeIndex = dockerfile.indexOf(
+      'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
+    );
+    const quickjsCleanupIndex = dockerfile.indexOf(
+      "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+    );
+    expect(quickjsPatchIndex).toBeLessThan(quickjsProbeIndex);
+    expect(quickjsProbeIndex).toBeLessThan(quickjsCleanupIndex);
     expect(
       dockerfile
         .split("\n")

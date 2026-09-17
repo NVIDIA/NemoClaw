@@ -254,6 +254,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
     && /opt/venv/bin/python3 -I -c 'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close()' \
+    && rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
