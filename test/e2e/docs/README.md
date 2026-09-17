@@ -75,21 +75,22 @@ The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
 
 Before it validates deployment semantics, the config export fixture rejects
-known fixture secrets and internal credential transport markers. Both checks
-scan the raw export and decoded YAML scalar keys and values, so YAML escaping
-cannot hide either value. The fixture caps each captured stdout and stderr
-stream at 64 KiB. Before reading or retaining an export, it opens the file
-without following symbolic links. The open descriptor must identify a regular
-file no larger than 1 MiB. After the descriptor read, the published path must
-still identify the same device and inode. The fixture rejects a replacement.
-It creates the export in a private temporary directory, registers cleanup
-before it invokes the CLI, and removes the directory before it writes retained
-evidence.
+known fixture secrets and internal credential transport markers. The secret
+check also rejects standard base64 and unpadded base64url encodings in the raw
+export. Both checks inspect decoded YAML scalar keys and values, including
+binary scalars. YAML escaping or binary tags cannot hide either value. The
+fixture caps each captured stdout and stderr stream at 64 KiB. Before reading
+or retaining an export, it opens the file without following symbolic links.
+The open descriptor must identify a regular file no larger than 1 MiB. After
+the descriptor read, the published path must still identify the same device
+and inode. The fixture rejects a replacement. It creates the export in a
+private temporary directory, registers cleanup before it invokes the CLI, and
+removes the directory before it writes retained evidence.
 
-For `required` coverage, the fixture parses the exported document without the
-product config validator. It reads the host registry directly and queries the
-effective policy through the OpenShell CLI. These independent observations
-prevent the exporter and validator from sharing the same product readers.
+For `required` coverage, the canonical `NemoClawConfig` validator checks the
+complete exported document. Semantic expectations remain independent of the
+exporter. The fixture reads the target manifest and host registry directly,
+then queries the effective policy through the OpenShell CLI.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets

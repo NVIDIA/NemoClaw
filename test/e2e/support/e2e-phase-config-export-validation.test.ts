@@ -26,7 +26,16 @@ import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/typ
 const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
 const SOURCE_REVISION = "b".repeat(40);
 const SECRET = "fixture-secret-value";
-const POLICY = { network_policies: { inference: { endpoints: ["inference.local"] } } };
+const POLICY = {
+  version: 1,
+  network_policies: {
+    inference: {
+      name: "inference",
+      endpoints: [{ host: "inference.example", port: 443 }],
+      binaries: [{ path: "/usr/bin/openclaw" }],
+    },
+  },
+};
 const createdDirectories: string[] = [];
 
 function sha256(value: string): string {
@@ -120,7 +129,7 @@ function document(overrides: { observability?: boolean } = {}): ConfigExportDocu
         },
       ],
     },
-  } as ConfigExportDocument;
+  } as unknown as ConfigExportDocument;
 }
 
 function instance(expectedFailure = false): NemoClawInstance {
@@ -347,6 +356,28 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
+  it("rejects an export that violates the canonical config schema (#11485)", async () => {
+    const valid = document();
+    const raw = JSON.stringify({
+      ...valid,
+      metadata: { ...valid.metadata, name: "Not Valid" },
+    });
+    const canonicalDependencies = dependencies();
+    canonicalDependencies.parseConfig = parseConfigExport;
+    const test = fixture({
+      dependencies: canonicalDependencies,
+      host: successfulHost(raw),
+    });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "verification",
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
   it("fails when live credentials are not declared by the target manifest (#11485)", async () => {
     const test = fixture({ dependencies: dependencies({ credentialRefs: [] }) });
 
@@ -390,6 +421,24 @@ describe("automatic config export validation phase", () => {
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+  });
+
+  it("withholds export metadata when a comment contains a base64 fixture secret (#11485)", async () => {
+    const encodedSecret = Buffer.from(SECRET, "utf8").toString("base64");
+    const raw = `${JSON.stringify(document())}\n# ${encodedSecret}\n`;
+    expect(raw).not.toContain(SECRET);
+    const test = fixture({ host: successfulHost(raw), secret: SECRET });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "security",
+      security: { knownSecretsAbsent: false },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
   });
 
   it("withholds export metadata when an internal credential transport leaks (#11485)", async () => {

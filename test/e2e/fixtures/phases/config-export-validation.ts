@@ -8,6 +8,12 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
+import type {
+  NemoClawAgentConfig,
+  NemoClawSandboxConfig,
+  ValidatedNemoClawConfig,
+} from "../../../../src/lib/config/model.ts";
+import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -143,41 +149,7 @@ export interface ConfigExportRegistry {
   sandboxes: Record<string, ConfigExportRegistryEntry>;
 }
 
-interface ConfigExportProviderDocument {
-  name: string;
-  provider: string;
-  api: string;
-  endpoint?: string;
-  credential?: { env?: string };
-}
-
-interface ConfigExportRouteDocument {
-  name: string;
-  providerRef: string;
-  overrides?: { model?: string };
-}
-
-interface ConfigExportAgentDocument {
-  name?: string;
-  type: string;
-  inference: { routes: ConfigExportRouteDocument[] };
-  observability?: unknown;
-}
-
-interface ConfigExportSandboxDocument {
-  name: string;
-  runtime: { provider: string; image: { ref: string } };
-  network: { policy: { explicit: unknown } };
-  agents: ConfigExportAgentDocument[];
-  integrations?: { webSearch?: unknown };
-}
-
-export interface ConfigExportDocument {
-  spec: {
-    inferenceProviders: ConfigExportProviderDocument[];
-    sandboxes: ConfigExportSandboxDocument[];
-  };
-}
+export type ConfigExportDocument = ValidatedNemoClawConfig;
 
 export interface ConfigExportValidationDependencies {
   closeFile(file: number): void;
@@ -235,13 +207,6 @@ function requiredRecord(value: unknown, field: string): Record<string, unknown> 
   return value as Record<string, unknown>;
 }
 
-function requiredArray(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`exported configuration field '${field}' must be an array`);
-  }
-  return value;
-}
-
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`exported configuration field '${field}' must be a non-empty string`);
@@ -249,107 +214,8 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
-function optionalString(value: unknown, field: string): string | undefined {
-  return value === undefined ? undefined : requiredString(value, field);
-}
-
-function parseProvider(value: unknown, index: number): ConfigExportProviderDocument {
-  const provider = requiredRecord(value, `spec.inferenceProviders[${index}]`);
-  const credential =
-    provider.credential === undefined
-      ? undefined
-      : requiredRecord(provider.credential, `spec.inferenceProviders[${index}].credential`);
-  return {
-    name: requiredString(provider.name, `spec.inferenceProviders[${index}].name`),
-    provider: requiredString(provider.provider, `spec.inferenceProviders[${index}].provider`),
-    api: requiredString(provider.api, `spec.inferenceProviders[${index}].api`),
-    ...(optionalString(provider.endpoint, `spec.inferenceProviders[${index}].endpoint`)
-      ? { endpoint: provider.endpoint as string }
-      : {}),
-    ...(credential
-      ? {
-          credential: {
-            env: optionalString(credential.env, `spec.inferenceProviders[${index}].credential.env`),
-          },
-        }
-      : {}),
-  };
-}
-
-function parseRoute(value: unknown, sandboxIndex: number, agentIndex: number, index: number) {
-  const prefix = `spec.sandboxes[${sandboxIndex}].agents[${agentIndex}].inference.routes[${index}]`;
-  const route = requiredRecord(value, prefix);
-  const overrides =
-    route.overrides === undefined
-      ? undefined
-      : requiredRecord(route.overrides, `${prefix}.overrides`);
-  return {
-    name: requiredString(route.name, `${prefix}.name`),
-    providerRef: requiredString(route.providerRef, `${prefix}.providerRef`),
-    ...(overrides
-      ? { overrides: { model: optionalString(overrides.model, `${prefix}.overrides.model`) } }
-      : {}),
-  };
-}
-
-function parseAgent(
-  value: unknown,
-  sandboxIndex: number,
-  index: number,
-): ConfigExportAgentDocument {
-  const prefix = `spec.sandboxes[${sandboxIndex}].agents[${index}]`;
-  const agent = requiredRecord(value, prefix);
-  const inference = requiredRecord(agent.inference, `${prefix}.inference`);
-  return {
-    type: requiredString(agent.type, `${prefix}.type`),
-    inference: {
-      routes: requiredArray(inference.routes, `${prefix}.inference.routes`).map(
-        (route, routeIndex) => parseRoute(route, sandboxIndex, index, routeIndex),
-      ),
-    },
-    ...(agent.observability === undefined ? {} : { observability: agent.observability }),
-  };
-}
-
-function parseSandbox(value: unknown, index: number): ConfigExportSandboxDocument {
-  const prefix = `spec.sandboxes[${index}]`;
-  const sandbox = requiredRecord(value, prefix);
-  const runtime = requiredRecord(sandbox.runtime, `${prefix}.runtime`);
-  const image = requiredRecord(runtime.image, `${prefix}.runtime.image`);
-  const network = requiredRecord(sandbox.network, `${prefix}.network`);
-  const policy = requiredRecord(network.policy, `${prefix}.network.policy`);
-  const integrations =
-    sandbox.integrations === undefined
-      ? undefined
-      : requiredRecord(sandbox.integrations, `${prefix}.integrations`);
-  return {
-    name: requiredString(sandbox.name, `${prefix}.name`),
-    runtime: {
-      provider: requiredString(runtime.provider, `${prefix}.runtime.provider`),
-      image: { ref: requiredString(image.ref, `${prefix}.runtime.image.ref`) },
-    },
-    network: { policy: { explicit: policy.explicit } },
-    agents: requiredArray(sandbox.agents, `${prefix}.agents`).map((agent, agentIndex) =>
-      parseAgent(agent, index, agentIndex),
-    ),
-    ...(integrations ? { integrations: { webSearch: integrations.webSearch } } : {}),
-  };
-}
-
 export function parseConfigExport(raw: string): ConfigExportDocument {
-  const root = requiredRecord(YAML.parse(raw), "document");
-  if (root.apiVersion !== "nemoclaw.nvidia.com/v1" || root.kind !== "NemoClawConfig") {
-    throw new Error("exported configuration has an unsupported contract");
-  }
-  const spec = requiredRecord(root.spec, "spec");
-  return {
-    spec: {
-      inferenceProviders: requiredArray(spec.inferenceProviders, "spec.inferenceProviders").map(
-        parseProvider,
-      ),
-      sandboxes: requiredArray(spec.sandboxes, "spec.sandboxes").map(parseSandbox),
-    },
-  };
+  return validateNemoClawConfig(YAML.parse(raw));
 }
 
 function readRegistry(): ConfigExportRegistry {
@@ -405,8 +271,8 @@ function enabledManifestFeatures(manifest: LoadedManifest): string[] {
 }
 
 function observedFeatures(
-  sandbox: ConfigExportSandboxDocument | undefined,
-  agent: ConfigExportAgentDocument | undefined,
+  sandbox: NemoClawSandboxConfig | undefined,
+  agent: NemoClawAgentConfig | undefined,
 ): string[] {
   const features: string[] = [];
   if (sandbox?.integrations?.webSearch) features.push("webSearch");
@@ -429,9 +295,10 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
-    inferenceEndpoint: provider?.endpoint ?? null,
+    inferenceEndpoint: provider && "endpoint" in provider ? provider.endpoint : null,
     model: route?.overrides?.model ?? null,
-    credentialReference: provider?.credential?.env ?? null,
+    credentialReference:
+      provider && "credential" in provider ? (provider.credential?.env ?? null) : null,
     routeName: route?.name ?? null,
     routeProviderReference: route?.providerRef ?? null,
     policySha256: sandbox ? sha256(canonicalJson(sandbox.network.policy.explicit)) : null,
@@ -530,6 +397,7 @@ function decodedScalarsMatch(
   visited = new WeakSet<object>(),
 ): boolean {
   if (typeof value === "string") return matches(value);
+  if (value instanceof Uint8Array) return matches(Buffer.from(value).toString("utf8"));
   if (value === null || typeof value !== "object" || visited.has(value)) return false;
   visited.add(value);
   if (Array.isArray(value)) {
@@ -538,6 +406,17 @@ function decodedScalarsMatch(
   return Object.entries(value).some(
     ([key, entry]) => matches(key) || decodedScalarsMatch(entry, matches, visited),
   );
+}
+
+function encodedSecretValues(secretValues: readonly string[]): string[] {
+  const encoded = new Set<string>();
+  for (const secret of secretValues) {
+    if (secret.length === 0) continue;
+    const base64 = Buffer.from(secret, "utf8").toString("base64");
+    encoded.add(base64);
+    encoded.add(base64.replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, ""));
+  }
+  return [...encoded];
 }
 
 export class ConfigExportValidationPhaseFixture {
@@ -690,7 +569,10 @@ export class ConfigExportValidationPhaseFixture {
         }
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        const rawSecretsAbsent = !secretValues.some((value) => value && raw!.includes(value));
+        const encodedSecrets = encodedSecretValues(secretValues);
+        const rawSecretsAbsent =
+          !secretValues.some((value) => value && raw!.includes(value)) &&
+          !encodedSecrets.some((value) => value && raw!.includes(value));
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
