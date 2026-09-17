@@ -167,7 +167,10 @@ impl OpenShell {
             sandbox_id: sandbox.metadata.ok_or(ObservationError::Incomplete)?.id,
             command,
             environment: environment.into_iter().collect(),
-            timeout_seconds: seconds,
+            execution_timeout: Some(
+                openshell_core::time::duration_from_std(Duration::from_secs(u64::from(seconds)))
+                    .expect("u32 seconds fit protobuf duration"),
+            ),
             ..Default::default()
         });
         request.set_timeout(Duration::from_secs(u64::from(seconds)));

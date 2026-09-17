@@ -514,10 +514,10 @@
               ]
             },
             "image": {
-              "default": "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a",
+              "default": "ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7",
               "enum": [
                 "",
-                "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a"
+                "ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7"
               ]
             },
             "management": {
@@ -597,7 +597,7 @@
         "image": {
           "description": "Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a."
+          "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7."
         },
         "management": {
           "description": "Whether the SDK manages the gateway or connects to an existing one.",

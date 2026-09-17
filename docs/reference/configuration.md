@@ -398,7 +398,7 @@ Paths:
 | `credential` | [Credential](#credential) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
 | `engine` | string | No | — | Managed gateway Docker socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
-| `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a. |
+| `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7. |
 | `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
 | `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |

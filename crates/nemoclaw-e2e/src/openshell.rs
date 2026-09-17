@@ -409,7 +409,9 @@ fn delete_provider(
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("lost delete reply secret"));
     }
-    Ok(p::DeleteProviderResponse { deleted })
+    Ok(p::DeleteProviderResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }
 
 #[derive(Clone)]
@@ -433,7 +435,13 @@ fn gateway_info(
     _: p::GetGatewayInfoRequest,
 ) -> Result<p::GetGatewayInfoResponse, Status> {
     Ok(p::GetGatewayInfoResponse {
-        gateway_version: "0.0.117-dev.155+gb3e4ad457".into(),
+        gateway_version: serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../versions.json"
+        ))
+        .unwrap()["openshell"]
+            .as_str()
+            .unwrap()
+            .into(),
         compute_drivers: vec![p::ComputeDriverInfo {
             name: state.driver.clone().unwrap_or_else(|| "docker".into()),
             ..Default::default()
@@ -481,14 +489,15 @@ fn delete_sandbox(
     state: &mut State,
     q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
-    let deleted = state
+    let sandbox = state
         .sandboxes
         .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
-        .is_some();
-    if deleted {
-        state.effects += 1;
-    }
-    Ok(p::DeleteSandboxResponse { deleted })
+        .ok_or_else(|| Status::not_found("absent"))?;
+    state.effects += 1;
+    Ok(p::DeleteSandboxResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+        sandbox_id: sandbox.metadata.unwrap().id,
+    })
 }
 fn policy_status(
     state: &mut State,
@@ -660,5 +669,10 @@ fn delete_profile(
         state.lose_delete = false;
         return Err(Status::unavailable("lost reply"));
     }
-    Ok(p::DeleteProviderProfileResponse { deleted })
+    if !deleted {
+        return Err(Status::not_found("absent"));
+    }
+    Ok(p::DeleteProviderProfileResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }
