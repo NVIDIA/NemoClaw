@@ -80,6 +80,9 @@ A reviewed qualification can use a PR-specific allowance in
 `ci/e2e-assertion-growth-exceptions.json`. The guard reads this policy only from the trusted base;
 candidate policy cannot grant itself an allowance. Each allowance names the exact changed live
 files and bounds both the increase and final census. Other PRs and files retain the no-growth rule.
+Census file entries describe test owners. Imported companion assertions contribute to their
+owner's transitive counts and the suite's unique counts. Companions also count toward
+`liveFileCount`; they do not get separate test-owner entries.
 When two approved qualifications share an owner, each record can use their combined ceiling
 and that ceiling minus its own delta as baseline. The delta bound preserves each PR's allowance
 before or after the other qualification merges.
@@ -90,8 +93,11 @@ orders. It and `growth-guardrail-parsers.test.ts` reject excess growth, unrelate
 and candidate-supplied policy. Remove each allowance in its feature PR, alongside the census
 that becomes the normal baseline. The empty-policy case keeps enforcing no-growth after the
 last record is removed.
-For local checks of that PR, set `NEMOCLAW_GROWTH_PR_NUMBER` to its number. This hint selects an
-existing trusted-base allowance; it grants no authorization. Hosted `PR_NUMBER` takes precedence.
+For local growth-guardrail checks, run `NEMOCLAW_GROWTH_PR_NUMBER=11919 npm run test-size:check`.
+Replace `11919` with the PR number. This hint selects an existing trusted-base allowance;
+it grants no authorization. Hosted `PR_NUMBER` takes precedence.
+`npm run e2e:assertions:check` compares the suite with its checked-in census. It does not read
+the PR hint or apply allowances. Include the regenerated census in the feature PR.
 
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
