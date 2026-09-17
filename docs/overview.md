@@ -45,7 +45,8 @@ A deployment can select multiple inference providers; at most one may have manag
 The gateway may also be managed or external.
 The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
 
-Each document contains one sandbox, which selects exactly one harness configuration.
+Each document contains one to 32 named sandboxes, each selecting exactly one harness configuration.
+Sandboxes can use different harnesses and share inference definitions.
 OpenClaw can declare multiple agents with different model and provider choices; other harnesses require one agent.
 Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
 

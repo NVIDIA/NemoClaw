@@ -38,8 +38,10 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
-Inline providers also require `name`, which identifies the OpenShell provider registration.
-The schema currently supports exactly one sandbox; OpenClaw agents can select models from different providers.
+Inline providers also require `name`.
+Deployment-level provider names identify their OpenShell registrations; sandbox-local providers receive stable identities derived from the sandbox and provider names.
+Different sandboxes can reuse a local definition name without sharing its registration.
+A document supports one to 32 named sandboxes; OpenClaw agents can select models from different providers.
 See [multiple model choices](inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
@@ -161,7 +163,7 @@ It passes the SDK parser and JSON Schema checks, but this combined deployment ha
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
 Follow the [SSH service prerequisites](remote-service.md), [agent image procedure](inference.md#build-an-image-with-the-configuration-interface), and [Brave credential instructions](agents.md#brave-web-search).
 The proxy and OTLP collector must already exist and be reachable; follow the [policy and proxy prerequisites](sandbox-network.md).
-Apply provisions the managed resources and invokes inference.
+Apply provisions the managed resources and checks readiness; verify inference separately.
 
 No single active configuration exercises every schema branch:
 

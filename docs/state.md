@@ -7,9 +7,19 @@ Keep the desired-state YAML, its matching bundle, and the entire deployment stat
 The CLI defaults to `.nemoclaw` in the working directory; use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
+## Named Sandbox Resources
+
+Intent version 3 identifies sandboxes and providers by name rather than their position in the document.
+Reordering sandboxes, agents, providers, or model choices does not change their resource addresses or the intent digest.
+Sandbox-local providers receive identities derived from their sandbox and provider names; moving a definition between scopes can change its identity.
+Intent versions 1 and 2 are rejected without rewriting state.
+Keep the original bundle for recovery or teardown, then use a fresh UUID and state directory with the new bundle.
+Do not edit the intent version to bypass this check.
+Existing agent files and conversations are not migrated.
+
 ## Native Inference Migration
 
-Intent version 2 uses native provider endpoints and sandbox provider attachments.
+The earlier intent version 2 introduced native provider endpoints and sandbox provider attachments.
 Intent version 1 is rejected before reconciliation; its files are retained unchanged.
 Keep the previous bundle and OpenShell gateway available for export, recovery, or teardown of the old deployment.
 Do not edit the intent version or remove route entries from OpenTofu state manually.
@@ -43,8 +53,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | Native data | Location and lifetime |
 |---|---|
 | OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
-| First OpenClaw agent's working files | `/sandbox/workspace` |
-| Additional declared OpenClaw agents' working files | `/sandbox/workspaces/<agent-name>` |
+| Declared OpenClaw agents' working files | `/sandbox/workspaces/<agent-name>` |
 | Default local Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
 | Default local Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Experimental Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |

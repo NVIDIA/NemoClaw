@@ -99,7 +99,7 @@ The adapters write these settings when first creating native configuration:
 The nested OpenClaw sandbox setting does not disable the outer OpenShell sandbox.
 These defaults do not guarantee that arbitrary native tools are harmless or supply missing integration prerequisites.
 The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) checks reserved gateway, inference, execution, and declared integration settings.
-With a declared roster/tool policy it also compares the full owned agent and tool sections; other native fields are not all checked for drift.
+It also compares the full owned agent and tool sections; other native fields are not all checked for drift.
 The default [local Hermes adapter](../image/fabric/hermes_adapter.py) compares the generated top-level configuration sections, including terminal, approval, and turn settings.
 Readiness rejects conflicts in those checked fields; it does not continuously rewrite native configuration or enforce every initialization default.
 
@@ -108,7 +108,8 @@ Readiness rejects conflicts in those checked fields; it does not continuously re
 A sandbox accepts one or more uniquely named OpenClaw agents.
 Agents share one harness runtime and can select different [named model choices](inference.md#give-an-agent-multiple-model-choices).
 Other harnesses still require one agent.
-The first declared agent receives plain-text Fabric invocations.
+Plain-text Fabric invocations require exactly one declared agent.
+With multiple agents, use an input object containing `agent` and `message`; there is no implicit default agent.
 Native OpenClaw commands can select any declared agent by name.
 The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
 
@@ -122,7 +123,8 @@ tools:
 Only this allowlist is supported; empty lists, other tools, wildcards, and additional grant fields are rejected.
 Omitting `tools` selects progressive discovery without restricting tools.
 This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
-Each agent has a distinct session and workspace; those directories are not separate security boundaries.
+Each agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
+Those directories are not separate security boundaries.
 
 An unrestricted agent can select tool disclosure instead of an allowlist:
 
@@ -140,7 +142,7 @@ An unrestricted agent that omits `tools` selects progressive; read-only agents u
 If every agent is read-only, the shared mode is progressive.
 Conflicting modes are rejected before deployment.
 
-With multiple agents or an explicit tool policy, NemoClaw owns the native agent roster, agent defaults, and tool configuration.
+For OpenClaw, NemoClaw owns the native agent roster, agent defaults, and tool configuration.
 Startup, refresh, and export reject conflicting native settings without overwriting them.
 Unrelated channels, pairing, and plugin settings remain native configuration.
 Changing the declared roster, tool policy, or disclosure mode changes the sandbox launch specification; it is not an in-place permission update.

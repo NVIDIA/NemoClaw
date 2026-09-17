@@ -4,7 +4,7 @@
 # Configure Inference APIs, Limits, and Authentication
 
 Choose who operates the inference service, then select the API and model used by the agent.
-A sandbox can attach up to 32 inference providers selected by its agents.
+A deployment can select up to 32 inference providers across its sandboxes.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
 Live deployment with the current OpenShell pin is [blocked by a main-process environment propagation bug](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker).
@@ -50,7 +50,8 @@ The [multiple-provider example](../examples/multiple-providers.yaml) gives a res
 Each route selects its own `provider` or `providerRef`, with that provider's API and credential reference.
 The sandbox attaches the union of those selections, deduplicated by definition identity.
 Unused definitions add no resources, credential requirements, or network grants.
-Selected definitions must have distinct provider names.
+Selected definitions must have distinct provider names within their [definition scope](configuration-references.md).
+Different sandboxes can reuse local provider names.
 
 Replace the example endpoints, model IDs, deployment UID, and image for your environment.
 The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#prepare-an-external-endpoint).
@@ -59,13 +60,15 @@ Use the [deployment workflow](usage.md) with fresh state, then verify each confi
 
 OpenShell receives a distinct provider credential key for each credentialed registration; the sandbox receives placeholders rather than the resolved upstream keys.
 Every attached provider is available at the sandbox boundary.
-OpenClaw's per-agent model-selection policy is not separate credential or network isolation: use separate deployments and sandboxes for that boundary.
+OpenClaw's per-agent model-selection policy is not separate credential or network isolation: use separate sandboxes for that boundary.
+Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
 One selected provider may have managed inference dependencies: a vLLM service, managed Ollama, or an Ollama proxy.
 Other selected providers must be external endpoints.
-That managed lifecycle belongs to its provider even when the first agent's default model uses another provider.
-Multiple independently managed inference lifecycles in one document are rejected; this version still supports one sandbox per document.
+That managed lifecycle belongs to its provider even when other agents select another provider.
+Multiple independently managed inference lifecycles in one document are rejected.
+Multiple sandboxes can share the selected managed service or external providers.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
