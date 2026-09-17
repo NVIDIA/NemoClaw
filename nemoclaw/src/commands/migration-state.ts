@@ -293,7 +293,7 @@ function defaultWorkspacePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(home, ".openclaw", "workspace");
 }
 
-function collectExternalRoots(
+export function collectExternalRoots(
   config: OpenClawConfigDocument | null,
   stateDir: string,
   env: NodeJS.ProcessEnv = process.env,
