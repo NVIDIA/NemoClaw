@@ -207,6 +207,56 @@ module.verify_cron_runtime_source()
   }
 }
 
+function runSessionDeleteProbe() {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-session-delete-probe-"));
+  const source = `
+import importlib.util
+import pathlib
+import sqlite3
+import sys
+import types
+
+database = pathlib.Path(sys.argv[2]) / "state.db"
+
+class SessionDB:
+    def __init__(self):
+        self._conn = sqlite3.connect(database)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA temp_store=MEMORY")
+        self._sessions = set()
+
+    def create_session(self, session_id, _source):
+        self._sessions.add(session_id)
+
+    def append_message(self, _session_id, _role, _content):
+        pass
+
+    def delete_session(self, session_id):
+        self._sessions.remove(session_id)
+        return True
+
+    def list_sessions_rich(self, limit):
+        return [{"id": session_id} for session_id in list(self._sessions)[:limit]]
+
+hermes_state = types.ModuleType("hermes_state")
+hermes_state.SessionDB = SessionDB
+sys.modules["hermes_state"] = hermes_state
+
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_session_delete()
+`;
+  try {
+    return spawnSync("python3", ["-I", "-c", source, probes, temporaryRoot], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
 function runGeneratedConfigPreparation(doctorExit = 0) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-prepare-"));
   const hermesHome = path.join(temporaryRoot, ".hermes");
@@ -296,6 +346,13 @@ describe("Hermes image build probes", () => {
 
   it("accepts the Hermes SQLite row factory when verifying the cron database path", () => {
     const result = runCronRuntimeSourceProbe();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("accepts the Hermes SQLite row factory when verifying session deletion", () => {
+    const result = runSessionDeleteProbe();
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");

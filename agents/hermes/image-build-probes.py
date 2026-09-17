@@ -307,7 +307,8 @@ def verify_session_delete() -> None:
 
     db = SessionDB()
     temp_store = db._conn.execute("PRAGMA temp_store").fetchone()
-    assert temp_store and temp_store[0] == 2, temp_store
+    normalized_temp_store = tuple(temp_store) if temp_store is not None else None
+    assert normalized_temp_store and normalized_temp_store[0] == 2, temp_store
     session_id = "nemoclaw-session-delete-smoke"
     db.create_session(session_id, "cli")
     db.append_message(session_id, "user", "probe message 1")
