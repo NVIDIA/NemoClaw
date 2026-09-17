@@ -8,6 +8,13 @@ export const LIVE_TARGET_BASE_TEST_TIMEOUT_MS = 30 * MINUTE_MS;
 export const CONFIG_EXPORT_COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
 export const CONFIG_EXPORT_POLICY_TIMEOUT_MS = MINUTE_MS;
 
+// The Deep Agents Code credential-rotation lifecycle performs three bounded
+// route polls around provider mutation, a bounded rejected rebuild, container
+// identity checks, marker checks, and credential restoration. The ordinary
+// live-target base retains environment preparation, onboarding, and final
+// state validation; this budget contains the additional lifecycle operations.
+export const DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS = 20 * MINUTE_MS;
+
 // The Docker recreation path can wait once before `Ready` and again after the final
 // replacement-container restart. The outer command must contain both waits
 // plus image creation, readiness checks, and a bounded failure diagnostic.
@@ -65,6 +72,16 @@ export function liveTargetTimeoutContract(
     const testTimeoutMs = ONBOARD_POST_REBOOT_BASE_TEST_TIMEOUT_MS + configExportBudget;
     return {
       commandTimeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+      testTimeoutMs,
+      targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
+    };
+  }
+  if (lifecycle === "dcode-rebuild-invalid-credential") {
+    const testTimeoutMs =
+      LIVE_TARGET_BASE_TEST_TIMEOUT_MS +
+      DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS +
+      configExportBudget;
+    return {
       testTimeoutMs,
       targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
     };

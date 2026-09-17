@@ -14,6 +14,7 @@ import type {
   ValidatedNemoClawConfig,
 } from "../../../../src/lib/config/model.ts";
 import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
+import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -130,21 +131,19 @@ export interface PolicyReadResult {
   value?: { document: string };
 }
 
-export interface ConfigExportRegistryEntry {
-  name?: string;
-  agent?: string;
-  openshellDriver?: string;
-  gatewayName?: string;
-  provider?: string;
-  preferredInferenceApi?: string;
-  endpointUrl?: string;
-  model?: string;
-  credentialEnv?: string;
-  workload?: {
-    kind?: string;
-    reference?: string;
-  };
-}
+export type ConfigExportRegistryEntry = Pick<
+  SandboxEntry,
+  | "name"
+  | "agent"
+  | "openshellDriver"
+  | "gatewayName"
+  | "provider"
+  | "preferredInferenceApi"
+  | "endpointUrl"
+  | "model"
+  | "credentialEnv"
+  | "workload"
+>;
 
 export interface ConfigExportRegistry {
   sandboxes: Record<string, ConfigExportRegistryEntry>;

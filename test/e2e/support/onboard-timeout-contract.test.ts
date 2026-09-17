@@ -7,6 +7,7 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onb
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
   LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
@@ -46,6 +47,13 @@ const gatewayRestartOperationCeilingMs =
 const gatewayReconnectOperationCeilingMs = 60 * 30_000 + 59 * 5_000 + 30_000;
 const sandboxReadinessOperationCeilingMs = 30 * 30_000 + 29 * 5_000;
 const statusValidationOperationCeilingMs = 5 * MINUTE_MS + MINUTE_MS + 15_000 + 2 * MINUTE_MS;
+const dcodeRoutePollOperationCeilingMs = 8 * 25_000 + 7 * 2_000;
+const dcodeLifecycleOperationCeilingMs =
+  8 * 30_000 + 2 * 15_000 + 3 * dcodeRoutePollOperationCeilingMs + 3 * MINUTE_MS;
+const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
+  "dcode-rebuild-invalid-credential",
+  "expected-refusal",
+);
 
 describe("onboard final-handoff timeout contract", () => {
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
@@ -99,6 +107,23 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("contains every bounded Deep Agents Code credential-rotation lifecycle operation", () => {
+    expect(DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS).toBeGreaterThanOrEqual(
+      dcodeLifecycleOperationCeilingMs,
+    );
+  });
+
+  it("reserves job headroom after the Deep Agents Code lifecycle and export refusal", () => {
+    expect(dcodeExpectedRefusalTimeout.testTimeoutMs).toBe(
+      LIVE_TARGET_BASE_TEST_TIMEOUT_MS +
+        DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS +
+        CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+    );
+    expect(dcodeExpectedRefusalTimeout.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      dcodeExpectedRefusalTimeout.testTimeoutMs! + jobHeadroomMs,
+    );
+  });
+
   it("encloses the reviewed onboard-resume command budget", () => {
     expect(ONBOARD_RESUME_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
@@ -121,6 +146,9 @@ describe("onboard final-handoff timeout contract", () => {
         ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportPolicyMinutes: CONFIG_EXPORT_POLICY_TIMEOUT_MS / MINUTE_MS,
+      dcodeLifecycleMinutes: DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS / MINUTE_MS,
+      dcodeExpectedRefusalTestMinutes: dcodeExpectedRefusalTimeout.testTimeoutMs! / MINUTE_MS,
+      dcodeExpectedRefusalTargetMinutes: dcodeExpectedRefusalTimeout.targetTimeoutMinutes,
       postRebootTestMinutes: postRebootRequiredTimeout.testTimeoutMs! / MINUTE_MS,
       postRebootTargetMinutes: postRebootRequiredTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
@@ -136,6 +164,9 @@ describe("onboard final-handoff timeout contract", () => {
       postRebootStatusValidationMinutes: 10,
       configExportCommandMinutes: 2,
       configExportPolicyMinutes: 1,
+      dcodeLifecycleMinutes: 20,
+      dcodeExpectedRefusalTestMinutes: 52,
+      dcodeExpectedRefusalTargetMinutes: 72,
       postRebootTestMinutes: 143,
       postRebootTargetMinutes: 163,
       onboardResumeTestMinutes: 150,
@@ -188,8 +219,8 @@ describe("onboard final-handoff timeout contract", () => {
     expect(
       liveTargetTimeoutContract("dcode-rebuild-invalid-credential", "expected-refusal"),
     ).toEqual({
-      testTimeoutMs: 32 * MINUTE_MS,
-      targetTimeoutMinutes: 52,
+      testTimeoutMs: 52 * MINUTE_MS,
+      targetTimeoutMinutes: 72,
     });
     expect(liveTargetTimeoutContract(undefined, "required")).toEqual({
       testTimeoutMs: 33 * MINUTE_MS,
@@ -213,7 +244,9 @@ describe("onboard final-handoff timeout contract", () => {
         ? postRebootRequiredTimeout.testTimeoutMs! -
           CONFIG_EXPORT_COMMAND_TIMEOUT_MS -
           CONFIG_EXPORT_POLICY_TIMEOUT_MS
-        : LIVE_TARGET_BASE_TEST_TIMEOUT_MS;
+        : target.environment.lifecycle === "dcode-rebuild-invalid-credential"
+          ? LIVE_TARGET_BASE_TEST_TIMEOUT_MS + DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS
+          : LIVE_TARGET_BASE_TEST_TIMEOUT_MS;
 
     expect(contract.testTimeoutMs).toBe(lifecycleTestBudgetMs + configExportBudgetMs);
     expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
@@ -246,6 +279,7 @@ describe("onboard final-handoff timeout contract", () => {
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+    DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
     LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
     ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS,
     ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS,

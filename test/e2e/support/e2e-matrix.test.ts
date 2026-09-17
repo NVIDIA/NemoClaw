@@ -66,7 +66,7 @@ describe("live E2E target matrix", () => {
       Object.fromEntries(buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes])),
     ).toEqual({
       "ubuntu-policy-custom-missing-presets-negative": 45,
-      "ubuntu-repo-cloud-langchain-deepagents-code": 52,
+      "ubuntu-repo-cloud-langchain-deepagents-code": 72,
       "ubuntu-repo-cloud-openclaw": 53,
       "ubuntu-repo-docker-post-reboot-recovery": 163,
     });
