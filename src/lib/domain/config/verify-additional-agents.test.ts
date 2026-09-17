@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import { validateV1Alpha1Export as validateNemoClawConfig } from "../../config/v1alpha1-export";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -89,8 +89,8 @@ describe("read-only secondary-agent export", () => {
       expect(result.outcome.ok).toBe(true);
       const document = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
       const [primary, secondary] = document.spec.sandboxes[0]!.agents;
-      expect(primary).toMatchObject({
-        name: "primary",
+      expect(primary).toMatchObject({ name: "primary" });
+      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
         observability: {
           otlp: {
             enabled: true,
@@ -102,7 +102,6 @@ describe("read-only secondary-agent export", () => {
       });
       expect(secondary).toEqual({
         name: "researcher",
-        type: "openclaw",
         tools: { allow: ["read"] },
         inference: primary!.inference,
       });
@@ -148,13 +147,11 @@ describe("read-only secondary-agent export", () => {
     expect(additional).toEqual([
       {
         name: "researcher",
-        type: "openclaw",
         tools: { allow: ["read"] },
         inference: primary!.inference,
       },
       {
         name: "reviewer",
-        type: "openclaw",
         tools: { allow: ["read"] },
         inference: primary!.inference,
       },

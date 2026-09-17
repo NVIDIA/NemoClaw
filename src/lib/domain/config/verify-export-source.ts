@@ -817,6 +817,14 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "V1 export requires the default workspace.",
       ),
     );
+  if (entry.openshellDriver !== "docker")
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.provider",
+        "unsupported",
+        "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+      ),
+    );
   if (entry.workload?.kind === "managed-image" && sandbox.imageRef !== entry.workload.reference)
     findings.push(
       finding(
@@ -949,7 +957,7 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "This local inference topology is not represented by v1 export.",
+        "This local inference topology is not represented by v1alpha1 export.",
       ),
     );
 
@@ -1033,6 +1041,23 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
   return findings;
 }
 
+function validateInitialCompatibility(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  if (
+    inference.topology === "managed" ||
+    inference.provider === "ollama-local" ||
+    inference.ollamaServing
+  )
+    return [
+      finding(
+        "spec.inferenceProviders",
+        "unsupported",
+        "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+      ),
+    ];
+  return [];
+}
+
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference, sandbox, gateway } = snapshot;
   const evidence = inference.endpointEvidence;
@@ -1101,6 +1126,14 @@ function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportF
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
+  if (inference.credentialEnv !== null && inference.endpoint?.startsWith("http:"))
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].credential",
+        "unsupported",
+        "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+      ),
+    );
   return findings;
 }
 
@@ -1139,6 +1172,35 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
   return findings;
 }
 
+function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  if (snapshot.policy.kind !== "verified") return [];
+  const policy = snapshot.policy.canonical;
+  const process = policy.process as Record<string, unknown> | undefined;
+  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
+  const findings: ExportFinding[] = [];
+  if (
+    !process ||
+    !["sandbox", "1000"].includes(String(process.run_as_user)) ||
+    !["sandbox", "1000"].includes(String(process.run_as_group))
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.process",
+        "unsupported",
+        "The source process principal cannot be projected to the v1 Fabric 1000:1000 principal.",
+      ),
+    );
+  if (!filesystem)
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.filesystem_policy",
+        "unsupported",
+        "An explicit filesystem policy is required to grant the v1 Fabric runtime roots.",
+      ),
+    );
+  return findings;
+}
+
 function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -1151,10 +1213,12 @@ function validateAgreement(
     ...validateGateway(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
+    ...validateInitialCompatibility(snapshot),
     ...validateEndpointEvidence(snapshot),
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
+    ...validateTargetPolicy(snapshot),
   ];
 }
 

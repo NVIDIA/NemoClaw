@@ -26,8 +26,8 @@ vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
   cliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
 }));
 
-vi.mock("../../../src/lib/config/schema.ts", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
+vi.mock("../../../src/lib/config/v1alpha1-export.ts", () => ({
+  validateV1Alpha1Export: mocks.validateNemoClawConfig,
 }));
 
 import {
@@ -61,10 +61,11 @@ beforeEach(() => {
       ],
       sandboxes: [
         {
-          agents: [{ type: "hermes" }],
+          agents: [{ name: "primary" }],
+          harness: { kind: "hermes" },
           name: "hermes",
           network: { policy: { explicit: null } },
-          runtime: { image: { ref: IMAGE_REF } },
+          runtime: { provider: "docker" },
         },
       ],
     },
@@ -213,7 +214,7 @@ describe("Hermes interface runtime evidence", () => {
     "checks API allocation $apiPort with the dashboard disabled (#11433)",
     async ({ apiPort, interfaces }) => {
       const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = interfaces;
+      document.spec.sandboxes[0].harness.interfaces = interfaces;
       mocks.validateNemoClawConfig.mockReturnValue(document);
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
@@ -241,7 +242,7 @@ describe("Hermes interface runtime evidence", () => {
     "requires the expected dashboard process and internal listener %s %s (#11433)",
     async (processOutput, status, expected) => {
       const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = {
+      document.spec.sandboxes[0].harness.interfaces = {
         dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
         api: { port: 8643 },
       };

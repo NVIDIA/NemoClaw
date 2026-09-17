@@ -8,7 +8,7 @@ import {
   type NemoClawConfigDocumentUid,
 } from "../../config/model";
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
-import { validateNemoClawConfig } from "../../config/schema";
+import { validateV1Alpha1Export } from "../../config/v1alpha1-export";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
 import type {
@@ -86,7 +86,7 @@ export async function runConfigExport(
       },
     };
   }
-  const config = validateNemoClawConfig(
+  const config = validateV1Alpha1Export(
     buildExportConfig(observation.source, {
       documentName: request.documentName,
       documentUid: dependencies.createDocumentUid(),

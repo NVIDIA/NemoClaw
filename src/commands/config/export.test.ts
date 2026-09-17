@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   observeStableExportSource: vi.fn(),
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
+  validateV1Alpha1Export: vi.fn(),
   publishExportFile: vi.fn(),
 }));
 
@@ -19,8 +19,10 @@ vi.mock("../../lib/config/canonical", () => ({
 vi.mock("../../lib/domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
-vi.mock("../../lib/config/schema", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
+vi.mock("../../lib/config/v1alpha1-export", () => ({
+  validateV1Alpha1Export: mocks.validateV1Alpha1Export,
+  isV1Alpha1ExportName: (value: unknown) =>
+    typeof value === "string" && /^[a-z][a-z0-9-]{0,39}$/u.test(value),
 }));
 vi.mock("../../lib/adapters/fs/config-export-file", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/adapters/fs/config-export-file")>()),
@@ -51,7 +53,7 @@ describe("config export command", () => {
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
-    mocks.validateNemoClawConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.validateV1Alpha1Export.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest,
@@ -75,12 +77,12 @@ describe("config export command", () => {
       return true;
     }) as typeof process.stdout.write);
     await expect(
-      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team.alpha"], process.cwd()),
+      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team-alpha"], process.cwd()),
     ).resolves.toBeUndefined();
     expect(mocks.observeStableExportSource).toHaveBeenCalledWith("alpha", mocks.snapshotReader);
     expect(mocks.buildExportConfig).toHaveBeenCalledWith(
       { sandboxName: "alpha" },
-      expect.objectContaining({ documentName: "team.alpha", documentUid: expect.any(String) }),
+      expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
     );
     expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
     expect(mocks.publishExportFile).not.toHaveBeenCalled();
@@ -103,7 +105,14 @@ describe("config export command", () => {
   it("rejects an invalid document name before reading source state (#10938)", async () => {
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-", "--name", "Not Valid"], process.cwd()),
-    ).rejects.toThrow("config name is invalid");
+    ).rejects.toThrow("config name must be a lowercase v1 name");
+    expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
+  });
+
+  it("rejects a legacy dotted document name at the v1 export boundary (#11977)", async () => {
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "-", "--name", "team.alpha"], process.cwd()),
+    ).rejects.toThrow("config name must be a lowercase v1 name");
     expect(mocks.observeStableExportSource).not.toHaveBeenCalled();
   });
 

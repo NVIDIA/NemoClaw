@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
-import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
+import { validateV1Alpha1Export } from "../../../src/lib/config/v1alpha1-export.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -120,7 +120,7 @@ test(
       redactionValues.some((value) => repeatRaw.includes(value)),
       "Repeated export must omit credential values",
     ).toBe(false);
-    const repeatSpec = validateNemoClawConfig(YAML.parse(repeatRaw)).spec;
+    const repeatSpec = validateV1Alpha1Export(YAML.parse(repeatRaw)).spec;
     expect(
       /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u.test(firstRaw + repeatRaw),
       "Export must omit internal environment transports and credential placeholders",

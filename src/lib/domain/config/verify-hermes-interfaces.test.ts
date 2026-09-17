@@ -4,7 +4,7 @@
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import { validateV1Alpha1Export as validateNemoClawConfig } from "../../config/v1alpha1-export";
 import {
   getHermesDashboardRegistryFields,
   resolveHermesDashboardOnboardState,
@@ -60,8 +60,8 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([source]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      type: "hermes",
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      kind: "hermes",
       interfaces: {
         dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
         api: { port: 8643 },
@@ -76,7 +76,7 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]!.interfaces).toEqual({
+    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
       dashboard: { enabled: true },
     });
   });
@@ -95,7 +95,7 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesSnapshot({ hermesApiPort: 8643 })]);
     expect(exported.outcome.ok).toBe(true);
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       interfaces: { api: { port: 8643 } },
     });
   });

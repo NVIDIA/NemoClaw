@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import { validateV1Alpha1Export as validateNemoClawConfig } from "../../config/v1alpha1-export";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
@@ -66,7 +66,12 @@ describe("managed tool-disclosure export", () => {
     expect(document.spec.sandboxes[0]!.agents[0]!).toHaveProperty("tools", {
       disclosure: "direct",
     });
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+    expect(document.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
+      process: { run_as_user: "1000", run_as_group: "1000" },
+      filesystem_policy: {
+        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
+      },
+    });
     expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
   });
 

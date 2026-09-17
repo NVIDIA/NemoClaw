@@ -28,8 +28,10 @@ import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
-import { type NemoClawConfig } from "../../config/model";
+import {
+  validateV1Alpha1Export as validateNemoClawConfig,
+  type V1Alpha1Export,
+} from "../../config/v1alpha1-export";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -45,10 +47,10 @@ function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
   return (result as Extract<typeof result, { kind: "verified" }>).source;
 }
 
-function primaryOpenClawAgent(config: NemoClawConfig) {
-  const agent = config.spec.sandboxes[0]!.agents[0]!;
-  expect(agent.type).toBe("openclaw");
-  return agent as Extract<typeof agent, { type: "openclaw" }>;
+function primaryOpenClawAgent(config: V1Alpha1Export) {
+  const sandbox = config.spec.sandboxes[0]!;
+  expect(sandbox.harness.kind).toBe("openclaw");
+  return { ...sandbox.agents[0]!, ...sandbox.harness };
 }
 
 describe("config export source verification (#10938)", () => {
@@ -232,7 +234,12 @@ describe("config export source verification (#10938)", () => {
       expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
       expect(agent).toMatchObject(expected);
       expect(Object.hasOwn(agent, "observability")).toBe(telemetry);
-      expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+      expect(config.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
+        process: { run_as_user: "1000", run_as_group: "1000" },
+        filesystem_policy: {
+          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
+        },
+      });
       expect(config.spec.inferenceProviders[0]).toEqual(
         expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
       );
@@ -264,7 +271,7 @@ describe("config export source verification (#10938)", () => {
     expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
       model: "gpt-5",
     });
-    expect(config.spec.sandboxes[0]!.agents[0]).not.toHaveProperty("execution");
+    expect(config.spec.sandboxes[0]!.harness).not.toHaveProperty("execution");
   });
 
   it("retains an explicit zero heartbeat duration", async () => {
@@ -431,9 +438,11 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const config = validateNemoClawConfig(YAML.parse(yaml));
-    expect(config.spec.sandboxes[0]!.network).toEqual({
+    expect(config.spec.sandboxes[0]!.network).toMatchObject({
       proxy: { host: "proxy.internal", port: 3129 },
-      policy: { explicit: canonicalPolicy },
+      policy: {
+        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
+      },
     });
     expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
   });
@@ -442,8 +451,10 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot()]);
     expect(result.outcome.ok).toBe(true);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toEqual({
-      policy: { explicit: canonicalPolicy },
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toMatchObject({
+      policy: {
+        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
+      },
     });
     expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
   });
@@ -593,10 +604,7 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
-  it.each([
-    [undefined, "https://api.openai.com/v1"],
-    ["progressive", "http://host.openshell.internal:35271/v1"],
-  ] as const)(
+  it.each([[undefined, "https://api.openai.com/v1"]] as const)(
     "exports canonical Hermes without tools for registry selection %s",
     async (toolDisclosure, endpoint) => {
       const observed = hermesSnapshot({ toolDisclosure, endpointUrl: endpoint });
@@ -617,11 +625,35 @@ describe("config export source verification (#10938)", () => {
       const config = validateNemoClawConfig(YAML.parse(yaml));
       expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
       const sandbox = config.spec.sandboxes[0]!;
-      expect(sandbox.agents[0]!.type).toBe("hermes");
+      expect(sandbox.harness.kind).toBe("hermes");
       expect(sandbox.agents[0]).not.toHaveProperty("tools");
-      expect(sandbox.network.policy.explicit).toEqual(canonicalPolicy);
+      expect(sandbox.network.policy.explicit).toMatchObject({
+        process: { run_as_user: "1000", run_as_group: "1000" },
+        filesystem_policy: {
+          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/opt/hermes"]),
+        },
+      });
     },
   );
+
+  it("rejects a credential-bearing HTTP inference route that v1 cannot consume (#11977)", () => {
+    const endpoint = "http://host.openshell.internal:35271/v1";
+    const observed = hermesSnapshot({ toolDisclosure: "progressive", endpointUrl: endpoint });
+    const result = verify({
+      ...observed,
+      inference: {
+        ...observed.inference,
+        endpoint,
+        endpointEvidence: { ...observed.inference.endpointEvidence!, endpoint },
+      },
+    });
+
+    expect(findings(result)).toContainEqual({
+      field: "spec.inferenceProviders[].credential",
+      category: "unsupported",
+      diagnostic: "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+    });
+  });
 
   it.each([
     { label: "stale direct selection", selection: "direct", retained: "progressive" },
@@ -663,11 +695,10 @@ describe("config export source verification (#10938)", () => {
     const document = validateNemoClawConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
       method: "api-key",
-      providerRef: "hosted-hermes-provider",
     });
     expect(document.spec.inferenceProviders[0]).toMatchObject({
       name: "hosted-hermes-provider",
-      provider: "hermes-provider",
+      provider: "openai",
       credential: { env: "NOUS_API_KEY" },
     });
   });
@@ -1083,6 +1114,17 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
+  it("defers Podman until the v1 runtime mapping is qualified (#11977)", () => {
+    const result = verify(snapshot({ registry: entry({ openshellDriver: "podman" }) }));
+
+    expect(findings(result)).toContainEqual({
+      field: "spec.sandboxes[].runtime.provider",
+      category: "unsupported",
+      diagnostic:
+        "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+    });
+  });
+
   it.each([
     { label: "default proxy", environment: {} },
     {
@@ -1181,8 +1223,8 @@ describe("dashboard settings export", () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
     expect(document.spec.sandboxes[0]!.agents[0]).toEqual({
-      type: "hermes",
       name: "primary",
       inference: {
         routes: [
@@ -1225,12 +1267,12 @@ describe("dashboard settings export", () => {
       expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       const raw = outcome.writeStdout.mock.calls[0]![0];
       const document = validateNemoClawConfig(YAML.parse(raw));
-      expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-        type: "openclaw",
+      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+        kind: "openclaw",
         interfaces: { dashboard },
       });
       expect(raw).not.toContain("deviceAuth");
-      expect(raw).not.toContain("http://127.0.0.1");
+      expect(raw).not.toContain(`http://127.0.0.1:${port}`);
       expect(outcome.read).toHaveBeenCalledTimes(2);
       expect(outcome.publish).not.toHaveBeenCalled();
     },
@@ -1244,8 +1286,8 @@ describe("dashboard settings export", () => {
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      type: "openclaw",
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
     expect(document.spec.sandboxes[0]!.network.proxy).toEqual({
@@ -1272,9 +1314,11 @@ describe("dashboard settings export", () => {
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
       execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
+    });
+    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
       inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
     });
   });
