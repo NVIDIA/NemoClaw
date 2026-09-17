@@ -541,8 +541,6 @@ export function createCliProviderRecoveryHelpers(
   const { captureOpenshell, ...recoveryDeps } = deps;
   return createProviderRecoveryHelpers({
     ...recoveryDeps,
-    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell, {
-      allowLegacySelectedFallback: true,
-    }),
+    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
   });
 }

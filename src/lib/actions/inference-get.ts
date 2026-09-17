@@ -79,9 +79,7 @@ export class InferenceGetError extends Error {
 
 function defaultDeps(): InferenceGetDeps {
   return {
-    inferenceRouteObserver: createCliOpenShellInferenceRouteObserver(captureOpenshell, {
-      allowLegacySelectedFallback: true,
-    }),
+    inferenceRouteObserver: createCliOpenShellInferenceRouteObserver(captureOpenshell),
     getSandboxTargetGatewayName,
     listSandboxes: listPersistedSandboxTargets,
     log: console.log,

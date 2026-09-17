@@ -255,9 +255,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
-  const inferenceRouteObserver = createCliOpenShellInferenceRouteObserver(
-    (args, opts) => captureOpenshell(rootDir, args, { timeout: opts.timeout }),
-    { allowLegacySelectedFallback: true },
+  const inferenceRouteObserver = createCliOpenShellInferenceRouteObserver((args, opts) =>
+    captureOpenshell(rootDir, args, { timeout: opts.timeout }),
   );
 
   // Resolving a sandbox ID costs one OpenShell call, so only pay it when the

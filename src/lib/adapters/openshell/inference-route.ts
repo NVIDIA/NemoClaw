@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type OpenShellInferenceRouteTarget =
-  | Readonly<{ kind: "selected" }>
-  | Readonly<{ kind: "named"; gatewayName: string }>;
+import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 export type OpenShellInferenceRoute = Readonly<{
   provider: string;
@@ -40,7 +38,7 @@ export type OpenShellInferenceRouteResult =
   | Readonly<{ ok: false; error: OpenShellInferenceRouteError }>;
 
 export type ObserveOpenShellInferenceRouteRequest = Readonly<{
-  target: OpenShellInferenceRouteTarget;
+  target: OpenShellGatewayTarget;
   timeoutMs?: number;
 }>;
 

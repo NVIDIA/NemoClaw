@@ -105,29 +105,22 @@ describe("CLI inference route observation", () => {
     });
   });
 
-  it("uses the legacy selected-gateway fallback only for the base gateway", async () => {
-    const capture = vi
-      .fn()
-      .mockResolvedValueOnce({
-        status: 2,
-        output: "error: unexpected argument '-g' found",
-      })
-      .mockResolvedValueOnce({
-        status: 0,
-        output: "Inference:\n  Provider: nvidia-prod\n  Model: nvidia/model",
-      });
-    const observer = createCliOpenShellInferenceRouteObserver(capture, {
-      allowLegacySelectedFallback: true,
+  it("keeps an unsupported named base-gateway read scoped", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: 2,
+      output: "error: unexpected argument '-g' found",
     });
+    const result =
+      await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(baseRequest);
 
-    await expect(observer.observeInferenceRoute(baseRequest)).resolves.toMatchObject({
-      ok: true,
-      value: { state: "configured" },
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "invalid_request" },
     });
-    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
       ["inference", "get", "-g", "nemoclaw"],
-      ["inference", "get"],
-    ]);
+      expect.any(Object),
+    );
   });
 
   it.each([
@@ -147,11 +140,10 @@ describe("CLI inference route observation", () => {
     ["transport", { status: 1, output: "connection refused secret" }],
     ["schema", { status: 1, output: "protobuf decode error secret" }],
     ["indeterminate", { status: null, output: "secret" }],
-  ])("does not hide a base-gateway %s failure with legacy fallback", async (_, captured) => {
+  ])("keeps a base-gateway %s failure scoped", async (_, captured) => {
     const capture = vi.fn().mockResolvedValue(captured);
-    const result = await createCliOpenShellInferenceRouteObserver(capture, {
-      allowLegacySelectedFallback: true,
-    }).observeInferenceRoute(baseRequest);
+    const result =
+      await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(baseRequest);
 
     expect(result.ok).toBe(false);
     expect(capture).toHaveBeenCalledOnce();
@@ -159,11 +151,10 @@ describe("CLI inference route observation", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
   });
 
-  it("does not hide a base-gateway process-start failure with legacy fallback", async () => {
+  it("keeps a base-gateway process-start failure scoped", async () => {
     const capture = vi.fn().mockRejectedValue(new Error("secret path"));
-    const result = await createCliOpenShellInferenceRouteObserver(capture, {
-      allowLegacySelectedFallback: true,
-    }).observeInferenceRoute(baseRequest);
+    const result =
+      await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(baseRequest);
 
     expect(result).toMatchObject({
       ok: false,
@@ -177,19 +168,19 @@ describe("CLI inference route observation", () => {
       status: 2,
       output: "Error: unauthorized; unexpected argument '--gateway' secret",
     }));
-    const result = createSynchronousCliOpenShellInferenceRouteObserver(capture, {
-      allowLegacySelectedFallback: true,
-    }).observeInferenceRoute(baseRequest);
+    const result =
+      createSynchronousCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(
+        baseRequest,
+      );
 
     expect(result).toMatchObject({ ok: false, error: { kind: "authentication" } });
     expect(capture).toHaveBeenCalledOnce();
   });
 
-  it("never falls back from a named non-default gateway", async () => {
+  it("keeps a named non-default gateway failure scoped", async () => {
     const capture = vi.fn().mockResolvedValue({ status: 1, output: "secret failure" });
-    const result = await createCliOpenShellInferenceRouteObserver(capture, {
-      allowLegacySelectedFallback: true,
-    }).observeInferenceRoute(namedRequest);
+    const result =
+      await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(namedRequest);
 
     expect(result).toMatchObject({ ok: false, error: { kind: "command", reason: "failed" } });
     expect(capture).toHaveBeenCalledOnce();

@@ -12,12 +12,11 @@ import {
   type OpenShellInferenceRouteObservation,
   type OpenShellInferenceRouteObserver,
   type OpenShellInferenceRouteResult,
-  type OpenShellInferenceRouteTarget,
   type OpenShellSynchronousInferenceRouteObserver,
   type ObserveOpenShellInferenceRouteRequest,
 } from "./inference-route";
+import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
-const BASE_GATEWAY_NAME = "nemoclaw";
 const CAPTURE_MAX_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
@@ -48,7 +47,6 @@ export type CaptureOpenShellInferenceRouteSynchronously = (
 ) => CapturedOpenShellInferenceRouteResult;
 
 export type CliOpenShellInferenceRouteObserverOptions = Readonly<{
-  allowLegacySelectedFallback?: boolean;
   environment?: OpenShellGatewayEndpointEnvironment;
 }>;
 
@@ -200,7 +198,7 @@ function parseRoute(output: string): OpenShellInferenceRouteResult {
   });
 }
 
-function argsFor(target: OpenShellInferenceRouteTarget): string[] {
+function argsFor(target: OpenShellGatewayTarget): string[] {
   const args = ["inference", "get"];
   return target.kind === "named" ? scopeGatewayOpenshellArgs(args, target.gatewayName) : args;
 }
@@ -228,34 +226,6 @@ function validateRequest(
     if (!(error instanceof OpenShellGatewayEndpointOverrideError)) throw error;
     return { kind: "validation", message: error.message };
   }
-}
-
-function allowsLegacySelectedFallback(
-  request: ObserveOpenShellInferenceRouteRequest,
-  options: CliOpenShellInferenceRouteObserverOptions,
-): boolean {
-  return (
-    options.allowLegacySelectedFallback === true &&
-    request.target.kind === "named" &&
-    request.target.gatewayName === BASE_GATEWAY_NAME
-  );
-}
-
-function rejectsNamedGatewayArgument(
-  result: CapturedOpenShellInferenceRouteResult,
-  observed: OpenShellInferenceRouteResult,
-): boolean {
-  if (
-    result.status !== 2 ||
-    observed.ok ||
-    observed.error.kind !== "command" ||
-    observed.error.reason !== "invalid_request"
-  )
-    return false;
-  const output = cleanTerminalText(commandOutput(result));
-  return /\b(?:unexpected|unknown|unrecognized)\s+(?:argument|option)\b[^\r\n]*(?:-g|--gateway)\b/iu.test(
-    output,
-  );
 }
 
 function observeCapturedRoute(
@@ -298,20 +268,7 @@ export function createSynchronousCliOpenShellInferenceRouteObserver(
       } catch {
         return processStartFailure();
       }
-      const observed = observeCapturedRoute(captured);
-      if (
-        observed.ok ||
-        !allowsLegacySelectedFallback(request, options) ||
-        !rejectsNamedGatewayArgument(captured, observed)
-      )
-        return observed;
-      try {
-        return observeCapturedRoute(
-          capture(argsFor({ kind: "selected" }), captureOptions(request)),
-        );
-      } catch {
-        return processStartFailure();
-      }
+      return observeCapturedRoute(captured);
     },
   };
 }
@@ -331,20 +288,7 @@ export function createCliOpenShellInferenceRouteObserver(
       } catch {
         return processStartFailure();
       }
-      const observed = observeCapturedRoute(captured);
-      if (
-        observed.ok ||
-        !allowsLegacySelectedFallback(request, options) ||
-        !rejectsNamedGatewayArgument(captured, observed)
-      )
-        return observed;
-      try {
-        return observeCapturedRoute(
-          await capture(argsFor({ kind: "selected" }), captureOptions(request)),
-        );
-      } catch {
-        return processStartFailure();
-      }
+      return observeCapturedRoute(captured);
     },
   };
 }

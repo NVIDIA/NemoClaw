@@ -53,9 +53,7 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
   // Cache the SSH process probe once for all sandboxes — avoids spawning ps
   // per sandbox row. The getSshProcesses() call is the expensive part (5s timeout).
   let cachedSshOutput: string | null | undefined;
-  const inferenceRouteObserver = createCliOpenShellInferenceRouteObserver(captureOpenshell, {
-    allowLegacySelectedFallback: true,
-  });
+  const inferenceRouteObserver = createCliOpenShellInferenceRouteObserver(captureOpenshell);
 
   // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
   // process list actually contains a proxied connection that needs one (#9316).
