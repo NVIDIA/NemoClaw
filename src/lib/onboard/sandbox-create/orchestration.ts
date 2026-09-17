@@ -2950,12 +2950,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     sandboxId: identity.sandboxId,
                   });
                   console.log("  ✓ Selected the exact managed startup runtime");
-                  const managedStartupTransaction =
-                    managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
-                      bootstrapIdentity: managedBootstrapIdentity,
-                      containerId,
-                      request: managedStartupRootApplyRequest,
-                    });
+                  let managedStartupTransaction: ReturnType<
+                    typeof managedWorkloadOnboard.applyDockerManagedStartupRootRequest
+                  >;
+                  try {
+                    managedStartupTransaction =
+                      managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
+                        bootstrapIdentity: managedBootstrapIdentity,
+                        containerId,
+                        request: managedStartupRootApplyRequest,
+                      });
+                  } catch (error) {
+                    console.error(
+                      `  Managed startup root apply failed: ${
+                        error instanceof Error ? error.message : "unknown root apply failure"
+                      }`,
+                    );
+                    throw error;
+                  }
                   console.log("  ✓ Applied the managed startup profile");
                   if (managedStartupTransaction) {
                     console.log("  Committing managed startup shared state...");
