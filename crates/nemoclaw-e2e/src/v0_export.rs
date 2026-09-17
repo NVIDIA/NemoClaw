@@ -6,6 +6,7 @@
 // 2026-09-15: translated the strict exported subset into v1alpha1 desired state
 // and made v1-only runtime bindings explicit inputs.
 // 2026-09-16: updated the target schema and made process-principal translation explicit.
+// 2026-09-17: bound the target Fabric image's read-only runtime roots.
 
 //! Strict desired-state translation for manually curated v0 configuration exports.
 
@@ -198,6 +199,24 @@ pub fn desired_state_from_v0_export(
     }
     process.run_as_user = Some(bindings.process_principal.target_user.clone());
     process.run_as_group = Some(bindings.process_principal.target_group.clone());
+    if let Some(filesystem) = sandbox
+        .network
+        .policy
+        .as_mut()
+        .and_then(|selection| selection.explicit.filesystem_policy.as_mut())
+    {
+        let read_only = filesystem.read_only.get_or_insert_default();
+        for path in ["/app", "/opt/fabric", "/opt/nemoclaw"] {
+            if !read_only.iter().any(|existing| existing == path)
+                && !filesystem
+                    .read_write
+                    .as_ref()
+                    .is_some_and(|paths| paths.iter().any(|existing| existing == path))
+            {
+                read_only.push(path.into());
+            }
+        }
+    }
 
     let document = Document {
         api_version: API_VERSION.into(),

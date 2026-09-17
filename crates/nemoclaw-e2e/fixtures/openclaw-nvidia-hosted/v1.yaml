@@ -4,6 +4,7 @@
 # f47724f29838fe08898993fad1c8c6b7fcb3e080.
 # 2026-09-15: bound explicit v1 gateway and Fabric runtime identities.
 # 2026-09-16: updated the v1 schema and bound sandbox:sandbox to numeric 1000:1000.
+# 2026-09-17: granted read-only access to the bound Fabric runtime roots.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -51,6 +52,9 @@ spec:
               include_workdir: true
               read_only:
                 - /usr
+                - /app
+                - /opt/fabric
+                - /opt/nemoclaw
               read_write:
                 - /sandbox
       agents:

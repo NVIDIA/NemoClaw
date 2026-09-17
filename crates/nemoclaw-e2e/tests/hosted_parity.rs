@@ -69,6 +69,24 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
         .unwrap();
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
+    let read_only = sandbox
+        .network
+        .policy
+        .as_ref()
+        .unwrap()
+        .explicit
+        .filesystem_policy
+        .as_ref()
+        .unwrap()
+        .read_only
+        .as_ref()
+        .unwrap();
+    for runtime_root in ["/app", "/opt/fabric", "/opt/nemoclaw"] {
+        assert!(
+            read_only.iter().any(|path| path == runtime_root),
+            "translated policy must grant the v1 runtime root {runtime_root}"
+        );
+    }
     let agent = &sandbox.agents[0];
     assert_eq!(v1.sandbox_harness().unwrap().kind, "openclaw");
     let inference = v1.agent_inference(agent).unwrap();
