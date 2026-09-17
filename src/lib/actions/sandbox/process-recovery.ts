@@ -297,6 +297,7 @@ export interface OpenClawPostRestoreDoctorWindow {
 
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
+  executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
   now: () => number;
@@ -305,10 +306,41 @@ interface OpenClawPostRestoreDoctorDeps {
 
 const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
+  executePrivilegedSandboxCommand,
   executeSandboxExecCommand,
   now: Date.now,
   sleep: sleepSeconds,
 };
+
+async function executeOpenClawDoctorGateCommand(
+  deps: OpenClawPostRestoreDoctorDeps,
+  sandboxName: string,
+  command: string,
+  timeout: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<SandboxCommandResult | null> {
+  if (!deps.executePrivilegedSandboxCommand) {
+    return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
+      localDockerFallbackPolicy: "never",
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    });
+  }
+  const ownerCommand = [
+    "set -e",
+    "uid=\"$(stat -c '%u' /sandbox/.openclaw)\"",
+    "gid=\"$(stat -c '%g' /sandbox/.openclaw)\"",
+    `exec /usr/bin/setpriv --reuid="$uid" --regid="$gid" --clear-groups -- /bin/sh -lc ${shellQuote(command)}`,
+  ].join("; ");
+  try {
+    return deps.executePrivilegedSandboxCommand(
+      sandboxName,
+      ["/bin/sh", "-lc", ownerCommand],
+      timeout,
+    );
+  } catch {
+    return null;
+  }
+}
 
 function captureOpenClawDoctorLifecycle(
   deps: OpenClawPostRestoreDoctorDeps,
@@ -493,10 +525,6 @@ export async function abortOpenClawPostRestoreDoctor(
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<OpenClawPostRestoreDoctorAbortResult> {
   const { sandboxName, runtimeSelection } = window;
-  const commandOptions = {
-    localDockerFallbackPolicy: "never" as const,
-    ...(runtimeSelection ? { runtimeSelection } : {}),
-  };
   const lifecycleOptions = withSelectedOpenShellCommandOptions(
     {
       ignoreError: true,
@@ -510,11 +538,12 @@ export async function abortOpenClawPostRestoreDoctor(
 
   const publishAbort = async (): Promise<boolean> => {
     try {
-      const result = await deps.executeSandboxExecCommand(
+      const result = await executeOpenClawDoctorGateCommand(
+        deps,
         sandboxName,
         buildOpenClawPostUpgradeDoctorAbortCommand(),
         30_000,
-        commandOptions,
+        runtimeSelection,
       );
       return result?.status === 0;
     } catch {
@@ -631,14 +660,12 @@ export async function beginOpenClawPostRestoreDoctor(
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
       try {
-        const result = await deps.executeSandboxExecCommand(
+        const result = await executeOpenClawDoctorGateCommand(
+          deps,
           sandboxName,
           buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
           Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
-          {
-            localDockerFallbackPolicy: "never",
-            ...(runtimeSelection ? { runtimeSelection } : {}),
-          },
+          runtimeSelection,
         );
         return result?.status === 0;
       } catch {
@@ -690,14 +717,12 @@ export async function finishOpenClawPostRestoreDoctor(
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
   const { sandboxName, runtimeSelection } = window;
-  const release = await deps.executeSandboxExecCommand(
+  const release = await executeOpenClawDoctorGateCommand(
+    deps,
     sandboxName,
     buildOpenClawPostUpgradeDoctorReleaseCommand(),
     30_000,
-    {
-      localDockerFallbackPolicy: "never",
-      ...(runtimeSelection ? { runtimeSelection } : {}),
-    },
+    runtimeSelection,
   );
   if (!release || release.status !== 0) {
     return {
@@ -712,14 +737,12 @@ export async function finishOpenClawPostRestoreDoctor(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
-      const result = await deps.executeSandboxExecCommand(
+      const result = await executeOpenClawDoctorGateCommand(
+        deps,
         sandboxName,
         buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName),
         Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
-        {
-          localDockerFallbackPolicy: "never",
-          ...(runtimeSelection ? { runtimeSelection } : {}),
-        },
+        runtimeSelection,
       );
       return result?.status === 0;
     },

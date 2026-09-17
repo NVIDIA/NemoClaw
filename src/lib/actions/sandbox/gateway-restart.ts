@@ -415,22 +415,30 @@ export async function restartSandboxGatewayWithDeps(
       ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart"
       : `${agentName} gateway restart`;
   const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  if (!restartResult) {
+    const detail = `${nativeCommand} did not return command output`;
+    const gatewayLogTail =
+      agentName === "hermes"
+        ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
+        : [];
+    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
+    return { ok: false, failureLayer: "native agent command", detail };
+  }
   const hermesRelayClosed =
     agentName === "hermes" &&
-    restartResult?.status !== 0 &&
+    restartResult.status !== 0 &&
     /code: 'The service is currently unavailable'[\s\S]*exec relay closed[\s\S]*before the command reported an exit status/u.test(
       gatewayRestartOutput(restartResult),
     );
-  if (!restartResult || (restartResult.status !== 0 && !hermesRelayClosed)) {
+  if (restartResult.status !== 0 && !hermesRelayClosed) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
       printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
       return { ok: false, failureLayer: classified.layer, detail: classified.detail };
     }
-    const detail = restartResult
-      ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
-        `${nativeCommand} exited ${restartResult.status}`
-      : `${nativeCommand} did not return command output`;
+    const detail =
+      sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+      `${nativeCommand} exited ${restartResult.status}`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)

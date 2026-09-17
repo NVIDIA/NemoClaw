@@ -341,6 +341,10 @@ async function runOpenClawLaunchTurns(input: {
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
+  // OpenClaw 2026.9.1 requires exclusive gateway-lifecycle ownership for
+  // doctor repairs. The rebuild qualification lane owns that offline
+  // maintenance boundary; this security lane retains the live lint evidence
+  // above and limits its running-gateway mutation to config set/validate.
   const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
@@ -350,7 +354,7 @@ for f in /sandbox/.bashrc /sandbox/.profile; do
 done
 ${
   securityPostureEnabled()
-    ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
+    ? "bash -lc '/usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
     : ""
 }
 sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),

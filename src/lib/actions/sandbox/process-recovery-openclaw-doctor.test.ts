@@ -264,6 +264,48 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(sleep).toHaveBeenCalledOnce();
   });
 
+  it("uses the pinned direct container while the OpenShell exec relay is intentionally offline", async () => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    const executePrivileged = vi.fn(
+      (_sandboxName: string, _command: readonly string[], _timeout: number) => ({
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    );
+    const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const deps = {
+      captureOpenshell: capture as never,
+      executePrivilegedSandboxCommand: executePrivileged,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+
+    const begun = await beginOpenClawPostRestoreDoctor("alpha", undefined, deps);
+    expect(begun).toEqual({ ok: true, window: { sandboxName: "alpha" } });
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        (begun as { ok: true; window: Parameters<typeof finishOpenClawPostRestoreDoctor>[0] })
+          .window,
+        deps,
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(executePrivileged).toHaveBeenCalledTimes(3);
+    const expectedDirectCall = [
+      "alpha",
+      ["/bin/sh", "-lc", expect.stringContaining('/usr/bin/setpriv --reuid="$uid" --regid="$gid"')],
+      expect.any(Number),
+    ];
+    expect(executePrivileged.mock.calls).toEqual([
+      expectedDirectCall,
+      expectedDirectCall,
+      expectedDirectCall,
+    ]);
+  });
+
   it("does not restart when the one-shot marker cannot be persisted", async () => {
     const capture = vi.fn();
 

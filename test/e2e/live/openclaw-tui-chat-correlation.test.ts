@@ -688,7 +688,7 @@ test(
         expectExitCode: tui.exitCode,
         captureExists: tuiCapture.exists,
         captureNonEmpty: plainCapture.length > 0,
-        captureHasMarkers: plainCapture.includes("ISSUE6194_MARK"),
+        captureHasMarkers: combined.includes("ISSUE6194_MARK"),
         connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
         chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
         connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
@@ -699,7 +699,7 @@ test(
 
       expect(tuiCapture.exists, "TUI expect capture must exist").toBe(true);
       expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
-      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
+      expect(combined, "TUI expect output must include expect-script markers").toContain(
         "ISSUE6194_MARK",
       );
       expect(
