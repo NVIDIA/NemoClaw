@@ -90,7 +90,7 @@ NemoClaw disables the native agent entry first and cleans only live resources wh
 ## Agent MCP Capability Is Missing
 
 If add or restart reports that the OpenClaw native writer, Hermes transaction helper, or Deep Agents native MCP capability v3 is unavailable, rebuild the sandbox onto a current image before retrying.
-When an older OpenClaw or Deep Agents sandbox has a legacy MCP file, preview `mcp migrate`, then use `mcp migrate --apply` to convert it. A native definition that conflicts with the legacy definition stops migration before mutation.
+When an older OpenClaw or Deep Agents sandbox has a legacy MCP file, preview `mcp migrate`, then use `mcp migrate --apply` when you intend to convert it. To delete one named legacy entry instead, run `mcp remove <server>`; NemoClaw removes it only when a matching committed registry row proves ownership and otherwise preserves it. A native definition that conflicts with the legacy definition stops migration before mutation.
 
 <AgentOnly variant="deepagents">
 Migration carries the legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into the native `/sandbox/.deepagents/.mcp.json` file.

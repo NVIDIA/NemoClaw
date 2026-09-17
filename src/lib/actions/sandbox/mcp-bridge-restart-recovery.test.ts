@@ -58,7 +58,8 @@ vi.mock("./mcp-bridge-runtime-capabilities", () => ({
   assertMcpAdapterMutationRuntimeCapabilities: vi.fn(),
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
 }));
-vi.mock("./mcp-bridge-state", () => ({
+vi.mock("./mcp-bridge-state", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
   ensureSandboxGatewaySelected: vi.fn(),
   getBridgeAdapter: mocks.getBridgeAdapter,
   getSandboxAgent: mocks.getSandboxAgent,
@@ -228,5 +229,24 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
     expect(mocks.register).toHaveBeenCalledTimes(2);
     expect(mocks.reload).toHaveBeenCalledOnce();
     expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"]);
+  });
+
+  it("rejects an ambiguous recovery batch before target preflight or mutation", async () => {
+    const ambiguousEntries = [
+      entries[0],
+      {
+        ...entries[1],
+        url: entries[0].url,
+      },
+    ];
+
+    await expect(restoreExistingMcpBridgeRuntime("alpha", ambiguousEntries)).rejects.toThrow(
+      /cannot safely choose between credentials for an indistinguishable endpoint/,
+    );
+
+    expect(mocks.preflightTargets).not.toHaveBeenCalled();
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.reload).not.toHaveBeenCalled();
   });
 });

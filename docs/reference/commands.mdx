@@ -2554,7 +2554,7 @@ Remove an MCP server from a sandbox.
 
 NemoClaw first removes the named agent-native entry so the agent can no longer use it, then removes the deterministic policy key and detaches the exact live provider when the policy binding, provider identity, type, and credential key agree. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command reports the retained provider name so an operator can inspect or remove it separately after confirming it is unused.
 
-The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. Legacy Mcporter or `.nemoclaw-mcp.json` entries must be converted with `mcp migrate --apply` before ordinary removal.
+The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. A named legacy Mcporter or `.nemoclaw-mcp.json` entry can be removed directly only when its committed NemoClaw registry row proves ownership. An unproven legacy entry is preserved; use `mcp migrate --apply` when you intend to convert it to native state.
 
 ```bash
 $$nemoclaw my-assistant mcp remove github [--force]

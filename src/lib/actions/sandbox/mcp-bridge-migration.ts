@@ -280,9 +280,15 @@ export async function migrateMcpBridges(
     const entries = Object.values(legacyEntries).sort((left, right) =>
       left.server.localeCompare(right.server),
     );
+    const nativeEntries = await joinMcpEntriesToOpenShell(
+      sandbox,
+      observed.sources.native,
+      runtimeSelection,
+      "inspect native MCP migration conflict state",
+    );
     const ambiguousTarget = findAmbiguousMcpCredentialTarget([
       ...entries,
-      ...Object.values(observed.sources.native),
+      ...Object.values(nativeEntries),
     ]);
     if (ambiguousTarget) {
       throw new McpBridgeError(

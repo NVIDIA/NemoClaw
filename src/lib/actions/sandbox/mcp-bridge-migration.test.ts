@@ -401,19 +401,31 @@ describe("explicit MCP migration", () => {
     expect(mocks.unregister).not.toHaveBeenCalled();
   });
 
-  it("rejects a legacy target that aliases a differently credentialed native target", async () => {
+  it("enriches native ownership before rejecting a differently credentialed alias", async () => {
     const nativeEntry = {
-      ...entry,
       server: "gitlab",
+      agent: "openclaw",
+      adapter: "openclaw-config" as const,
+      url: entry.url,
       env: ["GITLAB_TOKEN"],
-      providerName: "alpha-mcp-gitlab",
-      providerId: "gitlab-provider-id",
       policyName: "mcp-bridge-gitlab",
       source: "native" as const,
     };
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: entry },
       sources: { native: { gitlab: nativeEntry }, legacy: { github: entry } },
+    });
+    mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => {
+      const sourceEntries = entries as Record<string, typeof nativeEntry>;
+      return sourceEntries.gitlab
+        ? {
+            gitlab: {
+              ...sourceEntries.gitlab,
+              providerName: "alpha-mcp-gitlab",
+              providerId: "gitlab-provider-id",
+            },
+          }
+        : entries;
     });
 
     await expect(migrateMcpBridges("alpha")).rejects.toThrow(

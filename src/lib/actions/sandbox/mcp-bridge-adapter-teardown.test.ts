@@ -67,6 +67,7 @@ vi.mock("./mcp-bridge-runtime-capabilities", () => ({
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
 }));
 vi.mock("./mcp-bridge-state", () => ({
+  assertNoAmbiguousMcpCredentialTargets: vi.fn(),
   ensureSandboxGatewaySelected: mocks.ensureSandboxGatewaySelected,
   getBridgeAdapter: mocks.getBridgeAdapter,
   getSandboxAgent: mocks.getSandboxAgent,
