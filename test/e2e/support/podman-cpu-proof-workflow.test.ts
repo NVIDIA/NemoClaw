@@ -21,6 +21,7 @@ import {
   runPortableCpuDelegationProofMode,
 } from "../../../scripts/checks/run-portable-cpu-delegation-proof.mts";
 import { PORTABLE_HOST_GATEWAY_IP } from "../../../src/lib/onboard/experimental/portable-profile.ts";
+import { externalWorkflowTargets } from "../../../tools/e2e/target-definitions/external-workflows.mts";
 import {
   readRepoText,
   readYaml,
@@ -387,6 +388,12 @@ describe("native Podman CPU proof workflow", () => {
         "--reporter=test/e2e/risk-signal-reporter.ts",
       ]);
       expect(proofCalls.map((call) => call.argv)).toEqual([requiredExecution, requiredExecution]);
+      const declaredTests = externalWorkflowTargets
+        .find(({ id }) => id === "podman-cpu-proof-portable-cpu-delegation")!
+        .tests.map(({ file }) => file);
+      expect(
+        proofCalls.map(({ argv }) => argv.filter((argument) => argument.endsWith(".test.ts"))),
+      ).toEqual([declaredTests, declaredTests]);
       expect(proofStates).toEqual([
         "E2E_CPU_DELEGATION_STATE=missing",
         "E2E_CPU_DELEGATION_STATE=delegated",

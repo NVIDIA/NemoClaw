@@ -23,8 +23,8 @@ The target runner cutover is complete:
   live target entrypoint.
 - `test/e2e/fixtures/` owns phase fixtures, clients, artifact
   capture, redaction, cleanup, and shell-probe bridges.
-- `test/e2e/registry/run.ts` only lists targets and emits the live
-  matrix.
+- `test/e2e/registry/run.ts` lists typed targets, lists every registered
+  execution route with `--list-inventory`, and emits the typed live matrix.
 - The typed-shell target runner, shell validation-suite tree, and retiring
   target workflows are removed. See `RETIREMENT.md`.
 
@@ -97,6 +97,7 @@ When moving behavior from a former E2E script:
 ```bash
 # Target registry and matrix
 npx tsx test/e2e/registry/run.ts --list
+npx tsx test/e2e/registry/run.ts --list-inventory
 npx tsx test/e2e/registry/run.ts --emit-live-matrix
 npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-openclaw
 

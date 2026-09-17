@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { externalWorkflowTargets } from "../../../tools/e2e/target-definitions/external-workflows.mts";
 import {
   createGitHubOidcTokenProvider,
   createJetsonCancellation,
@@ -277,14 +278,20 @@ describe("Jetson dispatch static HTTP contract", () => {
 
 describe("Jetson dispatch GitHub controller", () => {
   it("binds the candidate and managed-image publication commits into a v2 request (#8142)", () => {
-    expect(
-      jetsonDispatchRequestFromEnvironment({
-        GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_RUN_ID: "123456789",
-        JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
-        JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "b".repeat(40),
-      }),
-    ).toEqual(requestV2);
+    const actual = jetsonDispatchRequestFromEnvironment({
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "123456789",
+      JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
+      JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "b".repeat(40),
+    });
+    expect(actual).toEqual(requestV2);
+    const inventoryTarget = externalWorkflowTargets.find(
+      ({ id }) => id === "e2e-jetson-nvmap-gpu",
+    )!;
+    expect(inventoryTarget.job).toBe(actual.target);
+    expect(inventoryTarget.tests).toEqual([
+      { file: `test/e2e/live/${actual.target}.test.ts`, project: "e2e-live" },
+    ]);
   });
 
   it("rejects a v2 request without the managed-image publication commit (#8142)", () => {

@@ -60,14 +60,15 @@ describe("standard E2E execution profile", () => {
     ).toBe(false);
   });
 
-  it("publishes validated DCode base evidence with private permissions", ({ onTestFinished }) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
-    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
-    const candidateSha = "a".repeat(40);
-    const reference = `registry/base@sha256:${"b".repeat(64)}`;
-    const result = recordDcodeEvidence(directory, candidateSha, reference);
-    expect(result.status, result.stderr).toBe(0);
-    for (const name of ["dcode-target", "dcode-installed-agent"]) {
+  it.for(["dcode-target", "dcode-installed-agent"])(
+    "publishes validated DCode base evidence with private permissions in %s",
+    (name, { onTestFinished }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
+      onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const candidateSha = "a".repeat(40);
+      const reference = `registry/base@sha256:${"b".repeat(64)}`;
+      const result = recordDcodeEvidence(directory, candidateSha, reference);
+      expect(result.status, result.stderr).toBe(0);
       const filename = path.join(directory, name, "dcode-base-image.json");
       expect(JSON.parse(fs.readFileSync(filename, "utf8"))).toEqual({
         contractVersion: 1,
@@ -75,8 +76,8 @@ describe("standard E2E execution profile", () => {
         base: { reference },
       });
       expect(fs.statSync(filename).mode & 0o777).toBe(0o600);
-    }
-  });
+    },
+  );
 
   it("requires the resolved candidate SHA for typed and catalogue execution evidence", () => {
     const workflow = readWorkflow();
