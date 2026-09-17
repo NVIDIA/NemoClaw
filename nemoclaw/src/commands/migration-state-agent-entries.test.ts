@@ -40,8 +40,5 @@ it("collects canonical keyed-agent workspace and agent-directory bindings", () =
   expect(result.errors).toEqual([]);
   expect(
     result.roots.map((entry: MigrationExternalRoot) => entry.bindings[0]?.configPath).sort(),
-  ).toEqual([
-    "agents.entries.researcher.agentDir",
-    "agents.entries.researcher.workspace",
-  ]);
+  ).toEqual(["agents.entries.researcher.agentDir", "agents.entries.researcher.workspace"]);
 });
