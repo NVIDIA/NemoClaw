@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { assertExitZero } from "../fixtures/clients/command.ts";
-import {
-  type SandboxClient,
-  sandboxAccessEnv,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 export type InstalledTelegramRuntimeProof = {
@@ -21,8 +18,14 @@ export type InstalledTelegramRuntimeProof = {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
 const LOCAL_PROOF_SCRIPT = path.join(REPO_ROOT, "test/e2e/lib/installed-telegram-runtime-proof.ts");
 const REMOTE_PROOF_SCRIPT = `/tmp/nemoclaw-installed-telegram-runtime-proof-${process.pid}.ts`;
-
-validateSandboxName(SANDBOX_NAME);
+const ATOMIC_PROOF_RUNNER = [
+  "set -eu",
+  'encoded_source="$1"',
+  'script_path="$2"',
+  "shift 2",
+  'printf \'%s\' "$encoded_source" | base64 -d > "$script_path"',
+  'exec env "$@" node --experimental-strip-types "$script_path"',
+].join("\n");
 
 export function resolveInstalledTelegramRuntimePath(
   candidate: string,
@@ -63,22 +66,21 @@ export async function sendWithInstalledTelegramRuntime(
   text: string,
   redactionValues: string[],
 ): Promise<InstalledTelegramRuntimeProof> {
-  await sandbox.upload(SANDBOX_NAME, LOCAL_PROOF_SCRIPT, REMOTE_PROOF_SCRIPT, {
-    artifactName: "upload-installed-telegram-runtime-proof",
-    env: sandboxAccessEnv(),
-    redactionValues,
-    timeoutMs: 120_000,
-  });
+  const encodedSource = Buffer.from(fs.readFileSync(LOCAL_PROOF_SCRIPT, "utf8"), "utf8").toString(
+    "base64",
+  );
   const result = await sandbox.exec(
     SANDBOX_NAME,
     [
-      "env",
+      "sh",
+      "-lc",
+      ATOMIC_PROOF_RUNNER,
+      "nemoclaw-telegram-runtime-proof",
+      encodedSource,
+      REMOTE_PROOF_SCRIPT,
       `FAKE_TELEGRAM_API_PORT=${fakeTelegram.port}`,
       `OPENCLAW_MESSAGE_TARGET=${target}`,
       `OPENCLAW_MESSAGE_TEXT=${text}`,
-      "node",
-      "--experimental-strip-types",
-      REMOTE_PROOF_SCRIPT,
     ],
     {
       artifactName: "installed-telegram-runtime-proof",

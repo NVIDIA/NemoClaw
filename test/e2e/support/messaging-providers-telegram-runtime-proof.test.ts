@@ -18,7 +18,7 @@ function successfulCommand(stdout = "") {
   };
 }
 
-it("uploads and runs the installed Telegram proof with redaction", async () => {
+it("transmits and runs the installed Telegram proof atomically with redaction", async () => {
   const upload = vi.fn().mockResolvedValue(successfulCommand());
   const exec = vi.fn().mockResolvedValue(
     successfulCommand(
@@ -47,25 +47,19 @@ it("uploads and runs the installed Telegram proof with redaction", async () => {
     chatId: "42424242",
     messageId: "telegram-message-1",
   });
-  expect(upload).toHaveBeenCalledWith(
-    `e2e-msg-${process.pid}`,
-    expect.stringMatching(/test\/e2e\/lib\/installed-telegram-runtime-proof\.ts$/u),
-    `/tmp/nemoclaw-installed-telegram-runtime-proof-${process.pid}.ts`,
-    expect.objectContaining({
-      artifactName: "upload-installed-telegram-runtime-proof",
-      redactionValues,
-    }),
-  );
+  expect(upload).not.toHaveBeenCalled();
   expect(exec).toHaveBeenCalledWith(
     `e2e-msg-${process.pid}`,
     [
-      "env",
+      "sh",
+      "-lc",
+      expect.stringContaining('exec env "$@" node --experimental-strip-types "$script_path"'),
+      "nemoclaw-telegram-runtime-proof",
+      expect.any(String),
+      `/tmp/nemoclaw-installed-telegram-runtime-proof-${process.pid}.ts`,
       "FAKE_TELEGRAM_API_PORT=32123",
       "OPENCLAW_MESSAGE_TARGET=42424242",
       "OPENCLAW_MESSAGE_TEXT=credential rewrite proof",
-      "node",
-      "--experimental-strip-types",
-      `/tmp/nemoclaw-installed-telegram-runtime-proof-${process.pid}.ts`,
     ],
     expect.objectContaining({
       artifactName: "installed-telegram-runtime-proof",
