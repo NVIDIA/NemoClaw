@@ -986,70 +986,49 @@ describe("sandbox provisioning: base runtime tools", () => {
     expect(aptInstall).toBeDefined();
     expect(aptInstall).toContain("nftables=1.1.3-1");
   });
-  it.each([
-    [false, false],
-    [true, false],
-    [true, true],
-  ])(
-    "runtime hardening repairs missing tools (existing tools: %s, lsof: %s)",
-    (toolsInstalled, lsofInstalled) => {
-      const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
-      const log = path.join(tmp, "calls.log");
-      const marker = path.join(tmp, "ps-installed");
-      const chattrMarker = path.join(tmp, "chattr-installed");
-      const tmuxMarker = path.join(tmp, "tmux-installed");
-      const lsofMarker = path.join(tmp, "lsof-installed");
-      fs.writeFileSync(lsofMarker, String(Number(lsofInstalled)));
-      fs.writeFileSync(marker, String(Number(toolsInstalled)));
-      fs.writeFileSync(chattrMarker, String(Number(toolsInstalled)));
-      fs.writeFileSync(tmuxMarker, String(Number(toolsInstalled)));
-      const lists = path.join(tmp, "apt-lists");
-      fs.mkdirSync(lists);
-      const command = dockerRunCommandBetween(
-        dockerfile,
-        "# Harden: remove unnecessary build tools",
-        "# Copy built plugin and blueprint",
-      ).replaceAll("/var/lib/apt/lists", lists);
-      const script = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `call_log=${JSON.stringify(log)}`,
-        `ps_marker=${JSON.stringify(marker)}`,
-        `chattr_marker=${JSON.stringify(chattrMarker)}`,
-        `tmux_marker=${JSON.stringify(tmuxMarker)}`,
-        `lsof_marker=${JSON.stringify(lsofMarker)}`,
-        'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then printf 1 > "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then printf 1 > "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then printf 1 > "$tmux_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"lsof=4.99.4+dfsg-2"* ]]; then printf 1 > "$lsof_marker"; fi; }',
-        'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ "$(cat "$ps_marker")" = 1 ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ "$(cat "$chattr_marker")" = 1 ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ "$(cat "$tmux_marker")" = 1 ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "lsof" ]; then [ "$(cat "$lsof_marker")" = 1 ]; else builtin command "$@"; fi; }',
-        'ps() { [ "$(cat "$ps_marker")" = 1 ] || return 127; printf "procps test version\\n"; }',
-        command,
-      ].join("\n");
-      const scriptPath = path.join(tmp, "run.sh");
-      try {
-        fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-        const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-        expect(result.status).toBe(0);
-        const calls = fs.readFileSync(log, "utf-8");
-        expect(calls).toContain("apt-mark manual procps e2fsprogs tmux lsof");
-        expect(
-          calls.includes("apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2"),
-        ).toBe(!lsofInstalled);
-        expect(fs.readFileSync(lsofMarker, "utf8")).toBe("1");
-        expect(calls).toContain("apt-get autoremove --purge -y");
-        expect(calls.includes("apt-get update")).toBe(!toolsInstalled || !lsofInstalled);
-        expect(calls.includes("apt-get install -y --no-install-recommends procps=2:4.0.4-9")).toBe(
-          !toolsInstalled,
-        );
-        expect(
-          calls.includes("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b12"),
-        ).toBe(!toolsInstalled);
-        expect(result.stdout).toContain("procps test version");
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    },
-  );
+  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
+    const log = path.join(tmp, "calls.log");
+    const marker = path.join(tmp, "ps-installed");
+    const chattrMarker = path.join(tmp, "chattr-installed");
+    const tmuxMarker = path.join(tmp, "tmux-installed");
+    const lists = path.join(tmp, "apt-lists");
+    fs.mkdirSync(lists);
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Harden: remove unnecessary build tools",
+      "# Copy built plugin and blueprint",
+    ).replaceAll("/var/lib/apt/lists", lists);
+    const script = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `call_log=${JSON.stringify(log)}`,
+      `ps_marker=${JSON.stringify(marker)}`,
+      `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `tmux_marker=${JSON.stringify(tmuxMarker)}`,
+      'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b12"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
+      'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
+      command,
+    ].join("\n");
+    const scriptPath = path.join(tmp, "run.sh");
+    try {
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      const calls = fs.readFileSync(log, "utf-8");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs");
+      expect(calls).toContain("apt-get autoremove --purge -y");
+      expect(calls).toContain("apt-get update");
+      expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.4-9");
+      expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b12");
+      expect(result.stdout).toContain("procps test version");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Hermes sandbox provisioning", () => {

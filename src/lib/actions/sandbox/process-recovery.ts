@@ -873,6 +873,7 @@ export async function restartSandboxGateway(
     restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
       deps: {
+        sleep: sleepSeconds,
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
         resolveSandboxDashboardPort,

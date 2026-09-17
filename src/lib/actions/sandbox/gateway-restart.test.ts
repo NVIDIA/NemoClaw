@@ -3,8 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
-import { classifyGatewayRestartFailure } from "./gateway-restart";
-import { restartSandboxGateway } from "./process-recovery";
+import {
+  classifyGatewayRestartFailure,
+  restartSandboxGatewayWithDeps as restartSandboxGateway,
+} from "./gateway-restart";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -47,12 +49,17 @@ describe("restartSandboxGateway native lifecycle", () => {
 
   function baseDeps(overrides = {}) {
     return {
+      sleep: vi.fn(async () => undefined),
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
       executeSandboxExecCommand: vi.fn(async () => ({
         status: 0,
-        stdout: "",
+        stdout: JSON.stringify({
+          ok: true,
+          result: "scheduled",
+          restart: { ok: true, delayMs: 0 },
+        }),
         stderr: "",
       })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
@@ -77,8 +84,52 @@ describe("restartSandboxGateway native lifecycle", () => {
     });
     expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
       "alpha",
-      "openclaw gateway restart",
+      "openclaw gateway restart --safe --skip-deferral --json",
       210000,
+    );
+  });
+
+  it.each([
+    "Gateway service is not installed.",
+    "null",
+    '{"ok":true}\n{"ok":true}',
+    JSON.stringify({ ok: true, result: "scheduled", restart: { ok: true, delayMs: -1 } }),
+    JSON.stringify({ ok: false }),
+    JSON.stringify({ ok: true, result: "deferred", restart: { ok: true, delayMs: 0 } }),
+    JSON.stringify({ ok: true, result: "scheduled", restart: { ok: true, delayMs: 60_001 } }),
+  ])(
+    "does not accept a healthy old gateway after an unacknowledged restart: %s",
+    async (stdout) => {
+      silenceConsole();
+      const deps = baseDeps({
+        executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout, stderr: "" })),
+      });
+      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
+        ok: false,
+        failureLayer: "native agent command",
+      });
+      expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    },
+  );
+
+  it("waits for the acknowledged cooldown before checking gateway health", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      executeSandboxExecCommand: vi.fn(async () => ({
+        status: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          ok: true,
+          result: "coalesced",
+          restart: { ok: true, delayMs: 30_000 },
+        }),
+      })),
+    });
+    expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({ ok: true });
+    expect(deps.sleep).toHaveBeenCalledWith(30);
+    expect(deps.sleep.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.waitForRecoveredSandboxGateway.mock.invocationCallOrder[0]!,
     );
   });
 
