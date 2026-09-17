@@ -25,7 +25,6 @@ import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
-import { isShippedManagedImageAgent } from "./managed-image/contract";
 import { MANAGED_STARTUP_RELEASE_FILE } from "./managed-startup/image-runtime";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
@@ -336,20 +335,28 @@ type InitialPolicyOptions = {
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
 
+const MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES = {
+  openclaw: "/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+  hermes: "/agents/hermes/policy-additions.yaml",
+  "langchain-deepagents-code": "/agents/langchain-deepagents-code/policy-additions.yaml",
+} as const;
+
 function addManagedStartupReleasePolicy(
   policyContent: string,
   policyPath: string,
   agentName: string | null | undefined,
 ): string {
-  if (!agentName || !isShippedManagedImageAgent(agentName)) return policyContent;
+  if (
+    !agentName ||
+    !Object.prototype.hasOwnProperty.call(MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES, agentName)
+  ) {
+    return policyContent;
+  }
   if (agentName === "hermes" && isPortableExperimentalProfile()) return policyContent;
   const normalizedPath = policyPath.split(path.sep).join("/");
-  const expectedSuffix =
-    agentName === "openclaw"
-      ? "/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-      : agentName === "hermes"
-        ? "/agents/hermes/policy-additions.yaml"
-        : "/agents/langchain-deepagents-code/policy-additions.yaml";
+  const expectedSuffix = MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES[
+    agentName as keyof typeof MANAGED_STARTUP_RELEASE_POLICY_SUFFIXES
+  ];
   if (!normalizedPath.endsWith(expectedSuffix)) return policyContent;
   const parsed = YAML.parse(policyContent);
   if (!isObjectRecord(parsed)) {
