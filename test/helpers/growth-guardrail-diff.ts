@@ -139,7 +139,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
 
   return {
     files,
-    pullRequestNumber: null,
+    pullRequestNumber: selectPullRequestNumber(process.env),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
@@ -156,7 +156,17 @@ function requiredEnvironment(name: string): string {
 }
 
 function assertPullNumber(value: string): void {
-  if (!/^[1-9][0-9]*$/.test(value)) throw new Error("PR_NUMBER must be a positive integer");
+  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new Error("Pull request number must be a positive safe integer");
+  }
+}
+
+/** Hosted metadata wins; a local hint only selects existing trusted-base policy. */
+function selectPullRequestNumber(env: NodeJS.ProcessEnv): number | null {
+  const value = env.PR_NUMBER ?? env.NEMOCLAW_GROWTH_PR_NUMBER;
+  if (value === undefined) return null;
+  assertPullNumber(value);
+  return Number(value);
 }
 
 function assertCommitSha(sha: string, label: string): void {
@@ -215,4 +225,5 @@ export const testOnly = {
   parseChangedFiles,
   readFilesCached,
   selectLocalComparisonBase,
+  selectPullRequestNumber,
 };

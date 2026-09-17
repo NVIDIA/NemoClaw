@@ -76,6 +76,14 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
+A reviewed qualification can use a PR-specific allowance in
+`ci/e2e-assertion-growth-exceptions.json`. The guard reads this policy only from the trusted base;
+candidate policy cannot grant itself an allowance. Each allowance names the exact changed live
+files and bounds both the increase and final census. Other PRs and files retain the no-growth rule.
+Remove an allowance after its PR merges, when the resulting census becomes the normal baseline.
+For local checks of that PR, set `NEMOCLAW_GROWTH_PR_NUMBER` to its number. This hint selects an
+existing trusted-base allowance; it grants no authorization. Hosted `PR_NUMBER` takes precedence.
+
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
 direct global or environment mutations in the test that owns them.

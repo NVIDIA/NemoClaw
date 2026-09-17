@@ -5,6 +5,10 @@ import ts from "typescript";
 
 import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
+import {
+  applyTrustedE2eAssertionGrowthException,
+  E2E_ASSERTION_GROWTH_EXCEPTIONS_FILE,
+} from "./e2e-assertion-growth-exceptions";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const DOCKERFILE_GROWTH_EXCEPTIONS_FILE = "ci/dockerfile-growth-exceptions.json";
@@ -497,7 +501,7 @@ export async function e2eAssertionBudgetGrowthViolations(
   );
   if (!changed) return [];
   const [baseBlob, headBlob] = await Promise.all([
-    diff.readBase([E2E_ASSERTION_BUDGET_FILE]),
+    diff.readBase([E2E_ASSERTION_BUDGET_FILE, E2E_ASSERTION_GROWTH_EXCEPTIONS_FILE]),
     diff.readHead([E2E_ASSERTION_BUDGET_FILE]),
   ]);
   const baseSource = baseBlob.get(E2E_ASSERTION_BUDGET_FILE);
@@ -507,7 +511,11 @@ export async function e2eAssertionBudgetGrowthViolations(
   }
   if (baseSource === null || baseSource === undefined) return [];
 
-  const base = parseE2eAssertionBudget(baseSource);
+  const base = applyTrustedE2eAssertionGrowthException(
+    parseE2eAssertionBudget(baseSource),
+    baseBlob.get(E2E_ASSERTION_GROWTH_EXCEPTIONS_FILE),
+    diff,
+  );
   const head = parseE2eAssertionBudget(headSource);
   const violations: string[] = [];
   if (JSON.stringify(head.reference) !== JSON.stringify(base.reference)) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { E2eAssertionBudget } from "../../../scripts/checks/e2e-assertion-census.mts";
 
 import {
   addedJavaScriptViolations,
@@ -99,8 +100,191 @@ function e2eAssertionBudget(
   });
 }
 
+const E2E_BUDGET_PATH = "ci/e2e-assertion-budget.json";
+const E2E_EXCEPTION_PATH = "ci/e2e-assertion-growth-exceptions.json";
+const QUALIFICATION_TEST = "test/e2e/live/gpu-e2e.test.ts";
+const QUALIFICATION_OWNER = "test/e2e/live/gpu-vllm-export-owner.ts";
+
+/** Synthetic policy and census retain the approved qualification's exact growth. */
+function qualificationExceptionFixture() {
+  const base = JSON.parse(
+    e2eAssertionBudget(1, "a".repeat(40), QUALIFICATION_TEST),
+  ) as E2eAssertionBudget;
+  const baseline = {
+    liveFileCount: 194,
+    direct: { expectCalls: 1452, assertionPoints: 2279 },
+    unique: { expectCalls: 1900, assertionPoints: 3528 },
+    files: { [QUALIFICATION_TEST]: [39, 44, 72, 90, 3] as const },
+  };
+  const maximum = {
+    liveFileCount: 195,
+    direct: { expectCalls: 1496, assertionPoints: 2340 },
+    unique: { expectCalls: 1970, assertionPoints: 3615 },
+    files: { [QUALIFICATION_TEST]: [83, 105, 142, 177, 3] as const },
+  };
+  const budget = (
+    limits: Pick<E2eAssertionBudget["limits"], "liveFileCount" | "files"> & {
+      direct: { expectCalls: number; assertionPoints: number };
+      unique: { expectCalls: number; assertionPoints: number };
+    },
+  ) => ({
+    ...base,
+    limits: {
+      ...base.limits,
+      ...limits,
+      direct: { ...base.limits.direct, ...limits.direct },
+      unique: { ...base.limits.unique, ...limits.unique },
+    },
+  });
+  const approvedBase = budget(baseline);
+  const head = budget(maximum);
+  const policy = JSON.stringify({
+    schemaVersion: 1,
+    exceptions: [
+      { pullRequest: 11919, paths: [QUALIFICATION_TEST, QUALIFICATION_OWNER], baseline, maximum },
+    ],
+  });
+  const files = [
+    { filename: E2E_BUDGET_PATH, status: "modified" },
+    { filename: QUALIFICATION_TEST, status: "modified" },
+    { filename: QUALIFICATION_OWNER, status: "added" },
+  ];
+  return { approvedBase, head, policy, files };
+}
+
 /** Register synthetic cases for the growth guardrail parsers and diagnostics. */
 function defineCodebaseGrowthGuardrailTestSupport(): void {
+  it("allows only the trusted qualification budget for its approved PR", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(approvedBase), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(head) },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it.each([null, 11918, 11920])("rejects the qualification allowance for PR %s", async (pr) => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(approvedBase), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(head) },
+      pr,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
+      "test/e2e/live/gpu-e2e.test.ts transitiveAssertionPoints increased from 90 to 177",
+    );
+  });
+
+  it("rejects an allowance supplied only by the candidate", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(approvedBase) },
+      { [E2E_BUDGET_PATH]: JSON.stringify(head), [E2E_EXCEPTION_PATH]: policy },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).not.toEqual([]);
+  });
+
+  it("rejects a qualification that exceeds the approved upper bound", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const oversized = {
+      ...head,
+      limits: {
+        ...head.limits,
+        unique: { ...head.limits.unique, assertionPoints: 3616 },
+        files: { [QUALIFICATION_TEST]: [83, 105, 142, 178, 3] },
+      },
+    };
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(approvedBase), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(oversized) },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
+      "test/e2e/live/gpu-e2e.test.ts transitiveAssertionPoints increased from 177 to 178",
+    );
+  });
+
+  it("keeps the approved growth bounded after unrelated baseline reductions", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const reduced = {
+      ...approvedBase,
+      limits: {
+        ...approvedBase.limits,
+        unique: { ...approvedBase.limits.unique, assertionPoints: 3527 },
+      },
+    };
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(reduced), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(head) },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
+      "unique.assertionPoints increased from 3614 to 3615",
+    );
+  });
+
+  it("rejects unrelated live source changes alongside the qualification", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const diff = fixtureDiff(
+      [...files, { filename: "test/e2e/live/unrelated.ts", status: "added" }],
+      { [E2E_BUDGET_PATH]: JSON.stringify(approvedBase), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(head) },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).not.toEqual([]);
+  });
+
+  it("rejects another owner's budget growth even within the suite allowance", async () => {
+    const { approvedBase, head, policy, files } = qualificationExceptionFixture();
+    const other = "test/e2e/live/other.test.ts";
+    const before = {
+      ...approvedBase,
+      limits: {
+        ...approvedBase.limits,
+        files: { ...approvedBase.limits.files, [other]: [1, 1, 1, 1, 0] },
+      },
+    };
+    const after = {
+      ...head,
+      limits: { ...head.limits, files: { ...head.limits.files, [other]: [2, 2, 2, 2, 0] } },
+    };
+    const diff = fixtureDiff(
+      files,
+      { [E2E_BUDGET_PATH]: JSON.stringify(before), [E2E_EXCEPTION_PATH]: policy },
+      { [E2E_BUDGET_PATH]: JSON.stringify(after) },
+      11919,
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
+      "test/e2e/live/other.test.ts directExpectCalls increased from 1 to 2",
+    );
+  });
+
+  it.each([
+    [{}, null],
+    [{ NEMOCLAW_GROWTH_PR_NUMBER: "11919" }, 11919],
+    [{ NEMOCLAW_GROWTH_PR_NUMBER: "11918" }, 11918],
+    [{ PR_NUMBER: "11918", NEMOCLAW_GROWTH_PR_NUMBER: "11919" }, 11918],
+    [{ PR_NUMBER: "11919", NEMOCLAW_GROWTH_PR_NUMBER: "invalid" }, 11919],
+  ])("uses local PR hints only outside hosted PR mode (%j)", (environment, expected) => {
+    expect(diffTestOnly.selectPullRequestNumber(environment)).toBe(expected);
+  });
+
+  it.each(["", "0", "-1", "11919junk", "1.5", "9007199254740992"])(
+    "rejects malformed local PR hint %s",
+    (value) => {
+      expect(() =>
+        diffTestOnly.selectPullRequestNumber({ NEMOCLAW_GROWTH_PR_NUMBER: value }),
+      ).toThrow();
+    },
+  );
+
   it("caches repeated blob reads across guardrail checks", () => {
     const read = vi.fn((file: string) => `${file} content`);
     const cache = new Map<string, string | null>();

@@ -1,0 +1,29 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nTrusted-base allowance for PR #11919's accepted #11859 fixed Linux/AMD64 managed-vLLM roster qualification. Bounds are the reviewed qualification's census: +61 direct and +87 transitive assertion points, with one owned lifecycle companion. This policy must land on main before #11919. Remove the exception after #11919 merges; its resulting census becomes the normal no-growth baseline.",
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "pullRequest": 11919,
+      "paths": [
+        "test/e2e/live/gpu-e2e.test.ts",
+        "test/e2e/live/gpu-vllm-export-owner.ts"
+      ],
+      "baseline": {
+        "liveFileCount": 194,
+        "direct": { "expectCalls": 1452, "assertionPoints": 2279 },
+        "unique": { "expectCalls": 1900, "assertionPoints": 3528 },
+        "files": {
+          "test/e2e/live/gpu-e2e.test.ts": [39, 44, 72, 90, 3]
+        }
+      },
+      "maximum": {
+        "liveFileCount": 195,
+        "direct": { "expectCalls": 1496, "assertionPoints": 2340 },
+        "unique": { "expectCalls": 1970, "assertionPoints": 3615 },
+        "files": {
+          "test/e2e/live/gpu-e2e.test.ts": [83, 105, 142, 177, 3]
+        }
+      }
+    }
+  ]
+}
