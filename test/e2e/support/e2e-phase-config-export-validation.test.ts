@@ -558,6 +558,26 @@ describe("automatic config export validation phase", () => {
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
   });
 
+  it("withholds export metadata when a comment contains a percent-encoded fixture secret (#11485)", async () => {
+    const encodedSecret = [...Buffer.from(SECRET, "utf8")]
+      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+      .join("");
+    const raw = `${JSON.stringify(document())}\n# ${encodedSecret}\n`;
+    expect(raw).not.toContain(SECRET);
+    const test = fixture({ host: successfulHost(raw), secret: SECRET });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "security",
+      security: { knownSecretsAbsent: false },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
+  });
+
   it.each(["wrapped", "escaped"] as const)(
     "withholds export metadata when a comment contains %s base64 fixture-secret text (#11485)",
     async (representation) => {

@@ -428,8 +428,18 @@ function encodedSensitiveValues(values: readonly string[]): string[] {
   return [...encoded];
 }
 
+function decodePercentEncodedText(raw: string): string {
+  return raw.replace(/(?:%[0-9a-f]{2})+/giu, (encoded) => {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  });
+}
+
 function normalizedSecretScanText(raw: string): string {
-  const decodedEscapes = raw
+  const decodedEscapes = decodePercentEncodedText(raw)
     .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
       String.fromCodePoint(Number.parseInt(hex, 16)),
     )
