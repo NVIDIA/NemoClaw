@@ -414,7 +414,6 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     );
 
     expect(script.match(/^export HERMES_.*$/gmu)).toEqual([
-      "export HERMES_BUNDLED_PLUGINS='/opt/hermes/plugins'",
       "export HERMES_HOME='/sandbox/.hermes'",
       "export HERMES_LAZY_INSTALL_TARGET='/sandbox/.hermes/lazy-packages'",
     ]);

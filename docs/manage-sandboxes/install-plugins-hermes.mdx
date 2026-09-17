@@ -3,251 +3,115 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Install Hermes Plugins"
 sidebar-title: "Install Hermes Plugins"
-description: "Install Hermes plugins and configure the bundled Hindsight memory plugin in NemoClaw-managed sandboxes."
-description-agent: "Explains how to configure the bundled Hindsight memory plugin in a stock Hermes sandbox or install a custom Hermes plugin. Use when users ask about Hindsight, lazy plugin dependencies, or custom Hermes plugins."
-keywords: ["install hermes plugins", "hermes hindsight memory", "hermes lazy dependencies", "nemoclaw hermes plugins", "nemohermes dockerignore"]
+description: "Install and manage Hermes plugins and lazy dependencies inside a NemoClaw sandbox."
+description-agent: "Explains native Hermes user-plugin discovery, durable lazy dependencies, restarts and rebuilds, network policy, and the OpenShell credential boundary."
+keywords: ["install hermes plugins", "hermes lazy dependencies", "nemoclaw hermes plugins", "Hermes user plugins"]
 content:
   type: "how_to"
 skill:
   priority: 40
 agent-variants: ["hermes"]
 ---
-Hermes plugins extend the Hermes runtime inside a NemoClaw-managed sandbox.
-They are different from NemoClaw skills and from OpenClaw plugins, so install them through the Hermes plugin path instead of `skill install`.
 
-## How Hermes Loads Plugins
+Hermes owns its plugin and package lifecycle after NemoClaw onboarding.
+NemoClaw sets `HERMES_HOME` to `/sandbox/.hermes`; Hermes discovers user plugins
+under `$HERMES_HOME/plugins` and uses `$HERMES_HOME/lazy-packages` for native
+lazy dependencies.
 
-NemoClaw sets `HERMES_HOME` to `/sandbox/.hermes` when it starts the Hermes gateway.
-Hermes can discover bundled plugins under `/opt/hermes/plugins/<plugin-name>` and user plugins under `$HERMES_HOME/plugins/<plugin-name>`.
-NemoClaw supports the image-owned bundled path so the sandbox agent cannot replace code later executed by the separated gateway identity.
-NemoClaw installs its built-in Hermes integration into the image-owned bundled-plugin path at `/opt/hermes/plugins/nemoclaw`.
+NemoClaw does not maintain a plugin allowlist, reset user packages, or require
+user plugins to be baked into the sandbox image. Its built-in integration
+remains part of the shipped runtime, while user-installed plugins and packages
+remain ordinary Hermes state.
 
-The built-in NemoClaw Hermes plugin provides sandbox status tools, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
-Do not replace or remove `/opt/hermes/plugins/nemoclaw` when you add your own plugin.
-The root-separated gateway ignores `/sandbox/.hermes/plugins` because it cannot trust sandbox-writable Python.
-The same-identity topology retains Hermes' upstream user-plugin behavior, and rebuilds continue to preserve that directory as agent state; image-bundled plugins are the supported path across both topologies.
-After an upgrade, root-separated startup warns when preserved user plugins are present; rebuild any required plugin into `/opt/hermes/plugins` before relying on it.
+## Install and Discover a User Plugin
 
-## Configure the Bundled Hindsight Plugin
-
-The stock Hermes image provides `/sandbox/.hermes/lazy-packages` for lazy dependencies used by interactive sandbox commands.
-The gateway target depends on the container process topology.
-
-| Topology | Gateway process | Gateway lazy-install target | Access and replacement boundary |
-|---|---|---|---|
-| Direct root-entrypoint topology | Root PID 1 launches the gateway under the separate `gateway` UID. | `/run/nemoclaw/hermes-gateway-lazy-packages` | The directory is gateway-owned with mode `0700`, so the `sandbox` UID cannot read or modify it. A rebuild or replacement container receives a newly created private directory, and Hindsight startup reinstalls the supported client. |
-| OpenShell-managed same-UID topology | OpenShell is PID 1 and launches `nemoclaw-start`, the gateway, and the agent under the `sandbox` UID. | `/sandbox/.hermes/lazy-packages` | The gateway and agent share access because they use the same UID. NemoClaw declares the directory as Hermes state and preserves it across rebuilds. |
-
-Neither target modifies the root virtual environment, and neither target is declared in the generated `.env` file.
-
-NemoClaw supports `hindsight-client==0.6.1` for this workflow.
-NemoClaw accepts only the reviewed wheel hashes for `hindsight-client==0.6.1` and `aiohttp-retry==2.9.1`.
-Setup or gateway startup stops if an index or mirror serves a different artifact under either version.
-Hermes checks this version before it loads the plugin.
-This version uses the OpenShell proxy path.
-Do not replace it with a `0.8.x` client because those releases do not use the proxy environment.
-
-Start the self-hosted Hindsight service on the host before you configure the plugin.
-The `local-memory` preset permits only `GET` and `POST` requests from the Hermes Python runtime to `host.openshell.internal` on port `8888`.
-The preset does not permit another private host or port.
-
-Add the preset to the sandbox:
+Follow the plugin's Hermes installation instructions and place its complete
+plugin directory under the native user-plugin root:
 
 ```bash
-nemohermes <name> policy add local-memory --yes
+nemohermes <name> exec -- mkdir -p /sandbox/.hermes/plugins
+nemohermes <name> exec -- hermes plugins list
 ```
 
-Run the Hermes setup command through the NemoClaw CLI:
+Use the plugin identifier reported by Hermes when a plugin documents an
+enablement step. For example:
 
 ```bash
-nemohermes <name> exec --tty -- hermes memory setup hindsight
+nemohermes <name> exec -- hermes plugins enable <plugin-id>
+nemohermes <name> gateway restart
+nemohermes <name> exec -- hermes plugins list
 ```
 
-Select `local_external` when Hermes asks for the connection mode.
-Set the API URL to `http://host.openshell.internal:8888`.
-Set the memory bank name for your workload.
-Accept the `hermes` default if you do not need a workload-specific name.
-After the setup command finishes, restart the gateway:
+Update or remove the plugin through its native Hermes/package installation
+mechanism, then restart the gateway when the plugin requires it. NemoClaw does
+not copy, reconcile, or restore an image-owned version over the user plugin.
+
+`nemohermes <name> skill install <path>` installs an agent skill, not a Hermes
+runtime plugin.
+
+## Install Lazy Dependencies
+
+Hermes' durable lazy package target is:
+
+```text
+/sandbox/.hermes/lazy-packages
+```
+
+The direct root-entrypoint and OpenShell-managed topologies use this same
+native location. The directory is shared with the Hermes gateway through the
+container's supported group permissions; it is not copied into a private
+NemoClaw runtime directory and it is not reset at startup.
+
+Hermes commands that support lazy dependencies populate this target themselves.
+For package downloads, first add the relevant policy, such as `pypi`, or a
+custom policy for the approved package host.
+
+Do not install user dependencies into `/opt/hermes/.venv`, and do not put
+`HERMES_LAZY_INSTALL_TARGET` in `/sandbox/.hermes/.env`. NemoClaw supplies the
+native target when it starts the runtime.
+
+## Restart and Rebuild
+
+Apply startup-time plugin changes through the supervised controller:
 
 ```bash
 nemohermes <name> gateway restart
-```
-
-The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` for the sandbox-side command.
-In the direct root-entrypoint topology, gateway startup independently installs the supported client into `/run/nemoclaw/hermes-gateway-lazy-packages` as the `gateway` user.
-The gateway does not activate the sandbox-owned tree in that topology.
-In the OpenShell-managed topology, gateway startup uses `/sandbox/.hermes/lazy-packages` under the shared `sandbox` UID.
-Both directories are outside the generated `.env`, `config.yaml`, and `.config-hash` files.
-
-Verify the provider and dependency after the restart:
-
-```bash
-nemohermes <name> exec -- hermes memory status
-nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; from importlib.metadata import version; print(version("hindsight-client"))'
 nemohermes <name> status
 ```
 
-The version command must print `0.6.1`.
-The status command must report a running Hermes gateway without an integrity failure or quarantine.
-
-If an earlier root install changed `/opt/hermes/.venv`, rebuild the sandbox before you use the lazy-install path:
+Hermes user plugins and lazy packages live in declared Hermes state, so they
+survive native restart and state-preserving rebuild or restore without a
+NemoClaw plugin ownership record:
 
 ```bash
 nemohermes <name> rebuild --yes
+nemohermes <name> exec -- hermes plugins list
 ```
 
-A rebuild replaces the root virtual environment and preserves the sandbox lazy-install directory as declared Hermes state.
-Direct root-entrypoint startup recreates its private runtime target when the container has been replaced and reinstalls the supported client as the `gateway` user when Hindsight is selected.
-OpenShell-managed startup uses the preserved sandbox target under the shared `sandbox` UID.
+A fresh onboarding with `--fresh` intentionally creates a new state boundary.
 
-Do not edit `/sandbox/.hermes/.env` to set `HERMES_LAZY_INSTALL_TARGET`.
-Do not install the dependency into `/opt/hermes/.venv`.
-Both paths change generated inputs and can make gateway reconciliation fail.
+## Network and Credential Boundaries
 
-The preset permits one local host route only.
-To use another approved Hindsight host or port, create a custom preset and name the endpoint.
-The `--from-file` and `--from-dir` paths accept `--trusted-private-host` for a private host.
-Refer to [Create Custom Policy Presets](../network-policy/configure-policies/create-custom-policy-presets) for that procedure.
+Hermes plugins still run inside OpenShell network policy. Permit only the
+package registries and runtime endpoints the plugin needs. Python-backed plugins
+usually require the policy to name `/opt/hermes/.venv/bin/python` as an allowed
+binary.
 
-## Choose an Install Path
-
-The supported path for custom Hermes plugins is to bake the plugin into a custom sandbox image and onboard from that Dockerfile.
-Use this path when the plugin adds Python code, runtime hooks, or dependencies that Hermes must see at gateway startup.
-
-`nemohermes <name> skill install <path>` is only for `SKILL.md` agent skills.
-It places the validated tree in Hermes' canonical writable user-skill root, but it does not install Hermes runtime plugins or maintain a separate NemoClaw skill inventory.
-
-When you change plugin code or dependencies, update the custom image and rebuild the sandbox so the plugin remains reproducible.
-When you change a supported startup-only setting with a NemoClaw host command, restart the Hermes gateway from the host:
-
-```bash
-nemohermes <name> gateway restart
-```
-
-The command reloads supported startup-only state through NemoClaw's authenticated lifecycle controller.
-Use `nemohermes <name> config set` or `nemohermes inference set` for supported configuration changes so NemoClaw updates managed config metadata together.
-For the controller topology, trust boundary, health proof, and fail-closed behavior, refer to [Understand Gateway Lifecycle Control](configure-sandboxes/understand-gateway-lifecycle-control).
-
-## Prepare a Build Directory
-
-Put the custom Dockerfile and every file it needs to `COPY` in one directory.
-`nemohermes onboard --from <Dockerfile>` sends the Dockerfile's parent directory as the Docker build context.
-
-The one exception is the managed Hermes Dockerfile itself: passing the `agents/hermes/Dockerfile` from the NemoClaw checkout the CLI runs from stages the repository root as the build context, exactly as the managed build does.
-The managed exception applies the `.dockerignore` from the repository root, not one under `agents/hermes/`.
-Use that path when you want to edit the managed Dockerfile in place (for example, to install extra Python packages) and rebuild the stock image with your changes.
-
-For a standalone custom Dockerfile, add a `.dockerignore` next to the Dockerfile to keep local caches, generated artifacts, model files, or other unneeded paths out of the staged context.
-NemoClaw still excludes credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` tries to include them.
-
-NemoClaw sends user-supplied `--from` contexts to the OpenShell gateway builder and reserves its host-side local BuildKit prebuild for contexts that NemoClaw generates itself.
-On a local Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and the custom image build continues through the gateway.
-The managed Hermes Dockerfile keeps image probes in a checked-in runner so OpenShell gateway builders without Dockerfile heredoc support execute the same assertions.
-
-```text
-my-hermes-plugin-sandbox/
-├── Dockerfile
-└── my-hermes-plugin/
-    ├── __init__.py
-    └── requirements.txt
-```
-
-If you start from the stock NemoClaw Hermes Dockerfile, keep the NemoClaw Hermes image contract intact.
-The image must still include the generated Hermes config, NemoClaw Hermes plugin, blueprint files, `nemoclaw-start` entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library.
-
-Start a standalone custom Dockerfile from the published complete image, which already carries every managed Hermes layer:
-
-```dockerfile
-FROM ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:<digest>
-```
-
-Releases publish `ghcr.io/nvidia/nemoclaw/hermes-sandbox:<release>` and its digest alongside `openclaw-sandbox`.
-Pin the digest rather than a tag so rebuilds stay reproducible.
-
-<Warning>
-  A custom `--from` Dockerfile replaces the normal NemoClaw Hermes Dockerfile.
-  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough: the platform base does not include the managed Hermes layers.
-  Extend the complete `ghcr.io/nvidia/nemoclaw/hermes-sandbox` image, or preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile` yourself.
-</Warning>
-
-If `gateway restart` or `recover` reports `privileged control unavailable` for an older custom image, update the Dockerfile to the current Hermes image contract and rebuild it with `nemohermes <name> rebuild --yes`.
-The current contract supports a direct root entrypoint and the OpenShell-managed topology where OpenShell is PID 1 and launches `nemoclaw-start` as nonroot.
-
-An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape cannot use lifecycle control.
-Kubernetes and other deployments without a matching direct container fail closed and do not fall back to ordinary `openshell sandbox exec` or an in-sandbox manual relaunch.
-
-## Install the Plugin in the Image
-
-Add your plugin to Hermes' bundled-plugin tree while the custom image is built.
-The example below keeps executable Python root-owned and non-writable at runtime.
-
-```dockerfile
-COPY my-hermes-plugin/ /opt/my-hermes-plugin/
-
-USER root
-RUN mkdir -p /opt/hermes/plugins/my-hermes-plugin \
-    && cp -a /opt/my-hermes-plugin/. /opt/hermes/plugins/my-hermes-plugin/ \
-    && if [ -f /opt/my-hermes-plugin/requirements.txt ]; then \
-        /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/my-hermes-plugin/requirements.txt; \
-    fi \
-    && chown -R root:root /opt/hermes/plugins/my-hermes-plugin \
-    && find /opt/hermes/plugins/my-hermes-plugin -type d -exec chmod 0755 {} + \
-    && find /opt/hermes/plugins/my-hermes-plugin -type f -exec chmod 0444 {} +
-
-USER sandbox
-WORKDIR /sandbox
-```
-
-Keep plugin code and dependency files inside the build directory.
-Avoid copying host credentials, local caches, or broad home-directory contents into the image.
-
-## Create the Sandbox
-
-Run onboarding with the custom Dockerfile and an explicit sandbox name.
-NemoClaw requires a name for `--from` builds so a custom image cannot silently replace the default sandbox.
-
-```bash
-nemohermes onboard --name my-hermes-build --from ./my-hermes-plugin-sandbox/Dockerfile
-```
-
-For non-interactive onboarding, set the same values through environment variables.
-
-```bash
-NEMOCLAW_NON_INTERACTIVE=1 \
-NEMOCLAW_SANDBOX_NAME=my-hermes-build \
-NEMOCLAW_FROM_DOCKERFILE=./my-hermes-plugin-sandbox/Dockerfile \
-nemohermes onboard
-```
-
-If you resume an interrupted onboarding run, use the same Dockerfile path that started the session.
-NemoClaw records the custom Dockerfile path and rejects a resume that points at a different image source.
-
-## Network Access
-
-Hermes plugins still run inside the OpenShell sandbox boundary.
-If a plugin calls an external API at runtime, add a policy preset for the required hostnames and binaries before you recreate the sandbox.
-
-Hermes uses Python for plugin execution, so policy entries usually need to allow the Hermes Python runtime, such as `/opt/hermes/.venv/bin/python`, in addition to any command-line wrapper your plugin starts.
-For package downloads during sandbox runtime, use the `pypi` preset or a custom preset that allows the package hosts you need.
-
-Refer to [Network Policies](../reference/network-policies) for policy concepts.
-Refer to [Customize Network Policy](../network-policy/customize-network-policy) for custom preset workflows.
+Never copy credentials into `/sandbox/.hermes/plugins`,
+`/sandbox/.hermes/lazy-packages`, `.env`, or `config.yaml`. Use the supported
+NemoClaw/OpenShell credential flow. OpenShell-held credential values must not be
+projected into plugin-visible files or ordinary process environments.
 
 ## Common Mistakes
 
-The following places commonly mix Hermes plugin installation with other NemoClaw extension paths.
-
 - Do not use `skill install` for Hermes runtime plugins.
-- Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
-- Do not remove `/opt/hermes/plugins/nemoclaw`; NemoClaw depends on that image-owned plugin for managed Hermes behavior.
-- Do not rely on executable plugins under `/sandbox/.hermes/plugins`; root-separated gateways ignore them and accept image-owned bundled plugins instead.
-- Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
-- Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
-- Do not assume OpenShell policy allows Python package downloads during runtime by default.
-- Do not install a bundled lazy dependency into `/opt/hermes/.venv` or declare its target in the generated `.env` file.
+- Do not put Hermes plugins under `/sandbox/.openclaw/extensions`.
+- Do not create a second NemoClaw-side plugin inventory or allowlist.
+- Do not bake user plugins into a custom image solely for persistence.
+- Do not install lazy dependencies into the root Hermes virtual environment.
+- Do not assume package or service egress is allowed without a policy.
 
 ## Next Steps
 
-- Review [NemoHermes Command Reference](../reference/commands#nemohermes-onboard-from) for `nemohermes onboard --from` details.
-- Review [Customize Network Policy](../network-policy/customize-network-policy) if the plugin needs runtime network egress.
-- Review [Understand Runtime Changes](configure-sandboxes/understand-runtime-changes) before changing runtime configuration for a plugin-enabled sandbox.
+- Review [Customize Network Policy](../network-policy/customize-network-policy) if a plugin needs package or service egress.
+- Review [Understand Runtime Changes](configure-sandboxes/understand-runtime-changes) before changing runtime configuration.

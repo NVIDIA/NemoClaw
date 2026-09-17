@@ -44,12 +44,11 @@ describe("deterministic target registry", () => {
   });
 
   // source-shape-contract: compatibility -- The registry inventory must contain only targets that the live runner can execute
-  it("contains only the four executable typed targets (#11407)", () => {
+  it("contains only the three executable typed targets (#11407)", () => {
     expect(listTargets().map((target) => target.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
-      "ubuntu-repo-docker-post-reboot-recovery",
     ]);
   });
 

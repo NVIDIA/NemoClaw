@@ -21,8 +21,6 @@ export {
   type LifecycleProfile,
   type LifecycleResult,
   type LifecycleSimulationOptions,
-  type PostRebootMode,
-  type PostRebootOptions,
 } from "./lifecycle.ts";
 export {
   type NemoClawInstance,

@@ -49,7 +49,7 @@ describe("live E2E target matrix", () => {
 
   it("exposes execution coverage for every executable typed target (#9167)", () => {
     expect(buildLiveTargetMatrix()).toEqual(buildLiveTargetMatrix([], ["docker"]));
-    expect(buildLiveTargetMatrix()).toHaveLength(4);
+    expect(buildLiveTargetMatrix()).toHaveLength(3);
     expectExecutableTypedTargetCoverage();
   });
 
@@ -68,7 +68,6 @@ describe("live E2E target matrix", () => {
       "ubuntu-policy-custom-missing-presets-negative": 45,
       "ubuntu-repo-cloud-langchain-deepagents-code": 72,
       "ubuntu-repo-cloud-openclaw": 53,
-      "ubuntu-repo-docker-post-reboot-recovery": 163,
     });
   });
 

@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { shellQuote } from "../core/shell-quote.js";
-import { listOpenClawPluginExtensionIds } from "../messaging/channels/metadata.js";
 
 // Exact symlinks baked into OpenClaw messaging images at build time. Source
 // paths are relative to the agent state-dir root (e.g. /sandbox/.openclaw);
@@ -28,20 +27,6 @@ const OPENCLAW_IMAGE_PACKAGE_PATHS: ReadonlySet<string> = new Set([
   // Locked runtime install used by current images; the global path points here.
   "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
 ]);
-
-// Preserve extensions baked into the freshly rebuilt image instead of
-// replacing them with archived copies. Messaging IDs come from the reviewed
-// channel manifests; the remaining entries are installed by Dockerfile.base.
-export const OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS = [
-  "nemoclaw",
-  "diagnostics-otel",
-  "brave",
-  ...listOpenClawPluginExtensionIds(),
-] as const;
-
-interface OpenClawRestoreManifest {
-  readonly agentType: string;
-}
 
 function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
   const normalizedRelPath = relPath.split(path.sep).join("/");
@@ -81,64 +66,8 @@ export function isAllowedStateSymlink(relPath: string, linkTarget: string): bool
   );
 }
 
-export function shouldPreserveOpenClawManagedExtensions(
-  manifest: OpenClawRestoreManifest,
-  dir: string,
-  localDirs: readonly string[],
-): boolean {
-  return (
-    localDirs.includes("extensions") &&
-    (manifest.agentType === "openclaw" || dir.replace(/\/+$/, "") === "/sandbox/.openclaw")
-  );
-}
-
-export function buildRestoreTarArgs(
-  backupPath: string,
-  localDirs: readonly string[],
-  managedExtensionDirs: readonly string[],
-): string[] {
-  const args = ["-cf", "-", "-C", backupPath];
-  for (const extensionName of managedExtensionDirs) {
-    args.push("--exclude", `extensions/${extensionName}`);
-  }
-  args.push("--", ...localDirs);
-  return args;
-}
-
-function buildOpenClawExtensionsCleanupCommand(
-  dir: string,
-  managedExtensionDirs: readonly string[],
-  requiredExtensionDirs: ReadonlySet<string>,
-): string {
-  const extensionsDir = `${dir}/extensions`;
-  const quotedExtensionsDir = shellQuote(extensionsDir);
-  const validationCommands = managedExtensionDirs
-    .map((extensionName) => {
-      const managedPath = `${extensionsDir}/${extensionName}`;
-      if (requiredExtensionDirs.has(extensionName)) {
-        return (
-          `p=${shellQuote(managedPath)}; ` +
-          'if [ ! -d "$p" ] || [ -L "$p" ]; then ' +
-          'echo "refusing missing or unsafe image-managed extension: $p" >&2; exit 20; fi'
-        );
-      }
-      return (
-        `p=${shellQuote(managedPath)}; ` +
-        'if { [ -e "$p" ] || [ -L "$p" ]; } && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
-        'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
-      );
-    })
-    .join("; ");
-  const validateManagedPaths = `{ ${validationCommands}; }`;
-  const preservedNames = managedExtensionDirs
-    .map((extensionName) => `! -name ${shellQuote(extensionName)}`)
-    .join(" ");
-
-  return [
-    `mkdir -p -- ${quotedExtensionsDir}`,
-    validateManagedPaths,
-    `find ${quotedExtensionsDir} -mindepth 1 -maxdepth 1 ${preservedNames} -exec rm -rf -- {} +`,
-  ].join(" && ");
+export function buildRestoreTarArgs(backupPath: string, localDirs: readonly string[]): string[] {
+  return ["-cf", "-", "-C", backupPath, "--", ...localDirs];
 }
 
 function buildStaleStateDirContentsCleanupCommand(dir: string, dirName: string): string {
@@ -153,25 +82,12 @@ function buildStaleStateDirContentsCleanupCommand(dir: string, dirName: string):
 export function buildRestoreCleanupCommand(
   dir: string,
   localDirs: readonly string[],
-  managedExtensionDirs: readonly string[],
-  requiredExtensionDirs: ReadonlySet<string>,
   staleContentDirs: readonly string[] = [],
 ): string {
-  const preserveManagedExtensions = managedExtensionDirs.length > 0;
-  const commands: string[] = [];
-  for (const dirName of localDirs) {
-    if (preserveManagedExtensions && dirName === "extensions") continue;
-    commands.push(`rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
-  }
-  if (preserveManagedExtensions) {
-    commands.push(
-      buildOpenClawExtensionsCleanupCommand(dir, managedExtensionDirs, requiredExtensionDirs),
-    );
-  }
+  const commands = localDirs.map((dirName) => `rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
   const localDirSet = new Set(localDirs);
   for (const dirName of staleContentDirs) {
     if (localDirSet.has(dirName)) continue;
-    if (preserveManagedExtensions && dirName === "extensions") continue;
     commands.push(buildStaleStateDirContentsCleanupCommand(dir, dirName));
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
