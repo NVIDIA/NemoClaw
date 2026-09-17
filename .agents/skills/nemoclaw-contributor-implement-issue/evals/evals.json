@@ -174,7 +174,10 @@
       "Moves parser evidence only when equivalent lower-layer coverage is absent.",
       "Removes the incidental progress-text assertion.",
       "Retains the smallest live assertions for the sandbox denial, recovery, cleanup, and credential-isolation outcomes.",
-      "Records which evidence stayed live, moved, or was removed without hiding duplicates in helpers or artifacts."
+      "Records the lower-layer owner for moved parser evidence and states that removed progress text protects no product contract.",
+      "Records the canonical live test and smallest assertion for each retained live outcome.",
+      "Records each semantic outcome and distinct regression, or lack of a product contract, and explains why semantic coverage remains complete.",
+      "Does not hide duplicate evidence in helpers or artifacts."
     ]
   }
 ]
