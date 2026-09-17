@@ -7,15 +7,15 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  catalogueTarget,
-  E2E_TARGET_CATALOGUE,
-  validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
-import {
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
+  catalogueTarget,
+  E2E_TARGET_CATALOGUE,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
@@ -23,6 +23,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  isolateGatewayUpgradeInstallerEnv,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -188,6 +189,29 @@ describe("OpenShell gateway upgrade boundary", () => {
       currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
     ).toBe("workflow-sha");
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
+  });
+
+  it.each([
+    ["historical", ""],
+    ["current", "local-dockerfile"],
+  ] as const)("isolates the %s installer from managed-image qualification", (_phase, source) => {
+    const environment = isolateGatewayUpgradeInstallerEnv(
+      {
+        E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+        E2E_MANAGED_IMAGE_COHORT_RECEIPT: "receipt",
+        E2E_WORKLOAD_SOURCE: "managed-image",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/catalog.json",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: '{"openclaw":{}}',
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
+        NEMOCLAW_INSTALL_REF: "candidate",
+      },
+      source,
+    );
+
+    expect(environment).toEqual({
+      E2E_WORKLOAD_SOURCE: source,
+      NEMOCLAW_INSTALL_REF: "candidate",
+    });
   });
 
   it("waits through the historical install for the Docker gateway network", () => {

@@ -16,8 +16,8 @@ import {
   packReviewedNpmArchive,
   removeReviewedNpmArchive,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
-import { listBackups, validateRebuildRecoveryManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { listBackups, validateRebuildRecoveryManifest } from "../../../src/lib/state/sandbox";
 import {
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
@@ -42,6 +42,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  isolateGatewayUpgradeInstallerEnv,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -533,31 +534,32 @@ async function installOldNemoclawAndClaw(
 
   const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 
-  const installEnv = liveEnv({
-    // The historical bootstrap owns its pinned source Dockerfile. An explicit
-    // empty value prevents the surrounding candidate local-Dockerfile plan
-    // from replacing that fixture at the ShellProbe boundary.
-    E2E_WORKLOAD_SOURCE: "",
-    PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-    COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
-    NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
-    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
-    NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
-    NEMOCLAW_OLD_OPENCLAW_ARCHIVE: reviewedOpenClaw.archivePath,
-    NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
-    NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
-    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-    NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-    NEMOCLAW_INSTALL_REF: OLD_NEMOCLAW_COMMIT,
-    NEMOCLAW_INSTALL_TAG: OLD_NEMOCLAW_COMMIT,
-    NEMOCLAW_PROVIDER: "custom",
-    NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-    NEMOCLAW_MODEL: "test-model",
-    NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
-    NEMOCLAW_POLICY_MODE: "skip",
-    NEMOCLAW_DASHBOARD_PORT: "",
-    CHAT_UI_URL: "",
-  });
+  // The historical bootstrap owns its pinned source Dockerfile. Isolate it
+  // from both candidate local-Dockerfile selection and managed-image catalogs.
+  const installEnv = isolateGatewayUpgradeInstallerEnv(
+    liveEnv({
+      PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
+      NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
+      NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
+      NEMOCLAW_OLD_OPENCLAW_ARCHIVE: reviewedOpenClaw.archivePath,
+      NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
+      NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
+      NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+      NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
+      NEMOCLAW_INSTALL_REF: OLD_NEMOCLAW_COMMIT,
+      NEMOCLAW_INSTALL_TAG: OLD_NEMOCLAW_COMMIT,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+      NEMOCLAW_MODEL: "test-model",
+      NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
+      NEMOCLAW_POLICY_MODE: "skip",
+      NEMOCLAW_DASHBOARD_PORT: "",
+      CHAT_UI_URL: "",
+    }),
+    "",
+  );
 
   // A transient gateway import failure leaves the old installer session in a
   // failed state. Keep Vitest retries independent without applying --fresh to
@@ -606,21 +608,24 @@ async function installCurrentNemoclawUpgrade(
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentEnv = withoutEnvKeys(
-    liveEnv({
-      GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
-      NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
-      NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-      NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify(LEGACY_SANDBOXES),
-      NEMOCLAW_INSTALL_REF: currentRef,
-      NEMOCLAW_INSTALL_TAG: currentRef,
-      NEMOCLAW_PROVIDER: "custom",
-      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-      NEMOCLAW_MODEL: "test-model",
-      NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
-      NEMOCLAW_POLICY_MODE: "skip",
-      NEMOCLAW_DASHBOARD_PORT: "",
-      CHAT_UI_URL: "",
-    }),
+    isolateGatewayUpgradeInstallerEnv(
+      liveEnv({
+        GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
+        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+        NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify(LEGACY_SANDBOXES),
+        NEMOCLAW_INSTALL_REF: currentRef,
+        NEMOCLAW_INSTALL_TAG: currentRef,
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+        NEMOCLAW_MODEL: "test-model",
+        NEMOCLAW_SANDBOX_NAME: SURVIVOR_SANDBOX,
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_DASHBOARD_PORT: "",
+        CHAT_UI_URL: "",
+      }),
+      "local-dockerfile",
+    ),
     ["COMPATIBLE_API_KEY"],
   );
   const redactionValues = [GATEWAY_CREDENTIAL, process.env.GITHUB_TOKEN ?? ""].filter(Boolean);

@@ -7,6 +7,13 @@ import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-ins
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
+const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
+  "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
+] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
 
 export interface LegacyGatewayUpgradeFixture {
@@ -84,6 +91,16 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
     if (candidate?.trim()) return candidate.trim();
   }
   return "HEAD";
+}
+
+/** Keep the upgrade fixture on its explicit Dockerfile source across managed-image CI lanes. */
+export function isolateGatewayUpgradeInstallerEnv(
+  environment: NodeJS.ProcessEnv,
+  workloadSource: "" | "local-dockerfile",
+): NodeJS.ProcessEnv {
+  const isolated: NodeJS.ProcessEnv = { ...environment, E2E_WORKLOAD_SOURCE: workloadSource };
+  for (const key of MANAGED_IMAGE_QUALIFICATION_ENV_KEYS) delete isolated[key];
+  return isolated;
 }
 
 export function legacyGatewayUpgradeHostFirewallOptions(): {
