@@ -146,6 +146,23 @@ describe("live E2E target gating", () => {
     });
   });
 
+  it(
+    "keeps the formatted bootstrap entry point valid through real Vitest collection",
+    testTimeoutOptions(35_000),
+    () => {
+      const formatted = spawnSync(
+        process.execPath,
+        [
+          path.join(REPO_ROOT, "node_modules", "oxfmt", "bin", "oxfmt"),
+          "--check",
+          path.join(LIVE_E2E_ROOT, "bootstrap-install-smoke.test.ts"),
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+      );
+      expect(formatted.status, formatted.stderr || formatted.stdout).toBe(0);
+    },
+  );
+
   it.concurrent(
     "collects the bootstrap install contract through its current entry point",
     collectorTimeoutOptions(),
@@ -286,6 +303,17 @@ describe("live E2E target gating", () => {
       context
         .expect(`${unsafe.stdout}${unsafe.stderr}`)
         .toContain("Selected target ID 'unsafe/id'");
+
+      const removed = await listLiveTests({
+        enabled: true,
+        env: { TARGET_ID: "ubuntu-repo-cloud-hermes" },
+        files: [file],
+      });
+
+      context.expect(removed.status, removed.stdout).not.toBe(0);
+      context
+        .expect(`${removed.stdout}${removed.stderr}`)
+        .toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
     },
   );
 

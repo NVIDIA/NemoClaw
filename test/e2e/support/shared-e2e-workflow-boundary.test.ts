@@ -12,6 +12,7 @@ import {
   discoverCredentialFreeTests,
   stripCredentialFreeTestDeclarations,
 } from "../../../tools/e2e/credential-free-tests.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
@@ -41,6 +42,48 @@ function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[
 }
 
 describe("shared E2E workflow boundary", () => {
+  it("reconciles workflow markers without letting them change planned execution ownership", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      delete workflow.jobs["openshell-gateway-auth-contract"];
+      workflow.jobs["unregistered-proof"] = {
+        env: { E2E_JOB: "1", E2E_TARGET_ID: "unregistered-proof" },
+        steps: [
+          {
+            run: "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/unregistered-proof.test.ts",
+          },
+        ],
+      };
+    });
+    expect(errors).toContain("Registered workflow job openshell-gateway-auth-contract is missing");
+    expect(errors).toContain(
+      "Discovered workflow job unregistered-proof has no inventory disposition",
+    );
+    expect(() => buildE2eWorkflowPlan({ jobs: "unregistered-proof" })).toThrow(
+      "unregistered-proof",
+    );
+  });
+
+  it.each(["", "dockre", "docker,docker", "docker,", 7, null])(
+    "rejects an explicitly invalid gateway runtime declaration: %s",
+    (declaration) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        workflow.jobs["openshell-gateway-auth-contract"].env!.E2E_GATEWAY_RUNTIMES = declaration;
+      });
+      expect(errors).toContain(
+        "openshell-gateway-auth-contract job E2E_GATEWAY_RUNTIMES is invalid",
+      );
+    },
+  );
+
+  it("keeps runtime-agnostic free-standing jobs valid when no declaration exists", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      delete workflow.jobs["openshell-gateway-auth-contract"].env!.E2E_GATEWAY_RUNTIMES;
+    });
+    expect(errors).not.toContain(
+      "openshell-gateway-auth-contract job E2E_GATEWAY_RUNTIMES is invalid",
+    );
+  });
+
   it.each([
     ["22.19.0", "jetson-nvmap-gpu", "Set up Node for Jetson controller"],
     ["22.19.0", "generate-matrix", "Set up Node for trusted E2E planning"],

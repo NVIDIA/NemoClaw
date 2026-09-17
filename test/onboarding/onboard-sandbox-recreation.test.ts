@@ -456,10 +456,7 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: {
-          targetAgentType?: string;
-          freshOpenClawImagePluginInstalls?: unknown[];
-        };
+        options?: { targetAgentType?: string };
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -479,7 +476,6 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-      assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
     },
   );
 
@@ -842,6 +838,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
@@ -898,11 +895,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 credentials.prompt = async () => "y";
 
 childProcess.spawn = (...args) => {
+  forwardService.recordSpawn(args);
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));

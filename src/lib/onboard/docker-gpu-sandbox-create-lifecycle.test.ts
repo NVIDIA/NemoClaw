@@ -331,6 +331,47 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
+  it("redacts a failed early-commit rollback before reporting it", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    rollbackError.stack = `Rollback stack: ${secret}`;
+    const finalizeBackup = vi.fn(async () => {
+      throw rollbackError;
+    });
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    const failure = (await patch.commitAfterReady().catch((error: unknown) => error)) as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+
+    expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", failure, expect.any(Object));
+    expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(failure.message).toContain(
+      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+    );
+    expect(failure.message).not.toContain(secret);
+    expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
+  });
+
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
@@ -480,6 +521,64 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(finalizeBackup).not.toHaveBeenCalled();
   });
 
+  it("redacts a managed rollback failure before reporting a patch error", async () => {
+    const deps = makeDeps();
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    rollbackError.stack = `Rollback stack: ${secret}`;
+    const patchError = new Error("docker rename failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => {
+          throw patchError;
+        }),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "gpus",
+        label: "--gpus all",
+        device: "all",
+        args: ["--gpus", "all"],
+      },
+      replacementRuntimeId: "replacement-container-id",
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "old-container-id",
+        newContainerId: "replacement-container-id",
+        backupContainerName: null,
+        selectedMode: null,
+      },
+      rollback: vi.fn(async () => {
+        throw rollbackError;
+      }),
+      commit: vi.fn(),
+    });
+
+    await patch.exitOnPatchError();
+
+    expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", patchError, expect.any(Object));
+    expect(patchError.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(patchError.message).toContain(
+      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+    );
+    expect(patchError.message).not.toContain(secret);
+    expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
+  });
+
   it("hard-stops a structured failed GPU proof on the compatibility route", async () => {
     const deps = makeDeps();
     const patch = createDockerGpuSandboxCreatePatch({
@@ -533,5 +632,114 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("pre-patch container was not restored"),
     );
+  });
+
+  it("logs only the sanitized rollback fallback after a terminal sandbox phase", async () => {
+    const deps = makeDeps();
+    deps.runCaptureOpenshell.mockReturnValue("alpha Error");
+    const secret = `nvapi-${"g".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    Object.preventExtensions(rollbackError);
+    const verifyGpu = vi.fn(() => {
+      throw new Error("GPU proof must not run after a terminal phase");
+    });
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "gpus",
+        label: "--gpus all",
+        device: "all",
+        args: ["--gpus", "all"],
+      },
+      replacementRuntimeId: "replacement-container-id",
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "old-container-id",
+        newContainerId: "replacement-container-id",
+        backupContainerName: null,
+        selectedMode: null,
+      },
+      rollback: vi.fn(async () => {
+        throw rollbackError;
+      }),
+      commit: vi.fn(),
+    });
+
+    const failure = await patch.verifyGpuOrExit(verifyGpu).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const stored = (failure as Error & { managedBootstrapRollbackError?: unknown })
+      .managedBootstrapRollbackError;
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(verifyGpu).not.toHaveBeenCalled();
+    expect(output).not.toContain(secret);
+    expect(output).toContain("diagnostic details were redacted");
+    expect(stored).toBeInstanceOf(Error);
+    expect(stored).not.toBe(rollbackError);
+    expect((stored as Error).message).not.toContain(secret);
+    expect(rollbackError.message).toContain(secret);
+  });
+
+  it("logs only the sanitized rollback fallback after GPU-proof failure", async () => {
+    const deps = makeDeps();
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    rollbackError.stack = `Rollback stack: ${secret}`;
+    Object.freeze(rollbackError);
+    const proofError = new Error("nvidia-smi failed") as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+    });
+    patch.attachManagedBootstrapCutover({
+      selectedMode: {
+        kind: "gpus",
+        label: "--gpus all",
+        device: "all",
+        args: ["--gpus", "all"],
+      },
+      replacementRuntimeId: "replacement-container-id",
+      failureContext: {
+        sandboxName: "alpha",
+        oldContainerId: "old-container-id",
+        newContainerId: "replacement-container-id",
+        backupContainerName: null,
+        selectedMode: null,
+      },
+      rollback: vi.fn(async () => {
+        throw rollbackError;
+      }),
+      commit: vi.fn(),
+    });
+
+    await expect(
+      patch.verifyGpuOrExit(() => {
+        throw proofError;
+      }),
+    ).rejects.toBe(proofError);
+
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).not.toContain(secret);
+    expect(output).toContain("diagnostic details were redacted");
+    expect(proofError.managedBootstrapRollbackError).toBeInstanceOf(Error);
+    expect(proofError.managedBootstrapRollbackError).not.toBe(rollbackError);
+    expect(proofError.message).toContain(
+      "Managed bootstrap rollback requires attention: Onboarding failed; diagnostic details were redacted",
+    );
+    expect(proofError.message).not.toContain(secret);
+    expect((proofError.managedBootstrapRollbackError as Error).message).not.toContain(secret);
+    expect(rollbackError.message).toContain(secret);
+    expect(rollbackError.stack).toContain(secret);
   });
 });

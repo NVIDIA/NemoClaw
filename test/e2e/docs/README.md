@@ -32,14 +32,15 @@ Direct E2E implementations now live in Vitest. The former
 
 ## Target Model
 
-The typed registry still describes targets as layered metadata:
+Typed definitions in `registry/definitions/baseline.ts` describe executable targets.
+`tools/e2e/target-inventory.mts` combines them with the workflow, shared, external,
+and manual definitions in `tools/e2e/target-definitions/`:
 
 ```text
 base environment
-  -> onboarding profile / manifest
+  -> executable onboarding profile
     -> expected state
-      -> optional lifecycle profile
-        -> suite metadata for migration tracking
+      -> optional executable lifecycle profile
 ```
 
 Live execution happens through shared fixtures:
@@ -96,6 +97,13 @@ The shared execution command sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` for
 typed and catalogue targets. An empty or entirely skipped selection exits
 nonzero. Collection can report unsupported runtime prerequisites without
 executing a target; collection alone does not certify live execution.
+
+Every typed-registry declaration must have executable platform, install,
+runtime, and onboarding routes plus resolved coverage metadata. A declared
+lifecycle route must also be executable. Registry construction rejects invalid
+declarations. Proposed combinations belong in planning issues until their live
+fixtures exist; they must not be added as empty skipped tests. Selecting a
+removed or unknown target ID fails and lists the available IDs.
 
 ## Run Live E2E Locally
 

@@ -2,127 +2,79 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
-import { target } from "../registry/builder.ts";
-import { liveTargetInventoryEntry } from "../registry/run.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
+import { buildExecutionInventory, listTargets } from "../../../tools/e2e/target-inventory.mts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
-const SUPPORTED_ENVIRONMENT: TargetEnvironment = {
-  platform: "ubuntu-local",
-  install: "repo-current",
-  runtime: "docker-running",
-  onboarding: "cloud-openclaw",
-};
-
-function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT): TargetDefinition {
-  return target("synthetic-target")
-    .environment(environment)
-    .expectedState("synthetic-ready")
-    .build();
+function buildTargetRegistry(targets: TargetDefinition[]) {
+  return buildExecutionInventory(
+    targets.map((definition) => ({ id: definition.id, route: "typed" as const, definition })),
+  );
 }
 
-describe("live target registry discovery support", () => {
-  it.each(["post-reboot-recovery", "dcode-rebuild-invalid-credential"])(
-    "accepts the lifecycle fixture profile %s during target discovery",
-    (lifecycle) => {
-      expect(isLifecycleProfile(lifecycle)).toBe(true);
-      expect(
-        liveTargetSupport(syntheticTarget({ ...SUPPORTED_ENVIRONMENT, lifecycle })).supported,
-      ).toBe(true);
-    },
-  );
+function syntheticTarget(environment: TargetEnvironment): TargetDefinition {
+  return {
+    ...listTargets()[0]!,
+    id: "synthetic-target",
+    environment,
+  };
+}
 
-  it("accepts a fully wired synthetic target", () => {
-    const registered = syntheticTarget();
-
-    expect(liveTargetSupport(registered)).toEqual({
-      supported: true,
-      reasons: [],
-    });
-  });
-
+describe("live target registry discovery", () => {
+  // source-shape-contract: compatibility -- Every registry dimension must resolve to a live fixture before a target can be selected
   it.each([
-    ["platform", { ...SUPPORTED_ENVIRONMENT, platform: "synthetic-platform" }],
-    ["install", { ...SUPPORTED_ENVIRONMENT, install: "synthetic-install" }],
-    ["runtime", { ...SUPPORTED_ENVIRONMENT, runtime: "synthetic-runtime" }],
-    ["onboarding", { ...SUPPORTED_ENVIRONMENT, onboarding: "synthetic-onboarding" }],
-    ["lifecycle", { ...SUPPORTED_ENVIRONMENT, lifecycle: "synthetic-lifecycle" }],
-  ] as const)("rejects an unwired %s with a diagnostic", (dimension, environment) => {
-    const support = liveTargetSupport(syntheticTarget(environment));
-
-    expect(support.supported).toBe(false);
-    expect(support.reasons).toEqual([
-      `${dimension} 'synthetic-${dimension}' is not wired for live fixtures`,
-    ]);
-  });
-
-  it("rejects an unrecognized runtime policy tier", () => {
+    ["platform", "synthetic-platform"],
+    ["install", "synthetic-install"],
+    ["runtime", "synthetic-runtime"],
+    ["onboarding", "synthetic-onboarding"],
+    ["lifecycle", "synthetic-lifecycle"],
+  ] as const)("rejects a target whose %s has no executable route (#11407)", (dimension, value) => {
     const environment = {
-      ...SUPPORTED_ENVIRONMENT,
-      policyTier: "synthetic-policy-tier" as TargetEnvironment["policyTier"],
+      ...listTargets()[0]!.environment,
+      [dimension]: value,
     };
 
-    expect(liveTargetSupport(syntheticTarget(environment)).reasons).toEqual([
-      "policyTier 'synthetic-policy-tier' is not wired for live fixtures",
-    ]);
-  });
-
-  it("rejects missing environment and expected-state inputs independently", () => {
-    const missingEnvironment = target("synthetic-no-environment")
-      .expectedState("synthetic-ready")
-      .build();
-    const missingExpectedState = target("synthetic-no-state")
-      .environment(SUPPORTED_ENVIRONMENT)
-      .build();
-
-    expect(liveTargetSupport(missingEnvironment)).toMatchObject({
-      supported: false,
-      reasons: ["missing environment"],
-    });
-    expect(liveTargetSupport(missingExpectedState)).toMatchObject({
-      supported: false,
-      reasons: ["missing expectedStateId"],
-    });
-  });
-
-  it("rejects a missing-environment declaration before reporting execution coverage", () => {
-    const declaration = target("synthetic-no-environment").expectedState("synthetic-ready").build();
-    expect(() => liveTargetInventoryEntry(declaration)).toThrow(
-      "E2E target synthetic-no-environment is not executable: missing environment",
+    expect(() => buildTargetRegistry([syntheticTarget(environment)])).toThrow(
+      `${dimension} '${value}' has no live fixture`,
     );
   });
 
-  it("compiles a run plan from synthetic target behavior", () => {
-    const registered = syntheticTarget();
+  // source-shape-contract: compatibility -- Registry entries must name an observable execution owner instead of silently becoming skipped tests
+  it("rejects unresolved execution coverage (#11407)", () => {
+    const target = {
+      ...listTargets()[0]!,
+      id: "synthetic-unresolved-target",
+      executionCoverage: {
+        agentRuntime: "unresolved" as const,
+        observableOutcome: "unresolved",
+        environmentOrInferenceEndpoint: "unresolved",
+        unresolvedReason: "No executable owner",
+      },
+    };
 
-    expect(buildLiveTargetRunPlan(registered)).toEqual({
-      targetId: registered.id,
-      expectedStateId: registered.expectedStateId,
-      phases: ["environment", "onboarding", "state-validation"],
-    });
-    const deepAgents = { ...SUPPORTED_ENVIRONMENT, onboarding: "cloud-langchain-deepagents-code" };
-
-    expect(buildLiveTargetRunPlan(syntheticTarget(deepAgents)).e2eCloudExperimentalChecks).toEqual(
-      DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
-    );
+    expect(() => buildTargetRegistry([target])).toThrow("execution coverage is unresolved");
   });
 
-  it("inserts lifecycle execution only when the synthetic target requests it", () => {
-    const registered = syntheticTarget({
-      ...SUPPORTED_ENVIRONMENT,
-      lifecycle: "post-reboot-recovery",
-    });
+  // source-shape-contract: compatibility -- Executable registry metadata must still compile into the phase plan consumed by the live runner
+  it("compiles a run plan from executable target behavior", () => {
+    const unsupportedEnvironment = {
+      ...listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")!.environment,
+      lifecycle: "dcode-rebuild-invalid-credential",
+    };
+    expect(() => buildTargetRegistry([syntheticTarget(unsupportedEnvironment)])).toThrow(
+      "environment tuple 'platform=ubuntu-local, install=repo-current, runtime=managed-runtime-running, onboarding=cloud-openclaw, lifecycle=dcode-rebuild-invalid-credential' has no live fixture",
+    );
 
-    expect(liveTargetSupport(registered).supported).toBe(true);
-    expect(buildLiveTargetRunPlan(registered).phases).toEqual([
-      "environment",
-      "onboarding",
-      "lifecycle",
-      "state-validation",
-    ]);
+    const target = listTargets().find(
+      (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
+    )!;
+    expect(buildLiveTargetRunPlan(target)).toMatchObject({
+      targetId: target.id,
+      expectedStateId: target.expectedStateId,
+      phases: ["environment", "onboarding", "lifecycle", "state-validation"],
+      e2eCloudExperimentalChecks: DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+    });
   });
 });

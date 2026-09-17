@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { test as base, expect } from "vitest";
@@ -72,9 +71,6 @@ export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
 
 export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
   switch (targetId) {
-    case "rebuild-hermes":
-    case "rebuild-hermes-stale-base":
-      return 15_000;
     default:
       return 60_000;
   }

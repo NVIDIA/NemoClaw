@@ -13,6 +13,7 @@ export type PullRequestFile = {
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
+  readonly pullRequestNumber: number | null;
   readBase(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
   readHead(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
 };
@@ -177,6 +178,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
 
   return {
     files,
+    pullRequestNumber: null,
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
@@ -226,6 +228,7 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
 
   return {
     files,
+    pullRequestNumber: Number(prNumber),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },

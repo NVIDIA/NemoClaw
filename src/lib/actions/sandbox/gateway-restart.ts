@@ -5,18 +5,6 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-
-export async function withUnsupportedHermesPortableGatewayRestartFence<T>(
-  sandboxName: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return withMcpLifecycleLock(sandboxName, async () => {
-    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:gateway:restart");
-    return operation();
-  });
-}
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -57,6 +45,7 @@ export function parseManagedGatewayControlCompletion(
 
 export type GatewayRestartFailureLayer =
   | "unsupported agent"
+  | "native agent command"
   | "privileged control unavailable"
   | "supervisor not running"
   | "supervisor unavailable"
@@ -65,7 +54,6 @@ export type GatewayRestartFailureLayer =
   | "unsafe config path"
   | "config hash mismatch"
   | "mcp configuration drift"
-  | "relaunch quarantined"
   | "launch failure"
   | "health timeout"
   | "forward recovery failure";
@@ -87,12 +75,6 @@ export type GatewayRestartResult =
 
 type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | null | undefined;
 
-type SupervisorAction = (
-  sandboxName: string,
-  action: "restart" | "recover" | "probe",
-  timeout?: number,
-) => GatewayRestartCommandResult | null;
-
 type SandboxExec = (
   sandboxName: string,
   command: string,
@@ -101,22 +83,10 @@ type SandboxExec = (
 
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
-// Substrings of the in-sandbox supervisor's quarantine lines. The supervisor
-// only forwards allowlisted lines to the host, so matching them is what tells
-// the host that no further relaunch will be attempted by this supervisor
-// instance. Keep in sync with the messages in agents/hermes/start.sh
-// and their allowlist in scripts/managed-gateway-control.py.
-const GATEWAY_RELAUNCH_QUARANTINE_MARKERS = [
-  "relaunch is stopped for this supervisor instance",
-  "quarantined without another launch",
-  "quarantining the managed startup supervisor",
-] as const;
-
 export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
-  requestGatewaySupervisorAction: SupervisorAction;
   executeSandboxExecCommand: SandboxExec;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
@@ -124,6 +94,7 @@ export type GatewayRestartDeps = {
       quiet?: boolean;
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
+      managedProbeImpl?: (sandboxName: string) => boolean | null;
     },
   ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
@@ -242,7 +213,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     };
   }
   if (output.includes(MARKERS.SECRET_BOUNDARY_REFUSED)) {
-    return { layer: "secret-boundary refusal", detail: detail || "boundary refused" };
+    return {
+      layer: "secret-boundary refusal",
+      detail: detail || "boundary refused",
+    };
   }
   if (
     output.includes(MARKERS.GATEWAY_UNSAFE_CONFIG_PATH) ||
@@ -250,17 +224,9 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     output.includes(MARKERS.HERMES_RUNTIME_CONFIG_GUARD_MISSING) ||
     output.includes(MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING)
   ) {
-    return { layer: "unsafe config path", detail: detail || "unsafe config path" };
-  }
-  // A quarantined supervisor is the strictly more specific and terminal fact:
-  // it stops attempting relaunch entirely, so the controller then reports the
-  // generic health timeout it would report for any unresponsive gateway.
-  // Classify the quarantine first so the host names the state that blocks
-  // recovery instead of its health-check side effect.
-  if (GATEWAY_RELAUNCH_QUARANTINE_MARKERS.some((marker) => output.includes(marker))) {
     return {
-      layer: "relaunch quarantined",
-      detail: detail || "the in-sandbox supervisor quarantined gateway relaunch",
+      layer: "unsafe config path",
+      detail: detail || "unsafe config path",
     };
   }
   if (output.includes("HERMES_MCP_CONFIG_DRIFT")) {
@@ -280,34 +246,28 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     };
   }
   if (output.includes("GATEWAY_HEALTH_TIMEOUT") || output.includes("SUPERVISOR_TIMEOUT")) {
-    return { layer: "health timeout", detail: detail || "gateway health timeout" };
+    return {
+      layer: "health timeout",
+      detail: detail || "gateway health timeout",
+    };
   }
-  return { layer: "launch failure", detail: detail || `restart exited ${result.status}` };
+  return {
+    layer: "launch failure",
+    detail: detail || `restart exited ${result.status}`,
+  };
 }
 
 export function isGatewayTerminalRepairLayer(
   layer: GatewayRestartFailureLayer | null | undefined,
-): layer is "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined" {
-  return (
-    layer === "config hash mismatch" ||
-    layer === "mcp configuration drift" ||
-    layer === "relaunch quarantined"
-  );
+): layer is "config hash mismatch" | "mcp configuration drift" {
+  return layer === "config hash mismatch" || layer === "mcp configuration drift";
 }
 
-/** Report terminal restart repair without treating process quarantine as config drift. */
+/** Report terminal native configuration repair guidance. */
 export function gatewayTerminalRepairLines(
   sandboxName: string,
-  layer: "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined",
+  layer: "config hash mismatch" | "mcp configuration drift",
 ): readonly string[] {
-  if (layer === "relaunch quarantined") {
-    return [
-      "The in-sandbox supervisor stopped relaunch after repeated process or health failures.",
-      `Inspect the Hermes failure with \`nemoclaw ${sandboxName} logs --tail 50\`.`,
-      `After correcting the cause, reset the supervisor with \`nemoclaw ${sandboxName} stop\`, then \`nemoclaw ${sandboxName} start\`.`,
-      `If the sandbox still cannot start, rebuild it with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
-    ];
-  }
   if (layer === "mcp configuration drift") {
     return [
       "Hermes refused the gateway restart because its native MCP configuration is missing, conflicting, or not reconciled.",
@@ -438,9 +398,7 @@ export async function restartSandboxGatewayWithDeps(
     }
   } else if (agentName !== "openclaw" || (agent && agent.name !== "openclaw")) {
     const unsupportedAgentName = agent?.name ?? agentName;
-    const reason =
-      `${agentRuntime.getAgentDisplayName(agent)} does not declare a supported supervisor-mediated ` +
-      "gateway restart runtime.";
+    const reason = `${agentRuntime.getAgentDisplayName(agent)} does not declare a supported native gateway restart runtime.`;
     const detail = unsupportedGatewayRestartAgentDetail(unsupportedAgentName, reason);
     printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return { ok: false, failureLayer: "unsupported agent", detail };
@@ -452,24 +410,31 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const restartResult = deps.requestGatewaySupervisorAction(sandboxName, "restart", 210000);
-  const hasRestartMarker =
-    restartResult?.status === 0 &&
-    restartResult.stdout.split(/\r?\n/).some((line) => line.startsWith("GATEWAY_PID="));
-  if (!hasRestartMarker) {
-    const failure = classifyGatewayRestartFailure(restartResult);
+  const nativeCommand = `${agentName} gateway restart`;
+  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  if (!restartResult || restartResult.status !== 0) {
+    const classified = classifyGatewayRestartFailure(restartResult);
+    if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
+      printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
+      return { ok: false, failureLayer: classified.layer, detail: classified.detail };
+    }
+    const detail = restartResult
+      ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+        `${nativeCommand} exited ${restartResult.status}`
+      : `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
-    printGatewayRestartFailure(sandboxName, failure.layer, failure.detail, gatewayLogTail);
-    return { ok: false, failureLayer: failure.layer, detail: failure.detail };
+    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
+    return { ok: false, failureLayer: "native agent command", detail };
   }
 
   if (
     !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
-      initialManagedHealthPassed: true,
+      initialManagedHealthPassed: false,
+      managedProbeImpl: () => null,
     }))
   ) {
     const detail = "gateway process restarted but health did not pass before timeout";
@@ -488,9 +453,18 @@ export async function restartSandboxGatewayWithDeps(
     { quiet },
   );
   const auxiliaryFailureDetail = failedAuxiliaryRecoveryDetail([
-    { label: "the Hermes dashboard host forward", recovered: dashboardForwardRecovered },
-    { label: "the messaging webhook host forward", recovered: messagingForwardRecovered },
-    { label: "one or more agent-declared host forwards", recovered: declaredForwardsRecovered },
+    {
+      label: "the Hermes dashboard host forward",
+      recovered: dashboardForwardRecovered,
+    },
+    {
+      label: "the messaging webhook host forward",
+      recovered: messagingForwardRecovered,
+    },
+    {
+      label: "one or more agent-declared host forwards",
+      recovered: declaredForwardsRecovered,
+    },
   ]);
 
   if (!forwardRecovered) {
@@ -501,7 +475,11 @@ export async function restartSandboxGatewayWithDeps(
   }
   if (auxiliaryFailureDetail !== null) {
     printGatewayRestartFailure(sandboxName, "forward recovery failure", auxiliaryFailureDetail);
-    return { ok: false, failureLayer: "forward recovery failure", detail: auxiliaryFailureDetail };
+    return {
+      ok: false,
+      failureLayer: "forward recovery failure",
+      detail: auxiliaryFailureDetail,
+    };
   }
 
   if (!quiet) {

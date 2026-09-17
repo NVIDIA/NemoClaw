@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as agentRuntime from "../../agent/runtime";
+import type { OpenShellForwardAdapter } from "../../adapters/openshell/forward";
 import {
   createDockerRuntimeProviderBundle,
   createKubernetesRuntimeProviderBundle,
@@ -110,9 +111,10 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const withLifecycleLock: NonNullable<SandboxStopDeps["withLifecycleLock"]> = async (
     _sandboxName,
     operation,
-  ) => operation();
-  const teardownSandboxDashboardForward =
-    vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
+  ) => await operation();
+  const teardownSandboxDashboardForward = vi.fn<
+    NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>
+  >(async () => true);
   const updateSandbox = vi.fn<NonNullable<SandboxStopDeps["updateSandbox"]>>((_name, updates) => {
     storedSandbox = { ...storedSandbox, ...updates };
     return true;
@@ -140,6 +142,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     runtimeProviders,
     stopSandboxChannels,
     teardownSandboxDashboardForward,
+    listSandboxes: () => ({ sandboxes: [storedSandbox], defaultSandbox: null }),
     log,
     warn,
     decideOllamaModelOwnership,
@@ -148,6 +151,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
       activeSandboxNames: new Set(peers.map((peer) => peer.name)),
       gatewayChecks: [],
     }),
+    loadPersistedOllamaHost: () => null,
     withOllamaModelOwnershipLock: (operation) => operation(),
     withLifecycleLock,
     updateSandbox,
@@ -172,26 +176,26 @@ function harness(overrides: StopHarnessOverrides = {}) {
 }
 
 describe("teardownSandboxDashboardForward", () => {
-  it("does not wait on a fallback dashboard port for a terminal agent", () => {
+  it("does not verify a fallback dashboard port for a terminal agent", async () => {
     const registeredAgent = vi
       .spyOn(agentRuntime, "getRegisteredAgent")
       .mockReturnValue({ runtime: { kind: "terminal" } } as never);
     const resolveSandboxDashboardPort = vi.fn(() => 18789);
-    const isLocalForwardReachable = vi.fn(() => true);
+    const verifyForwardRelease = vi.fn<OpenShellForwardAdapter["verifyForwardRelease"]>();
 
-    expect(
+    await expect(
       teardownSandboxDashboardForward("terminal-sandbox", {
+        forwardAdapterForAuthority: () => ({ verifyForwardRelease }),
         getSandbox: () => sandbox({ agent: "terminal-agent" }),
-        isLocalForwardReachable,
         resolveSandboxDashboardPort,
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(resolveSandboxDashboardPort).not.toHaveBeenCalled();
-    expect(isLocalForwardReachable).not.toHaveBeenCalled();
+    expect(verifyForwardRelease).not.toHaveBeenCalled();
     registeredAgent.mockRestore();
   });
 
-  it("waits for the selected sandbox port to release after stop", () => {
+  it("verifies the selected sandbox port is released after stop", async () => {
     const getSandbox = vi.fn(() =>
       sandbox({
         dashboardPort: 19443,
@@ -200,27 +204,48 @@ describe("teardownSandboxDashboardForward", () => {
       }),
     );
     const resolveSandboxDashboardPort = vi.fn(() => 19443);
-    const isLocalForwardReachable = vi
-      .fn<() => boolean>()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    const verifyForwardRelease = vi
+      .fn<OpenShellForwardAdapter["verifyForwardRelease"]>()
+      .mockResolvedValue({ state: "released" });
 
-    expect(() =>
+    await expect(
       teardownSandboxDashboardForward("selected-sandbox", {
+        forwardAdapterForAuthority: () => ({ verifyForwardRelease }),
         getSandbox,
-        isLocalForwardReachable,
+        resolveForwardRuntimeAuthority: () => ({
+          authority: {
+            endpoint: "https://127.0.0.1:18080",
+            owner: {
+              endpoint: null,
+              gatewayName: "nemoclaw-18080",
+              gatewayPort: 18080,
+              mode: "nemoclaw-managed",
+              requiredCapabilities: [],
+              source: "packaged-service",
+              stateDir: null,
+              supervisor: null,
+            },
+          },
+          runtime: {
+            gatewayEndpoint: "https://127.0.0.1:18080",
+            gatewayName: "nemoclaw-18080",
+            workspace: "default",
+          },
+        }),
         resolveSandboxDashboardPort,
-        sleep: () => {},
       }),
-    ).not.toThrow();
+    ).resolves.toBe(true);
 
     expect(resolveSandboxDashboardPort).toHaveBeenCalledWith(
       "selected-sandbox",
       expect.objectContaining({ getSandbox: expect.any(Function) }),
     );
-    expect(isLocalForwardReachable).toHaveBeenCalledTimes(2);
-    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(1, 19443);
-    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(2, 19443);
+    expect(verifyForwardRelease).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        forwards: [expect.objectContaining({ port: 19443, sandboxName: "selected-sandbox" })],
+        timeoutMs: 5_000,
+      }),
+    );
   });
 });
 
@@ -229,7 +254,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
   const activePeer = sandbox({ name: "active-peer" });
   const stoppedPeer = sandbox({ name: "stopped-peer" });
 
-  it("groups peers by gateway and distinguishes active phases from stopped or absent rows (#10074)", () => {
+  it("groups peers by gateway and distinguishes active phases from stopped or absent rows (#10074)", async () => {
     const captureSandboxOwnershipPhases = vi.fn(() => ({
       status: 0,
       output: [
@@ -264,7 +289,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
     expect(captureSandboxOwnershipPhases).toHaveBeenCalledExactlyOnceWith("nemoclaw", environment);
   });
 
-  it("fails closed when a listed sibling has no usable phase (#10074)", () => {
+  it("fails closed when a listed sibling has no usable phase (#10074)", async () => {
     const result = discoverActiveOllamaSandboxNames([activePeer], environment, {
       captureSandboxOwnershipPhases: () => ({
         status: 0,
@@ -279,7 +304,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
     });
   });
 
-  it("returns bounded OpenShell discovery evidence instead of treating a failed list as stale (#10074)", () => {
+  it("returns bounded OpenShell discovery evidence instead of treating a failed list as stale (#10074)", async () => {
     const result = discoverActiveOllamaSandboxNames([activePeer], environment, {
       captureSandboxOwnershipPhases: () => ({ status: 1, output: "gateway unavailable\n" }),
       resolvePersistedSandboxOwnershipGateway: () => "nemoclaw",
@@ -339,7 +364,7 @@ describe("stopSandbox", () => {
     );
   });
 
-  it("keeps a successful stop successful when dashboard cleanup cannot launch (#7227)", async () => {
+  it("reports failure and preserves recovery state when dashboard cleanup cannot launch (#7227, #9808)", async () => {
     const teardownSandboxDashboardForward = vi.fn(() => {
       throw new Error("spawn openshell EACCES");
     });
@@ -347,10 +372,26 @@ describe("stopSandbox", () => {
 
     const result = await stopSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain("release of its host forward ports could not be proved");
+    expect(result.message).toContain("Recoverable registry state was preserved");
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(true);
     expect(teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
     expect(h.warn).toHaveBeenCalledWith(
       "  Warning: could not release the dashboard port-forward: spawn openshell EACCES",
+    );
+  });
+
+  it("reports failure when dashboard port release remains unproved (#9808)", async () => {
+    const h = harness({ teardownSandboxDashboardForward: vi.fn(async () => false) });
+
+    const result = await stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain("release of its host forward ports could not be proved");
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(true);
+    expect(h.warn).toHaveBeenCalledWith(
+      "  Warning: a ForwardTcp port for 'my-sandbox' did not release. Retry 'nemoclaw my-sandbox stop'.",
     );
   });
 
@@ -505,7 +546,7 @@ describe("stopSandbox", () => {
     expect(h.stopSandboxChannels).not.toHaveBeenCalled();
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
-    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
     expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
   });
 

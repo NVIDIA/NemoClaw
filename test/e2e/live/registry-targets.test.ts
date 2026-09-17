@@ -12,9 +12,9 @@ import {
   dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
-import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
-import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
+import { liveTargetTestTitle } from "../registry/execution.ts";
+import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -29,6 +29,7 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 );
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
+// The workflow filters by the stable target ID prefix via `-t "^${TARGET_ID}:"`.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
 // That selector matches nothing when the ID names no registered target, and an
 // empty ID builds the selector `-t "^$"`, which also matches nothing. Vitest
@@ -43,11 +44,10 @@ const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
 requireTargets(SELECTED_TARGET_IDS);
 
 for (const [targetIndex, target] of listTargets().entries()) {
-  const support = liveTargetSupport(target);
-  const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
+  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
 
   test(
-    liveTargetTestTitle(target, support),
+    liveTargetTestTitle(target),
     {
       meta: {
         e2eArtifactRootId: target.id,
@@ -67,7 +67,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
       stateValidation,
     }) => {
       progress.phase("resolve the target contract and run plan");
-
       const dcodeBaseContract = loadDcodeBaseImagePublicationEvidence(
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
@@ -75,19 +74,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
       const dcodeBaseImageReference = dcodeBaseContract
         ? dcodeBaseImageReferenceForContract(dcodeBaseContract)
         : undefined;
-      target.requiredSecrets?.forEach((secret) => secrets.required(secret));
+      target.requiredSecrets.forEach((secret) => secrets.required(secret));
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
         "run `npm run build:cli` before live repo CLI targets",
       ).toBe(true);
-      if (!target.environment) {
-        throw new Error(`target '${target.id}' is missing environment`);
-      }
-      if (!target.expectedStateId) {
-        throw new Error(`target '${target.id}' is missing expectedStateId`);
-      }
-
       await artifacts.target.declare({
         id: target.id,
         boundary: "typed-registry",
@@ -103,13 +95,11 @@ for (const [targetIndex, target] of listTargets().entries()) {
       if (profile && !lifecycleProfile) {
         throw new Error(
           `target '${target.id}' declares lifecycle '${profile}' which is not ` +
-            `dispatched by LifecyclePhaseFixture.`,
+            `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
+            `SUPPORTED_LIFECYCLES whitelist together.`,
         );
       }
       progress.phase("prepare the target lifecycle prerequisites");
-      await (lifecycleProfile === "post-reboot-recovery"
-        ? lifecycle.preparePostReboot()
-        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
@@ -119,6 +109,10 @@ for (const [targetIndex, target] of listTargets().entries()) {
           : { timeoutMs: timeoutContract.commandTimeoutMs }),
       });
 
+      // Lifecycle phase runs between onboard and state-validation.
+      // Targets opt in by setting `environment.lifecycle` to a
+      // whitelisted profile. Profiles dispatch through LifecyclePhaseFixture
+      // before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       // Every registry target crosses the optional lifecycle boundary before
       // state validation.

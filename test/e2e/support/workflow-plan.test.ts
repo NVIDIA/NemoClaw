@@ -117,9 +117,9 @@ describe("E2E workflow plan", () => {
       }, {}),
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
-      "typed-registry": 4,
+      "typed-registry": 3,
       "shared-e2e": 2,
-      "retained-workflow": 15,
+      "retained-workflow": 14,
       staging: 1,
     });
     expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
@@ -129,7 +129,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(85);
+    expect(plan.coverageMatrix).toHaveLength(78);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -144,7 +144,6 @@ describe("E2E workflow plan", () => {
       "managed-image-protected-runtime",
       "mcp-bridge",
       "messaging-providers",
-      "openclaw-plugin-runtime-exdev",
       "openshell-credential-generation-window",
       "openshell-gateway-auth-contract",
       "shared-e2e",
@@ -172,14 +171,9 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(50);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining([
-        "bootstrap-install-smoke",
-        "gateway-guard-recovery",
-        "rebuild-hermes",
-        "rebuild-openclaw",
-      ]),
+      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -305,16 +299,11 @@ describe("E2E workflow plan", () => {
 
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "gateway-guard-recovery",
-          host_packages: "",
-          install_non_interactive: true,
-        }),
         expect.objectContaining({
           id: "hermes-slack",
           display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
@@ -689,6 +678,20 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "src/lib/actions/sandbox/gateway-state.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+  ])("selects stopped-phase survival coverage when %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-survival",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-survival",
+    );
+  });
+
   it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
     "selects both Hermes onboarding scenarios when %s changes",
     (changedFile) => {
@@ -699,6 +702,21 @@ describe("E2E workflow plan", () => {
       );
     },
   );
+
+  it.each([
+    "src/lib/adapters/openshell/command-execution.ts",
+    "src/lib/adapters/openshell/forward-cli.ts",
+    "src/lib/adapters/openshell/forward-runtime.ts",
+    "src/lib/adapters/openshell/forward.ts",
+  ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
+    const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
+
+    expect(targetIds).toEqual([
+      "dashboard-remote-bind",
+      "double-onboard-hermes",
+      "onboard-resume-hermes",
+    ]);
+  });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
     "prepares Hermes swap for the %s execution",

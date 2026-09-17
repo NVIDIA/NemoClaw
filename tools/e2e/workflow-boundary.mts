@@ -30,10 +30,6 @@ import {
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
-  type OpenClawPluginRuntimeExdevWorkflow,
-  validateOpenClawPluginRuntimeExdevWorkflow,
-} from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
-import {
   type OpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
@@ -49,6 +45,11 @@ import {
   type E2eGatewayRuntimeSupport,
 } from "./gateway-runtime.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  validateReviewedOpenShellSdkInstallAction,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -149,7 +150,6 @@ const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
 const GATEWAY_RUNTIMES_MARKER = "E2E_GATEWAY_RUNTIMES";
-const STAGING_BREV_JOB_ID = "staging-brev-launchable";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
@@ -209,7 +209,7 @@ const RUNNER_ROUTING_SCRIPT = [
   "  fi",
   '  larger_runner="${LARGER_RUNNER_LABEL}"',
   "fi",
-  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger}\')"',
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"security-posture-hermes":$larger}\')"',
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
@@ -483,8 +483,9 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 
     allowedJobs.push(jobId);
     workflowJobs.push(jobId);
-    const gatewayRuntimes =
-      gatewayRuntimeSupport(env[GATEWAY_RUNTIMES_MARKER]) ?? E2E_RUNTIME_AGNOSTIC;
+    const gatewayRuntimes = Object.hasOwn(env, GATEWAY_RUNTIMES_MARKER)
+      ? gatewayRuntimeSupport(env[GATEWAY_RUNTIMES_MARKER])
+      : E2E_RUNTIME_AGNOSTIC;
     if (gatewayRuntimes === undefined) {
       errors.push(`${jobId} job ${GATEWAY_RUNTIMES_MARKER} is invalid`);
     } else {
@@ -1045,6 +1046,40 @@ function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
+function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "external-gateway-health";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) return;
+  const jobSteps = asSteps(job.steps);
+  const sdkDownload = requireJobStep(
+    errors,
+    jobName,
+    jobSteps,
+    "Download reviewed OpenShell SDK archive",
+  );
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("external-gateway-health job must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireJobStep(
+    errors,
+    jobName,
+    jobSteps,
+    REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+  );
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push("external-gateway-health job must install the reviewed SDK with the shared action");
+  }
+}
+
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
   return asSteps(job.steps).some(
     (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
@@ -1477,7 +1512,7 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     ])
   ) {
     errors.push(
-      "hermes-e2e job must depend on publication, generate-matrix, and reviewed OpenShell SDK validation",
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
     );
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
@@ -1543,19 +1578,23 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     "Download reviewed OpenShell SDK archive",
   );
   if (
-    asRecord(sdkDownload?.with).name !== "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
   ) {
-    errors.push("hermes-e2e SDK download must use the reviewed package artifact");
+    errors.push("hermes-e2e job must download the run-scoped reviewed SDK archive");
   }
-  if (asRecord(sdkDownload?.with).path !== "${{ runner.temp }}/openshell-sdk") {
-    errors.push("hermes-e2e SDK download must use the isolated runner SDK directory");
+  const sdkInstall = requireJobStep(errors, jobName, steps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+    errors.push(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
   }
-  requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install reviewed OpenShell SDK archive without package credentials",
-  );
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
@@ -1674,6 +1713,10 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   } else {
     requireFullShaAction(errors, setupNode, "jetson-nvmap-gpu Node setup");
   }
+  const setupNpm = namedStep(steps, "Install reviewed npm");
+  if (setupNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference) {
+    errors.push("jetson-nvmap-gpu controller must install reviewed npm immutably");
+  }
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
     dispatch?.run !== "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
@@ -1700,9 +1743,9 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   ) {
     errors.push("jetson-nvmap-gpu controller must upload its bounded dispatch artifact");
   }
-  if (steps.length !== 4) {
+  if (steps.length !== 5 || steps.indexOf(setupNpm ?? {}) !== steps.indexOf(setupNode ?? {}) + 1) {
     errors.push(
-      "jetson-nvmap-gpu controller must contain only checkout, Node setup, dispatch, and upload",
+      "jetson-nvmap-gpu controller must contain only checkout, Node/npm setup, dispatch, and upload",
     );
   }
 }
@@ -2327,6 +2370,11 @@ function validateTrustedE2ePlannerBoundary(
     generateSteps,
     "Install trusted E2E planner dependencies",
   );
+  const trustedNpmInstall = requireStep(
+    errors,
+    generateSteps,
+    "Install reviewed npm for trusted E2E planning",
+  );
   requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
@@ -2342,6 +2390,9 @@ function validateTrustedE2ePlannerBoundary(
   if (Object.keys(asRecord(trustedPlannerSetup?.with)).some((key) => key !== "node-version")) {
     errors.push("trusted E2E planner must not enable additional Node setup inputs");
   }
+  if (trustedNpmInstall?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference) {
+    errors.push("trusted E2E planner must install reviewed npm from an immutable action");
+  }
   if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
     errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
   }
@@ -2349,6 +2400,7 @@ function validateTrustedE2ePlannerBoundary(
     ? generateSteps.indexOf(trustedPlannerCheckout)
     : -1;
   const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
+  const trustedNpmIndex = trustedNpmInstall ? generateSteps.indexOf(trustedNpmInstall) : -1;
   const trustedInstallIndex = trustedPlannerInstall
     ? generateSteps.indexOf(trustedPlannerInstall)
     : -1;
@@ -2357,7 +2409,8 @@ function validateTrustedE2ePlannerBoundary(
   if (
     trustedPlannerIndex < 0 ||
     trustedSetupIndex <= trustedPlannerIndex ||
-    trustedInstallIndex <= trustedSetupIndex ||
+    trustedNpmIndex <= trustedSetupIndex ||
+    trustedInstallIndex <= trustedNpmIndex ||
     generateIndex <= trustedInstallIndex ||
     candidateCheckoutIndex <= generateIndex
   ) {
@@ -2443,11 +2496,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateManagedImageMultiarchWorkflow(workflow));
   errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
-  errors.push(
-    ...validateOpenClawPluginRuntimeExdevWorkflow(
-      workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
-    ),
-  );
   errors.push(
     ...validateOpenShellGatewayAuthContractWorkflow(
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
@@ -2659,6 +2707,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
+  validateExternalGatewayHealthSdkInstall(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 
@@ -2801,6 +2850,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   return [
+    ...validateReviewedOpenShellSdkInstallAction(),
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),

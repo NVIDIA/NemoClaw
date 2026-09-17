@@ -745,13 +745,17 @@ async function destroySandboxUnlocked(
       throw error;
     }
   };
-  let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
-  destroyPreflight = abortPreparedCleanupOnError(() =>
-    prepareSandboxDestroy(sandboxName, {
+  let destroyPreflight: Awaited<ReturnType<typeof prepareSandboxDestroy>>;
+  try {
+    destroyPreflight = await prepareSandboxDestroy(sandboxName, {
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
       operationRuntimeSelection,
-    }),
-  );
+    });
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
+
   const {
     cleanupGatewayName,
     runOpenshell,
@@ -823,6 +827,7 @@ async function destroySandboxUnlocked(
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
+      deleteGatewayName: cleanupGatewayName,
       runOpenshell,
       ...(mcpRuntimeSelection ? { mcpRuntimeSelection } : {}),
       sandbox,
@@ -958,7 +963,7 @@ async function destroySandboxUnlocked(
   // gateway. Gate that teardown on the *confirmed* delete state only — never on
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
-  const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
   }
@@ -1202,12 +1207,13 @@ async function destroySandboxUnlocked(
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      if (destroyRuntimeProviderId) {
-        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
-          runtimeProviderId: destroyRuntimeProviderId,
+      if (destroyRuntimeProviderId || destroyRuntimeSelection) {
+        await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
+          ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+          ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
       } else {
-        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+        await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
       }
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every

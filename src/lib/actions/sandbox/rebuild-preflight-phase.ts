@@ -198,9 +198,14 @@ export async function runRebuildPreflightPhase(
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const versionCheck = await runRebuildGatewayIntentPreflight({
-    checkGatewaySchema: () =>
+    checkGatewaySchema: async () =>
       isDcodeRebuildAgent(rebuildAgent) ||
-      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection),
+      (await checkRebuildGatewaySchemaPreflight(
+        sandboxName,
+        sandboxEntry,
+        bail,
+        mcpRuntimeSelection,
+      )),
     confirmIntent: () =>
       confirmRebuildIntent(
         sandboxName,

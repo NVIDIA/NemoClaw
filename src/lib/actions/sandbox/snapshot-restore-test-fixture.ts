@@ -212,7 +212,10 @@ export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
     | { status: "blocked"; reason: "authority-unproven"; removed: false }
 >(() => ({ status: "complete", removed: true }));
 export const runOpenshellMock = vi.fn((args: string[]) => {
-  args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
+  if (args[0] === "sandbox" && args[1] === "delete") {
+    lifecycleMock.events.push("delete");
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+  }
   return { status: 0, output: "" };
 });
 export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
@@ -221,6 +224,13 @@ export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(as
   sawProgress: false,
   forcedReady: false,
 }));
+export const allocateSnapshotCloneForwardPortsMock = vi.fn(
+  async (input: { source: SandboxRecord }) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
+  }),
+);
 export const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
@@ -241,6 +251,10 @@ vi.mock("../../agent/defs", () => ({
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: (args: string[]) =>
+    args[0] === "gateway" && args[1] === "select"
+      ? runOpenshellMock(args)
+      : captureOpenshellMock(args),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
 }));
@@ -259,10 +273,6 @@ vi.mock("../../credentials/store", () => ({
   getCredential: vi.fn(() => null),
   prompt: vi.fn(),
   saveCredential: vi.fn(),
-}));
-
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -307,6 +317,22 @@ vi.mock("../../sandbox/mutable-config-perms", () => ({
 
 vi.mock("../../sandbox/create-stream", () => ({
   streamSandboxCreate: streamSandboxCreateMock,
+}));
+
+vi.mock("../../adapters/openshell/gateway-reuse-cli", () => ({
+  createCliOpenShellGatewayReuseObserver: () => ({
+    observeGatewayReuse: async () => {
+      const healthy = isGatewayHealthyMock();
+      return {
+        gatewayReuseState: healthy ? "healthy" : "missing",
+        healthy,
+        namedMetadata: true,
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding: healthy ? "match" : "unknown",
+      };
+    },
+  }),
 }));
 
 vi.mock("../../state/gateway", () => ({
@@ -362,6 +388,11 @@ vi.mock("./destroy", async () => {
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: establishRestoredSandboxGatewayPairingMock,
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
+}));
+
+vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
+  allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
 }));
 
 vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
@@ -447,6 +478,11 @@ export function resetSnapshotRestoreMocks(): void {
     output: "",
     sawProgress: false,
     forcedReady: false,
+  }));
+  allocateSnapshotCloneForwardPortsMock.mockImplementation(async (input) => ({
+    dashboardPort:
+      typeof input.source.dashboardPort === "number" ? input.source.dashboardPort : null,
+    hermesApiPort: input.source.agent === "hermes" ? 8_642 : null,
   }));
   waitForRestoredSandboxGatewaySupervisorMock.mockReturnValue(true);
   parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));

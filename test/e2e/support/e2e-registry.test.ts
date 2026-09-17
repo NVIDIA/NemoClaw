@@ -5,19 +5,38 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { target } from "../registry/builder.ts";
+import type { TargetDefinition } from "../registry/types.ts";
 import { validateE2eExecutionRows } from "../../../tools/e2e/execution-coverage.mts";
 import {
   buildExecutionInventory,
   listTargets,
   type E2eInventoryTarget,
   reconcileWorkflowExecutionDiscovery,
-  sharedTarget,
 } from "../../../tools/e2e/target-inventory.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
 const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
+
+const TYPED_FIXTURE: TargetDefinition = {
+  id: "typed-proof",
+  description: "Executable typed target fixture",
+  environment: {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "managed-runtime-running",
+    onboarding: "cloud-openclaw",
+  },
+  expectedStateId: "cloud-openclaw-ready",
+  executionCoverage: {
+    agentRuntime: "openclaw",
+    observableOutcome: "The fixture completes",
+    environmentOrInferenceEndpoint: "Ubuntu managed runtime host",
+    unresolvedReason: "",
+  },
+  requiredSecrets: [],
+  gatewayRuntimes: ["docker"],
+};
 
 const WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "workflow" }> = {
   id: "proof",
@@ -164,9 +183,16 @@ describe("deterministic target registry", () => {
     ).toThrow("has an invalid test path");
   });
 
+  it("rejects a typed target with a dangling expected state", () => {
+    const definition = { ...TYPED_FIXTURE, expectedStateId: "missing-state" };
+    expect(() =>
+      buildExecutionInventory([{ id: definition.id, route: "typed", definition }]),
+    ).toThrow("Unknown expected_state id 'missing-state'");
+  });
+
   it("should reject duplicate target IDs", () => {
-    const first = target("duplicate-id").build();
-    const second = target("duplicate-id").build();
+    const first = { ...TYPED_FIXTURE, id: "duplicate-id" };
+    const second = { ...TYPED_FIXTURE, id: "duplicate-id" };
 
     expect(() =>
       buildExecutionInventory(
@@ -179,15 +205,12 @@ describe("deterministic target registry", () => {
     ).toThrow(/duplicate-id/);
   });
 
-  it("rejects a typed target that reuses a shared target ID", () => {
-    const shared = sharedTarget("vllm-docker-storage");
-    const typed = target(shared.id).build();
+  it("rejects a typed target that reuses a workflow target ID", () => {
+    const workflow = WORKFLOW_FIXTURE;
+    const typed = { ...TYPED_FIXTURE, id: workflow.id };
     expect(() =>
-      buildExecutionInventory([
-        { id: shared.id, route: "shared", definition: shared },
-        { id: typed.id, route: "typed", definition: typed },
-      ]),
-    ).toThrow("Duplicate target IDs: vllm-docker-storage");
+      buildExecutionInventory([workflow, { id: typed.id, route: "typed", definition: typed }]),
+    ).toThrow("Duplicate target IDs: proof");
   });
 
   it("rejects coverage attached to another workflow target", () => {
@@ -239,7 +262,7 @@ describe("deterministic target registry", () => {
   });
 
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
-    const unsafe = target("bad.id").build();
+    const unsafe = { ...TYPED_FIXTURE, id: "bad.id" };
 
     expect(() =>
       buildExecutionInventory([{ id: unsafe.id, route: "typed", definition: unsafe }]),

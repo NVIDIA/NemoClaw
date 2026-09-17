@@ -98,9 +98,11 @@ describe("portable profile rootless runtime workflow", () => {
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
         "src/lib/actions/sandbox/forward-recovery.ts",
-        "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+        "src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.ts",
         "src/lib/actions/sandbox/start.ts",
-        "src/lib/adapters/openshell/forward-service.ts",
+        "src/lib/adapters/openshell/command-execution.ts",
+        "src/lib/adapters/openshell/forward-cli.ts",
+        "src/lib/adapters/openshell/forward.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
         "src/lib/onboard/experimental/hermes-portable-contract.ts",
@@ -355,7 +357,7 @@ ${serviceIdentityCheck}`,
       )
       .toBe(true);
     expect
-      .soft(selects("pull_request", "src/lib/adapters/openshell/forward-service.ts"))
+      .soft(selects("pull_request", "src/lib/adapters/openshell/forward-runtime.ts"))
       .toBe(true);
     expect.soft(selects("push", "src/lib/actions/sandbox/launch-readiness/health.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/actions/sandbox/gateway-state.ts")).toBe(true);
@@ -376,7 +378,7 @@ ${serviceIdentityCheck}`,
     expect
       .soft(selects("push", "src/lib/onboard/experimental/portable-runtime-receipt-readiness.ts"))
       .toBe(true);
-    expect.soft(selects("push", "src/lib/adapters/openshell/forward-service.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/forward-runtime.ts")).toBe(true);
 
     expect
       .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-container.ts"))

@@ -35,6 +35,17 @@ test.runIf(outcome === "cleanup-failed")(
   },
 );
 
+test.runIf(outcome === "body-and-cleanup-failed")(
+  "keeps body and cleanup failures distinct",
+  ({ cleanup, expect, progress }) => {
+    cleanup.add("owned cleanup after body failure", () => {
+      throw new Error("distinct owned cleanup failure");
+    });
+    progress.phase("raise primary body failure");
+    expect(false, "primary body failure").toBe(true);
+  },
+);
+
 test.runIf(outcome === "cleanup-stalled")(
   "stalls after cleanup starts",
   ({ cleanup, expect, progress }) => {
@@ -63,6 +74,17 @@ test.runIf(outcome === "soft-failed")(
 test.runIf(outcome === "incomplete")(
   "accepts a test without a final phase declaration",
   () => undefined,
+);
+
+test.runIf(outcome === "no-phase-passed" || outcome === "no-phase-failed")(
+  "checks a real file without declaring progress",
+  ({ artifacts, expect }) => {
+    const resultFile = artifacts.pathFor("observed-result.txt");
+    fs.writeFileSync(resultFile, "observed result");
+    expect(fs.readFileSync(resultFile, "utf8")).toBe(
+      outcome === "no-phase-failed" ? "different result" : "observed result",
+    );
+  },
 );
 
 test.runIf(outcome === "redacted-event")(

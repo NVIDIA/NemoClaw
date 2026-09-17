@@ -416,33 +416,4 @@ export const workflowTargets: readonly WorkflowE2eTarget[] = [
       },
     ],
   },
-  {
-    id: "openclaw-plugin-runtime-exdev",
-    workflow: ".github/workflows/e2e.yaml",
-    targetId: "openclaw-plugin-runtime-exdev",
-    defaultEnabled: true,
-    gatewayRuntimes: ["docker"],
-    testFiles: ["test/e2e/live/openclaw-plugin-runtime-exdev.test.ts"],
-    owningPaths: [
-      "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
-      "test/helpers/openshell-components.ts",
-      "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-      "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-    ],
-    coverage: [
-      {
-        row: {
-          id: "openclaw-plugin-runtime-exdev",
-          variant: "",
-          source: "retained-workflow",
-          agentRuntime: "openclaw",
-          observableOutcome:
-            "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation",
-          environmentOrInferenceEndpoint: "Ubuntu; current package; no inference endpoint",
-          unresolvedReason: "",
-        },
-        gatewayRuntimes: ["docker"],
-      },
-    ],
-  },
 ];

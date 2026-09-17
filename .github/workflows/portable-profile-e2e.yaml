@@ -49,9 +49,12 @@ on:
       - "agents/hermes/dashboard-external-host.patch"
       - "agents/hermes/start.sh"
       - "src/lib/actions/sandbox/forward-recovery.ts"
-      - "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts"
+      - "src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.ts"
       - "src/lib/actions/sandbox/start.ts"
-      - "src/lib/adapters/openshell/forward-service.ts"
+      - "src/lib/adapters/openshell/command-execution.ts"
+      - "src/lib/adapters/openshell/forward-cli.ts"
+      - "src/lib/adapters/openshell/forward-runtime.ts"
+      - "src/lib/adapters/openshell/forward.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
@@ -89,7 +92,10 @@ on:
       - "agents/hermes/manifest.yaml"
       - "agents/hermes/start.sh"
       - "agents/hermes/dashboard-external-host.patch"
-      - "src/lib/adapters/openshell/forward-service.ts"
+      - "src/lib/adapters/openshell/command-execution.ts"
+      - "src/lib/adapters/openshell/forward-cli.ts"
+      - "src/lib/adapters/openshell/forward-runtime.ts"
+      - "src/lib/adapters/openshell/forward.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/domain/sandbox/destroy.ts"
       - "src/lib/adapters/openshell/resolve*.ts"
@@ -149,8 +155,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install root dependencies
         if: github.event_name != 'workflow_dispatch'
@@ -282,7 +291,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
 
       - name: Provision restricted rootless Linux runtime
         shell: bash

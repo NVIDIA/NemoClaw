@@ -21,6 +21,10 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import {
+  cleanupBootstrapClone,
+  registerBootstrapRuntimeCleanup,
+} from "./bootstrap-install-smoke-cleanup.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // This is intentionally a single live test instead of a new fixture
@@ -109,23 +113,6 @@ async function preseedBootstrapClone(
     },
   );
   expectExitZero(result, "preseed bootstrap clone");
-}
-
-async function cleanupBootstrapState(host: HostCliClient, cloneDir: string): Promise<void> {
-  await runBash(
-    host,
-    [
-      `if command -v nemoclaw >/dev/null 2>&1; then nemoclaw ${JSON.stringify(SANDBOX_NAME)} destroy --yes 2>/dev/null || true; fi`,
-      `if command -v openshell >/dev/null 2>&1; then openshell sandbox delete ${JSON.stringify(SANDBOX_NAME)} 2>/dev/null || true; fi`,
-      "if command -v openshell >/dev/null 2>&1; then openshell gateway destroy -g nemoclaw 2>/dev/null || true; fi",
-      `sudo rm -rf ${JSON.stringify(cloneDir)} 2>/dev/null || rm -rf ${JSON.stringify(cloneDir)} || true`,
-    ].join("\n"),
-    {
-      artifactName: "cleanup-bootstrap-state",
-      env: runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` }),
-      timeoutMs: 180_000,
-    },
-  );
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -238,10 +225,10 @@ test(
 
     progress.phase("prepare a fresh bootstrap clone");
     const cloneDir = path.join(os.tmpdir(), `NemoClaw-bootstrap-${randomUUID()}`);
-    cleanup.add(`remove bootstrap clone ${cloneDir}`, async () =>
-      cleanupBootstrapState(host, cloneDir),
+    const cleanupEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
+    cleanup.add(`remove bootstrap clone ${cloneDir}`, () =>
+      cleanupBootstrapClone(host, cloneDir, cleanupEnv),
     );
-    await cleanupBootstrapState(host, cloneDir);
     await preseedBootstrapClone(host, cloneDir, artifacts);
 
     progress.phase("run the Brev bootstrap script");
@@ -317,6 +304,7 @@ test(
     ).toBe(true);
 
     progress.phase("onboard the hosted inference sandbox");
+    await registerBootstrapRuntimeCleanup(cleanup, host, SANDBOX_NAME, pathEnv);
     let onboard: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
       onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
@@ -468,17 +456,10 @@ test(
       timeoutMs: 120_000,
     });
     expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "phase-7-openshell-gateway-destroy",
-      env: pathEnv,
-      timeoutMs: 60_000,
-    });
 
     const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     if (fs.existsSync(registryFile)) {
       expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
     }
-
-    await cleanupBootstrapState(host, cloneDir);
   },
 );

@@ -302,14 +302,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "gateway-control.sh"),
-    path.join(stagedScriptsDir, "gateway-control.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-gateway-control.py"),
-    path.join(stagedScriptsDir, "managed-gateway-control.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );
@@ -338,10 +330,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
     path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
-    path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
@@ -378,6 +366,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
@@ -440,6 +432,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-identity.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-identity.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "bundled-npm-package.mts"),

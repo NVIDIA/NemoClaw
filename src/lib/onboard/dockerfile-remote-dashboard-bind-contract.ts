@@ -55,7 +55,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "42ef0b12e92ebe146c25367831b4ce3a2664f0fa99fd5e4fb98a8939d3af8800",
   "8b49e78185185f1b7e24d01631186554fef21d2300db65c9bc9998e7ec00469f",
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
-  "5af905889f94ffed2f6c371111d0589e38eed7b0de54ddb0dd68ad912a23149a",
+  "715d3a312ee9952d9fe55b827f2c855a078cdfbc2a8d6edeb32699dcaebb952b",
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
   "e4d6ad4cea1f9b676bcd0c11b3665933bc9baf783de1adef782c283775dd5171",
   "c0b409e1bf4d33a9e44f407c6bd9b0445b2ffd0b796823fe3cfa5989314d6603",
@@ -72,12 +72,13 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
   "6364b77bae0a2a4449737beefac36c439333a5e37993ac404c02e375aa170515",
-  // Reviewed late messaging inputs, metadata setup, and runtime assertions.
+  // Reviewed late messaging inputs, metadata setup, npm 12 helper, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
+  "0634acc02be0de381a0f706baff09233a1c069d55f6419fea0f385909656e88b",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
-  "9026e48d7294a60abe57d7fed77aaf27e8088d29c48421a0f2d1260e7a6d5bdc",
+  "76961dfa868381e4fb3756eb8eae0c6645074132bc0e9d96bda7f3058ac12706",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

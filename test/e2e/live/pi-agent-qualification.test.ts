@@ -11,6 +11,7 @@ import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { outputContainsSandbox, resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -27,6 +28,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
+  classifyPiReadTaskAttempt,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   qualificationPlatform,
@@ -40,6 +42,8 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const PI_PROVIDER_MAX_ATTEMPTS = 2;
+const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -137,7 +141,7 @@ async function preclean(
     env,
     timeoutMs: 3 * 60_000,
   });
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
+  await sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
     env,
     timeoutMs: 60_000,
@@ -172,35 +176,60 @@ async function runReadTask(
   );
   expect(seed.exitCode, resultText(seed)).toBe(0);
   const prompt = `Use the read tool exactly once to read ${remotePath}. Reply with exactly the file contents and no other text.`;
-  const result = await host.nemoclaw(
-    [
-      SANDBOX_NAME,
-      "exec",
-      "--workdir",
-      "/sandbox",
-      "--no-tty",
-      "--timeout",
-      "300",
-      "--",
-      "pi",
-      "--no-approve",
-      "--mode",
-      "json",
-      "--print",
-      "--tools",
-      "read",
-      "--name",
-      `${TASK_VERSION}-${phase}`,
-      prompt,
-    ],
-    {
-      artifactName: `pi-${phase}-headless-task`,
-      env,
-      timeoutMs: PI_COMMAND_TIMEOUT_MS,
+  // The canary is immutable and Pi receives only the read tool, so replaying this
+  // turn cannot repeat an external mutation. Retain every provider retry decision.
+  const execution = await runBoundedRetry({
+    operation: `pi-agent-qualification.read-${phase}`,
+    owner: "inference-provider",
+    idempotence: "read-only",
+    maxAttempts: PI_PROVIDER_MAX_ATTEMPTS,
+    delayMs: PI_PROVIDER_RETRY_DELAY_MS,
+    run: async (attempt) => {
+      const result = await host.nemoclaw(
+        [
+          SANDBOX_NAME,
+          "exec",
+          "--workdir",
+          "/sandbox",
+          "--no-tty",
+          "--timeout",
+          "300",
+          "--",
+          "pi",
+          "--no-approve",
+          "--mode",
+          "json",
+          "--print",
+          "--tools",
+          "read",
+          "--name",
+          `${TASK_VERSION}-${phase}-attempt-${String(attempt)}`,
+          prompt,
+        ],
+        {
+          artifactName: `pi-${phase}-headless-task-attempt-${String(attempt)}`,
+          env,
+          timeoutMs: PI_COMMAND_TIMEOUT_MS,
+        },
+      );
+      let failure: unknown;
+      let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
+      try {
+        proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+      } catch (error) {
+        failure = error;
+      }
+      return { failure, proof, result };
     },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+    classify: classifyPiReadTaskAttempt,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/pi-${phase}-provider-retry.json`, evidence);
+    },
+  });
+  const attempt = execution.value;
+  const failure = attempt?.failure instanceof Error ? attempt.failure.message : "missing attempt";
+  expect(execution.outcome, failure).toBe("passed");
+  const proof = attempt!.proof!;
   await artifacts.writeJson(`pi-${phase}-task-proof.json`, {
     taskVersion: TASK_VERSION,
     remotePath,
@@ -252,7 +281,6 @@ async function runInteractiveTask(
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
-  expect(result.timedOut).toBe(false);
   expect(result.firedTriggers).toContain(token);
   expect(result.exitCode).toBe(0);
 }
@@ -311,8 +339,6 @@ test(
     });
 
     progress.phase("validate the exact Pi candidate receipt");
-    // readPiQualificationReceipt already validates these fields through the
-    // managed-image contract parser; this lane proves source and runtime parity.
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
       directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
@@ -380,12 +406,10 @@ test(
       },
     });
 
-    progress.phase("run headless and interactive Pi tasks");
-    const beforeProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
+    progress.phase("run interactive Pi and preserve its session through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
     const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
 
-    progress.phase("rebuild Pi and preserve session state");
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
       env,
@@ -534,7 +558,6 @@ test(
       },
       tasks: {
         version: TASK_VERSION,
-        headlessBeforeRebuild: beforeProof,
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,

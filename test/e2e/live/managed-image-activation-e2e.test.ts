@@ -17,7 +17,7 @@ test(
     await artifacts.target.declare({
       id: "managed-image-activation",
       boundary:
-        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, restart recovery, and exact cleanup",
+        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, gateway restart readiness, and exact cleanup",
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",

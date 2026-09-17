@@ -26,7 +26,10 @@ import {
   isDcodeOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
 } from "../inference-route-health";
-import { isSandboxGatewayRunningForStatus } from "../process-recovery";
+import {
+  isSandboxGatewayHttpReachableForStatus,
+  isSandboxGatewayRunningForStatus,
+} from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
   | "missing"
@@ -56,7 +59,10 @@ export interface LaunchReadinessHealthDeps {
   capture?: LaunchReadinessBoundCapture;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
-  forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
+  forwardsHealthy?: (
+    sandboxName: string,
+    gatewayName: string,
+  ) => boolean | null | Promise<boolean | null>;
   smoke?: (sandboxName: string, agent: AgentDefinition) => ReturnType<typeof runAgentSmokeCommands>;
   inferenceProbe?: (
     sandboxName: string,
@@ -87,11 +93,11 @@ export function createBoundLaunchReadinessDeps(
       }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
-      isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
+      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
         commandExecutor,
       }),
     forwardsHealthy: (sandboxName, gatewayName) =>
-      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName, capture),
+      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName),
     inferenceProbe: (sandboxName, agent, gatewayName) =>
       probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
     commandExecutor,
@@ -253,7 +259,7 @@ export async function requireLaunchSemanticHealth(
     const forwardStartedAt = performance.now();
     let forwards: boolean | null;
     try {
-      forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
+      forwards = await (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
         sandboxName,
         gatewayName,
       );

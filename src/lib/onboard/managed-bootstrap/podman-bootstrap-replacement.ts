@@ -599,6 +599,13 @@ function sameMap(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function containsExactEntries(
+  observed: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  return Object.entries(expected).every(([key, value]) => observed[key] === value);
+}
+
 function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
   const result = captureWhileWatcherHeld(authority, ["volume", "exists", volumeName]);
   if (result.status === 0) return true;
@@ -751,7 +758,7 @@ function inspectExactContainer(
     name !== expected.name ||
     actualImageContentId !== expected.imageContentId ||
     (expected.running !== undefined && state.Running !== expected.running) ||
-    !sameMap(labels, exactStringMap(expected.labels, "Expected Podman labels"))
+    !containsExactEntries(labels, exactStringMap(expected.labels, "Expected Podman labels"))
   ) {
     return failure("Podman bootstrap container identity or state changed after it was pinned.");
   }
@@ -1081,6 +1088,7 @@ export function stopExactPodmanBootstrapOriginal(
   input: StopExactPodmanBootstrapOriginalInput,
 ): PodmanBootstrapPreparedReplacement {
   assertAuthority(input);
+  input.watcherLease.assertStillStopped();
   const journal = requireJournalPhase(input.journalStore.load(input.prepared.bootstrapIdentity), [
     "replacement-created",
   ]);
@@ -1094,7 +1102,7 @@ export function stopExactPodmanBootstrapOriginal(
   ) {
     failure("Podman bootstrap prepared replacement does not match the durable journal.");
   }
-  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
+  const original = inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload));
   const stateVolume = inspectStableStateVolume(
     input,
     stateVolumeExpectationFromJournal(journal, input.heldWorkload),
@@ -1108,13 +1116,20 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  const stop = captureWhileWatcherHeld(
-    input,
-    ["container", "stop", journal.originalRuntimeId],
-    STOP_TIMEOUT_MS,
-  );
-  requireZero(stop, "Podman bootstrap original-container stop");
+  if (original.running) {
+    const stop = captureWhileWatcherHeld(
+      input,
+      ["container", "stop", journal.originalRuntimeId],
+      STOP_TIMEOUT_MS,
+    );
+    requireZero(stop, "Podman bootstrap original-container stop");
+  }
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
+  const remove = captureWhileWatcherHeld(input, ["container", "rm", journal.originalRuntimeId]);
+  requireZero(remove, "Podman bootstrap original-container handoff removal");
+  if (containerExists(input, journal.originalRuntimeId)) {
+    failure("Podman bootstrap original remained after exact handoff removal.");
+  }
   inspectStableContainer(
     input,
     replacementExpectationFromJournal(
@@ -1202,17 +1217,23 @@ export function rollbackPodmanBootstrapBeforeCommit(
     replacementStateVolumeRemoved = true;
   }
 
-  const originalWasRunning = inspectStableContainer(
-    input,
-    expectedOriginal(journal, input.heldWorkload),
-  ).running;
   let originalStarted = false;
-  if (!originalWasRunning) {
-    const start = captureWhileWatcherHeld(input, ["container", "start", journal.originalRuntimeId]);
-    requireZero(start, "Podman bootstrap original-container rollback start");
-    originalStarted = true;
+  if (containerExists(input, journal.originalRuntimeId)) {
+    const originalWasRunning = inspectStableContainer(
+      input,
+      expectedOriginal(journal, input.heldWorkload),
+    ).running;
+    if (!originalWasRunning) {
+      const start = captureWhileWatcherHeld(input, [
+        "container",
+        "start",
+        journal.originalRuntimeId,
+      ]);
+      requireZero(start, "Podman bootstrap original-container rollback start");
+      originalStarted = true;
+    }
+    inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
   }
-  inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, true));
   input.journalStore.removeAfterRollback(input.bootstrapIdentity);
   input.watcherLease.assertStillStopped();
   return Object.freeze({

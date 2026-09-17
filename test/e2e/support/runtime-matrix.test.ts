@@ -11,9 +11,8 @@ import {
 const BOTH_RUNTIMES = { gatewayRuntimes: ["docker", "podman"] as const };
 
 describe("E2E runtime matrix", () => {
-  it("expands one managed target across runtimes without duplicating single-run contracts", () => {
+  it("expands one managed target across runtimes without duplicating runtime-agnostic contracts", () => {
     const managed = buildE2eWorkflowPlan({ jobs: "cloud-inference" }, BOTH_RUNTIMES);
-    const dockerOnly = buildE2eWorkflowPlan({ jobs: "gateway-guard-recovery" }, BOTH_RUNTIMES);
     const runtimeAgnostic = buildE2eWorkflowPlan({ jobs: "spark-install" }, BOTH_RUNTIMES);
     const managedRows = managed.catalogueMatrices["nvidia-inference"];
 
@@ -31,9 +30,6 @@ describe("E2E runtime matrix", () => {
         coverage_variant: "default-podman",
       }),
     ]);
-    expect(dockerOnly.catalogueMatrices["nvidia-inference"]).toEqual([
-      expect.objectContaining({ id: "gateway-guard-recovery", runtime_provider: "docker" }),
-    ]);
     expect(runtimeAgnostic.catalogueMatrices["nvidia-inference"]).toEqual([
       expect.objectContaining({ id: "spark-install", runtime_provider: "none" }),
     ]);
@@ -41,24 +37,19 @@ describe("E2E runtime matrix", () => {
       "default-docker",
       "default-podman",
     ]);
-    expect(renderE2eWorkflowPlanSummary(dockerOnly)).toContain(
-      "| `gateway-guard-recovery` | podman | docker |",
-    );
     expect(renderE2eWorkflowPlanSummary(runtimeAgnostic)).not.toContain(
       "| `spark-install` | podman |",
     );
   });
 
-  it.each([
-    "bootstrap-install-smoke",
-    "concurrent-gateway-ports",
-    "llama-cpp-generic-gpu",
-    "rebuild-hermes-stale-base",
-  ])("keeps the explicit Docker contract %s out of Podman fanout", (target) => {
-    const plan = buildE2eWorkflowPlan({ jobs: target }, BOTH_RUNTIMES);
-    const rows = Object.values(plan.catalogueMatrices).flat();
+  it.each(["bootstrap-install-smoke", "concurrent-gateway-ports", "llama-cpp-generic-gpu"])(
+    "keeps the explicit Docker contract %s out of Podman fanout",
+    (target) => {
+      const plan = buildE2eWorkflowPlan({ jobs: target }, BOTH_RUNTIMES);
+      const rows = Object.values(plan.catalogueMatrices).flat();
 
-    expect(rows).toEqual([expect.objectContaining({ id: target, runtime_provider: "docker" })]);
-    expect(renderE2eWorkflowPlanSummary(plan)).toContain(`| \`${target}\` | podman | docker |`);
-  });
+      expect(rows).toEqual([expect.objectContaining({ id: target, runtime_provider: "docker" })]);
+      expect(renderE2eWorkflowPlanSummary(plan)).toContain(`| \`${target}\` | podman | docker |`);
+    },
+  );
 });

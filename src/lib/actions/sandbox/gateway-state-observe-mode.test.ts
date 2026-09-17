@@ -19,7 +19,7 @@ import {
 
 describe("getReconciledSandboxGatewayState observe mode", () => {
   beforeEach(() => {
-    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
+    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockResolvedValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
     });

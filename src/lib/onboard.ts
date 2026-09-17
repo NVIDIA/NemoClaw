@@ -331,7 +331,6 @@ const {
 }: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
-  getPortConflictServiceHints,
 }: typeof import("./onboard/remediation") = require("./onboard/remediation");
 const resumeConfig: typeof import("./onboard/resume-config") = require("./onboard/resume-config");
 const {
@@ -437,6 +436,7 @@ const {
 const {
   createFinalOnboardFlowPhases,
   finalizationHandlerDeps,
+  restartNativeGatewayForInitialSetup,
   runFinalOnboardFlowSlice,
 }: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
@@ -451,12 +451,11 @@ const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
 const {
-  findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   withDashboardPortReservationScope: withSandboxPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
-const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
+const rebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { printPortConflictReport } =
@@ -465,7 +464,7 @@ const { runPreflightGatewaySequence } =
   require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
 const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
-const { gatewayCliSupportsLifecycleCommands } =
+const { gatewayCliSupportsLifecycleCommands: supportsLifecycle } =
   require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
 const {
   getGatewayReuseHealthWaitConfig,
@@ -567,7 +566,6 @@ const {
   isDockerDriverGatewayPortListener,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
-  isDockerDriverGatewayStateInUse,
   isPidAlive,
   rememberDockerDriverGatewayPid,
   resolveOpenShellGatewayBinary,
@@ -663,6 +661,8 @@ const {
   runOpenshell,
   runCaptureOpenshell,
   captureOpenshell,
+  gatewayLifecycleAdapter,
+  gatewayReuseAdapter,
   getDockerDriverGatewayEndpointArg,
 } = createOpenshellCliHelpers({
   getCachedBinary: () => OPENSHELL_BIN,
@@ -681,14 +681,14 @@ const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter(
   getGatewayName: () => GATEWAY_NAME,
   sleep: sleepSeconds,
 });
-const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
+const { hasStaleGateway, isGatewayHealthy, getGatewayReuseState } =
   gatewayBinding.createGatewayNameBoundClassifiers(gatewayState, () => GATEWAY_NAME);
 
 const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
   gatewayReuse.createGatewayReuseHelpers({
     gatewayName: () => GATEWAY_NAME,
-    runCaptureOpenshell,
-    runOpenshell,
+    observer: gatewayReuseAdapter,
+    lifecycle: gatewayLifecycleAdapter,
     cliDisplayName,
   });
 
@@ -1062,33 +1062,29 @@ function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
 }
 
-const {
-  destroyGateway,
-  removeDockerDriverGatewayRegistration,
-  retireLegacyGatewayForDockerDriverUpgrade,
-  runQuietOpenshell,
-} = createGatewayProcessLifecycle({
-  gatewayName: () => GATEWAY_NAME,
-  runOpenshell,
-  runCaptureOpenshell,
-  dockerInspect,
-  dockerStop,
-  dockerRm,
-  dockerRemoveVolumesByPrefix,
-  getGatewayClusterContainerName,
-  getDockerDriverGatewayPid,
-  isPidAlive,
-  isDockerDriverGatewayProcess,
-  resolveOpenShellGatewayBinary,
-  clearDockerDriverGatewayRuntimeFiles,
-  sleepSeconds,
-  isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
-  clearRegistry: registry.clearAll,
-  killProcess: process.kill.bind(process),
-  log: console.log,
-  gatewayCliSupportsLifecycleCommands,
-  destroyGatewayWithVolumeCleanup,
-});
+const { destroyGateway, retireLegacyGatewayForDockerDriverUpgrade } = createGatewayProcessLifecycle(
+  {
+    lifecycle: gatewayLifecycleAdapter,
+    gatewayPort: () => GATEWAY_PORT,
+    gatewayName: () => GATEWAY_NAME,
+    dockerInspect,
+    dockerStop,
+    dockerRm,
+    dockerRemoveVolumesByPrefix,
+    getGatewayClusterContainerName,
+    getDockerDriverGatewayPid,
+    isPidAlive,
+    isDockerDriverGatewayProcess,
+    resolveOpenShellGatewayBinary,
+    clearDockerDriverGatewayRuntimeFiles,
+    sleepSeconds,
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
+    clearRegistry: registry.clearAll,
+    killProcess: process.kill.bind(process),
+    log: console.log,
+    destroyGatewayWithVolumeCleanup,
+  },
+);
 
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName(GATEWAY_NAME);
@@ -1159,6 +1155,7 @@ async function preflight(
     managedGatewayObservationAuthoritative,
   } = await preflightGateway.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
+  const supportsLifecycleCommands = await supportsLifecycle(gatewayLifecycleAdapter, GATEWAY_NAME);
 
   // Docker-backed gateways use one legacy reuse and cleanup sequence because
   // OpenShell metadata can outlive a manually removed container (#2020).
@@ -1166,7 +1163,7 @@ async function preflight(
   reuseState = await runPreflightGatewaySequence({
     gatewayReuseState: reuseState,
     externallySupervised: gatewayExternallySupervised,
-    supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    supportsLifecycleCommands,
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     managedGatewayObservationAuthoritative,
     gatewayName: GATEWAY_NAME,
@@ -1224,7 +1221,7 @@ async function preflight(
         externallySupervised: gatewayExternallySupervised,
         managedGatewayObservationAuthoritative,
         portCheckOptions,
-        supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        supportsLifecycleCommands,
         destroyGateway,
         checkPortAvailable,
         verifyGatewayContainerRunning,
@@ -1255,7 +1252,6 @@ async function preflight(
         label,
         envVar,
         portCheck,
-        serviceHints: getPortConflictServiceHints(),
       });
       process.exit(1);
     }
@@ -1329,31 +1325,30 @@ const {
   machineGatewayOwnerDeps,
   resetGatewayOwnerBinding,
 } = createGatewayHostRuntime({
+  lifecycle: gatewayLifecycleAdapter,
+  observer: gatewayReuseAdapter,
   applyOverlayfsAutoFix,
   checkGatewayPortAvailable,
   gatewayName: () => GATEWAY_NAME,
   gatewayPort: () => GATEWAY_PORT,
   getGatewayPortListenerRawScan,
-  getInstalledOpenshellVersion,
-  runCaptureOpenshell,
-  runOpenshell,
+  ...{ getDockerDriverGatewayEnv, getInstalledOpenshellVersion },
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });
 const gatewayRegistration = createGatewayRegistration({
+  revalidateAuthority: getGatewayOwner,
   gatewayName: () => GATEWAY_NAME,
+  gatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpointArg,
   getGatewayLocalEndpoint,
-  hasStaleGateway,
-  isGatewayHealthy,
   isLinuxDockerDriverGatewayEnabled,
-  removeDockerDriverGatewayRegistration,
-  runCaptureOpenshell,
-  runOpenshell,
-  runQuietOpenshell,
+  lifecycle: gatewayLifecycleAdapter,
+  observer: gatewayReuseAdapter,
 });
 
 const dockerDriverGatewayStart = createDockerDriverGatewayStart({
+  observer: gatewayReuseAdapter,
   SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   checkGatewayPortAvailable,
   clearDockerDriverGatewayRuntimeFiles,
@@ -1369,11 +1364,11 @@ const dockerDriverGatewayStart = createDockerDriverGatewayStart({
   getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayStateDir,
+  getGatewayPortListenerRawScan,
   getInstalledOpenshellVersion,
   isDockerDriverGatewayHttpReady,
+  isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
-  isDockerDriverGatewayStateInUse,
-  isGatewayHealthy,
   isGatewayTcpReady,
   isPidAlive,
   logDockerDriverGatewayRestart,
@@ -1381,11 +1376,13 @@ const dockerDriverGatewayStart = createDockerDriverGatewayStart({
   rememberDockerDriverGatewayPid,
   resolveOpenShellGatewayBinary,
   resolveOpenShellSandboxBinary,
+  runner,
   runCaptureOpenshell,
   sleepSeconds,
 });
 
 const gatewayStart = createGatewayStart({
+  lifecycle: gatewayLifecycleAdapter,
   assertGatewayStartAllowed,
   cliDisplayName,
   dockerGpuLocalInference,
@@ -1394,17 +1391,16 @@ const gatewayStart = createGatewayStart({
   gatewayName: () => GATEWAY_NAME,
   getGatewayLocalEndpoint,
   getGatewayReuseSnapshot,
-  hasStaleGateway,
-  isGatewayHealthy,
   isGatewayHttpReady,
   isLinuxDockerDriverGatewayEnabled,
-  runOpenshell,
   selectNamedGatewayForReuseIfNeeded,
   startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
   step,
 });
 
 const gatewayRecovery = createGatewayRecoveryOrchestration({
+  lifecycle: gatewayLifecycleAdapter,
+  observer: gatewayReuseAdapter,
   SCRIPTS,
   assertGatewayStartAllowed,
   attachGatewayMetadataIfNeeded: gatewayRegistration.attachGatewayMetadataIfNeeded,
@@ -1413,14 +1409,10 @@ const gatewayRecovery = createGatewayRecoveryOrchestration({
   gatewayName: () => GATEWAY_NAME,
   getContainerRuntime,
   getGatewayClusterContainerState,
-  isGatewayHealthy,
   isGatewayHttpReady,
   isLinuxDockerDriverGatewayEnabled,
-  isSelectedGateway,
   repairGatewayBootstrapSecrets,
   run,
-  runCaptureOpenshell,
-  runOpenshell,
   shouldPatchCoredns,
   sleepSeconds,
   startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
@@ -1473,13 +1465,14 @@ const sandboxCreateOrchestrationRuntime = {
   get ensureDashboardForward() {
     return ensureDashboardForward;
   },
+  forwardObserver: (n: string, k?: "dashboard" | "loopback") => createForwardPortObserver(n, k),
   filterEnabledChannelsByAgent,
   formatSandboxAgentName,
   formatSandboxBuildEstimateNote,
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  ownsForwardServicePort: (n: string, p: number, k?: "dashboard" | "loopback") => ownsFwd(n, p, k),
+  getGatewayForwardRuntimeAuthority,
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -2456,37 +2449,34 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
-
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
-
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
+  restartNativeGateway: restartNativeGatewayForInitialSetup,
+  shouldRestartNativeGateway: isRoutedInferenceProvider,
 });
 const {
   buildChain,
   buildAgentVerifyChain,
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
+  createForwardPortObserver,
   ensureDashboardForward,
   ensureFinalizationAgentDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  ownsForwardServicePort: ownsFwd,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
-  runOpenshell,
   runCaptureOpenshell,
-  openshellArgv,
   runCapture,
   cliName,
   agentProductName,
@@ -2547,7 +2537,7 @@ async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
 ): Promise<import("./state/onboard-checkpoint-types").CheckpointGatewayAuthority> {
   const authoritativeGateway = entryDecisions.requireGatewayBinding(
-    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts),
+    rebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts),
   );
   const previous = {
     dashboardPort: _preflightDashboardPort,
@@ -2563,15 +2553,17 @@ async function preflightAuthoritativeRebuildTarget(
   const fail = (message: string): never => {
     throw new Error(message);
   };
+  const forwardAuthority = getGatewayForwardRuntimeAuthority();
+  const forwardContext = { sandbox: registry.getSandbox(opts.sandboxName), wsl: isWsl() };
   try {
-    await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
+    await rebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
           preflightGateway.runRuntimePreflight(
-            authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
+            rebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
@@ -2580,7 +2572,7 @@ async function preflightAuthoritativeRebuildTarget(
           ),
         assertGatewayReadiness: preflightGateway.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
-        captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        observeForwardPorts: rebuildTarget.forwardObserver(opts, forwardAuthority, forwardContext),
       },
     );
     return gatewayAuthorityCheckpoint.checkpointGatewayAuthority(getGatewayOwner());
@@ -2601,8 +2593,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
-  const authoritativeGateway =
-    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
+  const authoritativeGateway = rebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
   const previousOpenshellGateway = process.env.OPENSHELL_GATEWAY;
   const previousOpenshellLocalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
@@ -2892,8 +2883,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepComplete,
           updateSession: onboardSession.updateSession,
         },
-        getInitialGatewayReuseState: () =>
-          selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
+        getInitialGatewayReuseState: async () =>
+          (await selectNamedGatewayForReuseIfNeeded(await getGatewayReuseSnapshot()))
+            .gatewayReuseState,
         ...component.flowDeps(preflightGateway, getDockerDriverGatewayEnv, inspectSandboxForCreate),
         gatewayName: GATEWAY_NAME,
         recreateSandbox: isRecreateSandbox,
@@ -2901,8 +2893,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         gatewayDeps: {
           ...machineGatewayOwnerDeps,
           refreshDockerDriverGatewayReuseState,
-          gatewayCliSupportsLifecycleCommands: () =>
-            gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+          gatewayCliSupportsLifecycleCommands: async () =>
+            await supportsLifecycle(gatewayLifecycleAdapter, GATEWAY_NAME),
           waitForGatewayHttpReady,
           recoverGatewayRuntime,
           getGatewayLocalEndpoint,
@@ -2975,7 +2967,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           gatewayName: GATEWAY_NAME,
           inspectSandboxForCreate,
           forceProviderSelection: forceProviderSelectionForAgentChange,
-          ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+          ...rebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
           env: process.env,
           constants: {
@@ -3067,7 +3059,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           apfInterceptorRequested: session?.apfInterceptorRequested === true,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
-          ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
+          ...rebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
           recreateJournalTargetIntentFingerprint:
             opts.recreateJournalTargetIntentFingerprint ?? null,
           resumeAgentChanged,
@@ -3179,7 +3171,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exitCode = 0;
         return;
       }
-      setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
+      await setupInferenceFactory.selectGatewayForFollowupOrExit(
+        GATEWAY_NAME,
+        gatewayLifecycleAdapter,
+      );
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
       const finalFlowPhases = createFinalOnboardFlowPhases<
@@ -3188,6 +3183,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
+        portableRuntimeContext:
+          agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
@@ -3226,6 +3223,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           mergePolicyMessagingChannels,
           detectUnconfiguredMessagingChannels:
             messagingChannelSetup.detectUnconfiguredMessagingChannels,
+          inspectGatewayCredential: registration.inspectGatewayCredential,
           verifyCompatibleEndpointSandboxSmoke: (options) =>
             verifyCompatibleEndpointSandboxSmoke({
               ...options,
@@ -3240,8 +3238,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           startRecordedStep,
           setupPoliciesWithSelection,
           recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates,
         },
         finalization: {
           stagedLegacyKeys,
@@ -3308,9 +3305,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         runtime: onboardRuntimeBoundary.getRuntime(),
         phases: finalFlowPhases,
         recordRepairEvent,
-        afterPoliciesReady: () => {
-          sandboxCancelRollback.disarm();
-        },
+        afterPoliciesReady: () => sandboxCancelRollback.disarm(),
         onContextUpdated: (context) => {
           liveFinalFlowContext = context;
         },
@@ -3407,7 +3402,6 @@ module.exports = {
   clearAgentScopedResumeState: runtimeControlFlow.clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
-  getPortConflictServiceHints,
   classifyValidationFailure,
   isSandboxReady,
   isLoopbackHostname,
@@ -3425,7 +3419,6 @@ module.exports = {
   buildControlUiUrls,
   startGateway,
   startDockerDriverGateway,
-  findAvailableDashboardPort,
   startGatewayForRecovery,
   managedWorkloadOnboard,
   ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },

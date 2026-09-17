@@ -58,20 +58,9 @@ export const externalWorkflowTargets: readonly ExternalWorkflowE2eTarget[] = [
     ],
   },
   {
-    id: "managed-images-pr-openclaw-mcp-discovery",
-    workflow: ".github/workflows/managed-images.yaml",
-    job: "pr-openclaw-mcp-discovery",
-    tests: [
-      {
-        file: "test/e2e/live/mcp-bridge.test.ts",
-        project: "e2e-live",
-      },
-    ],
-  },
-  {
-    id: "platform-vitest-main-macos-vitest",
+    id: "platform-vitest-main-macos-live-e2e",
     workflow: ".github/workflows/platform-vitest-main.yaml",
-    job: "macos-vitest",
+    job: "macos-live-e2e",
     tests: [
       {
         file: "test/e2e/live/full-e2e.test.ts",

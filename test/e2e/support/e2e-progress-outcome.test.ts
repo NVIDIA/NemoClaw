@@ -158,11 +158,38 @@ describe.concurrent("automatic E2E phase outcomes", () => {
       20,
     ],
     [
+      "body-and-cleanup-failed",
+      1,
+      "keeps-body-and-cleanup-failures-distinct",
+      "raise primary body failure",
+      "failed",
+      "failed",
+      0,
+    ],
+    [
       "incomplete",
       0,
       "accepts-a-test-without-a-final-phase-declaration",
       E2E_TEARDOWN_PHASE,
       "passed",
+      "passed",
+      0,
+    ],
+    [
+      "no-phase-passed",
+      0,
+      "checks-a-real-file-without-declaring-progress",
+      "execute E2E test",
+      "passed",
+      "passed",
+      0,
+    ],
+    [
+      "no-phase-failed",
+      1,
+      "checks-a-real-file-without-declaring-progress",
+      "execute E2E test",
+      "failed",
       "passed",
       0,
     ],
@@ -218,6 +245,20 @@ describe.concurrent("automatic E2E phase outcomes", () => {
           outcome: expectedTeardownOutcome,
         });
         expect(phase?.durationMs).toBeGreaterThanOrEqual(minimumDurationMs);
+        if (mode === "body-and-cleanup-failed") {
+          const output = `${result.stdout}\n${result.stderr}`;
+          expect(output).toContain("primary body failure");
+          expect(output).toContain("distinct owned cleanup failure");
+          const cleanup = JSON.parse(
+            fs.readFileSync(path.join(artifactDir, slug, "cleanup.json"), "utf8"),
+          );
+          expect(cleanup.failures).toEqual([
+            {
+              name: "owned cleanup after body failure",
+              message: "distinct owned cleanup failure",
+            },
+          ]);
+        }
       } finally {
         fs.rmSync(artifactDir, { recursive: true, force: true });
       }
