@@ -135,10 +135,13 @@ describe("rebuild destroy phase", () => {
         ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
         : { status: 0, stdout: "", stderr: "" },
     );
-    mocks.waitUntilAsync.mockImplementation(
-      async (condition: () => boolean | Promise<boolean>) =>
-        (await condition()) || (await condition()) || (await condition()),
-    );
+    mocks.waitUntilAsync.mockImplementation(async (condition: () => boolean | Promise<boolean>) => {
+      let confirmed = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        confirmed ||= await condition();
+      }
+      return confirmed;
+    });
     mocks.teardownSandboxDashboardForward.mockReturnValue(true);
     mocks.restoreSandboxLaunchForwards.mockReturnValue(true);
   });
