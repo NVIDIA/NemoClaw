@@ -21,6 +21,9 @@ It also improves sandbox startup and deletion convergence, configuration export,
   Ambiguous or persistent state preserves local recovery ownership, and final-gateway cleanup explains why it kept the gateway when sandbox absence or the lack of other live sandboxes cannot be proved.
   Related changes: [PR #11838](https://github.com/NVIDIA/NemoClaw/pull/11838), [PR #11951](https://github.com/NVIDIA/NemoClaw/pull/11951), and [PR #11614](https://github.com/NVIDIA/NemoClaw/pull/11614).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Docker-backed rebuild now replays the exact provider-captured GPU selector and fails before deletion when the selected acceleration cannot be represented safely.
+  Related change: [PR #11929](https://github.com/NVIDIA/NemoClaw/pull/11929).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw config export` now accepts HTTP and HTTPS inference endpoints, retains supported managed vLLM execution and model settings, and exports the verified selected Ollama model with its SHA-256 digest.
   Hosted OpenClaw exports also preserve every supported read-only secondary agent in runtime order and reject the complete document when any roster member conflicts with the verified primary route.
   Related changes: [PR #11789](https://github.com/NVIDIA/NemoClaw/pull/11789), [PR #11889](https://github.com/NVIDIA/NemoClaw/pull/11889), [PR #11891](https://github.com/NVIDIA/NemoClaw/pull/11891), and [PR #11900](https://github.com/NVIDIA/NemoClaw/pull/11900).
