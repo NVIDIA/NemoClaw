@@ -27,17 +27,6 @@ const ATOMIC_PROOF_RUNNER = [
   'exec env "$@" node --experimental-strip-types "$script_path"',
 ].join("\n");
 
-export function resolveInstalledTelegramRuntimePath(
-  candidate: string,
-  realpath: (candidate: string) => string,
-): string {
-  try {
-    return realpath(candidate);
-  } catch {
-    return candidate;
-  }
-}
-
 function parseInstalledTelegramProof(stdout: string): InstalledTelegramRuntimeProof {
   for (const line of stdout.trim().split(/\r?\n/u).reverse()) {
     try {
