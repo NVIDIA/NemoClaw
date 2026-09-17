@@ -375,10 +375,16 @@ export const finalizationHandlerDeps = {
     portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
-      ...options,
-      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
-    });
+    const recover = () =>
+      processRecovery.checkAndRecoverSandboxProcesses(name, {
+        ...options,
+        ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+      });
+    let result = await recover();
+    if (result.checked !== true) {
+      const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
+      if (controlPlaneReady) result = await recover();
+    }
     return (
       result.checked === true &&
       (result.wasRunning !== false || result.recovered === true) &&

@@ -793,18 +793,48 @@ describe("finalization process-recovery refusal propagation", () => {
   });
 
   it("pauses when process inspection cannot complete (#11758)", async () => {
+    const recover = vi.fn(async () => ({
+      checked: false,
+      wasRunning: null,
+      recovered: false,
+      forwardRecovered: false,
+    }));
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
-      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
-        checked: false,
-        wasRunning: null,
-        recovered: false,
-        forwardRecovered: false,
-      })),
+      checkAndRecoverSandboxProcesses: recover,
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(false);
+    expect(recover).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries process inspection after replacement control-plane convergence", async () => {
+    const recover = vi
+      .fn()
+      .mockResolvedValueOnce({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      })
+      .mockResolvedValueOnce({
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      });
+    const waitForReady = vi.fn(async () => true);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: recover,
+      waitForRecreatedSandboxOpenShellReady: waitForReady,
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+    expect(waitForReady).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(recover).toHaveBeenCalledTimes(2);
   });
 
   it("pauses onboarding when the stopped gateway could not be recovered", async () => {

@@ -55,6 +55,11 @@ describe("restartSandboxGateway native lifecycle", () => {
         stdout: "",
         stderr: "",
       })),
+      executeManagedGatewayRestart: vi.fn(async () => ({
+        status: 0,
+        stdout: `v1 ${"a".repeat(64)} complete ok 41 42\nGATEWAY_PID=42`,
+        stderr: "",
+      })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
@@ -65,7 +70,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     };
   }
 
-  it("asks OpenClaw to restart with canonical HOME-derived state paths", async () => {
+  it("asks the pinned managed controller to restart OpenClaw", async () => {
     silenceConsole();
     const deps = baseDeps();
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
@@ -75,11 +80,8 @@ describe("restartSandboxGateway native lifecycle", () => {
       restarted: true,
       healthPassed: true,
     });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
-      "alpha",
-      "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart",
-      210000,
-    );
+    expect(deps.executeManagedGatewayRestart).toHaveBeenCalledWith("alpha", 210000);
+    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -100,6 +102,24 @@ describe("restartSandboxGateway native lifecycle", () => {
       "hermes gateway restart",
       210000,
     );
+    expect(deps.executeManagedGatewayRestart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the managed OpenClaw controller omits its completion receipt", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      executeManagedGatewayRestart: vi.fn(async () => ({
+        status: 0,
+        stdout: "GATEWAY_PID=42",
+        stderr: "",
+      })),
+    });
+
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toEqual({
+      ok: false,
+      failureLayer: "launch failure",
+      detail: "managed gateway supervisor returned an invalid completion receipt",
+    });
   });
 
   it("requires health proof when Hermes restart closes the exec relay before status", async () => {
@@ -148,10 +168,10 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
-  it("reports the native OpenClaw restart failure without an authorization verdict", async () => {
+  it("reports the managed OpenClaw restart failure without an authorization verdict", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeSandboxExecCommand: vi.fn(async () => ({
+      executeManagedGatewayRestart: vi.fn(async () => ({
         status: 1,
         stdout: "",
         stderr: "native restart failed",
@@ -161,14 +181,14 @@ describe("restartSandboxGateway native lifecycle", () => {
 
     expect(result).toEqual({
       ok: false,
-      failureLayer: "native agent command",
+      failureLayer: "launch failure",
       detail: "native restart failed",
     });
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
     expect(vi.mocked(console.error).mock.calls.join("\n")).not.toContain("authorization");
   });
 
-  it("waits for health after the native command", async () => {
+  it("settles health after the managed OpenClaw completion receipt", async () => {
     silenceConsole();
     const deps = baseDeps({
       waitForRecoveredSandboxGateway: vi.fn(async () => false),
@@ -177,8 +197,7 @@ describe("restartSandboxGateway native lifecycle", () => {
 
     expect(result).toMatchObject({ ok: false, failureLayer: "health timeout" });
     expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith("alpha", {
-      initialManagedHealthPassed: false,
-      managedProbeImpl: expect.any(Function),
+      initialManagedHealthPassed: true,
       quiet: true,
     });
     expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalled();

@@ -1384,6 +1384,8 @@ export async function restartSandboxGateway(
             timeout,
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
+        executeManagedGatewayRestart: (name, timeout) =>
+          executeGatewaySupervisorAction(name, "restart", timeout),
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
             ...options,
@@ -1440,6 +1442,8 @@ const OPENSHELL_RELAY_OPEN_TIMED_OUT = 'message: "relay open timed out"';
 const OPENSHELL_SUPERVISOR_RELAY_DEADLINE = "supervisor relay failed: status: DeadlineExceeded";
 const OPENSHELL_RELAY_CHANNEL_TIMED_OUT = "relay channel timed out";
 const OPENSHELL_RELAY_CHANNEL_DROPPED = 'message: "relay channel dropped"';
+const OPENSHELL_EXEC_RELAY_CLOSED =
+  'message: "exec relay closed before the command reported an exit status"';
 const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (os error 2)"';
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
@@ -1505,6 +1509,8 @@ function isRetryableOpenshellReRegistrationState(
     (error.includes(OPENSHELL_SERVICE_UNAVAILABLE) ||
       error.includes(OPENSHELL_STATUS_UNAVAILABLE)) &&
     error.includes(OPENSHELL_RELAY_CHANNEL_DROPPED);
+  const execRelayClosed =
+    error.includes(OPENSHELL_SERVICE_UNAVAILABLE) && error.includes(OPENSHELL_EXEC_RELAY_CLOSED);
   const relayTargetUnavailable =
     error.includes(OPENSHELL_SERVICE_UNAVAILABLE) &&
     (error.includes(OPENSHELL_RELAY_TARGET_NOT_FOUND) ||
@@ -1513,6 +1519,7 @@ function isRetryableOpenshellReRegistrationState(
     sessionUnavailable ||
     relayChannelTimedOut ||
     relayChannelDropped ||
+    execRelayClosed ||
     relayTargetUnavailable ||
     error.includes(OPENSHELL_RELAY_OPEN_TIMED_OUT)
   );

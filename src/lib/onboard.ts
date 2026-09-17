@@ -3208,6 +3208,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
           isOpenclawReady,
+          waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,
