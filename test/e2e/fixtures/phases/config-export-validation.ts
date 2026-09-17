@@ -27,6 +27,7 @@ import type { NemoClawInstance } from "./onboarding.ts";
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
+const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
 const INTERNAL_TRANSPORT_PATTERN = /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u;
 
@@ -176,6 +177,7 @@ export interface ConfigExportDocument {
 
 export interface ConfigExportValidationDependencies {
   exists(filePath: string): boolean;
+  inspectFile(filePath: string): { isFile: boolean; size: number };
   loadManifest(filePath: string): LoadedManifest;
   loadRegistry(): ConfigExportRegistry;
   makeTempDirectory(prefix: string): string;
@@ -189,6 +191,10 @@ export interface ConfigExportValidationDependencies {
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   exists: fs.existsSync,
+  inspectFile: (filePath) => {
+    const stat = fs.lstatSync(filePath);
+    return { isFile: stat.isFile(), size: stat.size };
+  },
   loadManifest,
   loadRegistry: readRegistry,
   makeTempDirectory: (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix)),
@@ -630,6 +636,15 @@ export class ConfigExportValidationPhaseFixture {
       } else {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
+        }
+        const output = this.dependencies.inspectFile(outputPath);
+        if (!output.isFile) {
+          throw new Error("config export output is not a regular file");
+        }
+        if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+          throw new Error(
+            `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+          );
         }
         raw = this.dependencies.readFile(outputPath);
         failureStage = "security";

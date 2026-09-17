@@ -77,9 +77,10 @@ harness or runner. Vitest remains the only test harness.
 Before it validates deployment semantics, the config export fixture rejects
 known fixture secrets and internal credential transport markers. Both checks
 scan the raw export and decoded YAML scalar keys and values, so YAML escaping
-cannot hide either value. The fixture caps each captured stdout and
-stderr stream at 64 KiB. It creates the export in a private temporary
-directory. It registers cleanup before it invokes the CLI and removes the
+cannot hide either value. The fixture caps each captured stdout and stderr
+stream at 64 KiB. Before reading or retaining an export, it requires a regular
+file no larger than 1 MiB. It creates the export in a private temporary
+directory, registers cleanup before it invokes the CLI, and removes the
 directory before it writes retained evidence.
 For `required` coverage, the fixture parses the exported document without the
 product config validator. It reads the host registry directly and queries the

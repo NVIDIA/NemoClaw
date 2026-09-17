@@ -153,6 +153,10 @@ function dependencies(
 ): ConfigExportValidationDependencies {
   return {
     exists: fs.existsSync,
+    inspectFile: (filePath) => {
+      const stat = fs.lstatSync(filePath);
+      return { isFile: stat.isFile(), size: stat.size };
+    },
     loadManifest: (filePath) => ({
       filePath,
       document: manifest(options.features, options.credentialRefs),
@@ -522,6 +526,35 @@ describe("automatic config export validation phase", () => {
       failureStage: "export",
     });
     expect(test.writes.at(-1)?.diagnostic).toHaveLength(2_048);
+  });
+
+  it("rejects and removes an oversized export file without retaining its bytes (#11485)", async () => {
+    const oversizedDirectory = { path: "" };
+    const base = dependencies();
+    const test = fixture({
+      dependencies: {
+        ...base,
+        makeTempDirectory: (prefix) => {
+          const directory = base.makeTempDirectory(prefix);
+          oversizedDirectory.path = directory;
+          return directory;
+        },
+      },
+      host: successfulHost("x".repeat(1024 * 1024 + 1)),
+    });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      passed: false,
+      failureStage: "export",
+      cleanup: { succeeded: true },
+      diagnostic: "config export output exceeds the 1048576-byte limit",
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(test.writes.at(-1)?.diagnostic?.length).toBeLessThanOrEqual(2_048);
+    expect(fs.existsSync(oversizedDirectory.path)).toBe(false);
   });
 
   it("records no usable sandbox without invoking export (#11485)", async () => {
