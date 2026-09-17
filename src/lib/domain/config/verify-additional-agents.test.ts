@@ -76,11 +76,8 @@ describe("read-only secondary-agent export", () => {
           tools: { allow: ["read"] },
         },
       });
-      expect(
-        Object.values(generated.agents.entries).filter(
-          (agent: { default?: boolean }) => agent.default,
-        ),
-      ).toHaveLength(1);
+      const entries = generated.agents.entries as Record<string, { default?: boolean }>;
+      expect(Object.values(entries).filter((agent) => agent.default)).toHaveLength(1);
       expect(generated.agents.defaults.model.primary).toBe("openai/gpt-5");
       const observed = additionalAgentSnapshot(manifest, {
         ...tunedEnvironment,

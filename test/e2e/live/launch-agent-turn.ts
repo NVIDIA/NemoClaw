@@ -1244,17 +1244,16 @@ function appendedSqliteSessions(baseline, jsonlBaseline) {
   const snapshot = readSqliteTranscriptSnapshot(
     baseline ? "sqlite_session_store_removed" : undefined,
   );
-  if (!baseline && snapshot) {
-    requireEvidence(
-      Object.keys(jsonlBaseline).length === 0,
-      "sqlite_session_store_appeared",
-    );
-    return Array.from(snapshot.sessions, ([sessionId, events]) => ({
-      sessionId,
-      messages: structuredMessages(events, sessionId),
-    })).filter((session) => session.messages.length > 0);
-  }
-  return snapshot ? appendedExistingSqliteSessions(snapshot, baseline) : null;
+  requireEvidence(
+    baseline || !snapshot || Object.keys(jsonlBaseline).length === 0,
+    "sqlite_session_store_appeared",
+  );
+  const effectiveBaseline =
+    baseline ??
+    (snapshot
+      ? { ...snapshot.identity, sessions: [] }
+      : null);
+  return snapshot ? appendedExistingSqliteSessions(snapshot, effectiveBaseline) : null;
 }
 
 function appendedExistingSqliteSessions(snapshot, baseline) {

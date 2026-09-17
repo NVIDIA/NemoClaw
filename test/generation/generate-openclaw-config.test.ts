@@ -819,9 +819,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    const defaultEntries = Object.entries(config.agents.entries).filter(
-      ([, entry]: [string, { default?: boolean }]) => entry.default === true,
-    );
+    const entries = config.agents.entries as Record<string, { default?: boolean }>;
+    const defaultEntries = Object.entries(entries).filter(([, entry]) => entry.default === true);
     expect(defaultEntries).toHaveLength(1);
     expect(defaultEntries[0][0]).toBe("main");
     expect(Object.keys(config.agents.entries)[0]).toBe("main");
