@@ -11,6 +11,12 @@ import { fileURLToPath } from "node:url";
 
 const VERSION = "2026.7.1";
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
+// OpenShell's /proc reset wrapper can move the immutable launcher out of argv[0].
+const OPENCLAW_LAUNCHER = "/usr/local/bin/openclaw";
+const GATEWAY_ARGV_FILE = "windows-port-pids-jYst3qTE.js";
+const ORIGINAL_GATEWAY_ARGV =
+  "if (normalized.some((arg) => entryCandidates.some((entry) => arg.endsWith(entry)))) return true;";
+const PATCHED_GATEWAY_ARGV = `if (normalized.some((arg) => entryCandidates.some((entry) => arg.endsWith(entry))) || normalized.includes(${JSON.stringify(OPENCLAW_LAUNCHER)})) return true;`;
 const ORIGINAL = `\tif (isContainerEnvironment()) return {
 \t\tmode: "disabled",
 \t\tdetail: "container: use in-process restart to keep PID 1 alive"
@@ -49,6 +55,19 @@ export function patchContainerRestart(source: string): string {
   return source.replace(originalFunction, originalFunction.replace(ORIGINAL, REPLACEMENT));
 }
 
+export function patchOpenShellGatewayArgv(source: string): string {
+  if (source.includes(PATCHED_GATEWAY_ARGV)) {
+    if (source.includes(ORIGINAL_GATEWAY_ARGV)) {
+      throw new Error("Incomplete OpenClaw OpenShell gateway argv patch");
+    }
+    return source;
+  }
+  if (source.split(ORIGINAL_GATEWAY_ARGV).length !== 2) {
+    throw new Error("Unrecognized OpenClaw gateway argv boundary");
+  }
+  return source.replace(ORIGINAL_GATEWAY_ARGV, PATCHED_GATEWAY_ARGV);
+}
+
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   // The Dockerfile separately restricts these reviewed pins to legacy E2E fixtures.
@@ -56,12 +75,18 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
   if (metadata.version !== VERSION)
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   const target = path.join(distDir, "cli", "gateway-lifecycle.runtime.js");
+  const argvTarget = path.join(distDir, GATEWAY_ARGV_FILE);
   const source = fs.readFileSync(target, "utf8");
+  const argvSource = fs.readFileSync(argvTarget, "utf8");
   const patched = patchContainerRestart(source);
+  const argvPatched = patchOpenShellGatewayArgv(argvSource);
   if (audit) {
-    if (patched !== source) throw new Error("OpenClaw container restart patch is missing");
-  } else if (patched !== source) {
-    fs.writeFileSync(target, patched);
+    if (patched !== source || argvPatched !== argvSource) {
+      throw new Error("OpenClaw container restart patch is missing");
+    }
+  } else {
+    if (patched !== source) fs.writeFileSync(target, patched);
+    if (argvPatched !== argvSource) fs.writeFileSync(argvTarget, argvPatched);
   }
 }
 

@@ -12,12 +12,22 @@ import { describe, expect, it, vi } from "vitest";
 import {
   patchContainerRestart,
   patchOpenClawContainerRestart,
+  patchOpenShellGatewayArgv,
 } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 
 const nativeRestart = fs.readFileSync(
   path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
   "utf8",
 );
+const nativeGatewayArgv = `function isGatewayArgv(args, opts) {
+  const normalized = args.map(normalizeProcArg);
+  const exe = (normalized[0] ?? "").replace(/\\.(bat|cmd|exe)$/i, "");
+  const isGatewayBinary = exe.endsWith("/openclaw-gateway") || exe === "openclaw-gateway";
+  if (!normalized.includes("gateway")) return opts?.allowGatewayBinary === true && isGatewayBinary;
+  const entryCandidates = ["dist/index.js", "openclaw.mjs"];
+  if (normalized.some((arg) => entryCandidates.some((entry) => arg.endsWith(entry)))) return true;
+  return exe.endsWith("/openclaw") || exe === "openclaw" || opts?.allowGatewayBinary === true && isGatewayBinary;
+}`;
 
 function restartHarness(
   options: {
@@ -125,6 +135,35 @@ describe("OpenClaw sandbox restart patch", () => {
     expect(() => patchContainerRestart(nativeRestart + nativeRestart)).toThrow("Expected one");
   });
 
+  it("recognizes the immutable OpenClaw launcher behind the OpenShell process wrapper", () => {
+    const patched = patchOpenShellGatewayArgv(nativeGatewayArgv);
+    const isGatewayArgv = vm.runInNewContext(`${patched}; isGatewayArgv`, {
+      normalizeProcArg: (arg: string) => arg.toLowerCase(),
+    }) as (args: string[], options?: { allowGatewayBinary?: boolean }) => boolean;
+    expect(patched).toContain('normalized.includes("/usr/local/bin/openclaw")');
+    expect(
+      isGatewayArgv([
+        "/usr/local/bin/node",
+        "--no-opt",
+        "-r",
+        "/proc/.reset",
+        "/usr/local/bin/openclaw",
+        "gateway",
+        "run",
+      ]),
+    ).toBe(true);
+    expect(isGatewayArgv(["/usr/local/bin/node", "/usr/local/bin/openclaw", "plugins"])).toBe(
+      false,
+    );
+    expect(isGatewayArgv(["/usr/local/bin/node", "/tmp/openclaw", "gateway", "run"])).toBe(false);
+    expect(patchOpenShellGatewayArgv(patched)).toBe(patched);
+    expect(() =>
+      patchOpenShellGatewayArgv(
+        nativeGatewayArgv.replace("entryCandidates.some", "unexpectedCandidates.some"),
+      ),
+    ).toThrow("Unrecognized");
+  });
+
   it.each(["2026.3.11", "2026.4.24"])("leaves legacy fixture %s unchanged", (version) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-restart-legacy-"));
     try {
@@ -144,7 +183,9 @@ describe("OpenClaw sandbox restart patch", () => {
       const dist = path.join(root, "dist");
       fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
       const target = path.join(dist, "cli/gateway-lifecycle.runtime.js");
+      const argvTarget = path.join(dist, "windows-port-pids-jYst3qTE.js");
       fs.writeFileSync(target, nativeRestart);
+      fs.writeFileSync(argvTarget, nativeGatewayArgv);
       fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "unknown" }));
       expect(() => patchOpenClawContainerRestart(dist)).toThrow("Unsupported");
       expect(fs.readFileSync(target, "utf8")).toBe(nativeRestart);
@@ -153,6 +194,9 @@ describe("OpenClaw sandbox restart patch", () => {
       patchOpenClawContainerRestart(dist);
       expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
       expect(fs.readFileSync(target, "utf8")).toBe(patchContainerRestart(nativeRestart));
+      expect(fs.readFileSync(argvTarget, "utf8")).toBe(
+        patchOpenShellGatewayArgv(nativeGatewayArgv),
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
