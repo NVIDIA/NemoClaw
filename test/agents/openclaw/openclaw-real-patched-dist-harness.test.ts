@@ -735,6 +735,22 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "#4434 patch state audit",
         );
 
+        const stateMigrationTargets = fs
+          .readdirSync(dist)
+          .filter((file) => /^state-migrations-.+\.js$/.test(file))
+          .map((file) => path.join(dist, file))
+          .filter((file) =>
+            fs
+              .readFileSync(file, "utf-8")
+              .includes("function migrateLegacyUpdateCheckState(params) {"),
+          );
+        requireRuntimeEqual(
+          String(stateMigrationTargets.length),
+          "1",
+          "native update-check migration target count",
+        );
+        const stateMigrationIntegrity = stateMigrationTargets.map(sha512Sri);
+
         const sharedStatePatch = spawnSync(
           nodeRuntime.executable,
           [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
@@ -812,20 +828,13 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "false",
           "generic private-store sharing marker",
         );
-        const stateMigrationTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^state-migrations-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("/* nemoclaw: ignore legacy OpenClaw update-check state */"),
+        stateMigrationTargets.forEach((file, index) => {
+          requireRuntimeEqual(
+            sha512Sri(file),
+            stateMigrationIntegrity[index],
+            "native update-check migration remains unchanged",
           );
-        requireRuntimeEqual(
-          String(stateMigrationTargets.length),
-          "1",
-          "legacy update-check migration patch target count",
-        );
+        });
         const fileStoreTargets = fs
           .readdirSync(dist)
           .filter((file) => /^file-store-.+\.js$/.test(file))
