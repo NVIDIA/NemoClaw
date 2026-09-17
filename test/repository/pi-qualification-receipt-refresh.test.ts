@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { checkPiQualificationReceiptRefresh } from "../../scripts/checks/pi-qualification-receipt-refresh.mts";
 
@@ -49,6 +49,8 @@ describe("Pi qualification receipt refresh", () => {
   let acceptedDigests: Set<string>;
 
   beforeEach(() => {
+    vi.stubEnv("GITHUB_ACTIONS", "false");
+    vi.stubEnv("GITHUB_EVENT_NAME", "");
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-receipt-refresh-"));
     fs.mkdirSync(path.join(rootDir, "agents/pi"), { recursive: true });
     fs.mkdirSync(path.join(rootDir, "ci"), { recursive: true });
@@ -67,7 +69,10 @@ describe("Pi qualification receipt refresh", () => {
     acceptedDigests = new Set([receiptDigest(amd64Contents), receiptDigest(arm64Contents)]);
   });
 
-  afterEach(() => fs.rmSync(rootDir, { force: true, recursive: true }));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(rootDir, { force: true, recursive: true });
+  });
 
   function run(
     changedPaths: readonly string[],
@@ -75,6 +80,7 @@ describe("Pi qualification receipt refresh", () => {
       accepted?: ReadonlySet<string>;
       headRevision?: string | null;
       mergeInProgress?: boolean;
+      pullRequestHeadRevision?: string;
       sourceParity?: boolean;
       stagedPaths?: readonly string[];
     } = {},
@@ -95,14 +101,17 @@ describe("Pi qualification receipt refresh", () => {
                 ? options.mergeInProgress
                   ? { status: 0, stdout: `${"e".repeat(40)}\n` }
                   : { status: 1, stdout: "" }
-                : (() => {
-                    throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
-                  })()
+                : args.join("\0") === ["rev-parse", "--verify", "HEAD^2"].join("\0") &&
+                    options.pullRequestHeadRevision
+                  ? { status: 0, stdout: `${options.pullRequestHeadRevision}\n` }
+                  : (() => {
+                      throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
+                    })()
               : args.includes("--quiet")
                 ? (args.includes("--cached") &&
                     options.mergeInProgress &&
                     args[3] === SOURCE_REVISION) ||
-                  args[3] === (options.headRevision ?? "HEAD")
+                  args[3] === (options.headRevision ?? options.pullRequestHeadRevision ?? "HEAD")
                   ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
                   : (() => {
                       throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
@@ -153,11 +162,32 @@ describe("Pi qualification receipt refresh", () => {
     ).not.toThrow();
   });
 
-  it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {
+  it("compares receipt parity against an explicit head revision", () => {
     const headRevision = "d".repeat(40);
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
         headRevision,
+      }),
+    ).not.toThrow();
+  });
+
+  it("probes for a merge before comparing receipt parity against HEAD", () => {
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+      }),
+    ).not.toThrow();
+  });
+
+  it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {
+    const pullRequestHeadRevision = "d".repeat(40);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_EVENT_NAME", "pull_request");
+
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+        pullRequestHeadRevision,
       }),
     ).not.toThrow();
   });
