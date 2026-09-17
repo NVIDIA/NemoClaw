@@ -64,7 +64,10 @@ const REGISTRY_TARGET_PHASES = [
 ] as const;
 
 for (const [targetIndex, target] of listTargets().entries()) {
-  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
+  const timeoutContract = liveTargetTimeoutContract(
+    target.environment.lifecycle,
+    target.configExport.expectation,
+  );
 
   test(
     liveTargetTestTitle(target),

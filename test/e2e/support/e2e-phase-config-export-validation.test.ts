@@ -152,10 +152,15 @@ function dependencies(
   } = {},
 ): ConfigExportValidationDependencies {
   return {
+    closeFile: fs.closeSync,
     exists: fs.existsSync,
     inspectFile: (filePath) => {
       const stat = fs.lstatSync(filePath);
-      return { isFile: stat.isFile(), size: stat.size };
+      return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+    },
+    inspectOpenFile: (file) => {
+      const stat = fs.fstatSync(file);
+      return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
     },
     loadManifest: (filePath) => ({
       filePath,
@@ -198,13 +203,19 @@ function dependencies(
       return directory;
     },
     now: vi.fn().mockReturnValueOnce(100).mockReturnValue(125),
+    openFileNoFollow: (filePath) =>
+      fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
     parseConfig: () => options.parsedDocument ?? document(),
     producer: () => ({
       sourceRevision: SOURCE_REVISION,
       cliVersion: "0.1.0",
       cliArtifactSha256: "d".repeat(64),
     }),
-    readFile: (filePath) => fs.readFileSync(filePath, "utf8"),
+    readOpenFile: (file, limitBytes) => {
+      const buffer = Buffer.alloc(limitBytes + 1);
+      const bytesRead = fs.readSync(file, buffer, 0, buffer.length, null);
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    },
     readPolicy: async () => ({ ok: true, value: { document: JSON.stringify(POLICY) } }),
     removeDirectory:
       options.removeDirectory ??
@@ -555,6 +566,47 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(test.writes.at(-1)?.diagnostic?.length).toBeLessThanOrEqual(2_048);
     expect(fs.existsSync(oversizedDirectory.path)).toBe(false);
+  });
+
+  it("rejects a path replaced after the no-follow file is inspected (#11485)", async () => {
+    const exportDirectory = { path: "" };
+    const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-race-"));
+    createdDirectories.push(outsideDirectory);
+    const outsidePath = path.join(outsideDirectory, "outside.yaml");
+    fs.writeFileSync(outsidePath, SECRET, "utf8");
+    const base = dependencies();
+    const test = fixture({
+      dependencies: {
+        ...base,
+        makeTempDirectory: (prefix) => {
+          const directory = base.makeTempDirectory(prefix);
+          exportDirectory.path = directory;
+          return directory;
+        },
+        inspectOpenFile: (file) => {
+          const inspected = base.inspectOpenFile(file);
+          const outputPath = path.join(exportDirectory.path, "config.yaml");
+          fs.unlinkSync(outputPath);
+          fs.symlinkSync(outsidePath, outputPath);
+          return inspected;
+        },
+      },
+      host: successfulHost(JSON.stringify(document())),
+      secret: SECRET,
+    });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      passed: false,
+      failureStage: "export",
+      cleanup: { succeeded: true },
+      diagnostic: "config export output changed while it was being read",
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+    expect(fs.existsSync(exportDirectory.path)).toBe(false);
   });
 
   it("records no usable sandbox without invoking export (#11485)", async () => {

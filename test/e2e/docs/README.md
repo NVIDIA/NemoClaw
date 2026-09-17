@@ -78,14 +78,23 @@ Before it validates deployment semantics, the config export fixture rejects
 known fixture secrets and internal credential transport markers. Both checks
 scan the raw export and decoded YAML scalar keys and values, so YAML escaping
 cannot hide either value. The fixture caps each captured stdout and stderr
-stream at 64 KiB. Before reading or retaining an export, it requires a regular
-file no larger than 1 MiB. It creates the export in a private temporary
-directory, registers cleanup before it invokes the CLI, and removes the
-directory before it writes retained evidence.
+stream at 64 KiB. Before reading or retaining an export, it opens the file
+without following symbolic links. The open descriptor must identify a regular
+file no larger than 1 MiB. After the descriptor read, the published path must
+still identify the same device and inode. The fixture rejects a replacement.
+It creates the export in a private temporary directory, registers cleanup
+before it invokes the CLI, and removes the directory before it writes retained
+evidence.
+
 For `required` coverage, the fixture parses the exported document without the
 product config validator. It reads the host registry directly and queries the
 effective policy through the OpenShell CLI. These independent observations
 prevent the exporter and validator from sharing the same product readers.
+
+The typed live-target timeout contract budgets a two-minute config export
+ceiling for `required` and `expected-refusal`. A `required` target also budgets
+a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
+ceiling because it does not invoke config export.
 
 The `config-export-evidence.v1.json` artifact binds each result to the source
 revision, CLI version, and compiled CLI entry-point hash. Each record includes

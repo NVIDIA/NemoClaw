@@ -8,6 +8,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
+import {
+  CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+} from "../../../../tools/e2e/onboard-timeout-contract.mts";
 import { type LoadedManifest, loadManifest } from "../../registry/manifests.ts";
 import type {
   ConfigExportExpectation,
@@ -176,32 +180,51 @@ export interface ConfigExportDocument {
 }
 
 export interface ConfigExportValidationDependencies {
+  closeFile(file: number): void;
   exists(filePath: string): boolean;
-  inspectFile(filePath: string): { isFile: boolean; size: number };
+  inspectFile(filePath: string): { device: number; inode: number; isFile: boolean; size: number };
+  inspectOpenFile(file: number): { device: number; inode: number; isFile: boolean; size: number };
   loadManifest(filePath: string): LoadedManifest;
   loadRegistry(): ConfigExportRegistry;
   makeTempDirectory(prefix: string): string;
   now(): number;
+  openFileNoFollow(filePath: string): number;
   parseConfig(raw: string): ConfigExportDocument;
   producer(): ConfigExportProducer;
-  readFile(filePath: string): string;
+  readOpenFile(file: number, limitBytes: number): string;
   readPolicy?(gatewayName: string, sandboxName: string): Promise<PolicyReadResult>;
   removeDirectory(directory: string): void;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
+  closeFile: fs.closeSync,
   exists: fs.existsSync,
   inspectFile: (filePath) => {
     const stat = fs.lstatSync(filePath);
-    return { isFile: stat.isFile(), size: stat.size };
+    return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+  },
+  inspectOpenFile: (file) => {
+    const stat = fs.fstatSync(file);
+    return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
   },
   loadManifest,
   loadRegistry: readRegistry,
   makeTempDirectory: (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix)),
   now: Date.now,
+  openFileNoFollow: (filePath) =>
+    fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
   parseConfig: parseConfigExport,
   producer: readProducer,
-  readFile: (filePath) => fs.readFileSync(filePath, "utf8"),
+  readOpenFile: (file, limitBytes) => {
+    const buffer = Buffer.alloc(limitBytes + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(file, buffer, offset, buffer.length - offset, null);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
@@ -538,7 +561,7 @@ export class ConfigExportValidationPhaseFixture {
         OPENSHELL_GATEWAY: gatewayName,
       },
       redactionValues: this.secrets.redactionValues(),
-      timeoutMs: 60_000,
+      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
     });
     if (result.exitCode !== 0 || result.signal !== null || result.timedOut) return { ok: false };
     const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(result.stdout);
@@ -604,7 +627,7 @@ export class ConfigExportValidationPhaseFixture {
           artifactName: "config-export-automatic",
           captureLimitBytes: CONFIG_EXPORT_CAPTURE_LIMIT_BYTES,
           redactionValues: this.secrets.redactionValues(),
-          timeoutMs: 120_000,
+          timeoutMs: CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
         },
       );
       const outputExists = this.dependencies.exists(outputPath);
@@ -637,16 +660,34 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode !== 0 || !outputExists) {
           throw new Error(`config export failed: ${resultText(result)}`);
         }
-        const output = this.dependencies.inspectFile(outputPath);
-        if (!output.isFile) {
-          throw new Error("config export output is not a regular file");
+        const outputFile = this.dependencies.openFileNoFollow(outputPath);
+        try {
+          const output = this.dependencies.inspectOpenFile(outputFile);
+          if (!output.isFile) {
+            throw new Error("config export output is not a regular file");
+          }
+          if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+            throw new Error(
+              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+            );
+          }
+          raw = this.dependencies.readOpenFile(outputFile, CONFIG_EXPORT_FILE_LIMIT_BYTES);
+          if (Buffer.byteLength(raw, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
+            throw new Error(
+              `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
+            );
+          }
+          const published = this.dependencies.inspectFile(outputPath);
+          if (
+            !published.isFile ||
+            published.device !== output.device ||
+            published.inode !== output.inode
+          ) {
+            throw new Error("config export output changed while it was being read");
+          }
+        } finally {
+          this.dependencies.closeFile(outputFile);
         }
-        if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-          throw new Error(
-            `config export output exceeds the ${CONFIG_EXPORT_FILE_LIMIT_BYTES}-byte limit`,
-          );
-        }
-        raw = this.dependencies.readFile(outputPath);
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         const rawSecretsAbsent = !secretValues.some((value) => value && raw!.includes(value));

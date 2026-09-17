@@ -61,14 +61,14 @@ describe("live E2E target matrix", () => {
     ]);
   });
 
-  it("assigns a 160-minute job timeout only to post-reboot recovery (#9622)", () => {
+  it("includes automatic config-export budgets in live target timeouts (#9622, #11485)", () => {
     expect(
       Object.fromEntries(buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes])),
     ).toEqual({
       "ubuntu-policy-custom-missing-presets-negative": 45,
-      "ubuntu-repo-cloud-langchain-deepagents-code": 45,
-      "ubuntu-repo-cloud-openclaw": 45,
-      "ubuntu-repo-docker-post-reboot-recovery": 160,
+      "ubuntu-repo-cloud-langchain-deepagents-code": 52,
+      "ubuntu-repo-cloud-openclaw": 53,
+      "ubuntu-repo-docker-post-reboot-recovery": 163,
     });
   });
 

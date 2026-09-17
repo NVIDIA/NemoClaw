@@ -4,9 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
-import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
+  CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
@@ -25,8 +26,11 @@ import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
-import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
+import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
+import { listTargets } from "../registry/registry.ts";
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
@@ -64,6 +68,8 @@ describe("onboard final-handoff timeout contract", () => {
         ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS +
         ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS +
         ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS +
+        CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
+        CONFIG_EXPORT_POLICY_TIMEOUT_MS +
         testHeadroomMs,
     );
   });
@@ -114,6 +120,8 @@ describe("onboard final-handoff timeout contract", () => {
       postRebootSandboxReadyMinutes: ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS / MINUTE_MS,
       postRebootStatusValidationMinutes:
         ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS / MINUTE_MS,
+      configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
+      configExportPolicyMinutes: CONFIG_EXPORT_POLICY_TIMEOUT_MS / MINUTE_MS,
       postRebootTestMinutes: ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS / MINUTE_MS,
       postRebootTargetMinutes: ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
@@ -127,8 +135,10 @@ describe("onboard final-handoff timeout contract", () => {
       postRebootGatewayReconnectMinutes: 45,
       postRebootSandboxReadyMinutes: 20,
       postRebootStatusValidationMinutes: 10,
-      postRebootTestMinutes: 140,
-      postRebootTargetMinutes: 160,
+      configExportCommandMinutes: 2,
+      configExportPolicyMinutes: 1,
+      postRebootTestMinutes: 143,
+      postRebootTargetMinutes: 163,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
     });
@@ -165,25 +175,55 @@ describe("onboard final-handoff timeout contract", () => {
     expect(plan.matrix).toEqual([
       expect.objectContaining({
         id: "ubuntu-repo-docker-post-reboot-recovery",
-        timeout_minutes: 160,
+        timeout_minutes: 163,
       }),
     ]);
   });
 
   it("applies the complete lifecycle timeout contract only to post-reboot recovery", () => {
-    expect(liveTargetTimeoutContract("post-reboot-recovery")).toEqual({
+    expect(liveTargetTimeoutContract("post-reboot-recovery", "required")).toEqual({
       commandTimeoutMs: 40 * MINUTE_MS,
-      testTimeoutMs: 140 * MINUTE_MS,
-      targetTimeoutMinutes: 160,
+      testTimeoutMs: 143 * MINUTE_MS,
+      targetTimeoutMinutes: 163,
     });
-    expect(liveTargetTimeoutContract("dcode-rebuild-invalid-credential")).toEqual({
+    expect(
+      liveTargetTimeoutContract("dcode-rebuild-invalid-credential", "expected-refusal"),
+    ).toEqual({
+      testTimeoutMs: 32 * MINUTE_MS,
+      targetTimeoutMinutes: 52,
+    });
+    expect(liveTargetTimeoutContract(undefined, "required")).toEqual({
+      testTimeoutMs: 33 * MINUTE_MS,
+      targetTimeoutMinutes: 53,
+    });
+    expect(liveTargetTimeoutContract(undefined, "no-usable-sandbox")).toEqual({
       targetTimeoutMinutes: 45,
     });
-    expect(liveTargetTimeoutContract(undefined)).toEqual({ targetTimeoutMinutes: 45 });
+  });
+
+  it.each(
+    listTargets().filter((target) => target.configExport.expectation !== "no-usable-sandbox"),
+  )("includes automatic config-export ceilings for registry target $id", (target) => {
+    const expectation = target.configExport.expectation;
+    const configExportBudgetMs =
+      CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
+      (expectation === "required" ? CONFIG_EXPORT_POLICY_TIMEOUT_MS : 0);
+    const contract = liveTargetTimeoutContract(target.environment.lifecycle, expectation);
+    const lifecycleTestBudgetMs =
+      target.environment.lifecycle === "post-reboot-recovery"
+        ? ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS -
+          CONFIG_EXPORT_COMMAND_TIMEOUT_MS -
+          CONFIG_EXPORT_POLICY_TIMEOUT_MS
+        : LIVE_TARGET_BASE_TEST_TIMEOUT_MS;
+
+    expect(contract.testTimeoutMs).toBe(lifecycleTestBudgetMs + configExportBudgetMs);
+    expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      contract.testTimeoutMs! + jobHeadroomMs,
+    );
   });
 
   it("derives the registry job timeout from its test and post-test headroom", () => {
-    const contract = liveTargetTimeoutContract("post-reboot-recovery");
+    const contract = liveTargetTimeoutContract("post-reboot-recovery", "required");
 
     expect(jobHeadroomMs).toBe(DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs);
     expect(contract.targetTimeoutMinutes * MINUTE_MS).toBe(
@@ -205,6 +245,9 @@ describe("onboard final-handoff timeout contract", () => {
   it.each([
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+    CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+    CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+    LIVE_TARGET_BASE_TEST_TIMEOUT_MS,
     ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS,
     ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS,
     ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS,

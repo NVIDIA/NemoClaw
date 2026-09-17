@@ -4,6 +4,9 @@
 const MINUTE_MS = 60_000;
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
 const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
+export const LIVE_TARGET_BASE_TEST_TIMEOUT_MS = 30 * MINUTE_MS;
+export const CONFIG_EXPORT_COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
+export const CONFIG_EXPORT_POLICY_TIMEOUT_MS = MINUTE_MS;
 
 // The Docker recreation path can wait once before `Ready` and again after the final
 // replacement-container restart. The outer command must contain both waits
@@ -30,13 +33,17 @@ export const ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS = 20 * MINUTE_MS;
 // Final status and typed state validation allow 8m15s, leaving room for local
 // completion evidence before the separate test headroom.
 export const ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS = 10 * MINUTE_MS;
-export const ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS =
+const ONBOARD_POST_REBOOT_BASE_TEST_TIMEOUT_MS =
   ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS +
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
   ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS +
   ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS +
   ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS +
   ONBOARD_TEST_HEADROOM_MS;
+export const ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS =
+  ONBOARD_POST_REBOOT_BASE_TEST_TIMEOUT_MS +
+  CONFIG_EXPORT_COMMAND_TIMEOUT_MS +
+  CONFIG_EXPORT_POLICY_TIMEOUT_MS;
 export const ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES =
   (ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
 
@@ -46,16 +53,34 @@ export type LiveTargetTimeoutContract = Readonly<{
   targetTimeoutMinutes: number;
 }>;
 
+type ConfigExportTimeoutExpectation = "required" | "expected-refusal" | "no-usable-sandbox";
+
+function configExportBudgetMs(expectation: ConfigExportTimeoutExpectation): number {
+  if (expectation === "required") {
+    return CONFIG_EXPORT_COMMAND_TIMEOUT_MS + CONFIG_EXPORT_POLICY_TIMEOUT_MS;
+  }
+  return expectation === "expected-refusal" ? CONFIG_EXPORT_COMMAND_TIMEOUT_MS : 0;
+}
+
 export function liveTargetTimeoutContract(
   lifecycle: string | undefined,
+  configExportExpectation: ConfigExportTimeoutExpectation,
 ): LiveTargetTimeoutContract {
-  return lifecycle === "post-reboot-recovery"
-    ? {
-        commandTimeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-        testTimeoutMs: ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS,
-        targetTimeoutMinutes: ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
-      }
-    : { targetTimeoutMinutes: 45 };
+  const configExportBudget = configExportBudgetMs(configExportExpectation);
+  if (lifecycle === "post-reboot-recovery") {
+    const testTimeoutMs = ONBOARD_POST_REBOOT_BASE_TEST_TIMEOUT_MS + configExportBudget;
+    return {
+      commandTimeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+      testTimeoutMs,
+      targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
+    };
+  }
+  if (configExportBudget === 0) return { targetTimeoutMinutes: 45 };
+  const testTimeoutMs = LIVE_TARGET_BASE_TEST_TIMEOUT_MS + configExportBudget;
+  return {
+    testTimeoutMs,
+    targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
+  };
 }
 
 // The onboard-resume scenario gives two create/recreate commands the
