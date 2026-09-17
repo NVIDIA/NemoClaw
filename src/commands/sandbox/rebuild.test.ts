@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  delegateRebuildToOwningRegistry: vi.fn(async () => false),
   rebuildSandbox: vi.fn(async () => undefined),
   retireRebuildRecoveryBackup: vi.fn(() => ({
     backupPath: "/backups/alpha/2026-09-01",
@@ -13,6 +14,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/actions/sandbox/rebuild", () => mocks);
+vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", () => ({
+  delegateRebuildToOwningRegistry: mocks.delegateRebuildToOwningRegistry,
+}));
 
 import RebuildCliCommand from "./rebuild";
 
@@ -62,5 +66,22 @@ describe("sandbox:rebuild command", () => {
       expect.objectContaining({ yes: true }),
     );
     expect(mocks.retireRebuildRecoveryBackup).not.toHaveBeenCalled();
+  });
+
+  it("delegates a sibling-root rebuild before the command lifecycle fence", async () => {
+    mocks.delegateRebuildToOwningRegistry.mockResolvedValueOnce(true);
+
+    await RebuildCliCommand.run(["alpha", "--yes", "--verbose"], rootDir);
+
+    expect(mocks.delegateRebuildToOwningRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        options: expect.objectContaining({ yes: true, verbose: true }),
+        executionOptions: {},
+      }),
+      expect.any(String),
+      expect.any(String),
+    );
+    expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
   });
 });

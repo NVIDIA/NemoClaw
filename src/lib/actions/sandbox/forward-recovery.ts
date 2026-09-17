@@ -69,21 +69,13 @@ function readForwardSandbox(sandboxName: string): registry.SandboxEntry | null {
   return registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
 }
 
-/** Resolve the persisted agent without falling back to a different registry root. */
 function getForwardSessionAgent(
   sandboxName: string,
 ): ReturnType<typeof agentRuntime.getSessionAgent> {
-  const sandbox = readForwardSandbox(sandboxName);
-  const selectedAgent = agentRuntime.getSessionAgent(sandboxName);
-  if (!sandbox) return selectedAgent;
-  const persistedAgent = sandbox.agent ?? "openclaw";
-  if (
-    selectedAgent?.name === persistedAgent ||
-    (selectedAgent === null && persistedAgent === "openclaw")
-  ) {
-    return selectedAgent;
-  }
-  return agentRuntime.getRegisteredAgent(sandbox);
+  return agentRuntime.resolveRegisteredSandboxAgent(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
 }
 
 export interface HermesPortableForwardCommandAuthority {

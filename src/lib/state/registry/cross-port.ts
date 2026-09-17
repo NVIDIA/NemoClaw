@@ -20,6 +20,8 @@ export interface CrossPortSandboxHit {
   entry: SandboxEntry;
   /** Recorded or directory-derived owning gateway port; null when unrecorded on the base root. */
   gatewayPort: number | null;
+  /** Gateway port whose state root contains this registry file. */
+  registryGatewayPort?: number;
   registryFile: string;
 }
 
@@ -65,6 +67,7 @@ function listSandboxHitsAcrossGatewayRoots(home: string): CrossPortSandboxHit[] 
           state.gatewayPort === DEFAULT_GATEWAY_PORT && !hasRecordedGatewayIdentity
             ? null
             : gatewayPort,
+        registryGatewayPort: state.gatewayPort,
         registryFile,
       });
     }

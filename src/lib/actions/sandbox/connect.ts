@@ -180,19 +180,11 @@ function readConnectSandbox(sandboxName: string): SandboxEntry | null {
   return registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
 }
 
-/** Prefer the owning registry row over the selected onboarding session. */
 function getConnectSessionAgent(sandboxName: string): AgentDefinition | null {
-  const sandbox = readConnectSandbox(sandboxName);
-  const selectedAgent = agentRuntime.getSessionAgent(sandboxName);
-  if (!sandbox) return selectedAgent;
-  const persistedAgent = sandbox.agent ?? "openclaw";
-  if (
-    selectedAgent?.name === persistedAgent ||
-    (selectedAgent === null && persistedAgent === "openclaw")
-  ) {
-    return selectedAgent;
-  }
-  return agentRuntime.getRegisteredAgent(sandbox);
+  return agentRuntime.resolveRegisteredSandboxAgent(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
 }
 
 export type SandboxStartupRecoveryResult = Awaited<

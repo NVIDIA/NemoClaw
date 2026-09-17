@@ -17,6 +17,11 @@ import {
   checkRebuildGatewaySchemaPreflight,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
+import {
+  delegateRebuildToOwningRegistry,
+  rebuildOwningRegistryDependencies,
+} from "./rebuild/owning-registry";
+import { rebuildSandbox } from "./rebuild";
 
 const driftIssue: gatewayDrift.OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -359,5 +364,103 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverDockerDriverSandboxSpy).not.toHaveBeenCalled();
     expect(registryPersistence.load).not.toHaveBeenCalled();
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("Failed to query running sandboxes");
+  });
+});
+
+describe("rebuild owning registry routing", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("delegates the complete rebuild transaction to a sibling registry root", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    const runWorker = vi
+      .spyOn(rebuildOwningRegistryDependencies, "runWorker")
+      .mockResolvedValue(undefined);
+    const recoveryManifest = { sandboxName: "alpha", backupPath: "/backup/alpha" } as never;
+    const input = {
+      sandboxName: "alpha",
+      options: { yes: true, verbose: true },
+      executionOptions: { throwOnError: true, recoveryManifest },
+    };
+
+    const readBaseRegistry = vi.spyOn(registry, "load");
+
+    await expect(
+      rebuildSandbox(input.sandboxName, input.options, input.executionOptions),
+    ).resolves.toBeUndefined();
+
+    expect(runWorker).toHaveBeenCalledWith(input, 9000);
+    expect(readBaseRegistry).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rebuild in-process when the selected root owns the sandbox", async () => {
+    const entry = makeSandboxEntry("nemoclaw", 8080);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 8080,
+      registryGatewayPort: 8080,
+      registryFile: "/home/test/.nemoclaw/sandboxes.json",
+    });
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(false);
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("keeps a legacy base-root row local even when it records a non-default runtime port", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 8080,
+      registryFile: "/home/test/.nemoclaw/sandboxes.json",
+    });
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).resolves.toBe(false);
+
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("fails fast instead of deadlocking when a parent lifecycle command owns the host fence", async () => {
+    const entry = makeSandboxEntry("nemoclaw-9000", 9000);
+    vi.spyOn(rebuildOwningRegistryDependencies, "findSandbox").mockReturnValue({
+      entry,
+      gatewayPort: 9000,
+      registryGatewayPort: 9000,
+      registryFile: "/home/test/.nemoclaw/gateways/9000/sandboxes.json",
+    });
+    vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(true);
+    const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+
+    await expect(
+      delegateRebuildToOwningRegistry(
+        { sandboxName: "alpha", options: { yes: true }, executionOptions: {} },
+        "/home/test",
+        "/home/test/.nemoclaw/sandboxes.json",
+      ),
+    ).rejects.toThrow("Run 'nemoclaw alpha rebuild' directly");
+
+    expect(runWorker).not.toHaveBeenCalled();
   });
 });
