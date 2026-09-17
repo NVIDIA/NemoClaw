@@ -7,7 +7,9 @@ import { runAsync } from "./helpers";
 
 vi.setConfig({ maxConcurrency: 4 });
 
+/** Exercise the CLI process so usage errors retain their exit status and registered actions. */
 describe.concurrent("tunnel CLI dispatch", () => {
+  /** The process boundary must render usage, not only return a translator error object. */
   it("rejects an unknown tunnel subcommand with usage guidance (#11996)", async () => {
     const r = await runAsync("tunnel bogus");
     expect(r.code).not.toBe(0);

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { translatePublicGlobalArgv } from "./public-argv-translation";
 
+/** Keep unknown actions on the public error path without changing valid dispatch or help. */
 describe("global subcommand usage", () => {
   it.each([
     { command: "tunnel", actions: ["start", "stop", "status"] },

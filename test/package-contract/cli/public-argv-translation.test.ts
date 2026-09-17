@@ -128,6 +128,7 @@ describe("public route/display separation", () => {
   });
 });
 
+/** Verify that the compiled CLI preserves public dispatch and usage-error results. */
 describe("translatePublicGlobalArgv", () => {
   it("translates simple and nested global commands to native oclif argv", () => {
     expectNative(translatePublicGlobalArgv("list", ["--json"]), "list", ["--json"]);
@@ -145,7 +146,8 @@ describe("translatePublicGlobalArgv", () => {
     expectNative(translatePublicGlobalArgv("version", []), "root:version", []);
   });
 
-  it("translates global parent help and errors to native oclif argv", () => {
+  /** Help remains an oclif command; unknown actions must return public usage guidance. */
+  it("routes global help to oclif and rejects unknown actions with usage", () => {
     expectNative(
       translatePublicGlobalArgv("credentials", []),
       "credentials",
@@ -158,12 +160,10 @@ describe("translatePublicGlobalArgv", () => {
       ["--help"],
       ["tunnel", "--help"],
     );
-    expectNative(
-      translatePublicGlobalArgv("inference", ["bogus"]),
-      "inference:bogus",
-      [],
-      ["inference", "bogus"],
-    );
+    expect(translatePublicGlobalArgv("inference", ["bogus"])).toEqual({
+      kind: "publicUsageError",
+      lines: ["inference <subcommand>", "Subcommands:", "get", "set"],
+    });
     expect(translatePublicGlobalArgv("bogus", [])).toEqual({ kind: "publicUsageError", lines: [] });
   });
 });
