@@ -34,6 +34,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
@@ -406,19 +407,32 @@ export async function preclean(
   });
 }
 
+export async function waitForManagedActivationSandboxAbsence(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const { value: openshellList } = await pollUntil({
+    artifactPrefix: `post-destroy-openshell-list-${sandboxName}`,
+    deadlineMs: 30_000,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => {
+      const result = await sandbox.list({ artifactName, env, timeoutMs: 10_000 });
+      assertExitZero(result, "list OpenShell sandboxes after managed activation destroy");
+      return result;
+    },
+    accept: (result) => !outputContainsSandbox(result, sandboxName),
+  });
+  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
+}
+
 async function verifyExactCleanup(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
+  await waitForManagedActivationSandboxAbsence(sandbox, sandboxName, env);
   const containers = await host.command(
     "docker",
     ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
