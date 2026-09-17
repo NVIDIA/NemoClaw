@@ -180,7 +180,7 @@ Native bundles and protocol/lifecycle fixtures pass on Linux ARM64/x64, macOS AR
 Managed gateway and GPU execution are qualified on Linux ARM64.
 
 Native CLI availability does not establish container or GPU backend support on every platform.
-Podman topology still requires its own evidence.
+[Managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies the local rootless Linux ARM64 gateway and sandbox topology; inference remains independently hosted.
 
 The model runtime retains the recipe archive, original and patched sources, preparation tools, licenses, supervisor source and vendored dependency licenses.
 The builder normalizes timestamps and rejects changing source inputs during a build.
