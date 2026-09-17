@@ -3,7 +3,7 @@
 
 import { expect, vi } from "vitest";
 import YAML from "yaml";
-import { runConfigExport } from "../../src/lib/actions/config/export";
+import { runConfigExport, type ConfigExportTarget } from "../../src/lib/actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
@@ -30,12 +30,16 @@ vi.mock("../../src/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/platform")>()),
   isWsl: vi.fn(() => false),
 }));
-vi.mock("../../src/lib/state/registry/persistence", () => ({ load: vi.fn() }));
+vi.mock("../../src/lib/state/registry/persistence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/state/registry/persistence")>()),
+  load: vi.fn(),
+}));
 vi.mock("../../src/lib/state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
 vi.mock("../../src/lib/inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
+  captureSanitizedResolvedOpenshellAsync: vi.fn(),
 }));
 vi.mock("../../src/lib/adapters/openshell/sandbox-config", async (importOriginal) => {
   const actual =
@@ -83,14 +87,14 @@ export function mockSupportedLiveSource(
   raw.getSandboxConfig.mockResolvedValue(configuration(appliedRevision));
 }
 
-export async function exportLiveSource() {
+export async function exportLiveSource(target: ConfigExportTarget = { kind: "stdout" }) {
   const writeStdout = vi.fn(async (_yaml: string) => {});
   const publish = vi.fn();
   const result = await runConfigExport(
     {
       sandboxName: "alpha",
       documentName: parseNemoClawConfigDocumentName("alpha"),
-      target: { kind: "stdout" },
+      target,
     },
     {
       observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),

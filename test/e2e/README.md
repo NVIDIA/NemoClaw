@@ -1414,6 +1414,42 @@ Validate phase coverage without executing test bodies with:
 npm run test:e2e-phases:check
 ```
 
+### Fixed Linux/AMD64 managed-vLLM export rosters
+
+Issue #11859 adds these installed-CLI qualification cases for the existing
+`vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4` deployment:
+
+| Retained roster | Required export |
+| --- | --- |
+| Primary and `researcher` | Both agents, in order, sharing the verified fixed route |
+| Primary, `researcher`, and `reviewer` | All three agents, in order, with identical route tuning |
+
+Run each case only on an already provisioned Linux/AMD64 Docker deployment with its original
+serving provenance and managed-image receipt. Use the installed candidate CLI and the existing
+qualification runner's authorization and cleanup. Export must not recreate agents or inference resources.
+
+For each sandbox, invoke `nemoclaw config export <sandbox> --output <private-directory>/roster.yaml --json`.
+Register removal of the private directory before export. Require successful command completion,
+schema validation, and the expected names, order, and `tools.allow: [read]` on every secondary.
+Compare catalog, profile, recipe, image, model revision, served name, and context window `65536`
+with the qualified deployment's independent evidence. Compare every agent's route tuning with the
+retained settings. Execution, interfaces, authentication, and observability must remain primary-owned.
+Scan for known fixture credentials before retaining any artifact; retain credential references only.
+Remove the private directory on success or failure and verify its absence.
+
+Record the installed CLI path, its `dist/build-identity.json` source revision, host platform,
+Docker runtime, scenario, command result, identity comparisons, and cleanup result.
+A checkout revision alone does not identify an installed CLI. Missing `servingProfileProvenance`
+must remain a failure: the SDK adapter cannot qualify managed serving without that record.
+Do not reconstruct provenance from the catalog or edit the registry to obtain a passing export.
+
+The automated qualification gap remains open under #11859: the checked-in Spark target below
+uses ARM64, and `managed-image-protected-runtime` uses a different vLLM model and launch contract.
+Neither establishes the fixed Linux/AMD64 export boundary. Adapter, command, and Docker-format
+fixture tests cover deterministic behavior. They do not replace the installed-CLI cases above.
+Wire these cases into the fixed-profile qualification owner when that runner is available;
+do not add them to a target that cannot provision the accepted profile.
+
 ### DGX Spark Express vLLM
 
 `spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
