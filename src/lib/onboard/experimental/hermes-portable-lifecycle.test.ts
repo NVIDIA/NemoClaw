@@ -848,7 +848,8 @@ describe("Hermes portable lifecycle", () => {
       const observer = commands.findIndex((args) =>
         args.includes(hermesPortableContainerInternals.authenticatedHealthScript),
       );
-      expect(observer).toBeGreaterThan(waiter);
+      expect(waiter).toBeGreaterThanOrEqual(0);
+      expect(observer).toBe(-1);
       expect(deps.now()).toBe(credentialWaits * 1_000);
       expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     },
