@@ -8,10 +8,6 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
-import {
-  cliOpenShellSandboxPolicyReader,
-  namedOpenShellGateway,
-} from "../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import type {
   NemoClawAgentConfig,
   NemoClawSandboxConfig,
@@ -199,13 +195,16 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     }
     return buffer.subarray(0, offset).toString("utf8");
   },
-  readPolicy: (gatewayName, sandboxName) =>
-    cliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  readPolicy: async (gatewayName, sandboxName) => {
+    const { cliOpenShellSandboxPolicyReader, namedOpenShellGateway } =
+      await import("../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts");
+    return cliOpenShellSandboxPolicyReader.readSandboxPolicy({
       target: namedOpenShellGateway(gatewayName),
       sandboxName,
       scope: "effective",
       timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
-    }),
+    });
+  },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
 };
 
