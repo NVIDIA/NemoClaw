@@ -52,7 +52,6 @@ esac
   || fail "bootstrap identity must be lowercase SHA-256"
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
-_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
 [ -f "$_nemoclaw_runtime" ] || fail "managed startup runtime is missing"
 
 /usr/local/bin/node "$_nemoclaw_runtime" \
@@ -60,6 +59,15 @@ _nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
   --agent "$_nemoclaw_agent" \
   --profile-fingerprint "$_nemoclaw_fingerprint" \
   --bootstrap-identity "$_nemoclaw_bootstrap_identity"
+
+_nemoclaw_runtime_env="/tmp/nemoclaw-managed-startup-runtime.env"
+_nemoclaw_legacy_runtime_env="/run/nemoclaw/managed-startup-runtime.env"
+if [ -e "$_nemoclaw_runtime_env" ] && [ -e "$_nemoclaw_legacy_runtime_env" ]; then
+  fail "managed startup published ambiguous runtime environments"
+fi
+if [ ! -e "$_nemoclaw_runtime_env" ]; then
+  _nemoclaw_runtime_env="$_nemoclaw_legacy_runtime_env"
+fi
 
 if [ -L "$_nemoclaw_runtime_env" ] \
   || [ ! -f "$_nemoclaw_runtime_env" ] \
@@ -97,7 +105,8 @@ while IFS='=' read -r _nemoclaw_environment_name _; do
 done < <(/usr/bin/env)
 
 unset _nemoclaw_agent _nemoclaw_fingerprint _nemoclaw_bootstrap_identity
-unset _nemoclaw_runtime _nemoclaw_runtime_env _nemoclaw_sandbox_uid _nemoclaw_sandbox_gid
+unset _nemoclaw_runtime _nemoclaw_runtime_env _nemoclaw_legacy_runtime_env
+unset _nemoclaw_sandbox_uid _nemoclaw_sandbox_gid
 unset _nemoclaw_environment_name
 unset -f fail
 exec "${_nemoclaw_scrubbed_env[@]}" /usr/local/bin/nemoclaw-start "$@"

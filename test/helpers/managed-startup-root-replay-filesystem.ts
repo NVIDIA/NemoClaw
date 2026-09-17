@@ -76,6 +76,7 @@ export function mockRootReplayFilesystem(
     "/etc/ssl/certs",
     "/run",
     "/run/nemoclaw",
+    "/tmp",
     "/usr",
     "/usr/local",
     "/usr/local/share",
@@ -101,6 +102,7 @@ export function mockRootReplayFilesystem(
     ]),
   );
   const directoryModes = new Map([...directories].map((target) => [target, 0o755]));
+  directoryModes.set("/tmp", 0o1777);
   const symlinkDirectories = new Set<string>();
   const fileModes = new Map([...fixtureFiles].map(([target, file]) => [target, file.mode]));
   let nextFileInode = 2n;

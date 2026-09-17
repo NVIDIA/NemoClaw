@@ -596,19 +596,19 @@ export function managedImageOpenShellProbe(
       : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-runtime.env",
+      "test ! -L /tmp/nemoclaw-managed-startup-runtime.env",
     ),
     probeStep(
       "managed runtime environment owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-runtime.env)" = "0:0:444"',
     ),
     probeStep(
       "managed startup completion must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-complete.json",
+      "test ! -L /tmp/nemoclaw-managed-startup-complete.json",
     ),
     probeStep(
       "managed startup completion owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-complete.json)" = "0:0:444"',
     ),
     probeStep(
       "corporate CA file must exist and be nonempty",
@@ -632,11 +632,11 @@ export function managedImageOpenShellProbe(
     ),
     probeStep(
       "managed startup CA bundle must exist and be nonempty",
-      "test -s /run/nemoclaw/managed-startup-ca-bundle.pem",
+      "test -s /tmp/nemoclaw-managed-startup-ca-bundle.pem",
     ),
     probeStep(
       "managed startup CA bundle owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
+      'test "$(stat -c "%u:%g:%a" /tmp/nemoclaw-managed-startup-ca-bundle.pem)" = "0:0:444"',
     ),
     probeStep(readinessLabel, healthProbe),
   ].join("\n");

@@ -131,7 +131,7 @@ printf 'start:%s:%s:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMO
             `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
           )
           .replace(
-            '_nemoclaw_runtime_env="/run/nemoclaw/managed-startup-runtime.env"',
+            '_nemoclaw_runtime_env="/tmp/nemoclaw-managed-startup-runtime.env"',
             `_nemoclaw_runtime_env=${JSON.stringify(runtimeEnvironment)}`,
           )
           .replace("/usr/local/bin/node", path.join(directory, "node"))

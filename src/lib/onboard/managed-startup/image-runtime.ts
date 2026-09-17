@@ -45,11 +45,12 @@ import {
 import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
 
 export { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
-export const MANAGED_STARTUP_RUNTIME_ENV_FILE = "/run/nemoclaw/managed-startup-runtime.env";
+const MANAGED_STARTUP_EXCHANGE_DIRECTORY = "/tmp";
+export const MANAGED_STARTUP_RUNTIME_ENV_FILE = `${MANAGED_STARTUP_EXCHANGE_DIRECTORY}/nemoclaw-managed-startup-runtime.env`;
 export const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
-export const MANAGED_STARTUP_MERGED_CA_FILE = "/run/nemoclaw/managed-startup-ca-bundle.pem";
-export const MANAGED_STARTUP_COMPLETION_FILE = "/run/nemoclaw/managed-startup-complete.json";
+export const MANAGED_STARTUP_MERGED_CA_FILE = `${MANAGED_STARTUP_EXCHANGE_DIRECTORY}/nemoclaw-managed-startup-ca-bundle.pem`;
+export const MANAGED_STARTUP_COMPLETION_FILE = `${MANAGED_STARTUP_EXCHANGE_DIRECTORY}/nemoclaw-managed-startup-complete.json`;
 
 const MANAGED_STARTUP_CORPORATE_CA_FILE = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY = "/usr/local/share/ca-certificates";
@@ -294,6 +295,19 @@ function modeOf(stat: fs.Stats): number {
   return stat.mode & 0o777;
 }
 
+function requireManagedStartupExchangeDirectory(): void {
+  const stat = fs.lstatSync(MANAGED_STARTUP_EXCHANGE_DIRECTORY);
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isDirectory() ||
+    stat.uid !== 0 ||
+    stat.gid !== 0 ||
+    (stat.mode & 0o7777) !== 0o1777
+  ) {
+    fail("managed startup exchange directory must be root:root mode 1777");
+  }
+}
+
 function requireRootOwnedDirectory(target: string, mode: number): void {
   let stat: fs.Stats;
   try {
@@ -358,12 +372,14 @@ function requireSafeExistingRootTarget(target: string): void {
 export function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
   const parent = path.dirname(target);
   const parentStat = fs.lstatSync(parent);
+  const trustedStickyExchange =
+    parent === MANAGED_STARTUP_EXCHANGE_DIRECTORY && (parentStat.mode & 0o7777) === 0o1777;
   if (
     parentStat.isSymbolicLink() ||
     !parentStat.isDirectory() ||
     parentStat.uid !== 0 ||
     parentStat.gid !== 0 ||
-    (modeOf(parentStat) & 0o022) !== 0
+    ((modeOf(parentStat) & 0o022) !== 0 && !trustedStickyExchange)
   ) {
     fail(`refusing unsafe root-owned file parent ${parent}`);
   }
@@ -1303,6 +1319,7 @@ export function verifyManagedStartupImageCompletion(
   completionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
   runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
 ): { readonly agent: ManagedStartupAgent; readonly fingerprint: string } {
+  requireManagedStartupExchangeDirectory();
   const expectedAgent = exactAgent(expectedAgentInput);
   if (!SHA256_RE.test(expectedFingerprint)) {
     fail("startup completion expected profile fingerprint is invalid");
@@ -1374,6 +1391,7 @@ export function publishManagedStartupCompletionAfterCommit(
   runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
 ): void {
   requireRoot();
+  requireManagedStartupExchangeDirectory();
   const expectedAgent = exactAgent(expectedAgentInput);
   if (
     getManagedStartupSharedStateTransactionStatus({
@@ -1518,6 +1536,7 @@ export async function applyManagedStartupImageProfile(
   if (profile.agent !== expectedAgent) {
     fail(`managed startup profile targets ${profile.agent}, expected ${expectedAgent}`);
   }
+  requireManagedStartupExchangeDirectory();
   const mapped = mapManagedStartupProfileToAgentEnvironment(profile, env);
   validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
 
