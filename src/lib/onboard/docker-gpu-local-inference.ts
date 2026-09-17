@@ -14,6 +14,7 @@ import {
 import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { attachManagedBootstrapRollbackError } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
@@ -525,9 +526,7 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     try {
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
     } catch (rollbackError) {
-      (
-        failure as Error & { managedBootstrapRollbackError?: unknown }
-      ).managedBootstrapRollbackError = rollbackError;
+      attachManagedBootstrapRollbackError(failure, rollbackError);
     }
     throw failure;
   }
