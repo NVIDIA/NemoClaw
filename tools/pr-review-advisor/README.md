@@ -115,7 +115,6 @@ The same risk plan maps runtime changes from these paths to the `focused-e2e` fa
 
 Each match selects these focused E2E jobs:
 
-- `device-auth-health`.
 - `issue-4462-scope-upgrade-approval`.
 - `openclaw-inference-switch`.
 
