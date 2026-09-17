@@ -48,7 +48,20 @@ impl Deployment {
         future: impl Future<Output = Result<T, Error>>,
     ) -> Result<T, Error> {
         let started = Instant::now();
-        self.report_timing(operation, started, future.await)
+        (self.progress)(Progress::Waiting {
+            operation,
+            elapsed: started.elapsed(),
+        });
+        tokio::pin!(future);
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                result = &mut future => return self.report_timing(operation, started, result),
+                _ = interval.tick() => (self.progress)(Progress::Waiting { operation, elapsed: started.elapsed() }),
+            }
+        }
     }
 }
 
@@ -56,6 +69,27 @@ impl Deployment {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn waiting_is_reported_before_a_step_completes() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let received = events.clone();
+        let deployment = Deployment::new("unused".as_ref(), "unused".as_ref())
+            .with_progress(Arc::new(move |event| received.lock().unwrap().push(event)));
+        deployment
+            .timed("runtime.ready", async {
+                assert!(matches!(
+                    events.lock().unwrap().as_slice(),
+                    [Progress::Waiting {
+                        operation: "runtime.ready",
+                        ..
+                    }]
+                ));
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn timings_preserve_results_and_report_failure_and_cancellation_without_diagnostics() {
@@ -80,12 +114,16 @@ mod tests {
             Err(Error::Cancelled)
         ));
         let events = events.lock().unwrap();
-        assert_eq!(events.len(), 3);
-        for (event, expected) in events.iter().zip([
-            StepOutcome::Succeeded,
-            StepOutcome::Failed,
-            StepOutcome::Cancelled,
-        ]) {
+        assert_eq!(events.len(), 6);
+        for (event, expected) in events
+            .iter()
+            .filter(|event| matches!(event, Progress::Completed { .. }))
+            .zip([
+                StepOutcome::Succeeded,
+                StepOutcome::Failed,
+                StepOutcome::Cancelled,
+            ])
+        {
             assert!(
                 matches!(event, Progress::Completed { operation: "test", outcome, .. } if *outcome == expected)
             );

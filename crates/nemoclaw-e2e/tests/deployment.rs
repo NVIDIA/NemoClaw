@@ -276,9 +276,20 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     }
     let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let received = timings.clone();
+    let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let resources = resource_events.clone();
     let deployment = Deployment::new(directory.path(), &bundle)
         .with_secrets(std::sync::Arc::new(FixtureSecrets))
         .with_progress(std::sync::Arc::new(move |event| {
+            if let nemoclaw_sdk::Progress::Resource {
+                resource,
+                action,
+                status,
+                ..
+            } = event
+            {
+                resources.lock().unwrap().push((resource, action, status));
+            }
             if let nemoclaw_sdk::Progress::Completed {
                 operation, outcome, ..
             } = event
@@ -292,6 +303,18 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
+    assert!(
+        resource_events
+            .lock()
+            .unwrap()
+            .contains(&("sandbox", "create", "started"))
+    );
+    assert!(
+        resource_events
+            .lock()
+            .unwrap()
+            .contains(&("sandbox", "create", "complete"))
+    );
     let health = applied.unwrap().health;
     assert_eq!(health.len(), 1);
     assert!(!health[0].health.supported);

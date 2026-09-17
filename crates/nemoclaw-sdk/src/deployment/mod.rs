@@ -31,6 +31,18 @@ pub use timing::StepOutcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
+    /// A resource operation observed in OpenTofu's machine-readable UI.
+    Resource {
+        resource: &'static str,
+        action: &'static str,
+        status: &'static str,
+        elapsed_seconds: u64,
+    },
+    /// A step that has started or is still waiting.
+    Waiting {
+        operation: &'static str,
+        elapsed: std::time::Duration,
+    },
     Preflight,
     Planning,
     Applying,
@@ -439,7 +451,21 @@ impl Deployment {
         };
         self.timed(operation, async {
             let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
-            crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+            if matches!(args.first(), Some(&"plan" | &"apply")) {
+                let mut args = args.to_vec();
+                args.insert(1, "-json");
+                crate::process::run_with_progress(
+                    &store.directory,
+                    &bundle.tofu(),
+                    &args,
+                    &env,
+                    cancel,
+                    Some(self.progress.clone()),
+                )
+                .await
+            } else {
+                crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+            }
         })
         .await
     }

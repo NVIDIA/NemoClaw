@@ -137,3 +137,5 @@ pub mod backends;
 pub mod recipes;
 
 mod inference_auth;
+
+mod tofu_ui;
