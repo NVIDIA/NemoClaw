@@ -12,6 +12,7 @@ import {
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderFinalSandboxLiveness,
   type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderRuntimeReceipt,
@@ -55,6 +56,8 @@ const SNAPSHOT_LIFECYCLE_STATES = new Set<RuntimeProviderSnapshotLifecycleState>
   "stopped",
 ]);
 const GATEWAY_LAUNCHERS = new Set(["nemoclaw", "openshell"]);
+const FINAL_SANDBOX_LIVENESS_SOURCES: ReadonlySet<unknown> =
+  new Set<RuntimeProviderFinalSandboxLiveness>(["openshell-and-docker", "openshell-only"]);
 const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderChannelStopTransport>([
   "docker-kubectl-first",
   "openshell",
@@ -445,6 +448,11 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
     );
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
+  if (!FINAL_SANDBOX_LIVENESS_SOURCES.has(surface.finalSandboxLiveness)) {
+    throw new RuntimeProviderRegistrationError(
+      "gateway.finalSandboxLiveness must be 'openshell-and-docker' or 'openshell-only'",
+    );
+  }
   requireBoolean(surface, "ownsHostReadiness", "gateway");
   if (surface.ownsHostReadiness === true) {
     requireFunction(surface, "observeOwnedGateway", "gateway");

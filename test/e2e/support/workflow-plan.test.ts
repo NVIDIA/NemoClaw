@@ -263,6 +263,18 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/onboard/runtime-provider/contract.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+    "src/lib/onboard/runtime-provider/mxc.ts",
+    "src/lib/onboard/runtime-provider/podman.ts",
+    "src/lib/onboard/runtime-provider/registry.ts",
+  ])("selects final gateway cleanup evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-operations",
+    );
+  });
+
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
@@ -648,6 +660,18 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
+  it("selects sandbox operations when its gateway client changes", () => {
+    const changedFile = "test/e2e/fixtures/clients/gateway.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "sandbox-operations",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "sandbox-operations",
+    );
   });
 
   it.each([
