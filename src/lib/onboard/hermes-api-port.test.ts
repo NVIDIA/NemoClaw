@@ -153,6 +153,21 @@ describe("findAvailableHermesApiPortFromObservations", () => {
 });
 
 describe("reserveCreateSandboxHermesApiPort", () => {
+  it("keeps the requested API port without inspecting or reserving forwards", async () => {
+    const env: NodeJS.ProcessEnv = { [HERMES_API_PORT_ENV]: "8644" };
+    const reservePort = vi.fn();
+
+    await expect(
+      reserveCreateSandboxHermesApiPort({
+        sandboxName: "alpha",
+        env,
+        getSandbox: () => undefined,
+        reservePort,
+      }),
+    ).resolves.toEqual({ effectivePort: 8644, reservation: null });
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
   it("keeps concurrent selections distinct before either host forward exists", async () => {
     const firstRelease = vi.fn(async () => undefined);
     const secondRelease = vi.fn(async () => undefined);

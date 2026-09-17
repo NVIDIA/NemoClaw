@@ -208,8 +208,7 @@ export function parseCliOpenShellForwardList(
   }
   if (lines.length === 0) return { ok: false, error: SCHEMA_ERROR };
   const rows: CliOpenShellLegacyForwardRow[] = [];
-  const runningPorts = new Set<number>();
-  const rowIdentities = new Set<string>();
+  const occupiedPorts = new Set<number>();
   for (const line of lines) {
     const columns = line.split(/\s+/u);
     if (columns.length !== 5) return { ok: false, error: SCHEMA_ERROR };
@@ -225,16 +224,12 @@ export function parseCliOpenShellForwardList(
       port > 65_535 ||
       !/^[1-9]\d*$/u.test(pidText ?? "") ||
       !Number.isSafeInteger(pid) ||
-      (status !== "running" && status !== "dead")
+      (status !== "running" && status !== "dead") ||
+      occupiedPorts.has(port)
     ) {
       return { ok: false, error: SCHEMA_ERROR };
     }
-    const rowIdentity = `${sandboxName}\u0000${bind}\u0000${String(port)}\u0000${String(pid)}\u0000${status}`;
-    if (rowIdentities.has(rowIdentity) || (status === "running" && runningPorts.has(port))) {
-      return { ok: false, error: SCHEMA_ERROR };
-    }
-    rowIdentities.add(rowIdentity);
-    if (status === "running") runningPorts.add(port);
+    occupiedPorts.add(port);
     rows.push({ sandboxName, bind, port, pid, status });
   }
   return { ok: true, rows };
@@ -1016,7 +1011,7 @@ function classifyRegistry(
   forward: OpenShellForwardIdentity,
   rows: readonly CliOpenShellLegacyForwardRow[],
 ): CliOpenShellForwardRegistryMatch {
-  const samePort = rows.filter((row) => row.status === "running" && row.port === forward.port);
+  const samePort = rows.filter((row) => row.port === forward.port);
   const sameTarget = samePort.filter(
     (row) => row.sandboxName === forward.sandboxName && row.bind === forward.localHost,
   );

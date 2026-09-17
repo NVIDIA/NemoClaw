@@ -493,6 +493,28 @@ describe("dashboard port reservation", () => {
     assert.deepEqual(released, [18790]);
   });
 
+  it("keeps the requested port without inspecting or reserving forwards", async () => {
+    const reservePort = vi.fn();
+    const result = await reserveCreateSandboxDashboardPort(
+      {
+        sandboxName: "cursor",
+        controlUiPort: 18789,
+        chatUiUrlEnv: null,
+        persistedPort: null,
+        agentForwardPort: null,
+      },
+      reservePort,
+    );
+
+    expect(result).toEqual({
+      preferredPort: 18789,
+      effectivePort: 18789,
+      chatUiUrl: "http://127.0.0.1:18789",
+      reservation: null,
+    });
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
   it("defers a persisted port reservation only for the exact owned forward", async () => {
     const reservePort = vi.fn();
     const observeForwardPorts = observePorts("cursor", new Map([[18789, "owned"]]));

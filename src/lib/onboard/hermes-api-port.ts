@@ -52,7 +52,7 @@ export interface HermesApiPortReservationInput {
   sandboxName: string;
   env: NodeJS.ProcessEnv;
   getSandbox(name: string): HermesApiPortSandboxLookup | null | undefined;
-  observeForwardPorts: OpenShellForwardPortObserver;
+  observeForwardPorts?: OpenShellForwardPortObserver;
   reservePort?(port: number): Promise<DashboardPortReservation>;
   warn(message: string): void;
 }
@@ -221,7 +221,7 @@ export async function reserveCreateSandboxHermesApiPort(options: {
   env?: NodeJS.ProcessEnv;
   getSandbox?: (name: string) => HermesApiPortSandboxLookup | null | undefined;
   allowRegisteredOverride?: boolean;
-  observeForwardPorts: OpenShellForwardPortObserver;
+  observeForwardPorts?: OpenShellForwardPortObserver;
   registryOccupiedPorts?: ReadonlyMap<string, string>;
   reservePort?: (port: number) => Promise<DashboardPortReservation>;
   warn?: (message: string) => void;
@@ -242,6 +242,11 @@ export async function reserveCreateSandboxHermesApiPort(options: {
   const registryOccupiedPorts = new Map(
     options.registryOccupiedPorts ?? getRegistryOccupiedHermesApiPorts(options.sandboxName),
   );
+  if (!options.observeForwardPorts) {
+    const effectivePort = pinnedPort ?? HERMES_OPENAI_API_PORT;
+    env[HERMES_API_PORT_ENV] = String(effectivePort);
+    return { effectivePort, reservation: null };
+  }
   const reserveSelectedPort = async (
     effectivePort: number,
     observations: readonly OpenShellForwardObservation[],
@@ -327,7 +332,10 @@ export function createHermesApiPortReservationScope(): HermesApiPortReservationS
       });
       this.effectivePort = selection.effectivePort;
       this.current = selection.reservation;
-      deferredOwnedForwardPort = selection.reservation === null ? selection.effectivePort : null;
+      deferredOwnedForwardPort =
+        input.observeForwardPorts && selection.reservation === null
+          ? selection.effectivePort
+          : null;
     },
     async rebindAfterOwnedForwardDelete(input) {
       if (

@@ -463,7 +463,7 @@ export type ReserveCreateSandboxDashboardPortInput = Omit<
   ObservedCreateSandboxDashboardPortInput,
   "forwardObservations"
 > & {
-  observeForwardPorts: OpenShellForwardPortObserver;
+  observeForwardPorts?: OpenShellForwardPortObserver;
 };
 
 export interface CreateSandboxDashboardPortResult {
@@ -671,6 +671,12 @@ export async function reserveCreateSandboxDashboardPort(
   reservePort: (port: number) => Promise<DashboardPortReservation> = reserveDashboardPort,
 ): Promise<ReservedCreateSandboxDashboardPortResult> {
   const preferredPort = preferredCreateSandboxDashboardPort(input);
+  if (!input.observeForwardPorts) {
+    return {
+      ...createSandboxDashboardPortResult(input, preferredPort, preferredPort),
+      reservation: null,
+    };
+  }
   const observed = await findAvailableDashboardPortFromObserver(
     input.sandboxName,
     preferredPort,

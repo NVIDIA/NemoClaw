@@ -9,7 +9,6 @@ import type {
   OpenShellForwardAdapter,
   OpenShellForwardIdentity,
   OpenShellForwardObservation,
-  OpenShellForwardStartResult,
   RetireLegacyOpenShellForwardRequest,
   StartOpenShellForwardRequest,
 } from "../../src/lib/adapters/openshell/forward";
@@ -21,17 +20,6 @@ type ForwardObservationWithIdentity = Extract<
   { forward: OpenShellForwardIdentity }
 >;
 type ForwardState = ForwardObservationWithIdentity["state"];
-
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
 
 function observation(
   forward: OpenShellForwardIdentity,
@@ -125,8 +113,21 @@ function harness(options: {
     retireLegacyForward,
     verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
   };
+  const runCaptureOpenshell = vi.fn(() => "");
+  const runOpenshell = vi.fn((args: string[]) => {
+    if (
+      args[0] === "forward" &&
+      args[1] === "start" &&
+      options.startFailurePort !== undefined &&
+      args[3]?.endsWith(`:${String(options.startFailurePort)}`)
+    ) {
+      return { status: 1 };
+    }
+    return { status: 0 };
+  });
   const helpers = createOnboardDashboardHelpers({
-    runCaptureOpenshell: vi.fn(() => ""),
+    runCaptureOpenshell,
+    runOpenshell,
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider) => provider,
@@ -142,7 +143,15 @@ function harness(options: {
     resolveForwardGatewayName: (sandbox) => sandbox?.gatewayName ?? "nemoclaw",
     forwardAdapterForAuthority: vi.fn(() => adapter),
   });
-  return { helpers, observeForwards, retireLegacyForward, startForward, states };
+  return {
+    helpers,
+    observeForwards,
+    retireLegacyForward,
+    runCaptureOpenshell,
+    runOpenshell,
+    startForward,
+    states,
+  };
 }
 
 afterEach(() => {
@@ -210,79 +219,47 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     },
   );
 
-  it("launches the persisted dashboard port and publishes its URL", async () => {
+  it("starts the persisted dashboard forward with one OpenShell command", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const test = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
+      initialStates: new Map([[18_790, "indeterminate"]]),
     });
 
     await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
       18_790,
     );
-    expect(test.startForward).toHaveBeenCalledOnce();
-    expect(test.startForward.mock.calls[0]?.[0].forward).toMatchObject({
-      sandboxName: "reonboard-test",
-      port: 18_790,
-    });
+    expect(test.runOpenshell).toHaveBeenCalledWith(
+      [
+        "forward",
+        "start",
+        "-d",
+        "127.0.0.1:18790",
+        "reonboard-test",
+        "--gateway",
+        "nemoclaw",
+        "--gateway-endpoint",
+        "https://127.0.0.1:8080",
+        "--workspace",
+        "default",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 15_000,
+        killProcessTreeOnTimeout: true,
+      },
+    );
+    expect(test.observeForwards).not.toHaveBeenCalled();
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(test.startForward).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
-  it.each(["foreign", "indeterminate"] as const)(
-    "leaves a %s persisted listener untouched with zero mutation attempts",
-    async (state) => {
-      vi.stubEnv("CHAT_UI_URL", undefined);
-      const test = harness({
-        listSandboxes: () => ({
-          sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
-        }),
-        initialStates: new Map([[18_790, state]]),
-      });
-
-      await expect(
-        test.helpers.ensureFinalizationDashboardForward("reonboard-test"),
-      ).rejects.toThrow(/cannot be reallocated|could not prove/u);
-      expect(test.startForward).not.toHaveBeenCalled();
-      expect(test.retireLegacyForward).not.toHaveBeenCalled();
-    },
-  );
-
-  it("retires an exact stale forward before one replacement start", async () => {
-    vi.stubEnv("CHAT_UI_URL", undefined);
-    const test = harness({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
-      }),
-      initialStates: new Map([[18_790, "stale"]]),
-    });
-
-    await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
-      18_790,
-    );
-    expect(test.retireLegacyForward).toHaveBeenCalledOnce();
-    expect(test.startForward).toHaveBeenCalledTimes(2);
-  });
-
-  it("reuses an exactly owned dashboard forward", async () => {
-    vi.stubEnv("CHAT_UI_URL", undefined);
-    const test = harness({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
-      }),
-      initialStates: new Map([[18_790, "owned"]]),
-    });
-
-    await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
-      18_790,
-    );
-    expect(test.startForward).toHaveBeenCalledOnce();
-    await expect(test.startForward.mock.results[0]?.value).resolves.toMatchObject({
-      state: "reused",
-    });
-  });
-
-  it("does not reuse a port registered by another sandbox", async () => {
+  it("lets OpenShell decide whether a registered port can be forwarded", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const test = harness({
       listSandboxes: () => ({
@@ -293,102 +270,32 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
       }),
     });
 
-    await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
-      /another sandbox registered it/u,
+    await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
+      18_790,
     );
-    expect(test.startForward).not.toHaveBeenCalled();
+    expect(test.runOpenshell).toHaveBeenCalledOnce();
+    expect(test.observeForwards).not.toHaveBeenCalled();
   });
 
-  it.each(["openclaw", "hermes"])(
-    "reuses registered forwards for %s without creating another listener",
-    async (name) => {
-      vi.stubEnv("CHAT_UI_URL", undefined);
-      const ports = name === "openclaw" ? [18_790] : [18_790, 8_643];
-      const test = harness({
-        listSandboxes: () => ({
-          sandboxes: [
-            { name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 },
-            { name: "sibling", dashboardPort: 18_789, hermesApiPort: 8_642 },
-          ],
-        }),
-        initialStates: new Map(ports.map((port) => [port, "owned" as const])),
-      });
-
-      await expect(
-        test.helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent(name)),
-      ).resolves.toBe(18_790);
-      expect(test.startForward.mock.calls.map(([request]) => request.forward.port)).toEqual(ports);
-    },
-  );
-
-  it("awaits every forward start and propagates a rejected start", async () => {
+  it("issues one OpenShell start command for each Hermes forward", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const test = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
       }),
     });
-    const first = deferred<OpenShellForwardStartResult>();
-    const second = deferred<OpenShellForwardStartResult>();
-    test.startForward
-      .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => second.promise);
 
-    let settled = false;
-    const finalization = test.helpers
-      .ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes"))
-      .then((value) => {
-        settled = true;
-        return value;
-      });
-    await vi.waitFor(() => expect(test.startForward).toHaveBeenCalledTimes(1));
-    expect(settled).toBe(false);
-    const firstForward = test.startForward.mock.calls[0]?.[0].forward;
-    expect(firstForward).toBeDefined();
-    first.resolve({ state: "reused", forward: firstForward! });
-    await vi.waitFor(() => expect(test.startForward).toHaveBeenCalledTimes(2));
-    expect(settled).toBe(false);
-    const secondForward = test.startForward.mock.calls[1]?.[0].forward;
-    expect(secondForward).toBeDefined();
-    second.resolve({ state: "reused", forward: secondForward! });
-    await expect(finalization).resolves.toBe(18_790);
-
-    const failure = harness({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
-      }),
-    });
-    failure.startForward.mockRejectedValueOnce(new Error("forward startup rejected"));
     await expect(
-      failure.helpers.ensureFinalizationAgentDashboardForward(
-        "reonboard-test",
-        loadAgent("hermes"),
-      ),
-    ).rejects.toThrow(/forward startup rejected/u);
+      test.helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
+    ).resolves.toBe(18_790);
+    expect(test.runOpenshell.mock.calls.map(([args]) => args[3])).toEqual([
+      "127.0.0.1:18790",
+      "127.0.0.1:8643",
+    ]);
+    expect(test.observeForwards).not.toHaveBeenCalled();
   });
 
-  it.each([18_790, 8_643])(
-    "establishes missing Hermes forward %s on its recorded port",
-    async (missingPort) => {
-      vi.stubEnv("CHAT_UI_URL", undefined);
-      const otherPort = missingPort === 18_790 ? 8_643 : 18_790;
-      const test = harness({
-        listSandboxes: () => ({
-          sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
-        }),
-        initialStates: new Map([[otherPort, "owned"]]),
-      });
-
-      await expect(
-        test.helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
-      ).resolves.toBe(18_790);
-      expect(
-        test.startForward.mock.calls.filter(([request]) => request.forward.port === missingPort),
-      ).toHaveLength(1);
-    },
-  );
-
-  it("fails the agent forward when the adapter reports a command failure", async () => {
+  it("reports an OpenShell command failure without inspecting forward state", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const test = harness({
       listSandboxes: () => ({ sandboxes: [{ name: "reonboard-test" }] }),
@@ -398,7 +305,8 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     await expect(
       test.helpers.ensureAgentFixedForward("reonboard-test", 8_642, "Hermes API"),
     ).resolves.toBe(false);
-    expect(test.startForward).toHaveBeenCalledOnce();
+    expect(test.runOpenshell).toHaveBeenCalledOnce();
+    expect(test.observeForwards).not.toHaveBeenCalled();
   });
 
   it("honors an explicit dashboard URL", async () => {
@@ -408,6 +316,6 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     await expect(test.helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
       19_001,
     );
-    expect(test.startForward.mock.calls[0]?.[0].forward.port).toBe(19_001);
+    expect(test.runOpenshell.mock.calls[0]?.[0]?.[3]).toBe("127.0.0.1:19001");
   });
 });

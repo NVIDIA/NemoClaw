@@ -23,3 +23,20 @@ export function buildCliOpenShellForwardServiceArgs(forward: OpenShellForwardIde
     `${forward.localHost}:${String(forward.port)}`,
   ];
 }
+
+/** Build the OpenShell-owned background forward command without a shell. */
+export function buildCliOpenShellForwardStartArgs(forward: OpenShellForwardIdentity): string[] {
+  return [
+    "forward",
+    "start",
+    "-d",
+    `${forward.localHost}:${String(forward.port)}`,
+    forward.sandboxName,
+    "--gateway",
+    forward.gatewayName,
+    "--gateway-endpoint",
+    forward.gatewayEndpoint,
+    "--workspace",
+    forward.workspace,
+  ];
+}
