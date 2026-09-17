@@ -72,6 +72,60 @@ it.each(dashboardSourceVariants)(
   },
 );
 
+it("applies the WhatsApp proxy root dependency hunk to the active lockfile", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-packages-"));
+  const bridgeDirectory = path.join(tmp, "scripts", "whatsapp-bridge");
+  const patchText = fs.readFileSync(PATCH, "utf8");
+  const lockfileDiffStart = patchText.indexOf(
+    "diff --git a/scripts/whatsapp-bridge/package-lock.json",
+  );
+  const nextLockfileHunk = patchText.indexOf("@@ -806", lockfileDiffStart);
+  const rootDependencyPatch = path.join(tmp, "whatsapp-root-dependency.patch");
+  expect(lockfileDiffStart).toBeGreaterThanOrEqual(0);
+  expect(nextLockfileHunk).toBeGreaterThan(lockfileDiffStart);
+  fs.mkdirSync(bridgeDirectory, { recursive: true });
+  fs.writeFileSync(rootDependencyPatch, patchText.slice(lockfileDiffStart, nextLockfileHunk));
+  fs.writeFileSync(
+    path.join(bridgeDirectory, "package-lock.json"),
+    `${JSON.stringify(
+      {
+        name: "hermes-whatsapp-bridge",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "hermes-whatsapp-bridge",
+            version: "1.0.0",
+            dependencies: {
+              "@whiskeysockets/baileys": "7.0.0-rc13",
+              express: "^4.21.0",
+              pino: "^9.0.0",
+              "qrcode-terminal": "^0.12.0",
+            },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  try {
+    const applied = spawnSync("git", ["apply", rootDependencyPatch], {
+      cwd: tmp,
+      encoding: "utf8",
+    });
+    expect(applied.status, applied.stderr).toBe(0);
+    const packageLock = JSON.parse(
+      fs.readFileSync(path.join(bridgeDirectory, "package-lock.json"), "utf8"),
+    ) as { packages: Record<string, { dependencies?: Record<string, string> }> };
+    expect(packageLock.packages[""].dependencies?.["https-proxy-agent"]).toBe("7.0.6");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 it("stores Hermes dashboard pairing state in the gateway session directory (#8184)", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-dashboard-"));
   const source = path.join(tmp, "hermes_cli", "web_server_messaging.py");
