@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS } from "../../../nemoclaw/src/security/secret-scanner.ts";
-import { buildSandboxCredentialScanCommand } from "../live/cloud-inference-credential-boundary.ts";
+import { buildSandboxCredentialScanCommand } from "../live/sandbox-credential-boundary.ts";
 
 const roots: string[] = [];
 
@@ -47,7 +47,19 @@ function scan(root: string): string {
   });
 }
 
-describe("cloud inference sandbox credential scan", () => {
+/** Run the scan without root's permission bypass when the test runner is privileged. */
+function scanWithoutRootPrivileges(root: string): string {
+  const command = buildSandboxCredentialScanCommand([root]);
+  return process.getuid?.() === 0
+    ? execFileSync(
+        "setpriv",
+        ["--reuid=65534", "--regid=65534", "--clear-groups", "sh", "-c", command],
+        { encoding: "utf8" },
+      )
+    : execFileSync("sh", ["-lc", command], { encoding: "utf8" });
+}
+
+describe("sandbox credential scan", () => {
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
 
@@ -74,6 +86,40 @@ describe("cloud inference sandbox credential scan", () => {
     writeFixture(root, "configuration/token-key-path.txt", "ordinary dependency metadata\n");
 
     expect(scan(root)).toBe("");
+  });
+
+  it("skips a sandbox state root that does not exist", () => {
+    const root = createScanRoot();
+
+    expect(scan(path.join(root, "missing"))).toBe("");
+  });
+
+  it("fails closed when an existing sandbox state root cannot be inspected", () => {
+    const root = createScanRoot();
+    const blocked = path.dirname(writeFixture(root, "blocked/state.txt", "ordinary state\n"));
+    fs.chmodSync(root, 0o755);
+    fs.chmodSync(blocked, 0o000);
+
+    try {
+      expect(() => scanWithoutRootPrivileges(blocked)).toThrow();
+    } finally {
+      fs.chmodSync(blocked, 0o700);
+    }
+  });
+
+  it("fails closed when a missing root cannot be verified through its parent", () => {
+    const root = createScanRoot();
+    const blocked = path.join(root, "blocked");
+    const missing = path.join(blocked, "missing");
+    fs.mkdirSync(blocked);
+    fs.chmodSync(root, 0o755);
+    fs.chmodSync(blocked, 0o000);
+
+    try {
+      expect(() => scanWithoutRootPrivileges(missing)).toThrow();
+    } finally {
+      fs.chmodSync(blocked, 0o700);
+    }
   });
 
   it.each([
