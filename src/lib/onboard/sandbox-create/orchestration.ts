@@ -2971,6 +2971,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                       );
                     }
                     console.log("  ✓ Committed managed startup shared state");
+                    managedWorkloadOnboard.releaseDockerManagedStartupHold({
+                      transaction: managedStartupTransaction,
+                      profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+                    });
+                    console.log("  ✓ Released the managed startup hold");
                   }
                   managedBootstrapCreateFinished = true;
                   context.revalidateSandboxIdentity(

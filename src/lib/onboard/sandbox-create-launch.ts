@@ -121,7 +121,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     ? randomBytes(32).toString("hex")
     : null;
   // Keep the raw profile and CA payload out of OpenShell's create argv and
-  // sandbox environment; apply them only after identity selects one exact runtime.
+  // sandbox environment; the verified host apply and release handshake owns them.
   const sandboxStartupCommand =
     managedStartupRootApplyRequest && managedBootstrapIdentity
       ? [

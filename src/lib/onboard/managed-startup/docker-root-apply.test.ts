@@ -7,6 +7,7 @@ import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-ma
 import {
   applyDockerManagedStartupRootRequest,
   getDockerManagedStartupFailureTransaction,
+  releaseDockerManagedStartupHold,
   resolveDockerManagedStartupContainer,
 } from "./docker-root-apply";
 import { encodeManagedStartupProfile } from "./profile";
@@ -56,6 +57,34 @@ function successfulSpawnResult() {
 }
 
 describe("Docker managed-startup root applicator", () => {
+  it("releases the hold through a clean root exec bound to the exact transaction", () => {
+    const dockerCapture = vi.fn(() => stableInspect());
+    const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+    releaseDockerManagedStartupHold(
+      {
+        transaction: {
+          agent: "openclaw",
+          bootstrapIdentity: BOOTSTRAP_IDENTITY,
+          containerId: CONTAINER_ID,
+          image: IMAGE_ID,
+        },
+        profileFingerprint: "e".repeat(64),
+      },
+      { dockerCapture, dockerSpawnSync },
+    );
+
+    expect(dockerSpawnSync).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "--release-startup-hold",
+        "--profile-fingerprint",
+        "e".repeat(64),
+        "--bootstrap-identity",
+        BOOTSTRAP_IDENTITY,
+      ]),
+      { encoding: "utf8", timeout: 30_000 },
+    );
+  });
+
   it("binds root application to the exact OpenShell sandbox label identity", () => {
     expect(
       resolveDockerManagedStartupContainer(

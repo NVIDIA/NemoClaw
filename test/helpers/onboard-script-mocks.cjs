@@ -1272,6 +1272,7 @@ function mockManagedStateVolumeOnboardLifecycle() {
   managedStartupRootApply.resolveDockerManagedStartupContainer = () =>
     ONBOARD_SANDBOX_OLD_CONTAINER_ID;
   managedStartupRootApply.applyDockerManagedStartupRootRequest = () => null;
+  managedStartupRootApply.releaseDockerManagedStartupHold = () => {};
   managedStartupSharedState.finalizeDockerManagedStartupSharedState = () => ({
     supervisorReady: true,
     failure: null,

@@ -249,3 +249,52 @@ export function applyDockerManagedStartupRootRequest(
   ).managedStartupTransaction = transaction;
   throw error;
 }
+
+/** Release the non-root image hold only after the identity-bound transaction commits. */
+export function releaseDockerManagedStartupHold(
+  input: {
+    readonly transaction: DockerManagedStartupTransaction;
+    readonly profileFingerprint: string;
+  },
+  deps: DockerManagedStartupRootApplyDeps = {},
+): void {
+  if (!/^[a-f0-9]{64}$/u.test(input.profileFingerprint)) {
+    throw new Error("Managed startup release requires one exact profile fingerprint.");
+  }
+  const capture = deps.dockerCapture ?? dockerCapture;
+  const spawn = deps.dockerSpawnSync ?? dockerSpawnSync;
+  const pinned = inspectExactContainer(input.transaction.containerId, capture);
+  if (pinned.image !== input.transaction.image) {
+    throw new Error("Managed-startup image identity changed before hold release.");
+  }
+  const result = spawn(
+    [
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      pinned.containerId,
+      "/usr/bin/env",
+      "-i",
+      ...FIXED_ROOT_ENV,
+      "/usr/local/bin/node",
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--release-startup-hold",
+      "--agent",
+      input.transaction.agent,
+      "--profile-fingerprint",
+      input.profileFingerprint,
+      "--bootstrap-identity",
+      input.transaction.bootstrapIdentity,
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Managed startup hold release failed in exact container ${pinned.containerId.slice(0, 12)}${
+        commandDetail(result) ? `: ${commandDetail(result)}` : ""
+      }`,
+    );
+  }
+}

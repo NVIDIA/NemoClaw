@@ -50,6 +50,7 @@ export const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 export const MANAGED_STARTUP_MERGED_CA_FILE = "/run/nemoclaw/managed-startup-ca-bundle.pem";
 export const MANAGED_STARTUP_COMPLETION_FILE = "/run/nemoclaw/managed-startup-complete.json";
+export const MANAGED_STARTUP_RELEASE_FILE = "/run/nemoclaw/managed-startup-release.json";
 
 const MANAGED_STARTUP_CORPORATE_CA_FILE = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY = "/usr/local/share/ca-certificates";
@@ -78,7 +79,9 @@ const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
+export const MANAGED_STARTUP_RELEASE_SCHEMA_VERSION = 1;
 const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
+const MAX_MANAGED_STARTUP_RELEASE_BYTES = 4096;
 const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
 export type ManagedStartupImageIdentity = "root" | "sandbox";
@@ -159,6 +162,13 @@ export interface ManagedStartupCompletionMarker {
   readonly profileFingerprint: string;
   readonly runtimeEnvironmentSha256: string;
   readonly corporateCaMerged: boolean;
+}
+
+export interface ManagedStartupReleaseMarker {
+  readonly schemaVersion: typeof MANAGED_STARTUP_RELEASE_SCHEMA_VERSION;
+  readonly agent: ManagedStartupAgent;
+  readonly profileFingerprint: string;
+  readonly bootstrapIdentity: string;
 }
 
 export class ManagedStartupImageActionPlanError extends Error {
@@ -1346,6 +1356,140 @@ export function waitForManagedStartupImageCompletion(
   }
 }
 
+export function serializeManagedStartupReleaseMarker(marker: ManagedStartupReleaseMarker): string {
+  if (
+    marker.schemaVersion !== MANAGED_STARTUP_RELEASE_SCHEMA_VERSION ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(marker.agent) ||
+    !SHA256_RE.test(marker.profileFingerprint) ||
+    !SHA256_RE.test(marker.bootstrapIdentity)
+  ) {
+    fail("managed startup release marker is invalid");
+  }
+  return `${JSON.stringify({
+    agent: marker.agent,
+    bootstrapIdentity: marker.bootstrapIdentity,
+    profileFingerprint: marker.profileFingerprint,
+    schemaVersion: marker.schemaVersion,
+  })}\n`;
+}
+
+function parseManagedStartupReleaseMarker(text: string): ManagedStartupReleaseMarker {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    fail("managed startup release marker is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    fail("managed startup release marker must be an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  const marker = {
+    schemaVersion: record.schemaVersion,
+    agent: record.agent,
+    profileFingerprint: record.profileFingerprint,
+    bootstrapIdentity: record.bootstrapIdentity,
+  };
+  if (
+    Object.keys(record).sort().join(",") !==
+      ["agent", "bootstrapIdentity", "profileFingerprint", "schemaVersion"].sort().join(",") ||
+    marker.schemaVersion !== MANAGED_STARTUP_RELEASE_SCHEMA_VERSION ||
+    typeof marker.agent !== "string" ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(marker.agent) ||
+    typeof marker.profileFingerprint !== "string" ||
+    !SHA256_RE.test(marker.profileFingerprint) ||
+    typeof marker.bootstrapIdentity !== "string" ||
+    !SHA256_RE.test(marker.bootstrapIdentity)
+  ) {
+    fail("managed startup release marker has an invalid schema");
+  }
+  const validated = marker as ManagedStartupReleaseMarker;
+  if (serializeManagedStartupReleaseMarker(validated) !== text) {
+    fail("managed startup release marker is not canonical");
+  }
+  return validated;
+}
+
+export function publishManagedStartupRelease(
+  expectedAgentInput: string,
+  expectedFingerprint: string,
+  bootstrapIdentity: string,
+  releaseFile: string = MANAGED_STARTUP_RELEASE_FILE,
+): void {
+  requireRoot();
+  const expectedAgent = exactAgent(expectedAgentInput);
+  verifyManagedStartupImageCompletion(expectedAgent, expectedFingerprint);
+  if (
+    getManagedStartupSharedStateTransactionStatus({
+      agent: expectedAgent,
+      profileFingerprint: expectedFingerprint,
+      bootstrapIdentity,
+    }) !== "committed"
+  ) {
+    fail("managed startup release requires a committed shared-state transaction");
+  }
+  atomicWriteRootFile(
+    releaseFile,
+    serializeManagedStartupReleaseMarker({
+      schemaVersion: MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
+      agent: expectedAgent,
+      profileFingerprint: expectedFingerprint,
+      bootstrapIdentity,
+    }),
+    0o444,
+  );
+}
+
+export function verifyManagedStartupRelease(
+  expectedAgentInput: string,
+  expectedFingerprint: string,
+  bootstrapIdentity: string,
+  releaseFile: string = MANAGED_STARTUP_RELEASE_FILE,
+): void {
+  const expectedAgent = exactAgent(expectedAgentInput);
+  const { bytes, stat } = readStableRegularFileSnapshot(
+    releaseFile,
+    MAX_MANAGED_STARTUP_RELEASE_BYTES,
+  );
+  if (
+    stat.nlink !== 1n ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o444
+  ) {
+    fail("managed startup release marker must be root:root mode 0444");
+  }
+  const marker = parseManagedStartupReleaseMarker(bytes.toString("utf8"));
+  if (
+    marker.agent !== expectedAgent ||
+    marker.profileFingerprint !== expectedFingerprint ||
+    marker.bootstrapIdentity !== bootstrapIdentity
+  ) {
+    fail("managed startup release marker does not match this bootstrap attempt");
+  }
+}
+
+export function waitForManagedStartupRelease(
+  expectedAgent: string,
+  expectedFingerprint: string,
+  bootstrapIdentity: string,
+  timeoutSeconds = 600,
+): void {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (true) {
+    try {
+      verifyManagedStartupRelease(expectedAgent, expectedFingerprint, bootstrapIdentity);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (Date.now() >= deadline) {
+        fail(`startup release was not published within ${String(timeoutSeconds)} seconds`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+  }
+}
+
 function applyAdapter(
   context: ManagedStartupAdapterContext,
   mapped: ManagedStartupAgentEnvironment,
@@ -1660,7 +1804,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--release-startup-hold|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1707,13 +1851,21 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     );
     return;
   }
+  if (argv.length === 7 && argv[0] === "--release-startup-hold") {
+    const agent = readCliAgent(argv, 7);
+    const fingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    publishManagedStartupRelease(agent, fingerprint, bootstrapIdentity);
+    console.log(`[managed-startup] released ${agent} profile ${fingerprint} startup hold`);
+    return;
+  }
   if (
     (argv.length === 5 || argv.length === 7) &&
     (argv[0] === "--verify-completion" || argv[0] === "--wait-for-completion")
   ) {
     const agent = readCliAgent(argv, argv.length);
     const fingerprint = readCliFingerprint(argv);
-    if (argv.length === 7) readCliBootstrapIdentity(argv);
+    const bootstrapIdentity = argv.length === 7 ? readCliBootstrapIdentity(argv) : null;
     const result =
       argv[0] === "--wait-for-completion"
         ? waitForManagedStartupImageCompletion(agent, fingerprint)
@@ -1721,6 +1873,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     console.log(
       `[managed-startup] verified ${result.agent} profile ${result.fingerprint} completion`,
     );
+    if (argv[0] === "--wait-for-completion" && bootstrapIdentity !== null) {
+      waitForManagedStartupRelease(agent, fingerprint, bootstrapIdentity);
+      console.log(`[managed-startup] verified ${result.agent} startup release`);
+    }
     return;
   }
   if (argv.length === 3 && argv[0] === "--begin-shared-state-transaction") {

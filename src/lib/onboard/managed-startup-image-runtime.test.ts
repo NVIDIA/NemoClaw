@@ -23,6 +23,8 @@ import {
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
   MANAGED_STARTUP_PROFILE_ENV,
+  MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
+  serializeManagedStartupReleaseMarker,
   type ManagedStartupImageActionPlanInput,
   main as mainManagedStartupImageRuntime,
 } from "./managed-startup/image-runtime";
@@ -345,6 +347,24 @@ describe("managed startup image runtime", () => {
         "not-an-identity",
       ]),
     ).rejects.toThrow(/bootstrap identity argument is missing or invalid/u);
+  });
+
+  it("serializes the root-owned startup release identity canonically", () => {
+    expect(
+      serializeManagedStartupReleaseMarker({
+        schemaVersion: MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
+        agent: "openclaw",
+        profileFingerprint: "a".repeat(64),
+        bootstrapIdentity: "b".repeat(64),
+      }),
+    ).toBe(
+      `${JSON.stringify({
+        agent: "openclaw",
+        bootstrapIdentity: "b".repeat(64),
+        profileFingerprint: "a".repeat(64),
+        schemaVersion: MANAGED_STARTUP_RELEASE_SCHEMA_VERSION,
+      })}\n`,
+    );
   });
 
   it("verifies copied transaction status only through a read-only receipt mount", async () => {

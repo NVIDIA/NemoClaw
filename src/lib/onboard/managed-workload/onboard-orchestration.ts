@@ -31,6 +31,7 @@ import {
 } from "../managed-startup/onboard-profile";
 export {
   applyDockerManagedStartupRootRequest,
+  releaseDockerManagedStartupHold,
   resolveDockerManagedStartupContainer,
   type DockerManagedStartupTransaction,
   finalizeDockerManagedStartupSharedState,

@@ -52,7 +52,7 @@ import {
 
 // Prove OpenShell-owned lifecycle for every standard runtime after retirement
 // of NemoClaw's provider-specific container controller, with Docker unavailable;
-// managed-image startup itself is qualified by the separate all-agent proof.
+// the separate all-agent proof owns the managed-image release handshake.
 const AGENTS = [
   { agent: "openclaw", sandboxName: "podman-openclaw" },
   { agent: "hermes", sandboxName: "podman-hermes" },
