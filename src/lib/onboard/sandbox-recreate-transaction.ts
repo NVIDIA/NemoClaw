@@ -234,9 +234,12 @@ export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
 function fingerprintLegacyDeferredN1xSandboxEntry(
   entry: SandboxEntry,
   expectedGateway: { readonly gatewayName: string; readonly gatewayPort: number },
+  expectedReservationSessionId: string | undefined,
 ): string | null {
   if (
+    !expectedReservationSessionId ||
     entry.pendingRouteReservation !== true ||
+    entry.reservationSessionId !== expectedReservationSessionId ||
     entry.deferredN1xManagedVllmAccepted !== undefined ||
     !isDeferredN1xManagedVllmAcceptanceRoute(entry) ||
     entry.gatewayName !== expectedGateway.gatewayName ||
@@ -260,16 +263,24 @@ function fingerprintLegacyDeferredN1xSandboxEntry(
  * source sandbox is already deleted. The compatibility digest reproduces the
  * exact legacy field sets, so it accepts only what previous releases already
  * accepted. The N1x compatibility digest is additionally gated on an active
- * reservation for the exact managed-vLLM route.
+ * reservation for the exact managed-vLLM route and the onboarding session
+ * that owns the journal.
  */
 function sandboxRecreateSourceRowMatches(
   entry: SandboxEntry | null,
   recordedFingerprint: string,
   expectedGateway: { readonly gatewayName: string; readonly gatewayPort: number },
+  expectedReservationSessionId?: string,
 ): boolean {
   if (!entry) return recordedFingerprint === fingerprintSandboxRecreateValue(null);
   if (fingerprintSandboxRegistryEntry(entry) === recordedFingerprint) return true;
-  if (fingerprintLegacyDeferredN1xSandboxEntry(entry, expectedGateway) === recordedFingerprint) {
+  if (
+    fingerprintLegacyDeferredN1xSandboxEntry(
+      entry,
+      expectedGateway,
+      expectedReservationSessionId,
+    ) === recordedFingerprint
+  ) {
     return true;
   }
   return (
@@ -502,6 +513,7 @@ export interface SandboxRecreateSourceProof {
   readonly sourceRegistryFingerprint: string;
   readonly sourceLiveIdentityFingerprint: string | null;
   readonly sourceConfirmedAbsent: boolean;
+  readonly reservationSessionId: string;
   readonly targetGeneration: string;
 }
 
@@ -519,6 +531,7 @@ export class SandboxRecreateSourceMismatchError extends Error {
 
 export function sandboxRecreateSourceProof(
   transaction: CheckpointSandboxRecreateTransaction,
+  reservationSessionId: string,
 ): SandboxRecreateSourceProof {
   return {
     transactionId: transaction.id,
@@ -529,6 +542,7 @@ export function sandboxRecreateSourceProof(
     sourceLiveIdentityFingerprint: transaction.sourceLiveIdentityFingerprint,
     sourceConfirmedAbsent: sandboxRecreatePhaseReached(transaction.phase, "deleted"),
     targetGeneration: transaction.targetGeneration,
+    reservationSessionId,
   };
 }
 
@@ -558,7 +572,12 @@ export function assertSandboxRecreateSourceProof(
   }
   if (!check.registryEntry) return fail("the source registry row is absent");
   if (
-    !sandboxRecreateSourceRowMatches(check.registryEntry, proof.sourceRegistryFingerprint, proof)
+    !sandboxRecreateSourceRowMatches(
+      check.registryEntry,
+      proof.sourceRegistryFingerprint,
+      proof,
+      proof.reservationSessionId,
+    )
   ) {
     return fail("the source registry row changed after the transaction recorded it");
   }
@@ -900,6 +919,7 @@ function replacementIsVoid(
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
   observedGateway: SandboxRecreateGateway | null | undefined,
+  expectedReservationSessionId: string | undefined,
 ): boolean {
   return Boolean(
     onSandboxRecreateGateway(transaction, observedGateway) &&
@@ -909,6 +929,7 @@ function replacementIsVoid(
       registryEntry,
       transaction.sourceRegistryFingerprint,
       transaction,
+      expectedReservationSessionId,
     ) &&
     registryEntry.lifecycleLiveIdentityFingerprint &&
     transaction.sourceLiveIdentityFingerprint &&
@@ -930,6 +951,7 @@ export function planSandboxRecreateRecovery(
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
   observedGateway?: SandboxRecreateGateway | null,
+  expectedReservationSessionId?: string,
 ): SandboxRecreateRecoveryPlan {
   if (registryEntry?.lifecycleGeneration === transaction.targetGeneration) {
     if (!transaction.targetLiveIdentityFingerprint) {
@@ -972,14 +994,25 @@ export function planSandboxRecreateRecovery(
     return { action: "accept_target" };
   }
 
-  const unregistered = planUnregisteredReplacementRecovery(transaction, observation, registryEntry);
+  const unregistered = planUnregisteredReplacementRecovery(
+    transaction,
+    observation,
+    registryEntry,
+    expectedReservationSessionId,
+  );
   // Only deleted and creating can represent an interrupted replacement whose
   // source returned. The transaction owner can atomically replace that journal
   // when the live sandbox and registry row prove the source identity (#10473).
   if (
     (transaction.phase === "deleted" || transaction.phase === "creating") &&
     unregistered.action === "reject" &&
-    replacementIsVoid(transaction, observation, registryEntry, observedGateway)
+    replacementIsVoid(
+      transaction,
+      observation,
+      registryEntry,
+      observedGateway,
+      expectedReservationSessionId,
+    )
   ) {
     return { action: "restart_from_source" };
   }
@@ -991,11 +1024,13 @@ function planUnregisteredReplacementRecovery(
   transaction: CheckpointSandboxRecreateTransaction,
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
+  expectedReservationSessionId: string | undefined,
 ): SandboxRecreateRecoveryPlan {
   const sourceStateUnchanged = sandboxRecreateSourceRowMatches(
     registryEntry,
     transaction.sourceRegistryFingerprint,
     transaction,
+    expectedReservationSessionId,
   );
   if (transaction.phase === "completed") {
     return reject("the completed transaction no longer matches its replacement registry row");
@@ -1157,10 +1192,16 @@ export function ownSandboxRecreateTransaction(
             `Sandbox '${input.sandboxName}' has a different recreate transaction in progress; resume or repair that transaction before changing its target.`,
           );
         }
-        recovery = planSandboxRecreateRecovery(expectedOld, freshObservation, freshRegistryEntry, {
-          gatewayName: input.gatewayName,
-          gatewayPort: input.gatewayPort,
-        });
+        recovery = planSandboxRecreateRecovery(
+          expectedOld,
+          freshObservation,
+          freshRegistryEntry,
+          {
+            gatewayName: input.gatewayName,
+            gatewayPort: input.gatewayPort,
+          },
+          openingSessionId,
+        );
         if (recovery.action === "reject") {
           throw new Error(
             `Cannot resume sandbox '${input.sandboxName}' replacement: ${recovery.reason}.`,
@@ -1454,6 +1495,7 @@ export function createSandboxRecreateRuntime(
     observe(sandboxName, transaction.gatewayName),
     registryEntry,
     transaction,
+    openingSessionId,
   );
   if (recovery.action === "reject") {
     throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
@@ -1476,7 +1518,7 @@ export function createSandboxRecreateRuntime(
     acceptedTarget: recovery.action === "accept_target",
     targetGeneration: transaction.targetGeneration,
     journaledGatewayName: transaction.gatewayName,
-    sourceProof: sandboxRecreateSourceProof(transaction),
+    sourceProof: sandboxRecreateSourceProof(transaction, openingSessionId),
     get registrationFields() {
       return {
         lifecycleGeneration: transaction.targetGeneration,

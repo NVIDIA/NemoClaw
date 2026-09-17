@@ -400,11 +400,26 @@ describe("sandbox recreate recovery from a void journal", () => {
       expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(LEGACY_N1X_DURABLE_FINGERPRINT);
       expect(reservedEntry.deferredN1xManagedVllmAccepted).toBeUndefined();
       expect(
-        planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, reservedEntry, {
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        }),
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          reservedEntry,
+          {
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+          "session-n1x-rebuild",
+        ),
       ).toEqual({ action: "continue_create" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, reservationSessionId: "session-foreign" },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+          "session-n1x-rebuild",
+        ),
+      ).toMatchObject({ action: "reject" });
       const { pendingRouteReservation: _, ...unreservedEntry } = reservedEntry;
       expect(
         planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, unreservedEntry, {

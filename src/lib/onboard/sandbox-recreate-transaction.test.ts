@@ -1277,6 +1277,7 @@ describe("journal-bound source proof", () => {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     return sandboxRecreateSourceProof(
       beginSandboxRecreateTransaction(session, beginInput(observation)),
+      session.sessionId,
     );
   }
 
