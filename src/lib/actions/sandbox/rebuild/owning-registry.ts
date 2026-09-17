@@ -37,27 +37,24 @@ export interface RebuildRecoveryStorageRoot {
   readonly registryFile: string;
 }
 
-export interface RebuildWorkerInvocation {
-  readonly gatewayPort: string;
-  readonly sandboxName: string;
-  readonly options: RebuildSandboxOptions;
-  readonly executionOptions: RebuildSandboxExecutionOptions & { readonly throwOnError: true };
-}
+export type OwningRegistryWorkerResult = Readonly<{
+  ok: boolean;
+  operation: OwningRegistryWorkerInput["operation"];
+  sandboxName: string;
+  gatewayPort: number;
+  message?: string;
+}>;
 
 type RebuildOwningRegistryDependencies = {
   findSandbox: typeof findSandboxAcrossGatewayRoots;
   findRecoveryRoot: typeof findRebuildRecoveryStorageRoot;
   isHostFenceHeld: typeof isCurrentPortableHostFenceHeld;
-  runWorker(
-    input: OwningRegistryWorkerInput,
-    gatewayPort: number,
-    options?: Readonly<{ observeInvocation?: boolean }>,
-  ): Promise<RebuildWorkerInvocation | void>;
+  runWorker(input: OwningRegistryWorkerInput, gatewayPort: number): Promise<void>;
 };
 
 const WORKER_PATH = path.join(__dirname, "owning-registry-worker.js");
 const MAX_RECOVERY_BACKUP_ENTRIES = 1024;
-const MAX_WORKER_OBSERVATION_BYTES = 64 * 1024;
+const MAX_WORKER_RESULT_BYTES = 64 * 1024;
 const REBUILD_ENV_NAMES = [
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
   "NEMOCLAW_NON_INTERACTIVE",
@@ -80,41 +77,45 @@ function rebuildWorkerEnv(gatewayPort: number): Record<string, string> {
   return buildSubprocessEnv(extra);
 }
 
-async function readWorkerObservation(stream: Readable): Promise<RebuildWorkerInvocation> {
+async function readWorkerResult(stream: Readable): Promise<OwningRegistryWorkerResult | null> {
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of stream) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
     bytes += buffer.length;
-    if (bytes > MAX_WORKER_OBSERVATION_BYTES) {
-      throw new Error("Rebuild worker observation is too large.");
+    if (bytes > MAX_WORKER_RESULT_BYTES) {
+      throw new Error("Rebuild worker result is too large.");
     }
     chunks.push(buffer);
   }
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (chunks.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
   if (
     typeof parsed !== "object" ||
     parsed === null ||
     Array.isArray(parsed) ||
-    typeof (parsed as Record<string, unknown>).gatewayPort !== "string" ||
-    typeof (parsed as Record<string, unknown>).sandboxName !== "string"
+    typeof (parsed as Record<string, unknown>).ok !== "boolean" ||
+    ((parsed as Record<string, unknown>).operation !== "rebuild" &&
+      (parsed as Record<string, unknown>).operation !== "retire-recovery") ||
+    typeof (parsed as Record<string, unknown>).sandboxName !== "string" ||
+    !Number.isInteger((parsed as Record<string, unknown>).gatewayPort) ||
+    ((parsed as Record<string, unknown>).message !== undefined &&
+      typeof (parsed as Record<string, unknown>).message !== "string")
   ) {
-    throw new Error("Rebuild worker observation is invalid.");
+    return null;
   }
-  return parsed as RebuildWorkerInvocation;
+  return parsed as OwningRegistryWorkerResult;
 }
 
-async function runWorker(
-  input: OwningRegistryWorkerInput,
-  gatewayPort: number,
-  options: Readonly<{ observeInvocation?: boolean }> = {},
-): Promise<RebuildWorkerInvocation | void> {
-  const observeInvocation = options.observeInvocation === true;
+async function runWorker(input: OwningRegistryWorkerInput, gatewayPort: number): Promise<void> {
   const child = spawn(process.execPath, [WORKER_PATH], {
     env: rebuildWorkerEnv(gatewayPort),
-    stdio: observeInvocation
-      ? ["inherit", "inherit", "inherit", "pipe", "pipe"]
-      : ["inherit", "inherit", "inherit", "pipe"],
+    stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
   });
   const inputStream = child.stdio[3];
   if (!inputStream || !("end" in inputStream)) {
@@ -125,28 +126,37 @@ async function runWorker(
     inputStream.once("error", reject);
     inputStream.end(JSON.stringify(input), resolve);
   });
-  const observationStream = observeInvocation ? (child.stdio[4] as Readable | null) : null;
-  if (observeInvocation && !observationStream) {
+  const resultStream = child.stdio[4] as Readable | null;
+  if (!resultStream) {
     child.kill();
-    throw new Error("Cannot observe the rebuild worker pipeline invocation.");
+    throw new Error("Cannot read the rebuild worker result.");
   }
-  const observation = observationStream ? readWorkerObservation(observationStream) : null;
-  const exited = new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0 && signal === null) {
-        resolve();
-        return;
-      }
-      reject(new Error("Rebuild in the owning gateway registry did not complete successfully."));
-    });
-  });
-  const [, , observed] = await Promise.all([
-    inputWritten,
-    exited,
-    observation ?? Promise.resolve(undefined),
-  ]);
-  return observed;
+  const result = readWorkerResult(resultStream);
+  const exited = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>(
+    (resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        resolve({ code, signal });
+      });
+    },
+  );
+  const [, exit, workerResult] = await Promise.all([inputWritten, exited, result]);
+  const resultMatchesRequest =
+    workerResult?.operation === input.operation &&
+    workerResult.sandboxName === input.sandboxName &&
+    workerResult.gatewayPort === gatewayPort;
+  if (
+    exit.code === 0 &&
+    exit.signal === null &&
+    workerResult?.ok === true &&
+    resultMatchesRequest
+  ) {
+    return;
+  }
+  if (workerResult?.ok === false && resultMatchesRequest && workerResult.message) {
+    throw new Error(workerResult.message, { cause: workerResult });
+  }
+  throw new Error("Rebuild in the owning gateway registry did not complete successfully.");
 }
 
 export const rebuildOwningRegistryDependencies: RebuildOwningRegistryDependencies = {

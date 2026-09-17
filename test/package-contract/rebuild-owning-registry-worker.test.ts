@@ -6,28 +6,32 @@ import { describe, expect, it } from "vitest";
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
 
 describe("compiled rebuild owning-registry worker", () => {
-  it("transfers the exact rebuild invocation over the private descriptor", async () => {
-    const recoveryManifest = {
-      sandboxName: "alpha",
-      backupPath: "/backup/alpha",
-    } as never;
+  it("executes the real pipeline and preserves its bounded failure", async () => {
+    const expectedMessage = "toolDisclosure must be one of: progressive, direct.";
+    let failure: unknown;
 
-    await expect(
-      rebuildOwningRegistryDependencies.runWorker(
+    try {
+      await rebuildOwningRegistryDependencies.runWorker(
         {
           operation: "rebuild",
           sandboxName: "alpha",
-          options: { yes: true, verbose: true },
-          executionOptions: { recoveryManifest },
+          options: { yes: true, toolDisclosure: "invalid" } as never,
+          executionOptions: {},
         },
         9000,
-        { observeInvocation: true },
-      ),
-    ).resolves.toEqual({
-      gatewayPort: "9000",
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(expectedMessage);
+    expect((failure as Error).cause).toEqual({
+      ok: false,
+      operation: "rebuild",
       sandboxName: "alpha",
-      options: { yes: true, verbose: true },
-      executionOptions: { recoveryManifest, throwOnError: true },
+      gatewayPort: 9000,
+      message: expectedMessage,
     });
   });
 
@@ -41,7 +45,6 @@ describe("compiled rebuild owning-registry worker", () => {
           executionOptions: {},
         } as never,
         9000,
-        { observeInvocation: true },
       ),
     ).rejects.toThrow();
   });

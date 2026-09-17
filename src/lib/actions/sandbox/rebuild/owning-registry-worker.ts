@@ -5,9 +5,10 @@ import fs from "node:fs";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { rebuildSandbox } from "../rebuild-pipeline";
+import { redactBoundedRebuildFailure } from "../rebuild-preflight-confirmation";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
 import { retireRebuildRecoveryBackup } from "../rebuild-recreate-journal";
-import type { OwningRegistryWorkerInput } from "./owning-registry";
+import type { OwningRegistryWorkerInput, OwningRegistryWorkerResult } from "./owning-registry";
 
 const MAX_REBUILD_INPUT_BYTES = 4 * 1024 * 1024;
 
@@ -58,8 +59,19 @@ function readInput(): OwningRegistryWorkerInput {
   throw new Error("Rebuild worker input is invalid.");
 }
 
-async function main(): Promise<void> {
-  const input = readInput();
+function writeResult(result: OwningRegistryWorkerResult): void {
+  fs.writeFileSync(4, JSON.stringify(result));
+}
+
+function workerIdentity(input: OwningRegistryWorkerInput): Omit<OwningRegistryWorkerResult, "ok"> {
+  return {
+    operation: input.operation,
+    sandboxName: input.sandboxName,
+    gatewayPort: Number(process.env.NEMOCLAW_GATEWAY_PORT),
+  };
+}
+
+async function run(input: OwningRegistryWorkerInput): Promise<void> {
   if (input.operation === "retire-recovery") {
     const retired = retireRebuildRecoveryBackup(input);
     console.log(
@@ -71,22 +83,20 @@ async function main(): Promise<void> {
     ...input.executionOptions,
     throwOnError: true,
   } as const;
-  try {
-    fs.fstatSync(4);
-    fs.writeFileSync(
-      4,
-      JSON.stringify({
-        gatewayPort: process.env.NEMOCLAW_GATEWAY_PORT ?? "",
-        sandboxName: input.sandboxName,
-        options: input.options,
-        executionOptions,
-      }),
-    );
-    return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
-  }
   await rebuildSandbox(input.sandboxName, input.options, executionOptions);
+}
+
+async function main(): Promise<void> {
+  const input = readInput();
+  const identity = workerIdentity(input);
+  try {
+    await run(input);
+    writeResult({ ok: true, ...identity });
+  } catch (error) {
+    const detail = redactBoundedRebuildFailure(error);
+    writeResult({ ok: false, ...identity, ...(detail ? { message: detail } : {}) });
+    process.exitCode = 1;
+  }
 }
 
 void main().catch(() => {
