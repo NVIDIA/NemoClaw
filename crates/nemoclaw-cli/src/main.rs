@@ -4,6 +4,7 @@
 mod args;
 mod dispatch;
 mod io;
+mod progress;
 use args::{Cli, Command};
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
@@ -51,7 +52,7 @@ async fn main() -> ExitCode {
             }
         },
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{}", dispatch::render_error(error.as_ref()));
             ExitCode::FAILURE
         }
     }

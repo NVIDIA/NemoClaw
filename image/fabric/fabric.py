@@ -266,7 +266,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             model_connection(inference, model["model"] if harness == "pi" else None)
         )
         if harness == "remote-agent":
-            config["harness"]["settings"]["base_url"] = model_connection(inference)["base_url"]
+            config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
     return config
 
 
@@ -296,7 +296,11 @@ async def serve():
         try:
             raw = await asyncio.wait_for(reader.readline(), 10)
             request = json.loads(raw)
-            if request == {"operation": "check"}:
+            if request == {"operation": "health"}:
+                from health import runtime_health
+
+                response = await runtime_health(runtime)
+            elif request == {"operation": "check"}:
                 response = {
                     "config": config,
                     "runtime_id": runtime.runtime_id,
@@ -401,6 +405,10 @@ if __name__ == "__main__":
         del sys.argv[-2:]
     if len(sys.argv) == 2 and sys.argv[1] == "serve":
         asyncio.run(serve())
+    elif len(sys.argv) == 2 and sys.argv[1] == "health":
+        from health import request_health
+
+        print(json.dumps(asyncio.run(request_health(SOCKET))))
     elif (
         len(sys.argv) == 5
         and sys.argv[1] in ("configure", "prepare", "check")

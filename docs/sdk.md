@@ -55,9 +55,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phase changes and `Progress::Completed` timing events.
+The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, and `Progress::Completed` events.
+Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with an `elapsed` duration; raw messages, addresses, IDs, and output values are omitted.
+Resources of the same kind share a label.
+Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
-They cover bundle verification, OpenTofu commands, and sandbox/runtime readiness, and contain no diagnostic payloads.
+They cover bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request, and contain no diagnostic payloads.
 Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
@@ -74,6 +77,19 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 Use the same state directory across CLI and SDK operations for this deployment, with compatible bundles and credentials.
 Each operation holds the deployment lock; schedule callers so they do not operate concurrently on that state.
 Apply computes its own checked plan; passing a previous preview is not part of the API.
+
+## Read Apply Health
+
+`OperationResult.health` contains `SandboxHealth` observations, labeled with the sandbox and its agent roster.
+Each observation wraps `RuntimeHealth`: a `supported` flag, an optional Fabric `report`, and an optional bridge `reason_code`.
+The report uses Fabric's field names and retains check timestamps and dependency results.
+Other lifecycle operations leave this list empty.
+
+`Error::Health { health }` retains the observation when supported health cannot establish readiness.
+Socket failures inside the host bridge also return `Error::Health`, with `health_transport_error` or `health_transport_timeout`.
+Outer OpenShell transport failures and invalid reports use the existing error variants without copying raw diagnostics.
+No health failure deletes deployment resources.
+The compatibility behavior for the current Fabric pin and required agent image is described in [apply health](usage.md#fabric-health-during-apply).
 
 ## Resolve Credentials in an Application
 

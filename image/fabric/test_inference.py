@@ -6,6 +6,23 @@ from fabric import configuration
 
 
 class InferenceConfiguration(unittest.TestCase):
+    def test_remote_agent_endpoint_is_not_an_unsupported_model_setting(self):
+        connection = {
+            "provider": "openai",
+            "model": "Qwen/Qwen3-4B",
+            "base_url": "http://172.30.127.1:18905/v1",
+            "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+        }
+        config = configuration(
+            "assistant",
+            "remote-agent",
+            inference={"api": "openai-completions", "connection": connection},
+        )
+        self.assertEqual(config["harness"]["settings"]["base_url"], connection["base_url"])
+        self.assertNotIn("base_url", config["models"]["default"])
+        self.assertEqual(config["models"]["default"]["model"], connection["model"])
+        self.assertEqual(config["models"]["default"]["api_key_env"], connection["api_key_env"])
+
     def test_openclaw_receives_api_and_tuning(self):
         options = {
             "api": "openai-responses",

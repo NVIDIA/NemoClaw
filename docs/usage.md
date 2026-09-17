@@ -42,6 +42,34 @@ Verify inference and a native agent reply separately; see [verification levels](
 For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
 Ordinary models can omit `service.recipe`.
 
+## Fabric Health During Apply
+
+Apply requests health from the existing hosted Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
+It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
+Plan, export, and destroy do not request Fabric health.
+
+The JSON result includes a `health` entry for the sandbox and its agent roster.
+This is one shared-runtime observation, not a separate test of each agent, inference route, or integration.
+When available, `report` retains Fabric's liveness, activity, readiness, reason codes, timestamps, and dependency observations.
+A busy runtime can complete apply if Fabric reports it responsive and ready to accept work.
+A dependency marked unsupported is not a successful check; Fabric owns its effect on overall readiness.
+
+The pinned Fabric does not yet provide `runtime.check_health()`.
+New agent images include the bridge but report `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
+Apply retains its existing configuration and readiness checks in this case; success does not establish fresh Fabric health or working inference.
+The proposed upstream contract is [Fabric #305](https://github.com/NVIDIA/NeMo-Fabric/pull/305); real adapter health qualification remains **TBD** until an accepted implementation is pinned and tested.
+
+Use an [agent image built from this revision](build.md#build-agent-images).
+An older image without the health bridge fails apply with an image-rebuild diagnostic; a missing bridge is not treated as unsupported Fabric.
+Sandbox image changes require the [separate-deployment path](#choose-the-change-path).
+Keep the original bundle and state for existing deployments.
+
+Supported health with not-ready or unknown readiness fails apply and retains resources.
+The SDK returns structured health evidence; the CLI writes it as JSON to stderr with exit status 1.
+Transport failures and malformed reports also fail rather than becoming healthy or unsupported.
+Keep the state directory, inspect the failure, and explicitly reapply the same configuration after recovery.
+The report is an observation at its recorded time, not a promise of future availability or successful tasks.
+
 ## Configuration and Credentials
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.

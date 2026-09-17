@@ -51,7 +51,7 @@ fn base(
     removing: bool,
 ) -> Result<Row, ObservationError> {
     let meta = meta.ok_or(ObservationError::Incomplete)?;
-    if meta.name != name || (!removing && meta.deletion_timestamp_ms != 0) {
+    if meta.name != name || (!removing && meta.deletion_time.is_some()) {
         return Err(ObservationError::BindingMismatch);
     }
     let row: Row = [
@@ -200,7 +200,7 @@ fn sandbox_row(
     if phase == proto::SandboxPhase::Unspecified {
         return Err(ObservationError::Incomplete);
     }
-    let ready = phase == proto::SandboxPhase::Ready && meta.deletion_timestamp_ms == 0;
+    let ready = phase == proto::SandboxPhase::Ready && meta.deletion_time.is_none();
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("agent_name".into(), agent.clone());
     row.insert("agent_runtime".into(), runtime);
@@ -226,12 +226,13 @@ fn active_policy(
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || policy_json(
+        || !network::loaded_policy_matches(
             revision
                 .policy
                 .as_ref()
                 .ok_or(ObservationError::Incomplete)?,
-        )? != expected
+            expected,
+        )?
     {
         return Err(ObservationError::Incomplete);
     }

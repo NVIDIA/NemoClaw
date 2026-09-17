@@ -181,6 +181,7 @@ impl OpenShell {
         let result = match kind {
             "sandbox" => {
                 let mut request = self.request(proto::DeleteSandboxRequest {
+                    allow_missing: false,
                     name: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 });
@@ -192,6 +193,7 @@ impl OpenShell {
             "provider_profile" => self
                 .grpc()
                 .delete_provider_profile(self.request(proto::DeleteProviderProfileRequest {
+                    allow_missing: false,
                     id: name.into(),
                     workspace: workspace.into(),
                 }))
@@ -200,6 +202,7 @@ impl OpenShell {
             "provider" => self
                 .grpc()
                 .delete_provider(self.request(proto::DeleteProviderRequest {
+                    allow_missing: false,
                     name: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))

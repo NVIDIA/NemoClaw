@@ -52,7 +52,12 @@ pub fn definition(
                 "name": id,
                 "endpoints": [{"host": host, "port": port, "path": path,
                     "protocol": "rest", "access": "full", "allowed_ips": allowed_ips}],
-                "binaries": [{"path": "/opt/fabric/bin/python"}, {"path": "/usr/local/bin/node"}]
+                // Match the real executables behind the shipped virtualenv launchers.
+                "binaries": [
+                    {"path": "/usr/local/bin/python3.14"},
+                    {"path": "/usr/local/bin/python3.13"},
+                    {"path": "/usr/local/bin/node"}
+                ]
             }}
         })
         .to_string(),
@@ -117,6 +122,33 @@ mod tests {
             profile.credentials[0].env_vars
         );
         assert_eq!(other.credentials[0].header_name, "x-api-key");
+    }
+
+    #[test]
+    fn inference_grants_the_executables_observed_for_shipped_python_runtimes() {
+        let profile = definition("local", "http://172.20.0.1:11436/v1", "openai", false).unwrap();
+        // OpenShell observes /proc/<pid>/exe, not the virtualenv launch symlink.
+        for executable in [
+            "/usr/local/bin/python3.14",
+            "/usr/local/bin/python3.13",
+            "/usr/local/bin/node",
+        ] {
+            assert!(
+                profile
+                    .binaries
+                    .iter()
+                    .any(|binary| binary.path == executable),
+                "missing {executable}"
+            );
+        }
+        assert!(
+            !profile
+                .binaries
+                .iter()
+                .any(|binary| binary.path.contains('*') || binary.path == "/bin/sh")
+        );
+        assert_eq!(profile.endpoints.len(), 1);
+        assert_eq!(profile.endpoints[0].allowed_ips, ["172.20.0.1/32"]);
     }
 
     #[test]

@@ -88,7 +88,14 @@ async def serve(configuration):
     async def handle(reader, writer):
         try:
             request = json.loads(await asyncio.wait_for(reader.readline(), 10))
-            if request == {"operation": "check"}:
+            if request == {"operation": "health"}:
+                from health import runtime_health, unavailable
+
+                runtime = host.runtime
+                response = await runtime_health(runtime)
+                if host.runtime is not runtime or host.stopping:
+                    response = unavailable("runtime_changed")
+            elif request == {"operation": "check"}:
                 response = host.status()
             elif (
                 isinstance(request, dict)

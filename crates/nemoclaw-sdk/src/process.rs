@@ -10,7 +10,8 @@ use tokio_util::task::AbortOnDropHandle;
 async fn capture(
     mut pipe: impl AsyncRead + Unpin,
     limit: usize,
-) -> std::io::Result<(Vec<u8>, bool)> {
+    mut ui: Option<crate::tofu_ui::Ui>,
+) -> std::io::Result<(Vec<u8>, bool, bool)> {
     let mut output = Vec::new();
     let mut overflow = false;
     let mut buffer = [0_u8; 8192];
@@ -19,11 +20,15 @@ async fn capture(
         if count == 0 {
             break;
         }
+        if let Some(ui) = &mut ui {
+            ui.feed(&buffer[..count]);
+        }
         let available = limit.saturating_sub(output.len());
         output.extend_from_slice(&buffer[..count.min(available)]);
         overflow |= count > available;
     }
-    Ok((output, overflow))
+    let valid_ui = ui.is_none_or(|ui| ui.finish().is_ok());
+    Ok((output, overflow, valid_ui))
 }
 pub(crate) async fn run(
     directory: &Path,
@@ -31,6 +36,16 @@ pub(crate) async fn run(
     args: &[&str],
     overrides: &BTreeMap<String, String>,
     cancel: &CancellationToken,
+) -> Result<Vec<u8>, Error> {
+    run_with_progress(directory, binary, args, overrides, cancel, None).await
+}
+pub(crate) async fn run_with_progress(
+    directory: &Path,
+    binary: &Path,
+    args: &[&str],
+    overrides: &BTreeMap<String, String>,
+    cancel: &CancellationToken,
+    progress: Option<std::sync::Arc<dyn Fn(crate::Progress) + Send + Sync>>,
 ) -> Result<Vec<u8>, Error> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -66,10 +81,12 @@ pub(crate) async fn run(
     let stdout = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stdout().take().expect("piped stdout"),
         64 * 1024 * 1024,
+        progress.map(crate::tofu_ui::Ui::new),
     )));
     let stderr = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stderr().take().expect("piped stderr"),
         16384,
+        None,
     )));
     let status = tokio::select! {
         status=child.wait()=>status,
@@ -100,15 +117,36 @@ pub(crate) async fn run(
             }
         )
     };
-    let ((output, overflow), (mut diagnostic, diagnostic_overflow)) = tokio::select! {
+    let ((output, overflow, valid_ui), (mut diagnostic, mut diagnostic_overflow, _)) = tokio::select! {
         ()=cancel.cancelled()=>return Err(Error::Cancelled),
         result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
     };
     if status.is_ok_and(|status| status.success()) && !overflow {
+        if !valid_ui {
+            return Err(Error::State("invalid or unsupported OpenTofu UI stream"));
+        }
         return Ok(output);
     }
     let mut message = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
+    if message.is_empty() {
+        for line in output.split(|byte| *byte == b'\n') {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
+                && value["type"] == "diagnostic"
+            {
+                for key in ["summary", "detail"] {
+                    if let Some(text) = value["diagnostic"][key].as_str() {
+                        if message.len() + text.len() + 1 > 16384 {
+                            diagnostic_overflow = true;
+                            break;
+                        }
+                        message.push_str(text);
+                        message.push('\n');
+                    }
+                }
+            }
+        }
+    }
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
         if !matches!(
             name.as_str(),
@@ -237,4 +275,62 @@ async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() 
         "capture outlived the exited command without a bound"
     );
     assert!(result.unwrap().is_err());
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn progress_arrives_before_exit_and_cancellation_still_works() {
+    let directory = tempfile::tempdir().unwrap();
+    let token = CancellationToken::new();
+    let stop = token.clone();
+    let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    let progress = std::sync::Arc::new(move |event| {
+        send.send(event).unwrap();
+    });
+    let task = tokio::spawn(async move {
+        run_with_progress(directory.path(), Path::new("/bin/sh"),
+            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox"},"action":"create"}}'; sleep 100"#],
+            &Default::default(), &stop, Some(progress)).await
+    });
+    let event = tokio::time::timeout(Duration::from_secs(2), receive.recv()).await;
+    token.cancel();
+    assert!(matches!(task.await.unwrap(), Err(Error::Cancelled)));
+    assert!(matches!(
+        event.unwrap().unwrap(),
+        crate::Progress::Resource {
+            resource: "sandbox",
+            status: "started",
+            ..
+        }
+    ));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn json_diagnostics_preserve_failures_and_redact_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = run_with_progress(directory.path(), Path::new("/bin/sh"),
+        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"diagnostic","diagnostic":{"summary":"provider failed","detail":"secret-sentinel"}}'; exit 1"#],
+        &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+        &CancellationToken::new(), Some(std::sync::Arc::new(|_| {}))).await.unwrap_err();
+    assert!(error.to_string().contains("provider failed"));
+    assert!(error.to_string().contains("[redacted]"));
+    assert!(!error.to_string().contains("secret-sentinel"));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn early_failure_keeps_stderr_even_without_a_ui_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = run_with_progress(
+        directory.path(),
+        Path::new("/bin/sh"),
+        &["-c", "echo launch-failed >&2; exit 1"],
+        &Default::default(),
+        &CancellationToken::new(),
+        Some(std::sync::Arc::new(|_| {})),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("launch-failed"));
 }

@@ -11,7 +11,7 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17695
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a
+    image: ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
     networkCIDR: 172.30.121.0/24
   inferenceProviders:
     - name: qwen

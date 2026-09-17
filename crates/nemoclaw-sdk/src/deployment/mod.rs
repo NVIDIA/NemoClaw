@@ -31,6 +31,18 @@ pub use timing::StepOutcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
+    /// A resource operation observed in OpenTofu's machine-readable UI.
+    Resource {
+        resource: &'static str,
+        action: &'static str,
+        status: &'static str,
+        elapsed: std::time::Duration,
+    },
+    /// A step that has started or is still waiting.
+    Waiting {
+        operation: &'static str,
+        elapsed: std::time::Duration,
+    },
     Preflight,
     Planning,
     Applying,
@@ -65,6 +77,8 @@ pub struct OperationResult {
     pub deferred: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retained: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub health: Vec<crate::SandboxHealth>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -73,6 +87,7 @@ impl OperationResult {
             changes,
             deferred: Vec::new(),
             retained: Vec::new(),
+            health: Vec::new(),
         }
     }
 }
@@ -322,6 +337,29 @@ impl Deployment {
             client.ready(&sandbox, cancel).await?;
             Ok(())
         }).await?;
+        let health = self
+            .timed("fabric.health", async {
+                tokio::select! {
+                    () = cancel.cancelled() => Err(Error::Cancelled),
+                    result = client.health(&sandbox) => result,
+                }
+            })
+            .await?;
+        let health = crate::SandboxHealth {
+            sandbox: document.spec.sandboxes[0].name.clone(),
+            agents: document.spec.sandboxes[0]
+                .agents
+                .iter()
+                .map(|agent| agent.name.clone())
+                .collect(),
+            health,
+        };
+        if !health.health.allows_apply_completion() {
+            return Err(Error::Health {
+                health: Box::new(health),
+            });
+        }
+        result.health.push(health);
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
@@ -341,6 +379,11 @@ impl Deployment {
             let mut expected = target.values.clone();
             if let Some(binding) = bindings.get(&target.address) {
                 expected.insert("id".into(), binding.id.clone());
+                if target.kind == "sandbox" {
+                    // A terminal sandbox cannot answer native configuration
+                    // checks. Report its verified lifecycle failure first.
+                    client.check_sandbox_phase(&expected).await?;
+                }
             }
             let observed = if crate::ollama::proxy::supports(&target.kind) {
                 let config = document
@@ -413,7 +456,21 @@ impl Deployment {
         };
         self.timed(operation, async {
             let env = command_environment(document, self.secrets.as_ref(), &store.directory)?;
-            crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+            if matches!(args.first(), Some(&"plan" | &"apply")) {
+                let mut args = args.to_vec();
+                args.insert(1, "-json");
+                crate::process::run_with_progress(
+                    &store.directory,
+                    &bundle.tofu(),
+                    &args,
+                    &env,
+                    cancel,
+                    Some(self.progress.clone()),
+                )
+                .await
+            } else {
+                crate::process::run(&store.directory, &bundle.tofu(), args, &env, cancel).await
+            }
         })
         .await
     }

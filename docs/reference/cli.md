@@ -44,9 +44,18 @@ Successful plan, apply, and destroy operations write JSON to stdout.
 Export writes YAML to stdout or the selected output file.
 Errors go to stderr with a nonzero exit status.
 Help and version output are plain text.
+A supported Fabric health failure writes JSON to stderr with `error: fabric_readiness`, the `health` observation, and `resourcesRetained: true`.
+See [apply health](../usage.md#fabric-health-during-apply) for unsupported checks, image requirements, and recovery.
 
-With `--verbose`, completed bundle verification, OpenTofu commands, and sandbox/runtime readiness steps report a fixed operation label, outcome, and elapsed seconds on stderr.
-For example, `bundle.verify succeeded 0.092s` reports one bundle verification.
+When stderr is a terminal, commands show deployment phases, OpenTofu resource operations, and elapsed waiting time.
+Readiness waits report elapsed time every 10 seconds; resource updates follow OpenTofu's event stream.
+Durations below one second use milliseconds; longer durations use seconds.
+Resource durations use OpenTofu event timestamps when available, falling back to its whole-second elapsed field.
+These messages do not measure download percentage or establish successful inference.
+Redirected stderr contains errors only unless `--verbose` enables progress output.
+
+With `--verbose`, completed bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed time on stderr.
+For example, `bundle.verify succeeded 92ms` reports one bundle verification.
 Timing events contain no configuration values, credentials, or error diagnostics; ordinary errors are reported separately.
 Stdout retains its JSON or YAML format.
 
@@ -57,6 +66,7 @@ The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines t
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `deferred` | Checks or changes deferred by planning; omitted when empty |
+| `health` | Apply observations for the hosted Fabric runtime; includes explicit unsupported results; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
 Use [inference verification](../inference.md#verify-the-result) to interpret a successful result.

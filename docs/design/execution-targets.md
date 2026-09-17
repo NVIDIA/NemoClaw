@@ -45,7 +45,7 @@ The gateway supplies provider attachments and policy; inference requests do not 
 A successful model request from the CLI host cannot establish that reachability.
 The [connection-resolution change](https://github.com/NVIDIA/NemoClaw/commit/80deefbd97) and [independent placement change](https://github.com/NVIDIA/NemoClaw/commit/8bdf4960c0) established these separate paths.
 
-The pinned OpenShell implementation uses [provider-backed native inference](https://github.com/NVIDIA/OpenShell/blob/b3e4ad4579e24dacfb285924876473b50a04b988/docs/sandboxes/inference-routing.mdx).
+The pinned OpenShell implementation uses [provider-backed native inference](https://github.com/NVIDIA/OpenShell/blob/7e7a8d5610f336f5f7f9f60da0951adbf295475d/docs/sandboxes/inference-routing.mdx).
 
 For example, suppose the alias used by an established deployment is redirected to a second daemon containing identically named containers.
 The observed daemon identity no longer matches the binding, so planning stops before mutation.

@@ -1,5 +1,5 @@
 {
-  "digest": "70caf47e2aa40c11b4ba6599a8bc104dc532a8a94a840138346ed0e2e41a9d24",
+  "digest": "5a94fd4505c8c6611b77b8a9899f8dd3c5810c5b4e9f522c062d0b79d96f278e",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -11,7 +11,7 @@
       "gateway": {
         "endpoint": "http://127.0.0.1:17681",
         "engine": "unix:///var/run/docker.sock",
-        "image": "ghcr.io/nvidia/openshell/gateway@sha256:37a5e3b1d55de018d02aa842239eb191dafa27617788977b07b0c5b495f7a11a",
+        "image": "ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7",
         "management": "managed",
         "networkCIDR": "172.30.110.0/24"
       },

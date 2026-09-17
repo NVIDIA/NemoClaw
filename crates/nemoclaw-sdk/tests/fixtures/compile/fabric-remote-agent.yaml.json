@@ -51,7 +51,7 @@
         },
         "name": "assistant",
         "owner": "e1b40bdf-b151-4259-b6b7-63b083ae071b",
-        "policy_json": "{\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/app\",\"/bin\",\"/etc\",\"/lib\",\"/lib64\",\"/opt\",\"/proc\",\"/sbin\",\"/usr\"],\"read_write\":[\"/dev/null\",\"/dev/urandom\",\"/home/node\",\"/sandbox\",\"/tmp\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"network_policies\":{\"nemoclaw-inference-local\":{\"binaries\":[{\"path\":\"/opt/fabric/bin/python\"},{\"path\":\"/usr/local/bin/node\"}],\"endpoints\":[{\"access\":\"full\",\"allowed_ips\":[\"172.20.0.1/32\"],\"host\":\"172.20.0.1\",\"path\":\"/v1/**\",\"port\":11446,\"protocol\":\"rest\"}],\"name\":\"nemoclaw-inference-local\"}},\"process\":{\"run_as_group\":\"1000\",\"run_as_user\":\"1000\"},\"version\":1}",
+        "policy_json": "{\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/app\",\"/bin\",\"/etc\",\"/lib\",\"/lib64\",\"/opt\",\"/proc\",\"/sbin\",\"/usr\"],\"read_write\":[\"/dev/null\",\"/dev/urandom\",\"/home/node\",\"/sandbox\",\"/tmp\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"network_policies\":{\"nemoclaw-inference-local\":{\"binaries\":[{\"path\":\"/usr/local/bin/python3.14\"},{\"path\":\"/usr/local/bin/python3.13\"},{\"path\":\"/usr/local/bin/node\"}],\"endpoints\":[{\"access\":\"full\",\"allowed_ips\":[\"172.20.0.1/32\"],\"host\":\"172.20.0.1\",\"path\":\"/v1/**\",\"port\":11446,\"protocol\":\"rest\"}],\"name\":\"nemoclaw-inference-local\"}},\"process\":{\"run_as_group\":\"1000\",\"run_as_user\":\"1000\"},\"version\":1}",
         "workspace": "${nemoclaw_workspace.deployment.name}"
       }
     },

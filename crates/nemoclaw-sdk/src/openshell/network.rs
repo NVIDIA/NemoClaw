@@ -35,6 +35,35 @@ pub fn policy_json(policy: &proto::SandboxPolicy) -> Result<String, ObservationE
     }
     canonical(policy)
 }
+/// OpenShell b3e4ad457 proxy baseline enrichment adds read-only /var/log.
+/// 2026-09-17: account for that runtime addition during loaded-policy comparison,
+/// preserving the authored policy and rejecting every other difference.
+pub(super) fn loaded_policy_matches(
+    loaded: &proto::SandboxPolicy,
+    expected: &str,
+) -> Result<bool, ObservationError> {
+    let actual = policy_json(loaded)?;
+    if actual == expected {
+        return Ok(true);
+    }
+    let mut baseline = row_policy(&[("policy_json".into(), expected.into())].into())?;
+    if baseline.network_policies.is_empty() {
+        return Ok(false);
+    }
+    let Some(fs) = &mut baseline.filesystem else {
+        return Ok(false);
+    };
+    if !fs
+        .read_only
+        .iter()
+        .chain(&fs.read_write)
+        .any(|p| p == "/var/log")
+    {
+        fs.read_only.push("/var/log".into());
+    }
+    Ok(policy_json(&baseline)? == actual)
+}
+
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
     match row.get("policy_json").map(String::as_str).unwrap_or("") {
         "" => Ok(policy()),

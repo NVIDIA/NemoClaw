@@ -276,9 +276,20 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     }
     let timings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let received = timings.clone();
+    let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let resources = resource_events.clone();
     let deployment = Deployment::new(directory.path(), &bundle)
         .with_secrets(std::sync::Arc::new(FixtureSecrets))
         .with_progress(std::sync::Arc::new(move |event| {
+            if let nemoclaw_sdk::Progress::Resource {
+                resource,
+                action,
+                status,
+                ..
+            } = event
+            {
+                resources.lock().unwrap().push((resource, action, status));
+            }
             if let nemoclaw_sdk::Progress::Completed {
                 operation, outcome, ..
             } = event
@@ -292,6 +303,21 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await;
     assert!(applied.is_ok(), "{applied:?}");
+    assert!(
+        resource_events
+            .lock()
+            .unwrap()
+            .contains(&("sandbox", "create", "started"))
+    );
+    assert!(
+        resource_events
+            .lock()
+            .unwrap()
+            .contains(&("sandbox", "create", "complete"))
+    );
+    let health = applied.unwrap().health;
+    assert_eq!(health.len(), 1);
+    assert!(!health[0].health.supported);
     for operation in [
         "bundle.verify",
         "tofu.init",
@@ -607,10 +633,27 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let mut bob = document.spec.sandboxes[0].agents[0].clone();
+    bob.name = "bob".into();
+    document.spec.sandboxes[0].agents.push(bob);
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
-    assert!(deployment.apply(&document, &cancel).await.is_err());
+    fixture.state.lock().unwrap().sandbox_conditions =
+        vec![openshell_core::proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ControlSupervisorExited".into(),
+            message: "private-backend-diagnostic".into(),
+            ..Default::default()
+        }];
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ControlSupervisorExited"));
+    assert!(!error.contains("private-backend-diagnostic"));
     let state_path = directory.path().join("terraform.tfstate");
     let established = fs::read(&state_path).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
@@ -619,6 +662,15 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(intent["pending"], false);
     assert_eq!(intent["succeeded"], false);
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ControlSupervisorExited"), "{error}");
+    assert_eq!(fs::read(&state_path).unwrap(), established);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
@@ -793,4 +845,94 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     assert!(state.sandboxes.is_empty());
     assert_eq!(state.workspaces.len(), 1); // Destroy retains the owned workspace.
     assert_eq!(state.delete_calls, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
+        "supported": true, "report": null, "reason_code": "fabric_health_timeout"
+    }));
+    let error = deployment.apply(&document, &cancel).await.unwrap_err();
+    assert!(matches!(error, nemoclaw_sdk::Error::Health { .. }));
+    let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(effects, 4);
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+    let calls = fixture.state.lock().unwrap().exec_calls.len();
+    assert!(
+        deployment
+            .plan(&document, &cancel)
+            .await
+            .unwrap()
+            .health
+            .is_empty()
+    );
+    assert!(
+        fixture.state.lock().unwrap().exec_calls[calls..]
+            .iter()
+            .all(|cmd| cmd.last().unwrap() != "health")
+    );
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        before
+    );
+    let input = directory.path().join("deployment.yaml");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let failed = Command::new(
+        bundle
+            .join("bin")
+            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+    )
+    .arg("apply")
+    .arg(&input)
+    .arg("--state-dir")
+    .arg(directory.path())
+    .output()
+    .unwrap();
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
+    assert_eq!(diagnostic["health"]["reason_code"], "fabric_health_timeout");
+    assert_eq!(diagnostic["resourcesRetained"], true);
+    fixture.state.lock().unwrap().health_report = None;
+    let result = deployment.apply(&document, &cancel).await.unwrap();
+    assert!(result.changes.is_empty());
+    assert!(!result.health[0].health.supported);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
+    assert_eq!(record["succeeded"], true);
+    fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
+        "supported": true, "reason_code": null, "report": {
+            "runtime_id": "owned", "checked_at_millis": 100, "duration_millis": 2,
+            "liveness": "responsive", "activity": "busy", "readiness": "ready",
+            "reason_code": "accepting_work", "checks": []
+        }
+    }));
+    let result = deployment.apply(&document, &cancel).await.unwrap();
+    assert!(result.changes.is_empty());
+    assert_eq!(
+        result.health[0].health.report.as_ref().unwrap()["activity"],
+        "busy"
+    );
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.effects, effects);
+    assert_eq!(state.delete_calls, 0);
+    assert!(
+        !state.exec_calls.iter().flatten().any(|arg| arg == "probe"
+            || arg.contains("inference-probe")
+            || arg.contains("pi-probe"))
+    );
 }

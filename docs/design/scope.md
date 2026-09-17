@@ -25,6 +25,7 @@ Reject unsupported state without silently adopting, replacing, or deleting its r
 - Authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve prior bindings.
 - Plan must not create or mutate runtime resources.
 - Apply checks resources, configuration, and readiness without requesting model or agent responses; generation verification is explicit.
+- Fabric owns runtime health semantics and adapter checks; NemoClaw transports and reports observations from the hosted runtime, preserving unknown and unsupported results.
 - Storage survives destroy by default; failed readiness must preserve established identities and persistent data.
 
 ## Runtime and Observation

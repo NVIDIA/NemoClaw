@@ -11,11 +11,16 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
+    #[error("Fabric readiness could not be established; resources retained")]
+    Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
-    #[error("sandbox startup failed: {phase}, exit code {exit_code}; resources retained")]
+    #[error(
+        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
+    )]
     SandboxStartup {
         phase: &'static str,
+        reason: &'static str,
         exit_code: String,
     },
     #[error("OpenTofu {operation} failed: {diagnostic}")]

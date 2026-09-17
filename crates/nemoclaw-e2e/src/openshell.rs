@@ -20,7 +20,9 @@ pub struct State {
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
     pub sandbox_phase: Option<p::SandboxPhase>,
+    pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub exec_exit: i32,
+    pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
     pub exec_truncated: bool,
     pub exec_stalled: bool,
@@ -407,7 +409,9 @@ fn delete_provider(
     if std::mem::take(&mut state.lose_delete) {
         return Err(Status::unavailable("lost delete reply secret"));
     }
-    Ok(p::DeleteProviderResponse { deleted })
+    Ok(p::DeleteProviderResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }
 
 #[derive(Clone)]
@@ -431,7 +435,13 @@ fn gateway_info(
     _: p::GetGatewayInfoRequest,
 ) -> Result<p::GetGatewayInfoResponse, Status> {
     Ok(p::GetGatewayInfoResponse {
-        gateway_version: "0.0.117-dev.155+gb3e4ad457".into(),
+        gateway_version: serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../versions.json"
+        ))
+        .unwrap()["openshell"]
+            .as_str()
+            .unwrap()
+            .into(),
         compute_drivers: vec![p::ComputeDriverInfo {
             name: state.driver.clone().unwrap_or_else(|| "docker".into()),
             ..Default::default()
@@ -452,6 +462,7 @@ fn create_sandbox(
         spec: q.spec,
         status: Some(p::SandboxStatus {
             phase: state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready) as i32,
+            conditions: state.sandbox_conditions.clone(),
             ..Default::default()
         }),
         ..Default::default()
@@ -478,14 +489,15 @@ fn delete_sandbox(
     state: &mut State,
     q: &p::DeleteSandboxRequest,
 ) -> Result<p::DeleteSandboxResponse, Status> {
-    let deleted = state
+    let sandbox = state
         .sandboxes
         .remove(&format!("{}/{}", workspace(&q.workspace_scope)?, q.name))
-        .is_some();
-    if deleted {
-        state.effects += 1;
-    }
-    Ok(p::DeleteSandboxResponse { deleted })
+        .ok_or_else(|| Status::not_found("absent"))?;
+    state.effects += 1;
+    Ok(p::DeleteSandboxResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+        sandbox_id: sandbox.metadata.unwrap().id,
+    })
 }
 fn policy_status(
     state: &mut State,
@@ -500,10 +512,20 @@ fn policy_status(
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: state
-                .active_policy
-                .clone()
-                .or_else(|| sandbox.spec.as_ref().unwrap().policy.clone()),
+            policy: state.active_policy.clone().or_else(|| {
+                let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
+                if !policy.network_policies.is_empty()
+                    && let Some(fs) = &mut policy.filesystem
+                    && !fs
+                        .read_only
+                        .iter()
+                        .chain(&fs.read_write)
+                        .any(|p| p == "/var/log")
+                {
+                    fs.read_only.push("/var/log".into());
+                }
+                Some(policy)
+            }),
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),
@@ -530,6 +552,20 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
         let mut events = Vec::new();
+        if request.command.last().is_some_and(|arg| arg == "health") {
+            let health = state.health_report.clone().unwrap_or_else(|| {
+                serde_json::json!({
+                    "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
+                })
+            });
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: serde_json::to_vec(&health).unwrap(),
+                    },
+                )),
+            }));
+        }
         if request.command.first().is_some_and(|c| c == "openclaw") {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(
@@ -633,5 +669,10 @@ fn delete_profile(
         state.lose_delete = false;
         return Err(Status::unavailable("lost reply"));
     }
-    Ok(p::DeleteProviderProfileResponse { deleted })
+    if !deleted {
+        return Err(Status::not_found("absent"));
+    }
+    Ok(p::DeleteProviderProfileResponse {
+        outcome: p::DeletionOutcome::Completed.into(),
+    })
 }

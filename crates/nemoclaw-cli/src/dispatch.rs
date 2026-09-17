@@ -21,6 +21,21 @@ impl CommandResult {
     }
 }
 
+pub(crate) fn render_error(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(Error::Health { health }) = error.downcast_ref::<Error>() {
+        return serde_json::json!({
+            "error": "fabric_readiness", "health": health, "resourcesRetained": true
+        })
+        .to_string();
+    }
+    if let Some(Error::SandboxStartup { .. }) = error.downcast_ref::<Error>() {
+        return format!(
+            "{error}\nInspect with openshell sandbox get NAME -o json using the deployment's gateway and workspace. Collect OpenShell gateway and supervisor logs before cleanup."
+        );
+    }
+    error.to_string()
+}
+
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     stdin: R,
@@ -35,20 +50,12 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             .into(),
     };
     let mut deployment = Deployment::new(&cli.state_dir, &bundle);
-    if cli.verbose {
-        deployment = deployment.with_progress(std::sync::Arc::new(|event| {
-            if let nemoclaw_sdk::Progress::Completed {
-                operation,
-                elapsed,
-                outcome,
-            } = event
-            {
-                use std::io::Write;
-                let _ = writeln!(
-                    std::io::stderr().lock(),
-                    "{operation} {outcome} {:.3}s",
-                    elapsed.as_secs_f64()
-                );
+    use std::io::IsTerminal;
+    if cli.verbose || std::io::stderr().is_terminal() {
+        deployment = deployment.with_progress(std::sync::Arc::new(move |event| {
+            use std::io::Write;
+            if let Some(message) = crate::progress::render(event, cli.verbose) {
+                let _ = writeln!(std::io::stderr().lock(), "{message}");
             }
         }));
     }
@@ -89,6 +96,52 @@ mod tests {
         task::{Context, Poll},
     };
     use tokio::io::ReadBuf;
+
+    #[test]
+    fn apply_reports_health_without_changing_the_command_surface() {
+        let value = serde_json::json!({
+            "outcome": "succeeded", "changes": [], "health": [{
+                "sandbox": "research", "agents": ["researcher", "writer"],
+                "supported": false, "report": null, "reason_code": "fabric_health_unsupported"
+            }]
+        });
+        let result = CommandResult::Operation(serde_json::from_value(value.clone()).unwrap());
+        let output: serde_json::Value = serde_json::from_str(&result.render().unwrap()).unwrap();
+        assert_eq!(output, value);
+    }
+
+    #[test]
+    fn sandbox_failure_points_to_openshell_diagnostics() {
+        let error = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "ControlSupervisorExited",
+            exit_code: "unknown".into(),
+        };
+        let output = render_error(&error);
+        assert!(output.contains("ControlSupervisorExited"));
+        assert!(output.contains("openshell sandbox get NAME -o json"));
+        assert!(output.contains("gateway and workspace"));
+        assert!(output.contains("resources retained"));
+    }
+
+    #[test]
+    fn health_failure_keeps_structured_evidence_in_stderr() {
+        let health = serde_json::from_value(serde_json::json!({
+            "sandbox": "research", "agents": ["researcher"],
+            "supported": true, "report": null, "reason_code": "fabric_health_timeout"
+        }))
+        .unwrap();
+        let error = Error::Health {
+            health: Box::new(health),
+        };
+        let output: serde_json::Value = serde_json::from_str(&render_error(&error)).unwrap();
+        assert_eq!(output["health"]["reason_code"], "fabric_health_timeout");
+        assert_eq!(output["resourcesRetained"], true);
+        assert_eq!(
+            render_error(&Error::Conflict("fixed message")),
+            "fixed message"
+        );
+    }
 
     struct ForbiddenInput;
     impl AsyncRead for ForbiddenInput {
