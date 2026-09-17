@@ -8,6 +8,13 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawnSync: subprocess.spawnSync,
+}));
+
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
@@ -71,6 +78,8 @@ function receiptWriter(
 }
 
 beforeEach(() => {
+  subprocess.spawnSync.mockReset();
+  subprocess.spawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-life-")));
   cacheRoot = path.join(temporaryRoot, "cache");
   modelPath = path.join(
@@ -569,17 +578,27 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
-    const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle(
-      undefined,
-      undefined,
-      86_400,
-    );
+    const fixture = dockerFixture();
+    const lifecycle = createLifecycle({
+      ...options(fixture),
+      loopbackProbe: "host-process",
+      readinessTimeoutSeconds: 86_400,
+    });
 
-    lifecycle.start(receiptWriter());
+    const receipt = lifecycle.start(receiptWriter());
 
-    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
-      "http://127.0.0.1:8081/health",
-      86_400,
+    expect(receipt.runtime).toMatchObject({
+      kind: "container",
+      runtimeId: RUNTIME_ID,
+    });
+    expect(subprocess.spawnSync).toHaveBeenCalledExactlyOnceWith(
+      process.execPath,
+      [
+        expect.stringMatching(/docker-llama-cpp-private-bridge-probe-process\.js$/u),
+        "http://127.0.0.1:8081/health",
+        "86400",
+      ],
+      { timeout: 86_415_000 },
     );
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
