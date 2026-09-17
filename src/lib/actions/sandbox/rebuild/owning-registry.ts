@@ -244,14 +244,14 @@ async function runWorker(
   }
   if (outcome.kind === "timeout") {
     signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGTERM");
-    const stoppedGracefully = await waitForWorkerProcessGroupExit(
+    let workerReaped = await waitForWorkerProcessGroupExit(
       child,
       dedicatedProcessGroup,
       terminationGraceMs,
     );
-    if (!stoppedGracefully) {
+    if (!workerReaped) {
       signalWorkerProcessGroup(child, dedicatedProcessGroup, "SIGKILL");
-      await waitForWorkerProcessGroupExit(
+      workerReaped = await waitForWorkerProcessGroupExit(
         child,
         dedicatedProcessGroup,
         REBUILD_WORKER_REAP_TIMEOUT_MS,
@@ -259,6 +259,12 @@ async function runWorker(
     }
     await settleWorkerPromises([inputWritten, exited, result], REBUILD_WORKER_REAP_TIMEOUT_MS);
     const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
+    if (!workerReaped) {
+      const workerPid = typeof child.pid === "number" ? String(child.pid) : "unavailable";
+      throw new Error(
+        `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. Termination is unconfirmed for worker PID ${workerPid}, so the worker or one of its descendants may still be active and the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect that worker, the sandbox, and recovery state before retrying.`,
+      );
+    }
     throw new Error(
       `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.`,
     );

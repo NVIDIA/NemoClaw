@@ -14,6 +14,7 @@ const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const TIMESTAMP = "2026-09-17T00-00-00-000Z";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -241,5 +242,28 @@ describe("compiled rebuild owning-registry worker", () => {
       }
       fs.rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it("reports an unreaped worker as potentially active", async () => {
+    const kill = process.kill.bind(process);
+    vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid < 0 && signal === 0) return true;
+      return kill(pid, signal);
+    });
+
+    await expect(
+      rebuildOwningRegistryDependencies.runWorker(
+        {
+          operation: "retire-recovery",
+          sandboxName: "alpha",
+          transactionId: TRANSACTION_ID,
+          confirmDataRecovered: true,
+        },
+        9000,
+        { timeoutMs: 1, terminationGraceMs: 1 },
+      ),
+    ).rejects.toThrow(
+      /Delegated recovery retirement for sandbox 'alpha' on owning gateway port 9000 exceeded its 1 ms deadline\. Termination is unconfirmed for worker PID \d+, so the worker or one of its descendants may still be active and the operation outcome is unknown\. NemoClaw did not remove retained recovery state; inspect that worker, the sandbox, and recovery state before retrying\./,
+    );
   });
 });
