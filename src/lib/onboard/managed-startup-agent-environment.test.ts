@@ -36,11 +36,7 @@ const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
   "NEMOCLAW_DASHBOARD_BIND",
   "NEMOCLAW_MINIMAL_BOOTSTRAP",
 ] as const;
-const HERMES_FIXED_RUNTIME_NAMES = [
-  "HERMES_BUNDLED_PLUGINS",
-  "HERMES_HOME",
-  "HERMES_LAZY_INSTALL_TARGET",
-] as const;
+const HERMES_FIXED_RUNTIME_NAMES = ["HERMES_HOME", "HERMES_LAZY_INSTALL_TARGET"] as const;
 
 function messagingPlan(agent: "openclaw" | "hermes"): ManagedStartupJsonObject {
   return {
@@ -534,7 +530,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "custom",
       NEMOCLAW_MODEL: "claude-sonnet-4-5",
-      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
       HERMES_HOME: "/sandbox/.hermes",
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       NEMOCLAW_PROXY_HOST: "proxy_name",

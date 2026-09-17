@@ -93,6 +93,13 @@ function twoAgentConfig() {
   return { value, primary, secondary };
 }
 
+function threeAgentConfig() {
+  const context = twoAgentConfig();
+  const reviewer = { ...structuredClone(context.secondary), name: "reviewer" };
+  context.value.spec.sandboxes[0]!.agents.push(reviewer);
+  return { ...context, reviewer };
+}
+
 describe("NemoClawConfig v1", () => {
   it.each(["researcher", "reviewer-2", "a", "a".repeat(32)])(
     "accepts secondary agent %s on the primary hosted route (#11434)",
@@ -103,6 +110,12 @@ describe("NemoClawConfig v1", () => {
       expect(validateNemoClawConfig(value)).toEqual(value);
     },
   );
+
+  it("accepts an ordered read-only roster on the primary hosted route (#11854)", () => {
+    const { value, primary } = threeAgentConfig();
+    Object.assign(primary, { tools: { disclosure: "direct" } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
 
   it.each(["main", "primary", "0agent", "with_underscore", "with.dot", "agent-", "a".repeat(33)])(
     "rejects unrepresentable secondary name %s (#11434)",
@@ -154,12 +167,6 @@ describe("NemoClawConfig v1", () => {
       },
     },
     {
-      field: "count",
-      mutate: ({ value, secondary }) => {
-        value.spec.sandboxes[0]!.agents.push({ ...secondary, name: "third" });
-      },
-    },
-    {
       field: "order",
       mutate: ({ value }) => {
         value.spec.sandboxes[0]!.agents.reverse();
@@ -177,12 +184,57 @@ describe("NemoClawConfig v1", () => {
         Object.assign(secondary, { execution: { timeoutSeconds: 1 } });
       },
     },
+    {
+      field: "interfaces",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, { interfaces: { dashboard: { port: 19000 } } });
+      },
+    },
+    {
+      field: "observability",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, {
+          observability: {
+            otlp: {
+              enabled: true,
+              endpoint: "http://host.openshell.internal:4318",
+              serviceName: "researcher",
+              sampleRate: 0.5,
+            },
+          },
+        });
+      },
+    },
   ])("rejects secondary configuration with incompatible $field (#11434)", ({ mutate }) => {
     const context = twoAgentConfig();
     mutate(context);
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must pair primary with one read-only OpenClaw agent sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
+    );
+  });
+
+  it("rejects duplicate secondary names through sandbox-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    value.spec.sandboxes[0]!.agents.push(structuredClone(secondary));
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents contains a duplicate name",
+    );
+  });
+
+  it("rejects secondary authentication through agent-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    Object.assign(secondary, { auth: { method: "api-key", providerRef: "hosted-openai" } });
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents/1/auth is supported only for a Hermes agent",
+    );
+  });
+
+  it("rejects a divergent route anywhere in a read-only roster (#11854)", () => {
+    const { value, reviewer } = threeAgentConfig();
+    reviewer.inference.routes[0]!.overrides.model = "other";
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted route",
     );
   });
 

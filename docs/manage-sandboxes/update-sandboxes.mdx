@@ -139,7 +139,7 @@ Legacy managed-image confirmation never overrides recorded custom-image evidence
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance; otherwise recovery stops before deletion.
+OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
 </AgentOnly>
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.

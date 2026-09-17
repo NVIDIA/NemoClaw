@@ -292,7 +292,6 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	! grep -Fq 'nemoclaw: group-shared OpenClaw private store' "$shared_state_permissions_patch"
 	! grep -Fq 'nemoclaw: group-shared OpenClaw file-store defaults' "$shared_state_permissions_patch"
 	grep -Fq 'nemoclaw: group-shared OpenClaw models file' "$shared_state_permissions_patch"
-	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
 	mcp_reliability_patch=${JSON.stringify(MCP_RELIABILITY_PATCH)}
