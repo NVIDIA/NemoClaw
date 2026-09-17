@@ -11,9 +11,23 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const PROBE_IMAGE =
   "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
+const DOCKER_TIMEOUT_MS = 60_000;
+const DOCKER_PULL_TIMEOUT_MS = 120_000;
 
-function docker(args: readonly string[], timeoutMs = 60_000) {
-  return spawnSync("docker", [...args], { encoding: "utf8", timeout: timeoutMs });
+function docker(args: readonly string[]) {
+  return spawnSync("docker", [...args], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+}
+
+function dockerPull(args: readonly string[]) {
+  return spawnSync("docker", [...args], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: DOCKER_PULL_TIMEOUT_MS,
+  });
 }
 
 function requireDockerOk(result: ReturnType<typeof docker>, label: string): string {
@@ -66,7 +80,7 @@ test(
     );
     expect(gatewayIp).toMatch(/^\d+\.\d+\.\d+\.\d+$/u);
 
-    requireDockerOk(docker(["pull", PROBE_IMAGE], 120_000), "pull probe image");
+    requireDockerOk(dockerPull(["pull", PROBE_IMAGE]), "pull probe image");
     requireDockerOk(
       docker([
         "run",
@@ -124,8 +138,8 @@ test(
       },
       inspectNetworkImpl: () => ({ subnet, gatewayIp }),
       usesHostGatewayRouteImpl: () => false,
-      runImpl: (args, timeoutMs) => {
-        const result = docker(args, timeoutMs);
+      runImpl: (args) => {
+        const result = docker(args);
         return {
           status: result.status,
           stderr: result.stderr,
