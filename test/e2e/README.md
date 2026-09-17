@@ -421,6 +421,14 @@ the Hermes agent type, immutable managed image, hosted route, effective policy, 
 credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The scenario verifies the export failure before restoring the registry.
 
+The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
+boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox, requires the bounded command to finish, and proves both the sandbox and gateway runtime
+are absent. Deterministic destroy tests own the exact 30-second retry schedule and delayed-list
+sequence.
+
 `tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, external workflow, and manual executions.
 Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
 The semantic-phase check compares live files with every inventory route before collection.

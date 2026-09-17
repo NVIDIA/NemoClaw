@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  assertExitCode,
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -699,6 +700,65 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
+  it("gateway client proves registration, listener, and host runtime are removed", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "No active gateway" });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 1 });
+    runner.enqueue({ exitCode: 0 });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await gateway.expectRemoved("nemoclaw", {
+      artifactName: "final-gateway",
+      gatewayPort: 18_080,
+    });
+
+    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+      ["openshell", ["status"]],
+      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+      ["sh", expect.any(Array)],
+      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+      ["true", []],
+    ]);
+    expect(runner.calls[0].options).toMatchObject({
+      artifactName: "final-gateway-status",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+    });
+    expect(runner.calls[1].options).toMatchObject({
+      artifactName: "final-gateway-listener",
+    });
+  });
+
+  it("gateway client rejects an inconclusive listener absence probe", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
+    runner.enqueue({ exitCode: 1, stderr: "lsof: command unavailable" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "gateway listener still exists or could not be disproved on port 8080",
+    );
+  });
+
+  it("gateway client rejects a gateway that still accepts status connections", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "openshell status did not prove gateway 'nemoclaw' disconnected",
+    );
+  });
+
   it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
@@ -1385,7 +1445,7 @@ describe("E2E fixture clients", () => {
     );
   });
 
-  it("assertExitZero reports non-zero and signaled commands", () => {
+  it("exit assertions report unexpected and signaled command results", () => {
     const result: ShellProbeResult = {
       command: ["cmd"],
       exitCode: 7,
@@ -1400,6 +1460,8 @@ describe("E2E fixture clients", () => {
     expect(() => assertExitZero({ ...result, exitCode: null, signal: "SIGTERM" }, "cmd")).toThrow(
       "cmd failed: signal=SIGTERM",
     );
+    expect(() => assertExitCode(result, 7, "cmd")).not.toThrow();
+    expect(() => assertExitCode(result, 1, "cmd")).toThrow("cmd expected exit=1, got exit=7");
   });
 
   it("assertExitZero accepts lightweight command results and retains both output streams", () => {
