@@ -16,7 +16,7 @@ import {
   type PortableRuntimeReceiptReadinessDeps,
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as registry from "../../state/registry";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { getKnownSandboxTarget, getSandboxTargetGatewayName } from "./gateway-target";
 
 const DOCKER_TIMEOUT_MS = 3000;
 const PORT_PROBE_TIMEOUT_MS = 2000;
@@ -136,7 +136,7 @@ export async function classifyGatewayFailure(
 ): Promise<GatewayFailureResult> {
   const runners = opts?.runners ?? defaultRunners;
 
-  if (!isDockerBackedSandbox(sandboxName, registry.getSandbox)) {
+  if (!isDockerBackedSandbox(sandboxName, getKnownSandboxTarget)) {
     return {
       layer: "gateway_unreachable",
       detail: `The OpenShell gateway for sandbox '${sandboxName}' is unreachable.`,
@@ -299,12 +299,12 @@ type SandboxDriverLookup = (name: string) => { openshellDriver?: string | null }
 
 // Drivers whose sandbox runtime does not live in the local Docker daemon.
 // Kubernetes remains Docker-backed on the supported legacy deployment paths;
-// native Podman and VM sandboxes must never enter the Docker outage probe.
-const NON_DOCKER_DRIVERS = new Set(["podman", "vm"]);
+// native MXC, Podman, and VM sandboxes must never enter the Docker outage probe.
+const NON_DOCKER_DRIVERS = new Set(["mxc", "podman", "vm"]);
 
 /**
  * Whether a sandbox's runtime depends on the local Docker daemon. Native
- * Podman and VM drivers are excluded. The `docker` and `kubernetes` drivers
+ * MXC, Podman, and VM drivers are excluded. The `docker` and `kubernetes` drivers
  * are Docker-backed, and legacy/recovered registry entries that predate
  * `openshellDriver` metadata (field omitted/null) are also treated as
  * Docker-backed so the outage guard still protects the Linux/Docker sandboxes
@@ -349,7 +349,7 @@ export function isDockerRuntimeDown(
     return true;
   }
   portableRuntimeFailures.delete(sandboxName);
-  const getSandbox = opts?.getSandbox ?? registry.getSandbox;
+  const getSandbox = opts?.getSandbox ?? getKnownSandboxTarget;
   if (!isDockerBackedSandbox(sandboxName, getSandbox)) return false;
   const probe = opts?.runners?.dockerInfo ?? defaultRunners.dockerInfo;
   return !probe();
