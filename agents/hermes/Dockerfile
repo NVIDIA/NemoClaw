@@ -105,6 +105,7 @@ COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/pa
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
+COPY agents/hermes/patch-oneshot-retry-exit-code.py /opt/nemoclaw-hermes-config/patch-oneshot-retry-exit-code.py
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
@@ -686,6 +687,22 @@ RUN printf '%s  %s\n' \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
     && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
+
+# Hermes v0.20.6 `hermes -z` writes its own retry-exhaustion notice into the
+# printed response and marks the run failed, but the CLI's exit-code gate only
+# treats failed/partial as non-zero when the response text is also empty. A
+# one-shot that reports its own failure as text still exits 0 (NVIDIA/NemoClaw#11848).
+ARG NEMOCLAW_HERMES_ONESHOT_EXIT_CODE_PATCHER_SHA256=c04aa3f8adc6a030f420d56605af6c68c189c481f7c6b7ee786bd59e87814b4f
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_ONESHOT_EXIT_CODE_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-oneshot-retry-exit-code.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-oneshot-retry-exit-code.py hash mismatch (update NEMOCLAW_HERMES_ONESHOT_EXIT_CODE_PATCHER_SHA256)" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-oneshot-retry-exit-code.py \
+    && /opt/hermes/.venv/bin/python -m py_compile /opt/hermes/hermes_cli/oneshot.py \
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py oneshot-retry-exit-code \
+    && rm /opt/nemoclaw-hermes-config/patch-oneshot-retry-exit-code.py
 
 # Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
 # falls back to file-based temp storage for FK constraint processing (for
@@ -1445,6 +1462,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-oneshot-retry-exit-code.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
