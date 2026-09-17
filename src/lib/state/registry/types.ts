@@ -7,7 +7,6 @@ import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { ToolDisclosure } from "../../tool-disclosure";
-import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMessagingState } from "../registry-messaging";
 
 /** Bounded identity checkpoint for one incomplete sandbox create. */
@@ -107,8 +106,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
-  /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
-  openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an

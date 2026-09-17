@@ -548,6 +548,17 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts[2]).toContain("Call `turn_action` now");
   });
 
+  it("repairs missing required evidence before retrying a rejected terminal submission", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const result = await run([
+      { ...submitTurn("prepare-and-submit"), requiredToolNames: ["repair_action"] },
+    ]);
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.activeToolCalls).toContainEqual(["repair_action", "turn_action"]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
   it("repairs a preparatory terminal submit only after a settled failure", async () => {
     sdk.state.terminalResponses = ["fail-once", "success"];
     const result = await run([submitTurn("prepare-and-submit")]);
