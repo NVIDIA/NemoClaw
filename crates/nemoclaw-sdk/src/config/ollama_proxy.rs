@@ -55,7 +55,7 @@ impl OllamaProxy {
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(harness, "openclaw" | "hermes")
+            || !matches!(harness, "openclaw" | "hermes" | "deepagents" | "pi")
             || !loopback
             || upstream.scheme() != "http"
             || upstream.path() != "/v1"
@@ -79,7 +79,7 @@ impl OllamaProxy {
                 .is_match(model)
         {
             return Err(ConfigError::new(
-                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw or Hermes completions",
+                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw, Hermes, Deep Agents, or Pi completions",
             ));
         }
         Ok(())

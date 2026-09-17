@@ -34,15 +34,26 @@ class HermesServerConfiguration(unittest.TestCase):
         self.assertTrue(config["relay"]["observability"]["atif"]["enabled"])
         self.assertFalse(config["relay"]["observability"]["enable_full_payloads"])
 
-    def test_relay_tracing_rejects_ambiguous_or_interface_configuration(self):
+    def test_relay_tracing_rejects_ambiguous_configuration(self):
         self.assertFalse(hermes_relay_enabled(None))
         for inference in (
             {"observability": {"relay": {"enabled": False}}},
             {"observability": {"relay": {"enabled": True}, "otlp": {}}},
-            {"observability": {"relay": {"enabled": True}}, "interfaces": {}},
         ):
             with self.assertRaises(ValueError):
                 configuration("main", "hermes", inference=inference)
+
+    def test_relay_with_interfaces_keeps_native_server_and_telemetry(self):
+        inference = {
+            "api": "openai-completions",
+            "observability": {"relay": {"enabled": True}},
+            "interfaces": {"dashboard": {"enabled": False}},
+        }
+        config = configuration("main", "hermes", inference=inference)
+        self.assertEqual(config["harness"]["adapter_id"], "nemoclaw.local.hermes")
+        self.assertEqual(config["harness"]["settings"]["inference"], inference)
+        self.assertNotIn("max_turns", config["runtime"])
+        self.assertEqual(config["telemetry"], {"providers": {"relay": {}}})
 
     def test_retained_configuration_and_credential_reject_drift(self):
         with (

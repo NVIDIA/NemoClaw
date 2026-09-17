@@ -64,5 +64,5 @@ pub(crate) fn brave_policy() -> super::PolicyRule {
     serde_json::from_value(json!({"name":"nemoclaw-brave", "endpoints":[{
         "host":"api.search.brave.com", "port":443, "protocol":"rest", "tls":"terminate", "enforcement":"enforce",
         "rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]}],
-        "binaries":[{"path":"/usr/local/bin/node"}]})).expect("typed Brave policy")
+        "binaries":[{"path":"/usr/local/bin/node"},{"path":"/usr/local/bin/python3.14"}]})).expect("typed Brave policy")
 }

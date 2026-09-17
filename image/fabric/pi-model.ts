@@ -8,55 +8,63 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentModelConfig } from "nemo-fabric-adapter-contract";
 import { LifecycleError } from "nemo-fabric-adapters-common";
 
-/** Pi owns the model schema, defaults, and validation through its native loader. */
+/** Pi owns model validation; route-specific providers keep endpoints and keys separate. */
 export async function loadConfiguredModel(
   selected: AgentModelConfig,
   credentials: CredentialStore,
+  choices?: Record<string, AgentModelConfig>,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "nemoclaw-pi-model-"));
   const cleanup = () => rm(directory, { recursive: true, force: true });
   try {
-    const metadata = selected.settings?.model_metadata;
-    const modelsPath = join(directory, "models.json");
-    await writeFile(
-      modelsPath,
-      JSON.stringify({
-        providers: {
-          [selected.provider]: {
-            baseUrl: selected.base_url,
-            ...(metadata === undefined
-              ? {}
-              : {
-                  models: [
-                    {
-                      ...(metadata as object),
-                      // The deployment owns identity and routing, not the opaque object.
-                      id: selected.model,
-                      baseUrl: selected.base_url,
-                    },
-                  ],
-                }),
+    const options = { credentials, allowModelNetwork: false, refreshOnCreate: false };
+    const catalog = await ModelRuntime.create({ ...options, modelsPath: null });
+    const entries = Object.entries(choices ?? { default: selected });
+    const providers = Object.fromEntries(
+      entries.map(([alias, config]) => {
+        const native = config.settings?.model_metadata;
+        const known =
+          native === undefined ? catalog.getModel(config.provider, config.model) : undefined;
+        if (native === undefined && !known)
+          throw new LifecycleError(
+            "pi_model_unknown",
+            "The configured model is not in the Pi catalog; supply its native piModel configuration",
+          );
+        const metadata =
+          native ??
+          Object.fromEntries(Object.entries(known!).filter(([key]) => key !== "provider"));
+        return [
+          choices ? `nemoclaw-${alias.replaceAll("_", "-")}` : config.provider,
+          {
+            baseUrl: config.base_url,
+            models: [{ ...(metadata as object), id: config.model, baseUrl: config.base_url }],
           },
-        },
+        ];
       }),
-      { mode: 0o600 },
     );
+    const modelsPath = join(directory, "models.json");
+    await writeFile(modelsPath, JSON.stringify({ providers }), { mode: 0o600 });
     const modelRuntime = await ModelRuntime.create({
-      credentials,
+      ...options,
       modelsPath,
       modelsStore: new InMemoryModelsStore(),
-      allowModelNetwork: false,
-      refreshOnCreate: false,
     });
     const error = modelRuntime.getError();
     if (error) throw new LifecycleError("pi_model_invalid", error);
-    const model = modelRuntime.getModel(selected.provider, selected.model);
-    if (!model)
-      throw new LifecycleError(
-        "pi_model_unknown",
-        "The configured model is not in the Pi catalog; supply its native piModel configuration",
-      );
-    return { modelRuntime, model, cleanup };
+    const models = Object.fromEntries(
+      entries.map(([alias, config]) => {
+        const model = modelRuntime.getModel(
+          choices ? `nemoclaw-${alias.replaceAll("_", "-")}` : config.provider,
+          config.model,
+        );
+        if (!model)
+          throw new LifecycleError("pi_model_unknown", "The configured Pi model is unavailable");
+        return [alias, model];
+      }),
+    );
+    const model = models.default;
+    if (!model) throw new LifecycleError("pi_model_unknown", "Pi requires a default model");
+    return { modelRuntime, model, models, cleanup };
   } catch (error) {
     await cleanup();
     throw error;

@@ -82,9 +82,7 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
         ..Default::default()
     };
     check_capacity(service, &capacity, true, 0, 0).expect("qualified dedicated GPU must pass");
-    for invalid in [
-        "vram", "free", "compute", "driver", "host", "missing", "busy",
-    ] {
+    for invalid in ["vram", "free", "compute", "driver", "host", "missing"] {
         let mut c = capacity.clone();
         match invalid {
             "vram" => {
@@ -97,7 +95,6 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
             "driver" => c.driver_major = 579,
             "host" => c.available = 20 * GIB,
             "missing" => c.gpu_memory = None,
-            "busy" => c.foreign_gpu_processes = 1,
             _ => unreachable!(),
         }
         assert!(
@@ -105,6 +102,9 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
             "{invalid}"
         );
     }
+    let mut shared = capacity.clone();
+    shared.foreign_gpu_processes = 1;
+    check_capacity(service, &shared, true, 0, 0).unwrap();
     // A running service legitimately uses its GPU allocation. Refresh still
     // checks total capacity, without requiring the startup allocation to be free.
     let mut running = capacity;

@@ -45,15 +45,7 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
     service
         .check_capacity(&cached, true, download, prepared)
         .unwrap();
-    for dimension in [
-        "memory",
-        "disk",
-        "gpu",
-        "architecture",
-        "driver",
-        "busy",
-        "reserve",
-    ] {
+    for dimension in ["memory", "disk", "gpu", "architecture", "driver", "reserve"] {
         let mut bad = good.clone();
         let mut spec = service.clone();
         match dimension {
@@ -62,7 +54,6 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
             "gpu" => bad.gpu = "unknown".into(),
             "architecture" => bad.architecture = "amd64".into(),
             "driver" => bad.driver_major = 570,
-            "busy" => bad.foreign_gpu_processes = 1,
             "reserve" => spec.memory.host_reserve_gib = 64,
             _ => unreachable!(),
         }
@@ -71,6 +62,11 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
             "{dimension}"
         );
     }
+    let mut shared = good.clone();
+    shared.foreign_gpu_processes = 1;
+    service
+        .check_capacity(&shared, true, download, prepared)
+        .expect("existing GPU users are accounted for by measured available memory");
     let mut running = good;
     running.available = 20 * GIB;
     running.foreign_gpu_processes = 1;
@@ -118,4 +114,26 @@ fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
         read_memory(b"MemTotal: 120 kB\nMemAvailable: 90 kB\nMemFree: 130 kB\n".as_slice())
             .is_err()
     );
+}
+
+#[test]
+fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice() {
+    let mut service = service();
+    service.recipe = None;
+    service.memory.gpu_memory_gib = 20;
+    service.memory.kv_cache_gib = 6;
+    let mut capacity = Capacity {
+        architecture: "arm64".into(),
+        gpu: "NVIDIA GB10".into(),
+        driver_major: 580,
+        total: 121 * GIB,
+        available: 100 * GIB,
+        ..Default::default()
+    };
+    check_service_budgets(&[(&service, true), (&service, true)], &capacity).unwrap();
+    capacity.available = 65 * GIB;
+    assert!(check_service_budgets(&[(&service, true), (&service, true)], &capacity).is_err());
+    check_service_budgets(&[(&service, false), (&service, true)], &capacity).unwrap();
+    capacity.total = 65 * GIB;
+    assert!(check_service_budgets(&[(&service, false), (&service, false)], &capacity).is_err());
 }

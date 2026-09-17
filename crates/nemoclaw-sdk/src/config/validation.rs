@@ -157,6 +157,37 @@ impl Document {
         self.validate_harness_references()?;
         let selected_providers = self.selected_inference_providers()?;
         self.lifecycle_provider()?;
+        let mut publications = std::collections::BTreeSet::new();
+        let mut networks = std::collections::BTreeMap::new();
+        if gateway.management == "managed" {
+            networks.insert(gateway.engine.as_str(), gateway.network_cidr.as_str());
+        }
+        for provider in &selected_providers {
+            if let Some(service) = &provider.service {
+                let engine = service
+                    .placement
+                    .as_ref()
+                    .map_or(gateway.engine.as_str(), |p| p.engine.as_str());
+                let cidr = service
+                    .placement
+                    .as_ref()
+                    .map_or(gateway.network_cidr.as_str(), |p| p.network_cidr.as_str());
+                require(
+                    networks
+                        .insert(engine, cidr)
+                        .is_none_or(|previous| previous == cidr),
+                    "managed services sharing an engine must use the same network CIDR",
+                )?;
+                let bind = service
+                    .publication
+                    .as_ref()
+                    .map_or_else(|| gateway.bridge(), |p| Ok(p.bind_address.clone()))?;
+                require(
+                    publications.insert((engine, bind, service.serving.port)),
+                    "managed inference publication addresses must be distinct on each engine",
+                )?;
+            }
+        }
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
             validate_provider(definition, gateway)?;
@@ -184,8 +215,9 @@ impl Document {
             let harness = self.sandbox_harness(sandbox)?;
             sandbox.network.validate_runtime_access(&harness.kind)?;
             require(
-                sandbox.agents.len() == 1 || harness.kind == "openclaw",
-                "multiple agents require OpenClaw",
+                sandbox.agents.len() == 1
+                    || matches!(harness.kind.as_str(), "openclaw" | "deepagents"),
+                "multiple agents require OpenClaw or Deep Agents",
             )?;
             let web_search = self.web_search(sandbox)?;
             sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;
@@ -210,18 +242,18 @@ impl Document {
             for agent in &sandbox.agents {
                 require(names.insert(&agent.name), "agent names must be unique")?;
 
-                require(
-                    agent.tools.is_none() || harness.kind == "openclaw",
-                    "tool restrictions require OpenClaw",
-                )?;
+                if let Some(tools) = &agent.tools {
+                    tools.validate(&harness.kind)?;
+                }
                 require(
                     SLUG.is_match(&agent.name),
                     "agent requires a lowercase name",
                 )?;
 
                 require(
-                    self.agent_inference(agent)?.routes.len() == 1 || harness.kind == "openclaw",
-                    "multiple model choices require OpenClaw",
+                    self.agent_inference(agent)?.routes.len() == 1
+                        || matches!(harness.kind.as_str(), "openclaw" | "pi"),
+                    "multiple model choices require OpenClaw or Pi",
                 )?;
                 for route in &self.agent_inference(agent)?.routes {
                     let (_, scope) = self.scoped_inference(agent)?;

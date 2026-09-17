@@ -76,3 +76,105 @@ test("Pi rejects invalid native schema values and invalid context limits", async
 test("unknown models without configuration fail instead of borrowing another model", async () => {
   await assert.rejects(load(undefined, "custom-model"), /piModel/);
 });
+
+test(
+  "Pi keeps endpoint credentials and conversation history when switching choices",
+  { timeout: 30000 },
+  async () => {
+    const { createServer } = await import("node:http");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { PiAdapterRuntime } =
+      await import("/opt/fabric-source/adapters/typescript/pi/dist/runtime.js");
+    const { PiSdkSessionFactory } =
+      await import("/opt/fabric-source/adapters/typescript/pi/dist/pi-sdk.js");
+    const requests: {
+      path: string | undefined;
+      authorization: string | undefined;
+      body: { messages: unknown[] };
+    }[] = [];
+    const server = createServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      requests.push({
+        path: request.url,
+        authorization: request.headers.authorization,
+        body: JSON.parse(Buffer.concat(chunks).toString()),
+      });
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(
+        `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 0, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content: "FOUR" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const workspace = await mkdtemp(join(tmpdir(), "pi-choices-"));
+    const runtime = new PiAdapterRuntime(new PiSdkSessionFactory());
+    try {
+      const address = server.address();
+      assert(address && typeof address === "object");
+      const choice = (path: string, key: string) => ({
+        provider: "openai",
+        model: "fixture",
+        base_url: `http://127.0.0.1:${address.port}/${path}/v1`,
+        api_key_env: key,
+        settings: {
+          model_metadata: { api: "openai-completions", contextWindow: 8192, maxTokens: 128 },
+        },
+      });
+      const fast = choice("fast", "FAST_KEY");
+      const smart = choice("smart", "SMART_KEY");
+      const input = {
+        agentName: "main",
+        baseDir: workspace,
+        config: {
+          models: { default: fast, route_fast: fast, route_smart: smart },
+          tools: { enabled: [] },
+        },
+        runtimeContext: {
+          artifacts: {},
+          environment: {
+            control_location: "external_control" as const,
+            environment_id: "fixture",
+            ownership: "caller_owned" as const,
+            provider: "local" as const,
+            workspace,
+            env: { FAST_KEY: "fixture-fast", SMART_KEY: "fixture-smart" },
+          },
+          invocation_id: "start",
+          request_id: "start",
+          runtime_id: "fixture",
+        },
+      };
+      await runtime.start(input);
+      for (const model of ["fast", "smart"]) {
+        const result = await runtime.invoke(
+          { input: { prompt: "Reply FOUR", model } },
+          input.runtimeContext,
+        );
+        assert.equal(result.status, "succeeded", JSON.stringify(result));
+      }
+      assert.deepEqual(
+        requests.map((r) => [r.path, r.authorization]),
+        [
+          ["/fast/v1/chat/completions", "Bearer fixture-fast"],
+          ["/smart/v1/chat/completions", "Bearer fixture-smart"],
+        ],
+      );
+      assert(
+        requests[1]!.body.messages.length > requests[0]!.body.messages.length,
+        "model switch must preserve conversation history",
+      );
+      const unknown = await runtime.invoke(
+        { input: { prompt: "Do not send", model: "missing" } },
+        input.runtimeContext,
+      );
+      assert.equal(unknown.status, "failed");
+      assert.equal(requests.length, 2, "unknown choices must fail before inference");
+    } finally {
+      await runtime.stop();
+      await rm(workspace, { recursive: true, force: true });
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);

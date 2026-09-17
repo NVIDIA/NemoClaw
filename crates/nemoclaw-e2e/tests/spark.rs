@@ -232,7 +232,7 @@ async fn spark_apply_export_capacity_and_watchdog_recovery_preserve_identity_and
     assert_eq!(plan.changes.len(), 1);
     assert_eq!(
         plan.changes[0].resource,
-        "nemoclaw_inference_service.runtime"
+        "nemoclaw_inference_service.inference_qwen"
     );
     assert_eq!(plan.changes[0].actions, ["update"]);
     assert!(
@@ -297,7 +297,7 @@ async fn spark_image_change_preserves_independent_bindings_and_prepared_data() {
     assert_eq!(plan.changes.len(), 1);
     assert_eq!(
         plan.changes[0].resource,
-        "nemoclaw_inference_service.runtime"
+        "nemoclaw_inference_service.inference_qwen"
     );
     assert_eq!(plan.changes[0].actions, ["delete", "create"]);
     assert_eq!(
@@ -315,7 +315,7 @@ async fn spark_image_change_preserves_independent_bindings_and_prepared_data() {
     let after = capture(&directory).await;
     assert_eq!(before["receipts"], after["receipts"]);
     for (address, id) in before["ids"].as_object().unwrap() {
-        if address == "nemoclaw_inference_service.runtime" {
+        if address == "nemoclaw_inference_service.inference_qwen" {
             assert_ne!(id, &after["ids"][address]);
         } else {
             assert_eq!(

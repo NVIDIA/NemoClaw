@@ -50,7 +50,7 @@ impl Spec {
     /// # Errors
     /// Returns an error if any of these contracts is invalid.
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-(gateway|inference)$")
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-(gateway|inference(?:-[a-z][a-z0-9-]{0,62})?)$")
             .unwrap()
             .is_match(&self.name)
             || !regex::Regex::new(r"^[a-f0-9-]{36}$")

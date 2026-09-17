@@ -12,7 +12,9 @@ pub struct InferenceConnection {
 impl Document {
     pub fn has_runtime(&self) -> bool {
         self.spec.gateway.management == "managed"
-            || self.lifecycle_provider().is_ok_and(|p| p.service.is_some())
+            || self
+                .selected_inference_providers()
+                .is_ok_and(|providers| providers.iter().any(|p| p.service.is_some()))
     }
     /// Validate the document and resolve its inference connection.
     /// Managed inference retains its publication; external inference uses its explicit URL.

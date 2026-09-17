@@ -25,7 +25,11 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     assert_eq!(graph["resource"].as_object().unwrap().len(), 4);
     for kind in ["gateway_storage", "inference_storage"] {
         assert_eq!(
-            graph["resource"][format!("nemoclaw_{kind}")]["runtime"]["lifecycle"]["prevent_destroy"],
+            graph["resource"][format!("nemoclaw_{kind}")][if kind == "gateway_storage" {
+                "runtime"
+            } else {
+                "inference_qwen"
+            }]["lifecycle"]["prevent_destroy"],
             true
         );
     }
@@ -34,14 +38,15 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         json!(["nemoclaw_gateway_storage.runtime"])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_inference_service"]["runtime"]["depends_on"],
+        graph["resource"]["nemoclaw_inference_service"]["inference_qwen"]["depends_on"],
         json!([
             "nemoclaw_managed_gateway.runtime",
-            "nemoclaw_inference_storage.runtime"
+            "nemoclaw_inference_storage.inference_qwen"
         ])
     );
     for target in targets {
-        let attrs = &graph["resource"][format!("nemoclaw_{}", target.kind)]["runtime"];
+        let attrs = &graph["resource"][format!("nemoclaw_{}", target.kind)]
+            [target.address.split_once('.').unwrap().1];
         assert_eq!(attrs["spec"], target.values["spec"]);
         assert!(
             attrs.get("running").is_none(),
@@ -91,8 +96,8 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     assert_eq!(runtime_targets(&document, &generations).unwrap().len(), 2);
     assert!(graph["resource"].get("nemoclaw_managed_gateway").is_none());
     assert_eq!(
-        graph["resource"]["nemoclaw_inference_service"]["runtime"]["depends_on"],
-        json!(["nemoclaw_inference_storage.runtime"])
+        graph["resource"]["nemoclaw_inference_service"]["inference_qwen"]["depends_on"],
+        json!(["nemoclaw_inference_storage.inference_qwen"])
     );
     assert_eq!(
         document.inference_endpoint().unwrap(),

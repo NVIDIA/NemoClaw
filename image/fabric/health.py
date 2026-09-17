@@ -32,11 +32,16 @@ async def runtime_health(runtime, timeout_seconds=3.0):
         return unavailable("fabric_health_error")
 
 
-async def request_health(socket):
+async def request_health(socket, agent=None):
     async def request():
         reader, writer = await asyncio.open_unix_connection(socket, limit=65536)
         try:
-            writer.write(b'{"operation":"health"}\n')
+            writer.write(
+                json.dumps(
+                    {"operation": "health", **({"agent": agent} if agent is not None else {})}
+                ).encode()
+                + b"\n"
+            )
             await writer.drain()
             return json.loads(await reader.readline())
         finally:

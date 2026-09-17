@@ -194,11 +194,6 @@ impl Harness {
         }
         if let Some(observability) = &self.observability {
             observability.validate(&self.kind)?;
-            if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError::new(
-                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
-                ));
-            }
         }
         Ok(())
     }

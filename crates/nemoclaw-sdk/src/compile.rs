@@ -52,6 +52,13 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         let settings = document.sandbox_runtime_settings(sandbox)?;
         let agent_name = if harness.kind == "openclaw" {
             &sandbox.name
+        } else if harness.kind == "deepagents" {
+            &sandbox
+                .agents
+                .iter()
+                .min_by_key(|agent| &agent.name)
+                .expect("validated roster")
+                .name
         } else {
             &sandbox.sole_agent()?.name
         };
@@ -158,30 +165,40 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             }
         }
     }
-    let provider = document.lifecycle_provider()?;
-    if provider
-        .service
-        .as_ref()
-        .is_some_and(|s| s.authentication.is_some())
-    {
-        let spec = runtime_targets(document, generations)
-            .map_err(|_| ConfigError::new("invalid managed credential source"))?
-            .into_iter()
-            .find(|t| t.kind == crate::managed::SERVICE_KIND)
-            .ok_or(ConfigError::new("missing managed credential source"))?
-            .values["spec"]
-            .clone();
-        let source = crate::inference_auth::Source::ManagedService {
-            spec: serde_json::from_str(&spec)
-                .map_err(|_| ConfigError::new("invalid managed credential source"))?,
-        };
-        result
-            .iter_mut()
-            .find(|r| r.kind == "provider" && r.values["name"] == document.provider_key(provider))
-            .unwrap()
-            .values
-            .insert("credential_source".into(), source.json()?);
+    for provider in document.selected_inference_providers()? {
+        if provider
+            .service
+            .as_ref()
+            .is_some_and(|s| s.authentication.is_some())
+        {
+            let spec = runtime_targets(document, generations)
+                .map_err(|_| ConfigError::new("invalid managed credential source"))?
+                .into_iter()
+                .find(|t| {
+                    t.address
+                        == format!(
+                            "nemoclaw_inference_service.inference_{}",
+                            document.provider_key(provider)
+                        )
+                })
+                .ok_or(ConfigError::new("missing managed credential source"))?
+                .values["spec"]
+                .clone();
+            let source = crate::inference_auth::Source::ManagedService {
+                spec: serde_json::from_str(&spec)
+                    .map_err(|_| ConfigError::new("invalid managed credential source"))?,
+            };
+            result
+                .iter_mut()
+                .find(|r| {
+                    r.kind == "provider" && r.values["name"] == document.provider_key(provider)
+                })
+                .unwrap()
+                .values
+                .insert("credential_source".into(), source.json()?);
+        }
     }
+    let provider = document.lifecycle_provider()?;
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
             .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;

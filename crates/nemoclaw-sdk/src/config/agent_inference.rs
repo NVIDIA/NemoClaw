@@ -91,7 +91,7 @@ pub struct AgentAuth {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
-/// OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+/// Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
 pub enum AgentTools {
     /// Expose only the read tool, independently of the gateway's discovery mode.
     ReadOnly {
@@ -103,6 +103,19 @@ pub enum AgentTools {
         /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
         disclosure: ToolDisclosure,
     },
+}
+impl AgentTools {
+    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+        if harness == "openclaw"
+            || (matches!(harness, "deepagents" | "pi") && matches!(self, Self::ReadOnly { .. }))
+        {
+            Ok(())
+        } else {
+            Err(ConfigError::new(
+                "read-only tools require OpenClaw, Deep Agents, or Pi; disclosure requires OpenClaw",
+            ))
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -136,7 +149,7 @@ impl ToolDisclosure {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
-/// Tool supported by the read-only OpenClaw policy.
+/// Tool supported by the native read-only policy.
 pub enum AllowedTool {
     /// Read a file within the sandbox's filesystem permissions.
     Read,
@@ -191,6 +204,8 @@ pub(crate) struct RuntimeAgentInference {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi: Option<Overrides>,
     pub provider: String,
     pub connection: RuntimeConnection,
     pub api: InferenceApi,
@@ -251,11 +266,6 @@ impl SandboxRuntimeSettings {
         }
         if let Some(observability) = &self.observability {
             observability.validate(harness)?;
-            if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError::new(
-                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
-                ));
-            }
         }
         if let Some(execution) = &self.execution {
             execution.validate(harness)?;
@@ -263,16 +273,22 @@ impl SandboxRuntimeSettings {
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(harness)?;
         }
+        for agent in &self.agents {
+            if let Some(tools) = &agent.tools {
+                tools.validate(harness)?;
+            }
+        }
         ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
-            && (harness != "openclaw"
+            && (!matches!(harness, "openclaw" | "pi" | "deepagents")
+                || (!matches!(harness, "openclaw" | "deepagents") && self.agents.len() != 1)
                 || self
                     .agents
                     .iter()
                     .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
         {
-            return Err(ConfigError::new("invalid OpenClaw agent roster"));
+            return Err(ConfigError::new("invalid harness agent roster"));
         }
         let explicit_choices = self.agents.iter().any(|agent| agent.inference.is_some());
         if explicit_choices {
@@ -281,7 +297,8 @@ impl SandboxRuntimeSettings {
                     .inference
                     .as_ref()
                     .ok_or(ConfigError::new("every agent requires model choices"))?;
-                if selection.models.is_empty()
+                if (harness == "deepagents" && selection.models.len() != 1)
+                    || selection.models.is_empty()
                     || selection.models.len() > 32
                     || !selection.models.contains_key(&selection.default)
                 {
@@ -293,6 +310,14 @@ impl SandboxRuntimeSettings {
                     }
                     model.connection.validate(&model.provider, harness)?;
                     model.tuning.validate(harness)?;
+                    if (harness == "pi") != model.pi.is_some()
+                        || model
+                            .pi
+                            .as_ref()
+                            .is_some_and(|pi| !super::validation::valid_model(&pi.model))
+                    {
+                        return Err(ConfigError::new("invalid Pi model choice"));
+                    }
                 }
             }
             let selection = self
@@ -341,6 +366,7 @@ impl Document {
         )
         .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {
+            pi: (harness == "pi").then(|| route.overrides.clone()),
             provider: self.provider_key(provider),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
@@ -391,6 +417,8 @@ impl Document {
             .ok_or(ConfigError::new("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
+            || resolved.len() > 1
+            || (harness.kind == "pi" && resolved.iter().any(|agent| agent.agent.tools.is_some()))
             || resolved
                 .iter()
                 .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);

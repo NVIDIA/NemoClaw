@@ -66,8 +66,4 @@ impl AgentObservability {
     pub(crate) fn uses_otlp(&self) -> bool {
         self.otlp.is_some()
     }
-
-    pub(crate) fn uses_relay(&self) -> bool {
-        self.relay.is_some()
-    }
 }

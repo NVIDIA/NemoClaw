@@ -5,6 +5,8 @@
 Upstream: NVIDIA/NeMo-Fabric 6e155bfbe9e740fb8ce1e1fda900d96f1435a23c,
 Apache-2.0. 2026-09-15: resolve declared models through Pi's native loader,
 retain cleanup on failure and shutdown, and add a matching inference probe.
+2026-09-17: load declared model choices with separate credential namespaces and
+switch the native session model for explicit Fabric invocation selections.
 """
 
 import json
@@ -35,8 +37,15 @@ def patch_pi(source):
         'import { loadConfiguredModel } from "./pi-model.js";\n\nimport { realpath',
     ).replace(
         old,
-        "    const { modelRuntime, model, cleanup } = await loadConfiguredModel(selected, credentials);\n"
-        "    await modelRuntime.setRuntimeApiKey(selected.provider, apiKey).catch(async (error) => { await cleanup(); throw error; });",
+        """    const { modelRuntime, model, models, cleanup } = await loadConfiguredModel(selected, credentials, input.config.models);
+    try {
+      for (const [alias, native] of Object.entries(models)) {
+        const config = input.config.models?.[alias] ?? selected;
+        const key = config.api_key_env ? credentialValue(input, config.api_key_env) : undefined;
+        if (!key) throw new LifecycleError("pi_credential_missing", "A configured Pi model credential is unavailable");
+        await modelRuntime.setRuntimeApiKey(native.provider, key);
+      }
+    } catch (error) { await cleanup(); throw error; }""",
     )
     text = text.replace(
         "      excludeTools: blocked,\n    });",
@@ -47,6 +56,44 @@ def patch_pi(source):
         "    const handle = new PiSdkSessionHandle(session, state);\n"
         "    const stop = handle.stop.bind(handle);\n"
         "    handle.stop = async () => { try { await stop(); } finally { await cleanup(); } };",
+    )
+    text = text.replace(
+        "    return handle;",
+        """    return Object.assign(handle, {
+      selectModel: async (name: string) => {
+        const choice = models[`route_${name}`];
+        if (!choice) throw new LifecycleError("pi_model_unknown", "The requested Pi model choice is not declared");
+        await session.setModel(choice);
+      },
+    });""",
+    )
+    runtime_path = directory / "runtime.ts"
+    runtime = runtime_path.read_text().replace(
+        "  prompt(text: string): Promise<PiPromptOutcome>;",
+        "  prompt(text: string): Promise<PiPromptOutcome>;\n  selectModel?(name: string): Promise<void>;",
+    )
+    old_input = """    if (typeof request.input !== "string") {
+      return failed("pi_unsupported_input", "The Pi adapter accepts only plain-text input");
+    }
+
+    const outcome = await this.session.prompt(request.input);"""
+    new_input = """    let prompt = request.input;
+    if (typeof prompt === "object" && prompt !== null && !Array.isArray(prompt)
+        && Object.keys(prompt).length === 2 && typeof prompt.prompt === "string"
+        && typeof prompt.model === "string" && this.session.selectModel) {
+      try { await this.session.selectModel(prompt.model); }
+      catch { return failed("pi_model_selection_failed", "The requested Pi model choice could not be selected"); }
+      prompt = prompt.prompt;
+    }
+    if (typeof prompt !== "string") {
+      return failed("pi_unsupported_input", "Pi requires text or an object containing prompt and model");
+    }
+    const outcome = await this.session.prompt(prompt);"""
+    if runtime.count(old_input) != 1:
+        raise ValueError("pinned Pi invocation source changed")
+    runtime_path.write_text(
+        "// NemoClaw modification, 2026-09-17: explicit model selection. See NEMOCLAW-MODIFICATIONS.md.\n"
+        + runtime.replace(old_input, new_input)
     )
     path.write_text(
         "// NemoClaw modification, 2026-09-15: declared model selection and cleanup.\n"

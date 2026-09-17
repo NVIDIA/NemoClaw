@@ -210,7 +210,11 @@ async fn exercise(fresh: bool) {
     for address in [
         "nemoclaw_workspace.deployment",
         "nemoclaw_gateway_storage.runtime",
-        "nemoclaw_inference_storage.runtime",
+        before
+            .keys()
+            .find(|address| address.starts_with("nemoclaw_inference_storage."))
+            .unwrap()
+            .as_str(),
     ] {
         assert_eq!(retained.get(address), before.get(address));
         assert!(retained.contains_key(address));
