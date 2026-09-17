@@ -4,6 +4,8 @@
 import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
+  formatGatewayRouteImpactWarning,
+  isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import {
   buildHttpsPinRouteBaseUrl,
@@ -92,6 +94,7 @@ export interface PreparedInferenceSetRoute {
   /** Invocation-only source URL; never persisted for HTTPS-pin routes. */
   preliminaryExplicitSourceEndpointUrl: string | null;
   preliminaryRegistryMetadata: RegistryInferenceMetadata;
+  preliminaryRouteImpactWarning: string | null;
 }
 
 const CUSTOM_COMPATIBLE_CREDENTIAL_ENV: Record<string, string> = {
@@ -402,23 +405,25 @@ function registryMetadataForProviderSwitch(options: {
   };
 }
 
-function assertGatewayRouteCompatibility(options: {
+function routeImpactWarningOrThrow(options: {
   gatewayName: string;
   sandboxName: string;
   provider: string;
   model: string;
   metadata: RegistryInferenceMetadata;
   sandboxes: SandboxEntry[];
-}): void {
+}): string | null {
   const compatibility = checkGatewayRouteCompatibility({
     gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
     route: { provider: options.provider, model: options.model, ...options.metadata },
     sandboxes: options.sandboxes,
   });
-  if (!compatibility.ok) {
-    throw new InferenceSetError(formatGatewayRouteConflict(compatibility), 2);
+  if (compatibility.ok) return null;
+  if (isAdvisoryGatewayRouteConflict(compatibility)) {
+    return formatGatewayRouteImpactWarning(compatibility, "inference-set");
   }
+  throw new InferenceSetError(formatGatewayRouteConflict(compatibility), 2);
 }
 
 export function prepareInferenceSetRoute(options: {
@@ -459,7 +464,7 @@ export function prepareInferenceSetRoute(options: {
     session: options.session,
     explicitMetadata: preliminaryExplicitMetadata,
   });
-  assertGatewayRouteCompatibility({
+  const preliminaryRouteImpactWarning = routeImpactWarningOrThrow({
     gatewayName,
     sandboxName: options.sandboxName,
     provider: options.provider,
@@ -472,6 +477,7 @@ export function prepareInferenceSetRoute(options: {
     preliminaryExplicitMetadata,
     preliminaryExplicitSourceEndpointUrl: explicit.sourceEndpointUrl,
     preliminaryRegistryMetadata,
+    preliminaryRouteImpactWarning,
   };
 }
 
@@ -492,6 +498,7 @@ export async function finalizeInferenceSetRoute(options: {
   explicitPreferredInferenceApi: string | null;
   directProviderBinding: InferenceSetProviderBinding | null;
   httpsPinProviderBinding: HttpsPinProviderBinding | null;
+  routeImpactWarning: string | null;
 }> {
   const { prepared } = options;
   if (!prepared.preliminaryExplicitMetadata) {
@@ -500,6 +507,7 @@ export async function finalizeInferenceSetRoute(options: {
       explicitPreferredInferenceApi: null,
       directProviderBinding: null,
       httpsPinProviderBinding: null,
+      routeImpactWarning: prepared.preliminaryRouteImpactWarning,
     };
   }
   // Bound once per finalize call: preparation already pinned the credential env
@@ -602,7 +610,7 @@ export async function finalizeInferenceSetRoute(options: {
         token: credentialValue,
         providerType,
       };
-  assertGatewayRouteCompatibility({
+  const routeImpactWarning = routeImpactWarningOrThrow({
     gatewayName: prepared.gatewayName,
     sandboxName: options.sandboxName,
     provider: options.provider,
@@ -615,5 +623,6 @@ export async function finalizeInferenceSetRoute(options: {
     explicitPreferredInferenceApi: registryMetadata.preferredInferenceApi ?? null,
     directProviderBinding,
     httpsPinProviderBinding,
+    routeImpactWarning,
   };
 }
