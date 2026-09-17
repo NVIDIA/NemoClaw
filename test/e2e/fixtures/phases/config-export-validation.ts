@@ -555,6 +555,7 @@ export class ConfigExportValidationPhaseFixture {
         {
           artifactName: "config-export-automatic",
           captureLimitBytes: CONFIG_EXPORT_CAPTURE_LIMIT_BYTES,
+          persistArtifacts: false,
           redactionValues: this.secrets.redactionValues(),
           timeoutMs: CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
         },

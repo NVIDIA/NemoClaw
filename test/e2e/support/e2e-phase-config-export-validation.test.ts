@@ -902,6 +902,10 @@ describe("automatic config export validation phase", () => {
 
     await captureFailure(test.phase.from(target("required"), instance()));
 
+    expect(host.nemoclaw).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ persistArtifacts: false }),
+    );
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "export",
