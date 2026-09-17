@@ -118,12 +118,22 @@ function isHelpToken(token: string | undefined): boolean {
   return token === "help" || token === "--help" || token === "-h";
 }
 
-function nativeGlobalParentArgv(cmd: string, args: string[]): NativeArgvTranslation {
+/** Show registered subcommands when a global parent receives an unknown action. */
+function nativeGlobalParentArgv(cmd: string, args: string[]): PublicTranslationResult {
   const subcommand = args[0];
   if (!subcommand || isHelpToken(subcommand)) {
     return nativeArgv(cmd, ["--help"], [cmd, "--help"]);
   }
-  return nativeArgv(`${cmd}:${subcommand}`, args.slice(1), [cmd, ...args]);
+  return {
+    kind: "publicUsageError",
+    lines: [
+      `${cmd} <subcommand>`,
+      "Subcommands:",
+      ...globalRoutes()
+        .filter((route) => route.tokens[0] === cmd)
+        .map((route) => route.tokens.slice(1).join(" ")),
+    ],
+  };
 }
 
 function nativeSandboxParentArgv(
