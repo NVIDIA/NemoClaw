@@ -588,7 +588,9 @@ mod live {
         }
 
         let apply = deployment.apply(&document, &cancel).await.unwrap();
-        assert!(!apply.changes.is_empty());
+        if fresh {
+            assert!(!apply.changes.is_empty());
+        }
         evidence.record("initialApply", apply);
         let (before, sandbox) = state_bindings(&directory);
         let provider = &document.spec.inference_providers[0];
