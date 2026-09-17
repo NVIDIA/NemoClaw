@@ -95,7 +95,8 @@ complete exported document. Semantic expectations remain independent of the
 exporter. The fixture reads the target manifest and host registry directly,
 then queries the effective policy through the OpenShell CLI. It captures these
 expectations before it invokes config export, so exporter-side mutations cannot
-redefine the expected deployment state.
+redefine the expected deployment state. It rejects an unsafe registry inference
+endpoint before invoking export or publishing endpoint data in evidence.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
