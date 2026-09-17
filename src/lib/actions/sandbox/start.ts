@@ -20,7 +20,10 @@ import {
 } from "./inference-invocation-probe";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
+} from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -68,16 +71,7 @@ export interface SandboxStartDeps {
 }
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
-const OPENCLAW_GATEWAY_STARTUP_DEFAULT_MS = 30_000;
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
-
-function openClawStartupTimeoutMs(environment: NodeJS.ProcessEnv): number {
-  const raw = environment.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS?.trim();
-  const seconds = raw ? Number(raw) : NaN;
-  return Number.isFinite(seconds) && seconds >= 0
-    ? Math.min(seconds * 1000, Number.MAX_SAFE_INTEGER)
-    : OPENCLAW_GATEWAY_STARTUP_DEFAULT_MS;
-}
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
@@ -108,7 +102,8 @@ async function waitForStartedNativeGatewayProcess(
   }
 
   const now = deps.now ?? (() => performance.now());
-  const deadline = now() + openClawStartupTimeoutMs(deps.environment ?? process.env);
+  const deadline =
+    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;

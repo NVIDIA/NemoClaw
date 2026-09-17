@@ -292,6 +292,14 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("uses a bounded shared override for a large finite startup setting", async () => {
+    const h = harness({ environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "1e300" } });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(h.probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw", {
+      startup: { timeoutMs: 15_000 },
+    });
+  });
+
   it("charges slow probes and sleep to one deadline and passes only the remaining time", async () => {
     let elapsed = 0;
     const budgets: number[] = [];

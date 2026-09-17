@@ -868,11 +868,30 @@ export async function restartSandboxGateway(
   );
 }
 
-function readNonNegativeNumberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+function readNonNegativeNumberEnv(
+  name: string,
+  fallback: number,
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = environment[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/** Resolve the shared override; HTTP health defaults to 30s, OpenShell readiness supplies 120s. */
+export function resolveGatewayRecoveryWaitSeconds(
+  fallbackSeconds = 30,
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  return Math.min(
+    readNonNegativeNumberEnv(
+      "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+      fallbackSeconds,
+      environment,
+    ),
+    Number.MAX_SAFE_INTEGER / 1_000,
+  );
 }
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
@@ -1036,10 +1055,7 @@ async function waitForRecreatedSandboxOpenShellReadyResult(
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
       : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    requestedTimeoutSeconds,
-  );
+  const timeoutSeconds = resolveGatewayRecoveryWaitSeconds(requestedTimeoutSeconds);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
@@ -1272,10 +1288,7 @@ export async function waitForRecoveredSandboxGateway(
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
       : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    requestedTimeoutSeconds,
-  );
+  const timeoutSeconds = resolveGatewayRecoveryWaitSeconds(requestedTimeoutSeconds);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     3,
