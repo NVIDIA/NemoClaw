@@ -1865,8 +1865,8 @@ jobs:
             & python -m unittest discover -s "$env:GITHUB_WORKSPACE\packaging\windows\installer" -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath $pythonLog
             $pythonResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 87 tests') {
-            throw 'The eighty-seven MSI build and metadata controls did not all pass.'
+          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 89 tests') {
+            throw 'The eighty-nine MSI build and metadata controls did not all pass.'
           }
 
       - name: Build and exercise actual isolated MSI transactions
