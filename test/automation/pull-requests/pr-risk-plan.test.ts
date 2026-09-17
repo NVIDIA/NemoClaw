@@ -760,10 +760,7 @@ describe("deterministic PR risk plan", () => {
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
     );
 
-    expect(PR_E2E_TYPED_TARGET_IDS).toEqual([
-      "ubuntu-repo-cloud-langchain-deepagents-code",
-      "ubuntu-repo-docker-post-reboot-recovery",
-    ]);
+    expect(PR_E2E_TYPED_TARGET_IDS).toEqual(["ubuntu-repo-cloud-langchain-deepagents-code"]);
     expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[0]]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
@@ -847,14 +844,14 @@ describe("deterministic PR risk plan", () => {
     "src/lib/onboard/docker-driver-sandbox-recovery.ts",
     "src/lib/onboard/docker-startup-command-agent.ts",
     "src/lib/onboard/sandbox-create-step.ts",
-  ])("selects post-reboot recovery for Docker delivery changes in %s (#7824)", (changedFile) => {
+  ])("selects sandbox survival for Docker delivery changes in %s (#7824)", (changedFile) => {
     const result = plan(changedFile);
     const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual(["sandbox-survival"]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
-        id: PR_E2E_TYPED_TARGET_IDS[1],
+        id: "sandbox-survival",
         families: ["focused-e2e"],
         matchedFiles: [changedFile],
       }),
@@ -863,18 +860,11 @@ describe("deterministic PR risk plan", () => {
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
   });
 
-  it("selects post-reboot recovery when its shared timeout contract changes (#9622)", () => {
+  it("does not select a retired recovery target for timeout-contract changes", () => {
     const changedFile = "tools/e2e/onboard-timeout-contract.mts";
     const result = plan(changedFile);
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual(["ubuntu-repo-docker-post-reboot-recovery"]);
-    expect(result.requiredTargets).toEqual([
-      expect.objectContaining({
-        id: "ubuntu-repo-docker-post-reboot-recovery",
-        families: ["focused-e2e"],
-        matchedFiles: [changedFile],
-      }),
-    ]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([]);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
