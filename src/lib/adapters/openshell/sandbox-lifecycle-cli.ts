@@ -4,6 +4,7 @@
 import { isValidName } from "../../sandbox-name-contract";
 import { redactCredentialText } from "../../security/credential-filter";
 import { redact } from "../../security/redact";
+import { waitUntilAsync } from "../../core/wait";
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
@@ -17,14 +18,87 @@ import {
   createCliOpenShellSandboxObserverFromRunner,
   isExplicitMissingOpenShellSandboxOutput,
   type CapturedOpenShellCommandResult,
+  type CliOpenShellSandboxLookup,
+  type CliOpenShellSandboxLookupResult,
 } from "./sandbox-observer-cli";
 import type { OpenShellSandboxError } from "./sandbox-observer";
-import { OPENSHELL_HEAVY_TIMEOUT_MS } from "./command-execution";
+import { OPENSHELL_HEAVY_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 
 const DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const CAPTURE_LIMIT_BYTES = 1024 * 1024;
 
 export { createCliOpenShellSandboxLookupFromRunner, createCliOpenShellSandboxObserverFromRunner };
+
+const DELETE_ABSENCE_MAX_ATTEMPTS = 20;
+const DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
+const DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
+const DELETE_ABSENCE_REQUIRED_MISSING_OBSERVATIONS = 2;
+
+export type SandboxDeleteConvergenceResult = Readonly<{
+  confirmed: boolean;
+  attempts: number;
+  lastObservation: CliOpenShellSandboxLookupResult["result"] | null;
+}>;
+
+type SandboxDeleteConvergenceDeps = Readonly<{
+  now?: () => number;
+  sleep?: (milliseconds: number) => void;
+}>;
+
+/**
+ * Wait for stable explicit absence from the exact gateway-scoped sandbox lookup.
+ * Two consecutive missing observations prevent a transient lookup gap from
+ * retiring local ownership while the sandbox remains or is replaced.
+ * The delete mutation belongs to the caller and must never be retried here.
+ */
+export async function waitForSandboxDeleteAbsence(
+  sandboxName: string,
+  gatewayName: string,
+  lookupSandbox: CliOpenShellSandboxLookup,
+  log: (message: string) => void = () => undefined,
+  deps: SandboxDeleteConvergenceDeps = {},
+): Promise<SandboxDeleteConvergenceResult> {
+  const now = deps.now ?? Date.now;
+  const deadlineMs = now() + OPENSHELL_PROBE_TIMEOUT_MS;
+  let attempts = 0;
+  let lastObservation: CliOpenShellSandboxLookupResult["result"] | null = null;
+  let consecutiveMissingObservations = 0;
+
+  const confirmed = await waitUntilAsync(
+    async () => {
+      attempts += 1;
+      const timeoutMs = Math.max(1, Math.ceil(deadlineMs - now()));
+      try {
+        const observation = await lookupSandbox({
+          sandboxName,
+          target: { kind: "named", gatewayName },
+          timeoutMs,
+        });
+        lastObservation = observation.result;
+        const state = observation.result.ok ? observation.result.value.state : "unknown";
+        log(`Delete convergence probe ${attempts}: state=${state}`);
+        consecutiveMissingObservations =
+          state === "missing" ? consecutiveMissingObservations + 1 : 0;
+        return consecutiveMissingObservations >= DELETE_ABSENCE_REQUIRED_MISSING_OBSERVATIONS;
+      } catch {
+        lastObservation = null;
+        consecutiveMissingObservations = 0;
+        log(`Delete convergence probe ${attempts}: state=unknown`);
+        return false;
+      }
+    },
+    {
+      deadlineMs,
+      initialIntervalMs: DELETE_ABSENCE_INITIAL_INTERVAL_MS,
+      maxIntervalMs: DELETE_ABSENCE_MAX_INTERVAL_MS,
+      maxAttempts: DELETE_ABSENCE_MAX_ATTEMPTS,
+      now,
+      ...(deps.sleep ? { sleep: deps.sleep } : {}),
+    },
+  );
+
+  return { confirmed, attempts, lastObservation };
+}
 
 const deleteMessages = {
   authentication: "OpenShell could not authorize the sandbox deletion.",
