@@ -12,7 +12,18 @@ skill:
   priority: 20
 agent-variants: ["openclaw", "hermes"]
 ---
-Built-in OpenClaw and Hermes images support two direct-container lifecycle topologies for `recover` and `gateway restart`.
+<AgentOnly variant="openclaw">
+
+OpenClaw owns its native `gateway restart` operation.
+In supported Linux OpenShell sandboxes, the native restart replaces the Node process image while preserving its process ID, so updated plugin modules load without recreating the sandbox.
+NemoClaw then verifies gateway health and checks or recovers host-side forwards.
+The recovery controllers described below apply to `recover`.
+Refer to [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) for restart instructions.
+
+</AgentOnly>
+
+Built-in OpenClaw and Hermes images support two direct-container recovery topologies.
+Hermes also uses these controllers for `gateway restart`.
 
 | Topology | Process ownership | Lifecycle and trust boundary |
 |---|---|---|
@@ -21,7 +32,7 @@ Built-in OpenClaw and Hermes images support two direct-container lifecycle topol
 
 The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
 It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
-For `recover` and `gateway restart`, the managed controller acquires the expected-exit lock before it inspects the supervisor or gateway.
+For `recover` and Hermes `gateway restart`, the managed controller acquires the expected-exit lock before it inspects the supervisor or gateway.
 Lock acquisition, gateway termination, and replacement health share one recovery deadline.
 If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BUSY` without publishing an expected-exit marker.
 
@@ -40,7 +51,8 @@ Remove it only after the minimum supported OpenShell provides a root-owned lifec
 
 ## Verify Recovery Health
 
-For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
+For built-in OpenClaw and Hermes controllers, a successful `recover` response supplies the initial authenticated gateway-health proof.
+Hermes `gateway restart` uses the same controller proof.
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
 
 The controller rechecks the managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
@@ -64,7 +76,7 @@ After the in-sandbox processes are healthy, the host repairs only the host-side 
 
 ## Fail Closed on Unsupported Topologies
 
-The host selects the matching controller automatically for `recover` and `gateway restart`.
+The host selects the matching controller automatically for `recover` and Hermes `gateway restart`.
 Ordinary `openshell sandbox exec` and manual in-sandbox relaunch are not fallback paths.
 
 A current built-in image supports both the direct root-entrypoint and OpenShell-managed topologies.

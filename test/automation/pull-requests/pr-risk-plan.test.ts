@@ -454,6 +454,7 @@ describe("deterministic PR risk plan", () => {
   });
 
   it.each([
+    "scripts/lib/patch-openclaw-container-restart.mts",
     "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
   ])("maps %s changes to the EXDEV job (#10517, #11547)", (changedFile) => {

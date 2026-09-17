@@ -88,7 +88,10 @@ Use `gateway restart` when you intentionally need a supported OpenClaw gateway t
 $$nemoclaw <sandbox-name> gateway restart
 ```
 
-The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health. The host then checks or recovers host-side dashboard, messaging, and agent forwards. Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+The restart command asks OpenClaw to perform its native gateway restart.
+In supported Linux OpenShell sandboxes, the native restart replaces the Node process image while preserving its process ID, so updated plugin code loads without recreating the sandbox.
+NemoClaw verifies listener and HTTP health, then checks or recovers host-side dashboard, messaging, and agent forwards.
+Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
 
 </AgentOnly>
 
