@@ -153,7 +153,8 @@ export function hermesInstalledToolCommand(nonce: string) {
 export function createHermesPtyState() {
   let channel: string | null = null,
     sessionId: string | null = null,
-    storedSessionId: string | null = null;
+    storedSessionId: string | null = null,
+    profileName: string | null = null;
   let receivedPtyData = false,
     lastSeq = 0,
     completeSeq = 0,
@@ -213,17 +214,29 @@ export function createHermesPtyState() {
       failure = "Invalid actual PTY session.info payload";
       return;
     }
+    const announcedProfile =
+      typeof payload?.profile_name === "string" &&
+      payload.profile_name.length > 0 &&
+      payload.profile_name.length <= 128
+        ? payload.profile_name
+        : null;
     const usable =
       event.type === "session.info" &&
       payload.version === "0.21.1" &&
       payload.lazy !== true &&
-      payload.running === false;
+      payload.running === false &&
+      announcedProfile !== null;
     if (!sessionId) {
       if (!usable) return;
       sessionId = event.session_id;
+      profileName = announcedProfile;
     }
     if (event.session_id !== sessionId) {
       failure = "The actual PTY changed its runtime session";
+      return;
+    }
+    if (usable && announcedProfile !== profileName) {
+      failure = "The actual PTY changed its owning profile";
       return;
     }
     if (event.seq <= lastSeq) return; // A reconnect can replay already observed sequence numbers.
@@ -254,6 +267,7 @@ export function createHermesPtyState() {
             version: payload.version,
             lazy: payload.lazy === true,
             running: payload.running,
+            profileName,
             seq: event.seq,
           }
         : null;
@@ -329,12 +343,16 @@ export function createHermesPtyState() {
     storedSessionId() {
       return storedSessionId;
     },
+    profileName() {
+      return profileName;
+    },
     snapshot() {
       return {
         channel,
         eventFeedOpen: eventFeedOpen(),
         runtimeSessionId: sessionId,
         storedSessionId,
+        profileName,
         receivedPtyData,
         lastSeq,
         completeSeq,
@@ -775,10 +793,14 @@ async function main() {
       tavilyLiveLookup: "not-tested-user-waiver",
     };
     const messagesFor = async (prompt: string) => {
-      const id = pty.storedSessionId();
-      if (!id) return [];
+      const id = pty.storedSessionId(),
+        profile = pty.profileName();
+      if (!id || !profile) return [];
       const detail = await api(
-        "/api/sessions/" + encodeURIComponent(id) + "/messages?limit=500&order=latest",
+        "/api/sessions/" +
+          encodeURIComponent(id) +
+          "/messages?limit=500&order=latest&profile=" +
+          encodeURIComponent(profile),
       );
       assert.equal(detail.session_id, id);
       assert(Array.isArray(detail.messages));

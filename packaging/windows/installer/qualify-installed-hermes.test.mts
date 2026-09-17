@@ -229,6 +229,7 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
         lazy: false,
         running: false,
         stored_session_id: "saved-real",
+        profile_name: "profile-real",
         ...payload,
       },
     },
@@ -255,6 +256,7 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
   state.receive("actual-pty", info(3));
   assert.equal(state.usable(), true);
   assert.equal(state.storedSessionId(), "saved-real");
+  assert.equal(state.profileName(), "profile-real");
   const mark = state.markTurn();
   const event = (type: string, seq: number) => ({
     method: "event",
