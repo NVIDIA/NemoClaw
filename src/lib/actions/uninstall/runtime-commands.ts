@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RunResult } from "../../adapters/uninstall/commands";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  createUninstallSandboxLifecycle,
+  createUninstallSandboxObserver,
+  type RunResult,
+} from "../../adapters/uninstall/commands";
 import {
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
@@ -14,24 +17,37 @@ interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
   log(message: string): void;
   run(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): RunResult;
+  sleep?(milliseconds: number): void;
   warn(message: string): void;
 }
 
-export function deleteSelectedGatewaySandbox(
+export async function deleteSelectedGatewaySandbox(
   runtime: UninstallRuntimeCommands,
   gatewayName: string,
   sandboxName: string,
-): boolean {
-  const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
-    env: runtime.env,
+): Promise<boolean> {
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteSandbox({
+    sandboxName,
+    target: { kind: "named", gatewayName },
   });
-  if (result.status === 0) {
-    runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-    return true;
-  }
-  if (getSandboxDeleteOutcome(result).alreadyGone) {
+  if (result.kind === "absent") {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
     return true;
+  }
+  if (result.kind === "failed" && !result.ambiguous) {
+    runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+    return false;
+  }
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const observed = await observer.listSandboxes({
+      target: { kind: "named", gatewayName },
+    });
+    if (observed.ok && !observed.value.sandboxes.some((sandbox) => sandbox.name === sandboxName)) {
+      runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
+      return true;
+    }
+    if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
   return false;

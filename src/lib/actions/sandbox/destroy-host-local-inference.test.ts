@@ -201,6 +201,7 @@ async function runDestroy(
     peers?: SandboxEntry[];
     currentAfterDelete?: SandboxEntry | null;
     deleteResult?: { status: number; stdout: string; stderr: string };
+    listResult?: { status: number; stdout: string; stderr: string };
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -235,20 +236,19 @@ async function runDestroy(
   const runOpenshell = vi.fn((args: string[]) => {
     const command = args.join(" ");
     runtimeProvider.events.push(command);
-    current =
-      args[0] === "sandbox" && args[1] === "delete" && args.at(-1) === "alpha"
-        ? afterDelete
-        : current;
-    return (
-      options.deleteResult ?? {
-        status: 0,
-        stdout: "",
-        stderr: "",
-      }
-    );
+    switch (`${String(args[0])}:${String(args[1])}`) {
+      case "sandbox:list":
+        return options.listResult ?? { status: 0, stdout: "", stderr: "" };
+      case "sandbox:delete":
+        current = args.at(-1) === "alpha" ? afterDelete : current;
+        return options.deleteResult ?? { status: 0, stdout: "", stderr: "" };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
   });
   const result = await executeSandboxDestroy({
     force: options.force ?? false,
+    deleteGatewayName: "nemoclaw",
     ...(options.includeRegistryReaders === false ? {} : { getSandbox, listSandboxes }),
     runOpenshell,
     sandbox: entry,
@@ -377,6 +377,7 @@ describe("sandbox destroy host-local inference transaction", () => {
 
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox,
       listSandboxes: () => ({ sandboxes: [entry] }),
       runOpenshell,
@@ -490,6 +491,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox: () => current,
       listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
@@ -521,6 +523,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     const stopInferenceResources = vi.fn();
     const result = await executeSandboxDestroy({
       force: false,
+      deleteGatewayName: "nemoclaw",
       getSandbox: () => entry,
       listSandboxes: () => ({ sandboxes: [entry] }),
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
@@ -696,6 +699,36 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runtimeProvider.events).not.toContain("cleanup");
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("preserves recovery authority when an accepted delete remains present", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      listResult: { status: 0, stdout: "alpha Ready", stderr: "" },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      deleteOutput: expect.stringContaining("did not confirm its absence"),
+    });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {
+    const runtimeProvider = provider();
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      deleteResult: {
+        status: 1,
+        stdout: "",
+        stderr: "transport error: connection reset",
+      },
+      listResult: { status: 0, stdout: "", stderr: "" },
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
   });
 
   it("reconciles retained authority only after stable sandbox absence", async () => {

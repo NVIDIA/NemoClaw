@@ -33,11 +33,12 @@ belongs to the frozen contract or was newly proven on the exact follow-up delta.
 - Already-reported findings become a frozen contract and are not repeated on later commits.
 - Follow-up feedback is allowed only for a validated P0/P1 blocker newly introduced or newly
   proven by the reviewed delta.
-- Malformed evidence and unsupported Advisor statuses are rejected before a decision.
+- Malformed evidence, non-boolean snapshot flags, unsupported Advisor statuses, and any Advisor
+  identity other than `exact-head` are rejected before a decision.
 - Ambiguous evidence, stale results, pending prerequisites, drafts, self-authored changes, and
   duplicate exact-head writes stay quiet.
-- Approval is proposed only for an exact head with a clear Advisor result, passing required checks,
-  mergeability, verified commits, and accepted product scope.
+- Approval is proposed only for an exact head with a clear exact-head Advisor result, passing
+  required checks, mergeability, explicitly verified commits, and accepted product scope.
 
 Any future GitHub writer must re-read the live head and base immediately before a write and apply
 the same duplicate-write guard. Approval and merge remain separate actions; this coordinator never

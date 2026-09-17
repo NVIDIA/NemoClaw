@@ -212,7 +212,10 @@ export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
     | { status: "blocked"; reason: "authority-unproven"; removed: false }
 >(() => ({ status: "complete", removed: true }));
 export const runOpenshellMock = vi.fn((args: string[]) => {
-  args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
+  if (args[0] === "sandbox" && args[1] === "delete") {
+    lifecycleMock.events.push("delete");
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+  }
   return { status: 0, output: "" };
 });
 export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
@@ -270,10 +273,6 @@ vi.mock("../../credentials/store", () => ({
   getCredential: vi.fn(() => null),
   prompt: vi.fn(),
   saveCredential: vi.fn(),
-}));
-
-vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 
 vi.mock("../../inference/nim", () => ({
