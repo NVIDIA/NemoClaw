@@ -54,13 +54,17 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
   );
   const checkout = step("Check out trusted Station controller");
   requireEqual(
-    checkout.with,
+    checkout,
     {
-      repository: "NVIDIA/NemoClaw",
-      ref: "${{ github.workflow_sha }}",
-      "persist-credentials": false,
+      name: "Check out trusted Station controller",
+      uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      with: {
+        repository: "NVIDIA/NemoClaw",
+        ref: "${{ github.workflow_sha }}",
+        "persist-credentials": false,
+      },
     },
-    "Station controller checkout must use the trusted workflow revision without stored credentials",
+    "Station controller checkout must use the reviewed checkout action and trusted workflow revision without stored credentials",
   );
   requireEqual(
     step("Set up Node for Station controller"),

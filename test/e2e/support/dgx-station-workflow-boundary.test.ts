@@ -58,6 +58,9 @@ describe("Station workflow authorization and ownership", () => {
       },
       "trusted workflow revision",
     ],
+    [0, "uses", `unreviewed/checkout@${"a".repeat(40)}`, "reviewed checkout action"],
+    [0, "uses", `actions/checkout@${"b".repeat(40)}`, "reviewed checkout action"],
+    [0, "if", "false", "reviewed checkout action"],
     [1, "uses", "actions/setup-node@main", "reviewed Node setup"],
     [1, "with", { "node-version": ">=22.19.0 <23" }, "reviewed Node setup"],
     [1, "if", "false", "reviewed Node setup"],
@@ -74,6 +77,7 @@ describe("Station workflow authorization and ownership", () => {
     ];
     job.steps[index as number][field as string] = value;
     expect(validateDgxStationDispatchBoundary(workflow).join("\n")).toContain(expected);
+    expect(validateE2eWorkflow(workflow).join("\n")).toContain(expected);
   });
 
   it("rejects a Station controller without reviewed npm setup", () => {
