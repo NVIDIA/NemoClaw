@@ -15,7 +15,8 @@ const ORIGINAL = `\tif (isContainerEnvironment()) return {
 \t\tmode: "disabled",
 \t\tdetail: "container: use in-process restart to keep PID 1 alive"
 \t};`;
-const REPLACEMENT = `\tif (isContainerEnvironment()) {
+// OpenShell sandboxes can omit Docker/Podman sentinels and namespace cgroup paths.
+const REPLACEMENT = `\tif (isContainerEnvironment() || (process.platform === "linux" && process.env.OPENSHELL_SANDBOX === "1")) {
 \t\t${MARKER}
 \t\tif (process.platform === "linux" && process.env.OPENSHELL_SANDBOX === "1") {
 \t\t\tif (typeof process.execve !== "function") throw new Error("OpenClaw sandbox restart requires process.execve");

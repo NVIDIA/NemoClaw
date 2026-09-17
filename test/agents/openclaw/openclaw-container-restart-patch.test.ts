@@ -60,19 +60,22 @@ function restartHarness(
 }
 
 describe("OpenClaw sandbox restart patch", () => {
-  it("replaces the process with its original invocation and restart handoff environment", () => {
-    const { restart, execve, processStub } = restartHarness();
-    expect(() => restart({ env: { RESTART_TRACE: "trace-id" } })).toThrow("replaced");
-    expect(execve).toHaveBeenCalledExactlyOnceWith(
-      processStub.execPath,
-      [processStub.execPath, ...processStub.execArgv, ...processStub.argv.slice(1)],
-      { ...processStub.env, RESTART_TRACE: "trace-id" },
-    );
-  });
+  it.each([true, false])(
+    "replaces the OpenShell process when generic container detection is %s",
+    (container) => {
+      const { restart, execve, processStub } = restartHarness({ container });
+      expect(() => restart({ env: { RESTART_TRACE: "trace-id" } })).toThrow("replaced");
+      expect(execve).toHaveBeenCalledExactlyOnceWith(
+        processStub.execPath,
+        [processStub.execPath, ...processStub.execArgv, ...processStub.argv.slice(1)],
+        { ...processStub.env, RESTART_TRACE: "trace-id" },
+      );
+    },
+  );
 
   it.each([
     { sandbox: false },
-    { container: false },
+    { sandbox: false, container: false },
     { platform: "darwin" },
     { platform: "win32" },
     { disabled: true },
@@ -173,7 +176,7 @@ console.log(JSON.stringify({version, pid: process.pid}));
 if (process.env.RESTARTED !== "1") {
   fs.writeFileSync(new URL("./version.mjs", import.meta.url), 'export const version = "v1-exdev";');
   const processView = {platform: "linux", env: {...process.env, OPENSHELL_SANDBOX: "1"}, execPath: process.execPath, execArgv: process.execArgv, argv: process.argv, execve: process.execve.bind(process)};
-  const context = vm.createContext({process: processView, isTruthy: value => value === "1", detectRespawnSupervisor: () => null, isContainerEnvironment: () => true});
+  const context = vm.createContext({process: processView, isTruthy: value => value === "1", detectRespawnSupervisor: () => null, isContainerEnvironment: () => false});
   const restart = vm.runInContext(${JSON.stringify(patchContainerRestart(nativeRestart) + "; restartGatewayProcessWithFreshPid")}, context);
   restart({env: {RESTARTED: "1"}});
 }
