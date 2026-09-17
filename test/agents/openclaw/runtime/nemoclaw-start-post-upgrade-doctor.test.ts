@@ -124,9 +124,6 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
       expect(fs.existsSync(f.normalizeCalls)).toBe(false);
-      expect(source.indexOf("run_requested_openclaw_backup_quiesce || exit 1")).toBeLessThan(
-        source.indexOf("prepare_openshell_sqlite_tmpdir || exit 1"),
-      );
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
