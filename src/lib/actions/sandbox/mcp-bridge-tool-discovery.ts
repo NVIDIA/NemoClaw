@@ -3,11 +3,11 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
-import type {
-  McpSourceEntry,
-  McpBridgeStatus,
-  McpBridgeToolDiscoveryFailedStage,
-  McpBridgeToolDiscoveryFailureClass,
+import {
+  type McpSourceEntry,
+  type McpBridgeStatus,
+  type McpBridgeToolDiscoveryFailedStage,
+  type McpBridgeToolDiscoveryFailureClass,
 } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
@@ -16,7 +16,7 @@ import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
-import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -113,11 +113,7 @@ export function buildMcpToolDiscoveryCommand(
   // skip a healthy registration as "no valid managed endpoint" (#11377).
   // Entries without a recorded trusted host keep the strict public boundary.
   try {
-    if (
-      normalizeMcpServerUrl(entry.url, {
-        trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
-      }) !== entry.url
-    ) {
+    if (normalizeRecordedMcpServerUrl(entry) !== entry.url) {
       return null;
     }
   } catch {

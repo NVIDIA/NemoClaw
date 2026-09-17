@@ -67,7 +67,7 @@ import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
-import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -183,21 +183,6 @@ function curlCommand(url: string, authorization: string, httpMarker: string): st
 }
 
 /**
- * Trusted-private hosts the stored URL must be validated under.
- *
- * The recorded exact-host trust intent must ride along with the stored URL: a
- * trusted private endpoint is canonical only under that intent, and dropping it
- * made status skip a healthy registration as "no credential binding or safe
- * endpoint to probe" (#11377). Entries without a recorded trusted host keep the
- * strict public boundary.
- */
-function recordedTrustedPrivateHosts(
-  entry: Pick<McpSourceEntry, "trustedPrivateHost">,
-): readonly string[] | undefined {
-  return entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined;
-}
-
-/**
  * Build the in-sandbox wire probe that checks whether the gateway resolves the
  * recorded credential placeholder for a persisted MCP entry. Returns null when
  * the entry has no credential binding or its stored URL fails the current
@@ -214,11 +199,7 @@ export function buildCredentialResolutionProbeCommand(
   // authenticated-endpoint boundary: the gateway could rewrite the placeholder
   // header into a live credential bound for a legacy or private endpoint.
   try {
-    if (
-      normalizeMcpServerUrl(entry.url, {
-        trustedPrivateHosts: recordedTrustedPrivateHosts(entry),
-      }) !== entry.url
-    ) {
+    if (normalizeRecordedMcpServerUrl(entry) !== entry.url) {
       return null;
     }
   } catch {
@@ -430,12 +411,7 @@ export async function probeCredentialResolution(
   // Reject the entry before the fresh credential observation so an unsafe
   // persisted URL cannot trigger either sandbox or endpoint traffic.
   try {
-    if (
-      !entry.env[0] ||
-      normalizeMcpServerUrl(entry.url, {
-        trustedPrivateHosts: recordedTrustedPrivateHosts(entry),
-      }) !== entry.url
-    ) {
+    if (!entry.env[0] || normalizeRecordedMcpServerUrl(entry) !== entry.url) {
       return { ok: null, detail: "no credential binding or safe endpoint to probe" };
     }
   } catch {
