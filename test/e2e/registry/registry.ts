@@ -42,10 +42,18 @@ export function buildTargetRegistry(targets: TargetDefinition[]): TargetRegistry
   }
   for (const target of targets) {
     requireLiveTargetExecution(target);
-    requireExpectedState(target.expectedStateId);
+    const expectedState = requireExpectedState(target.expectedStateId);
     if (!CONFIG_EXPORT_EXPECTATIONS.includes(target.configExport?.expectation)) {
       throw new Error(
         `Target '${target.id}' has a config export coverage gap; declare required, expected-refusal, or no-usable-sandbox.`,
+      );
+    }
+    if (
+      target.configExport.expectation === "no-usable-sandbox" &&
+      expectedState.sandbox?.expected !== "absent"
+    ) {
+      throw new Error(
+        `Target '${target.id}' no-usable-sandbox config export requires an absent sandbox expected state.`,
       );
     }
     if (

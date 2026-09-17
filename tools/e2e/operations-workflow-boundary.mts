@@ -11,6 +11,10 @@ import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -867,8 +871,44 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
-  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
-    errors.push("live E2E must wait for matrix generation and base-image publication");
+  if (
+    !sameMembers(needs(live), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
+    );
+  }
+  const sdkSteps = live.steps ?? [];
+  const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
+  const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
+  const downloadIndex = sdkSteps.indexOf(sdkDownload);
+  const installIndex = sdkSteps.indexOf(sdkInstall);
+  const runIndex = sdkSteps.indexOf(findStep(live, "Run live E2E tests"));
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: DOWNLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !(
+      prepareIndex >= 0 &&
+      prepareIndex < downloadIndex &&
+      downloadIndex < installIndex &&
+      installIndex < runIndex
+    )
+  ) {
+    errors.push(
+      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
+    );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
