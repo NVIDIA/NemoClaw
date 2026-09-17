@@ -403,7 +403,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=4b491ee5d77dd83fc73146399b3feea8ac6858d8598d1ec5b5083deacafb782e
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b2932c2abfac122022e153164a6c64078f9ce4d54cd45aa840fba59a713a995a
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -429,7 +429,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=4b491ee5d77dd83fc73146399b3feea8ac6858d8598d1ec5b5083deacafb782e
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b2932c2abfac122022e153164a6c64078f9ce4d54cd45aa840fba59a713a995a
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /

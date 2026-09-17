@@ -263,6 +263,44 @@ module.verify_session_delete()
   }
 }
 
+function runGoogleChatOverrideSeamsProbe() {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-seams-"));
+  const adapter = path.join(temporaryRoot, "adapter.py");
+  fs.writeFileSync(
+    adapter,
+    `
+def _validate_config(self) -> Tuple[str, Optional[str]]:
+    pass
+def _load_sa_credentials(self) -> Any:
+    pass
+def _new_authed_http(self) -> Any:
+    pass
+async def connect(self, *, is_reconnect: bool = False) -> bool:
+    if subscription_path is not None and not await self._check_subscription(subscription_path, credentials):
+        return False
+    self._supervisor_task = asyncio.create_task(self._run_supervisor()) if subscription_path is not None else None
+`,
+  );
+  const source = `
+import importlib.util
+import pathlib
+import sys
+
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_googlechat_override_seams(pathlib.Path(sys.argv[2]))
+`;
+  try {
+    return spawnSync("python3", ["-I", "-c", source, probes, adapter], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
 function runGeneratedConfigPreparation(doctorExit = 0) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-prepare-"));
   const hermesHome = path.join(temporaryRoot, ".hermes");
@@ -365,6 +403,13 @@ describe("Hermes image build probes", () => {
     expect(dockerfile).toContain(
       `printf '%s\\n' 'database:' '  temp_store: 2' > "$session_probe_home/config.yaml"`,
     );
+  });
+
+  it("accepts the Hermes 0.21.3 Google Chat override seams", () => {
+    const result = runGoogleChatOverrideSeamsProbe();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {

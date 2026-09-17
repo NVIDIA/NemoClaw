@@ -663,7 +663,9 @@ def verify_discord_reopen() -> None:
     assert store.call(reopen_probe) == ("gateway-reopened",)
 
 
-def verify_googlechat_override_seams() -> None:
+def verify_googlechat_override_seams(
+    path: Path = Path("/opt/hermes/plugins/platforms/google_chat/adapter.py"),
+) -> None:
     """Fail the build when a Google Chat definition the channel override binds moves.
 
     The override subclasses the bundled adapter because ``PlatformEntry`` carries
@@ -671,16 +673,16 @@ def verify_googlechat_override_seams() -> None:
     them: an upgrade that renames one stops the build instead of letting the
     channel fall back to the stock adapter unnoticed.
     """
-    path = "/opt/hermes/plugins/platforms/google_chat/adapter.py"
-    source = Path(path).read_text(encoding="utf-8")
+    source = path.read_text(encoding="utf-8")
     expected = {
         "def _validate_config(self) -> Tuple[str, Optional[str]]:": 1,
         "def _load_sa_credentials(self) -> Any:": 1,
         "def _new_authed_http(self) -> Any:": 1,
         "async def connect(self, *, is_reconnect: bool = False) -> bool:": 1,
-        # connect() gates its gRPC subscriber precheck and its own supervisor on
-        # this test; the override reports no subscription so both are skipped.
-        "if subscription_path is not None:": 2,
+        # The override reports no subscription, so connect() skips both the
+        # gRPC subscriber precheck and the bundled supervisor.
+        "if subscription_path is not None and not await self._check_subscription(subscription_path, credentials):": 1,
+        "self._supervisor_task = asyncio.create_task(self._run_supervisor()) if subscription_path is not None else None": 1,
     }
     for needle, count in expected.items():
         actual = source.count(needle)
