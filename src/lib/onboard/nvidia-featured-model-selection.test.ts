@@ -140,6 +140,23 @@ describe("NVIDIA featured model selection", () => {
     expect(promptCloudModel).not.toHaveBeenCalled();
   });
 
+  it("ignores a configured retired NVIDIA model during non-interactive recovery", async () => {
+    const retiredModel = "minimaxai/minimax-m3";
+    const replacement = "nvidia/nemotron-3-super-120b-a12b";
+    const warn = vi.fn();
+    const session = createNvidiaFeaturedModelSession({ warn, writeLine: vi.fn() });
+
+    await expect(session.select(retiredModel, retiredModel, true, retiredModel)).resolves.toBe(
+      replacement,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `  Warning: configured NVIDIA model "${retiredModel}" is retired; ignoring it and using "${replacement}" instead.`,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `  Warning: recovered NVIDIA model "${retiredModel}" is retired; using "${replacement}" instead.`,
+    );
+  });
+
   it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {
     const select = vi.fn().mockResolvedValue("nvidia/selected-model");
     const session = { select } as unknown as NvidiaFeaturedModelSession;

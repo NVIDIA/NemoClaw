@@ -48,28 +48,43 @@ export function createNvidiaFeaturedModelSession(
   let announcedLoad = false;
   return {
     async select(requestedModel, recoveredModel, nonInteractive, envModel, promptOptions) {
-      if (requestedModel) return requestedModel;
+      const configuredModel = envModel?.trim();
+      const configuredModelIsRetired = Boolean(
+        configuredModel && isRetiredNvidiaFeaturedModelId(configuredModel, options.retiredModelIds),
+      );
+      if (requestedModel) {
+        if (!isRetiredNvidiaFeaturedModelId(requestedModel, options.retiredModelIds)) {
+          return requestedModel;
+        }
+        warn(
+          `  Warning: configured NVIDIA model "${requestedModel}" is retired; ignoring it and using "${defaultModel}" instead.`,
+        );
+      }
       if (recoveredModel) {
         if (!isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)) {
           return recoveredModel;
         }
-        const configuredModel = envModel?.trim();
         warn(
           nonInteractive
-            ? `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; using "${configuredModel || defaultModel}" instead.`
+            ? `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; using "${configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel}" instead.`
             : `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; choose a replacement model.`,
         );
       }
-      const configuredModel = envModel?.trim();
-      if (nonInteractive) return configuredModel || defaultModel;
+      if (nonInteractive) {
+        return configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
+      }
       if (!announcedLoad) {
         writeLine(loadingMessage);
         announcedLoad = true;
       }
       return promptCloudModel({
-        ...loadPromptOptions(configuredModel || defaultModel),
+        ...loadPromptOptions(
+          configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel,
+        ),
         ...promptOptions,
-        manualDefaultModelId: promptOptions?.manualDefaultModelId ?? configuredModel,
+        manualDefaultModelId:
+          promptOptions?.manualDefaultModelId ??
+          (configuredModel && !configuredModelIsRetired ? configuredModel : undefined),
       });
     },
   };
