@@ -30,7 +30,7 @@ External services remain operated by their owners; NemoClaw still owns its deplo
 Build an image for the selected harness using [the Fabric image procedure](../inference.md#build-an-image-with-the-configuration-interface).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
-Hermes uses the local API/dashboard adapter by default; experimental [Relay tracing](../agents.md#hermes-relay-tracing) selects an upstream adapter without those interfaces.
+Hermes uses the local API/dashboard adapter by default; experimental [Relay tracing](../agents.md#hermes-relay-tracing) keeps that adapter when `interfaces` is explicit, otherwise selecting an upstream adapter without those interfaces.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) enforces the harness restrictions.
 [Retained evidence](../validation/README.md) distinguishes native protocol fixtures from live inference at specific revisions.

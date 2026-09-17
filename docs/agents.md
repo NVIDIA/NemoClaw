@@ -38,7 +38,7 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 | Agent | Access and conversation behavior |
 |---|---|
 | OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
-| Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) selects another adapter without those interfaces |
+| Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) can accompany explicitly declared interfaces |
 | Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the named agent's route |
 | Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
@@ -106,8 +106,8 @@ The adapters write these settings when first creating native configuration:
 |---|---|
 | OpenClaw | Nested native sandbox mode `off`; execution host `gateway` and mode `full`, inside the OpenShell sandbox; coding tool profile |
 | OpenClaw | Memory search, cron, update checks, and automatic updates disabled |
-| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings do not describe the Relay adapter |
-| Hermes Relay adapter | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
+| Hermes local adapter | Local terminal backend in `/sandbox/workspace`, manual approvals, and `agent.max_turns: 8`; these settings also apply with Relay and explicit interfaces |
+| Hermes Relay without explicit interfaces | Upstream Fabric defaults `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1` when unset; it does not install the local adapter's manual-approval configuration |
 
 The nested OpenClaw sandbox setting does not disable the outer OpenShell sandbox.
 These defaults do not guarantee that arbitrary native tools are harmless or supply missing integration prerequisites.
@@ -239,15 +239,18 @@ observability:
     enabled: true
 ```
 
-Fabric then starts Hermes through its upstream adapter and enables Hermes' in-process NeMo Relay integration.
+Fabric enables Hermes' in-process NeMo Relay integration.
+With explicit `interfaces`, it keeps the local API/dashboard adapter. Without `interfaces`, it selects the upstream Fabric adapter.
 Relay writes ATOF events and an ATIF trajectory under `/sandbox/artifacts/relay`; it does not run as a sidecar or add network egress.
 Full payload capture is disabled.
+With native interfaces, ATOF events appear during conversation turns; ATIF export follows native session finalization or graceful process shutdown. An open conversation may not yet have a trajectory file.
 
-This path cannot be combined with Hermes `interfaces` because the upstream adapter does not provide NemoClaw's local API and dashboard process.
-Omit `observability` to preserve the existing local Hermes adapter and its interface behavior.
+To trace the native API and dashboard, combine the declaration above with `interfaces` from [the Hermes interfaces example](../examples/hermes-interfaces.yaml).
+The native processes inherit Fabric's generated Relay configuration; API and dashboard conversations remain separate.
+The local adapter keeps its manual-approval settings.
 Relay also cannot be combined with OpenClaw's `otlp` setting; `enabled: false` is rejected, so omit the declaration to select the default mode.
-Enabling Relay also changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
-Do not rely on the local adapter's manual approvals when evaluating this mode.
+With `interfaces` omitted, selecting the upstream adapter changes native approval behavior: the [pinned upstream adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/51a28c1aefec56abd877070b6973d0a32a1e3003/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1` when unset.
+Do not rely on the local adapter's manual approvals when evaluating the upstream adapter.
 Its native home is under the Fabric artifact root at `.fabric/hermes/runtimes/<runtime-id>`, rather than the local API/dashboard homes.
 
 Build the current Hermes image with the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface).
@@ -266,8 +269,8 @@ Look for per-session `events.atof.jsonl` and `trajectory-*.atif.json` files; ins
 Full payload capture being disabled does not establish that every trace is free of private data.
 Trace files live in the sandbox and are deleted with it; there is no managed collector or independent archival lifecycle.
 Apply does not invoke Hermes or produce conversation traces.
-An explicitly requested Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation.
-General interactive access to this experimental hosted adapter remains **TBD**; do not use the local API/dashboard/token procedure for it.
+An explicitly requested upstream Relay agent probe uses a normal prompt and updates its in-memory conversation history; that probe is not isolated from the conversation. The local API adapter retains its isolated probe behavior when Relay is enabled.
+For Relay with explicit `interfaces`, use the normal local API/dashboard/token procedure. General interactive access to the upstream adapter remains **TBD**.
 On failure, preserve deployment state and inspect the original error; do not replay an uncertain invocation merely to produce traces.
 
 The [Fabric configuration](../image/fabric/fabric.py), [observability tests](../crates/nemoclaw-sdk/tests/observability.rs), and [offline adapter experiment](../test/fabric_adapters.py) define this contract.
@@ -366,7 +369,7 @@ Retained intent with the old shape is not migrated automatically; use its matchi
 
 ## Hermes Native Server
 
-With Relay tracing omitted, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
+With Relay tracing omitted or `interfaces` explicitly declared, Fabric's local Hermes adapter owns one authenticated native HTTP API server per sandbox.
 This section's API, token, native-file, and probe-isolation behavior applies to that default adapter.
 It invokes the native Responses endpoint and chains completed turns within the Fabric runtime.
 A runtime restart starts a new Fabric conversation; native persisted history remains in `/sandbox/.hermes`.

@@ -127,7 +127,7 @@ They do not establish browser compatibility or qualify a public dashboard deploy
 ## Hermes API, Dashboard, and Browser TUI
 
 This procedure uses the default local Hermes adapter with Relay tracing omitted.
-The experimental [Relay adapter](agents.md#hermes-relay-tracing) rejects `interfaces` and does not provide these services or their token files.
+Declare `interfaces` explicitly to combine these services with experimental [Relay tracing](agents.md#hermes-relay-tracing). Relay without `interfaces` selects the upstream adapter, which does not provide these services or their token files.
 
 Hermes exposes a native authenticated API on sandbox loopback port 8642 and a dashboard on port 18789 by default.
 The dashboard uses internal port 19119 behind a sandbox-local forwarder.

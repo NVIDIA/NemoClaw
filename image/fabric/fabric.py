@@ -55,13 +55,8 @@ def hermes_relay_enabled(inference=None):
     observability = (inference or {}).get("observability")
     if not isinstance(observability, dict) or "relay" not in observability:
         return False
-    if (
-        observability != {"relay": {"enabled": True}}
-        or (inference or {}).get("interfaces") is not None
-    ):
-        raise ValueError(
-            "Hermes Relay tracing requires the exact enabled setting and no native interfaces"
-        )
+    if observability != {"relay": {"enabled": True}}:
+        raise ValueError("Hermes Relay tracing requires the exact enabled setting")
     return True
 
 
@@ -178,7 +173,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         "remote-agent": "nvidia.fabric.remote-agent",
         "pi": "nvidia.fabric.pi",
     }[harness]
-    if relay:
+    native_interfaces = harness == "hermes" and (inference or {}).get("interfaces") is not None
+    if relay and not native_interfaces:
         adapter = "nvidia.fabric.hermes"
     config = {
         **(
@@ -188,7 +184,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         ),
         **(
             {"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}}
-            if harness == "hermes" and not relay
+            if harness == "hermes" and (not relay or native_interfaces)
             else {}
         ),
         **(
@@ -218,7 +214,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             ),
             **(
                 {"settings": {"agent_name": name}}
-                if harness == "openclaw" or harness == "hermes" and not relay
+                if harness == "openclaw" or harness == "hermes" and (not relay or native_interfaces)
                 else {}
             ),
         },
@@ -244,7 +240,9 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         "runtime": {
             **(
                 {"max_turns": 8}
-                if harness in ("deepagents", "claude", "mini-swe-agent") or relay
+                if harness in ("deepagents", "claude", "mini-swe-agent")
+                or relay
+                and not native_interfaces
                 else {}
             ),
             "timeout_seconds": execution_settings(inference, harness)["timeoutSeconds"]
@@ -270,7 +268,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             settings = config["harness"].setdefault("settings", {})
             settings.update(
                 {
-                    **({} if relay else {"inference": inference}),
+                    **({} if relay and not native_interfaces else {"inference": inference}),
                     "api_mode": {
                         "openai-completions": "chat_completions",
                         "openai-responses": "codex_responses",

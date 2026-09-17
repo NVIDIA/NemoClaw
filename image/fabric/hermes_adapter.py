@@ -12,7 +12,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from fabric import model_connection, model_credential
+from fabric import hermes_relay_enabled, model_connection, model_credential
 from interfaces import token
 
 ROOT = Path("/sandbox/.hermes")
@@ -271,6 +271,16 @@ class HermesRuntime:
                 HERMES_DISABLE_LAZY_INSTALLS="1",
                 NEMOCLAW_HERMES_INTERFACES=json.dumps(interface_settings(self.inference)),
             )
+            if hermes_relay_enabled(self.inference):
+                from nemo_fabric_adapters.hermes.telemetry import (
+                    HERMES_RELAY_ENV_NAMES,
+                    write_hermes_relay_plugin_config,
+                )
+
+                path, _ = write_hermes_relay_plugin_config(payload)
+                for name in HERMES_RELAY_ENV_NAMES:
+                    env.pop(name, None)
+                env["HERMES_NEMO_RELAY_PLUGINS_TOML"] = str(path)
             self.process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 __file__,

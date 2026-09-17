@@ -332,7 +332,7 @@ pub(super) fn constrain(root: &mut Value) {
     ]);
     defs["Harness"]["allOf"].as_array_mut().unwrap().extend([
         json!({"if":{"required":["observability"],"properties":{"observability":{"required":["otlp"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}),
-        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"kind":{"const":"hermes"}},"not":{"required":["interfaces"]}}})
+        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"kind":{"const":"hermes"}}}})
     ]);
     // JSON Schema's dollar anchor also matches before a trailing newline.
     property(

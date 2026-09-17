@@ -684,11 +684,6 @@
             ]
           },
           "then": {
-            "not": {
-              "required": [
-                "interfaces"
-              ]
-            },
             "properties": {
               "kind": {
                 "const": "hermes"

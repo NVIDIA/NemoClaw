@@ -138,6 +138,6 @@ fn relay_tracing_rejects_unsupported_combinations() {
     with_interfaces["spec"]["sandboxes"][0]["harness"]["observability"] = relay();
     with_interfaces["spec"]["sandboxes"][0]["harness"]["interfaces"] =
         json!({"dashboard":{"enabled":false}});
-    assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_err());
-    assert!(!schema.is_valid(&with_interfaces));
+    assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_ok());
+    assert!(schema.is_valid(&with_interfaces));
 }

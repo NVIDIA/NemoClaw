@@ -266,11 +266,6 @@ impl SandboxRuntimeSettings {
         }
         if let Some(observability) = &self.observability {
             observability.validate(harness)?;
-            if observability.uses_relay() && self.interfaces.is_some() {
-                return Err(ConfigError::new(
-                    "Hermes Relay tracing cannot be combined with native Hermes interfaces",
-                ));
-            }
         }
         if let Some(execution) = &self.execution {
             execution.validate(harness)?;
