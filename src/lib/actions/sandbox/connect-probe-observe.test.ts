@@ -313,14 +313,14 @@ describe("connectSandbox probe-only observe mode", () => {
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
       sandboxLifecycleStartStatus: 1,
-      expectedDockerStartCalls: 1,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "Docker reports no start status",
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: null,
       sandboxLifecycleStartStatus: 1,
-      expectedDockerStartCalls: 1,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "the container is already running",
@@ -393,7 +393,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("continues readiness polling when neither start recovers the container (#8967)", async () => {
+  it("continues readiness polling when OpenShell cannot start the container (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
@@ -403,9 +403,9 @@ describe("connectSandbox probe-only observe mode", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
-      "Docker could not start container 'openshell-alpha' (exit 1); continuing with readiness checks.",
+      "OpenShell could not start sandbox 'alpha' (exit 1); continuing with readiness checks.",
     );
     expect(
       harness.captureOpenshellSpy.mock.calls.some(
@@ -415,7 +415,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("falls back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
+  it("does not fall back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       sandboxLifecycleStartStatus: null,
@@ -424,14 +424,11 @@ describe("connectSandbox probe-only observe mode", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     const lifecycleStartIndices = harness.captureOpenshellSpy.mock.calls.flatMap(([args], index) =>
       Array.isArray(args) && args[0] === "sandbox" && args[1] === "start" ? [index] : [],
     );
     expect(lifecycleStartIndices).toHaveLength(1);
-    expect(
-      harness.captureOpenshellSpy.mock.invocationCallOrder[lifecycleStartIndices[0]!],
-    ).toBeLessThan(harness.dockerStartSpy.mock.invocationCallOrder[0]!);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
