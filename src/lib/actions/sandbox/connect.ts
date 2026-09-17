@@ -137,6 +137,7 @@ import {
   type PreparedHermesPortableForwardRecovery,
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
+  waitForStartedHermesGatewayProcess,
 } from "./process-recovery";
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
@@ -362,11 +363,13 @@ async function runSandboxConnectProbe(
   {
     hermesPortable = false,
     hermesPortableCommandAuthority,
+    startedStoppedContainer = false,
     probeOnly,
     probeTiming,
   }: {
     hermesPortable?: boolean;
     hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
+    startedStoppedContainer?: boolean;
     probeOnly: true;
     probeTiming?: ProbeTimingRecorder;
   },
@@ -375,7 +378,7 @@ async function runSandboxConnectProbe(
   const measure = <T>(stage: "forward" | "inference" | "pairing", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const measureAsync = <T>(
-    stage: "inference" | "pairing",
+    stage: "processes" | "inference" | "pairing",
     operation: () => Promise<T>,
   ): Promise<T> => (probeTiming ? probeTiming.measureAsync(stage, operation) : operation());
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -427,6 +430,21 @@ async function runSandboxConnectProbe(
       }),
     );
     return;
+  }
+
+  if (startedStoppedContainer && agent?.name === "hermes") {
+    const gatewayProcess = await measureAsync("processes", () =>
+      waitForStartedHermesGatewayProcess(sandboxName, getSandboxTargetGatewayName(sandboxName), {
+        log: console.log,
+      }),
+    );
+    if (gatewayProcess === false) {
+      probeTiming?.markFailureStage("processes");
+      console.error(
+        `  Probe failed: the Hermes gateway in sandbox '${sandboxName}' did not become observable and running before the startup settlement window expired.`,
+      );
+      process.exit(1);
+    }
   }
 
   // Managed recovery runs quiet here, so its classified failure layer is the
@@ -2873,6 +2891,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             await runSandboxConnectProbe(sandboxName, {
               hermesPortable,
               ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
+              startedStoppedContainer,
               probeOnly: true,
               probeTiming,
             });
