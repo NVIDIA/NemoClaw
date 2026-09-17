@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { loadManifest } from "../registry/manifests.ts";
 import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import type { TargetDefinition } from "../registry/types.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
@@ -61,19 +62,37 @@ describe("deterministic target registry", () => {
   });
 
   it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
-    const registered = listTargets()[0]!;
+    const registered: TargetDefinition = {
+      id: "export-coverage",
+      description: "Config export coverage validation fixture",
+      executionCoverage: {
+        agentRuntime: "openclaw",
+        observableOutcome: "Config export preserves the deployed configuration",
+        environmentOrInferenceEndpoint: "Ubuntu managed runtime",
+        unresolvedReason: "",
+      },
+      manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
+      environment: {
+        platform: "ubuntu-local",
+        install: "repo-current",
+        runtime: "managed-runtime-running",
+        onboarding: "cloud-openclaw",
+      },
+      expectedStateId: "cloud-openclaw-ready",
+      configExport: { expectation: "required" },
+      suiteIds: [],
+      requiredSecrets: [],
+      gatewayRuntimes: ["docker"],
+    };
+    expect(buildTargetRegistry([registered]).byId.get(registered.id)).toBe(registered);
     const targetWithoutExpectation = {
       ...registered,
       configExport: undefined,
     } as unknown as typeof registered;
 
-    let rejected = false;
-    try {
-      buildTargetRegistry([targetWithoutExpectation]);
-    } catch {
-      rejected = true;
-    }
-    expect(rejected).toBe(true);
+    expect(() => buildTargetRegistry([targetWithoutExpectation])).toThrow(
+      /config export coverage gap/,
+    );
   });
 
   it.each(listTargets())(

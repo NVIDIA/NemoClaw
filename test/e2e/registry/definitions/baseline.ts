@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TargetDefinition } from "../types.ts";
-import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
 import { E2E_GATEWAY_RUNTIMES } from "../../../../tools/e2e/gateway-runtime.mts";
+import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
+import type { TargetDefinition } from "../types.ts";
 
 const TARGETS: readonly TargetDefinition[] = [
   {

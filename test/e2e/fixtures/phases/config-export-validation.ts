@@ -147,9 +147,14 @@ export type ConfigExportDocument = ValidatedNemoClawConfig;
 
 export interface ConfigExportValidationDependencies {
   closeFile(file: number): void;
-  exists(filePath: string): boolean;
   inspectFile(filePath: string): { device: number; inode: number; isFile: boolean; size: number };
-  inspectOpenFile(file: number): { device: number; inode: number; isFile: boolean; size: number };
+  inspectOpenFile(file: number): {
+    device: number;
+    inode: number;
+    isFile: boolean;
+    linkCount: number;
+    size: number;
+  };
   loadManifest(filePath: string): LoadedManifest;
   loadRegistry(): ConfigExportRegistry;
   makeTempDirectory(prefix: string): string;
@@ -163,14 +168,19 @@ export interface ConfigExportValidationDependencies {
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   closeFile: fs.closeSync,
-  exists: fs.existsSync,
   inspectFile: (filePath) => {
     const stat = fs.lstatSync(filePath);
     return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
   },
   inspectOpenFile: (file) => {
     const stat = fs.fstatSync(file);
-    return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+    return {
+      device: stat.dev,
+      inode: stat.ino,
+      isFile: stat.isFile(),
+      linkCount: stat.nlink,
+      size: stat.size,
+    };
   },
   loadManifest,
   loadRegistry: readRegistry,
@@ -514,6 +524,16 @@ export class ConfigExportValidationPhaseFixture {
     private readonly dependencies: ConfigExportValidationDependencies = DEFAULT_DEPENDENCIES,
   ) {}
 
+  private outputEntryExists(filePath: string): boolean {
+    try {
+      this.dependencies.inspectFile(filePath);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+      throw error;
+    }
+  }
+
   async from(
     target: TargetDefinition,
     instance: NemoClawInstance,
@@ -574,6 +594,7 @@ export class ConfigExportValidationPhaseFixture {
           this.dependencies,
         );
       }
+      failureStage = "transport";
       const result = await this.host.nemoclaw(
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
         {
@@ -584,7 +605,7 @@ export class ConfigExportValidationPhaseFixture {
           timeoutMs: CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
         },
       );
-      const outputExists = this.dependencies.exists(outputPath);
+      const outputExists = this.outputEntryExists(outputPath);
       command = {
         exitCode: result.exitCode,
         signal: result.signal,
@@ -619,6 +640,9 @@ export class ConfigExportValidationPhaseFixture {
           const output = this.dependencies.inspectOpenFile(outputFile);
           if (!output.isFile) {
             throw new Error("config export output is not a regular file");
+          }
+          if (output.linkCount !== 1) {
+            throw new Error("config export output must have exactly one hard link");
           }
           if (output.size > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
             throw new Error(

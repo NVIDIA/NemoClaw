@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ConfigExportExpectation } from "../../test/e2e/registry/types.ts";
+import { testTimeout } from "../../test/helpers/timeouts.ts";
 
 const MINUTE_MS = 60_000;
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
@@ -33,11 +34,17 @@ export type LiveTargetTimeoutContract = Readonly<{
   targetTimeoutMinutes: number;
 }>;
 
+const CONFIG_EXPORT_BUDGET_MS: Readonly<Record<ConfigExportExpectation, number>> = {
+  required: CONFIG_EXPORT_COMMAND_TIMEOUT_MS + CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  "expected-refusal": CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  "no-usable-sandbox": 0,
+};
+
 function configExportBudgetMs(expectation: ConfigExportExpectation): number {
-  if (expectation === "required") {
-    return CONFIG_EXPORT_COMMAND_TIMEOUT_MS + CONFIG_EXPORT_POLICY_TIMEOUT_MS;
+  if (!Object.hasOwn(CONFIG_EXPORT_BUDGET_MS, expectation)) {
+    throw new Error("Unknown config export expectation");
   }
-  return expectation === "expected-refusal" ? CONFIG_EXPORT_COMMAND_TIMEOUT_MS : 0;
+  return CONFIG_EXPORT_BUDGET_MS[expectation];
 }
 
 export function liveTargetTimeoutContract(
@@ -46,20 +53,21 @@ export function liveTargetTimeoutContract(
 ): LiveTargetTimeoutContract {
   const configExportBudget = configExportBudgetMs(configExportExpectation);
   if (lifecycle === "dcode-rebuild-invalid-credential") {
-    const testTimeoutMs =
+    const testTimeoutMs = testTimeout(
       LIVE_TARGET_BASE_TEST_TIMEOUT_MS +
-      DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS +
-      configExportBudget;
+        DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS +
+        configExportBudget,
+    );
     return {
       testTimeoutMs,
-      targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
+      targetTimeoutMinutes: Math.ceil((testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS),
     };
   }
   if (configExportBudget === 0) return { targetTimeoutMinutes: 45 };
-  const testTimeoutMs = LIVE_TARGET_BASE_TEST_TIMEOUT_MS + configExportBudget;
+  const testTimeoutMs = testTimeout(LIVE_TARGET_BASE_TEST_TIMEOUT_MS + configExportBudget);
   return {
     testTimeoutMs,
-    targetTimeoutMinutes: (testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS,
+    targetTimeoutMinutes: Math.ceil((testTimeoutMs + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS),
   };
 }
 

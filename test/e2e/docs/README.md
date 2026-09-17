@@ -84,11 +84,11 @@ internal transport markers.
 The fixture caps each captured stdout and stderr stream at 64 KiB. Before
 reading or retaining an export, it opens the file without following symbolic
 links.
-The open descriptor must identify a regular file no larger than 1 MiB. After
-the descriptor read, the published path must still identify the same device
-and inode. The fixture rejects a replacement. It creates the export in a
-private temporary directory, registers cleanup before it invokes the CLI, and
-removes the directory before it writes retained evidence.
+The open descriptor must identify a regular file with exactly one hard link,
+no larger than 1 MiB. After the descriptor read, the published path must still
+identify the same device and inode. The fixture rejects a replacement. It
+creates the export in a private temporary directory, registers cleanup before
+it invokes the CLI, and removes the directory before it writes retained evidence.
 
 For `required` coverage, the canonical `NemoClawConfig` validator checks the
 complete exported document. Semantic expectations remain independent of the
@@ -105,7 +105,8 @@ ceiling because it does not invoke config export. The
 `dcode-rebuild-invalid-credential` lifecycle adds a 20-minute budget. With its
 expected refusal, its default test timeout is 52 minutes and its job ceiling is
 72 minutes. `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
-lower the derived test timeout.
+lower the derived test timeout. The derived job ceiling keeps at least 20
+minutes of headroom and rounds up to a whole minute.
 
 The `config-export-evidence.v1.json` artifact binds each result to the source
 revision, CLI version, and compiled CLI entry-point hash. Each record includes
@@ -118,6 +119,9 @@ Its failure stage distinguishes transport errors from export failures, while
 cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
 secrets and internal credential transport markers before publication.
+
+The secret scan covers registered fixture values, not arbitrary unregistered
+secrets. Review selected exports before retaining them as migration fixtures.
 
 After a live target succeeds, the E2E workflow requires
 `config-export-evidence.v1.json` before artifact upload. A missing file fails

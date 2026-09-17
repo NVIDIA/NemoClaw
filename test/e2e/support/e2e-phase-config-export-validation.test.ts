@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   CONFIG_EXPORT_EVIDENCE_CONTRACT,
   type ConfigExportDocument,
@@ -19,7 +20,9 @@ import {
   parseConfigExport,
 } from "../fixtures/phases/config-export-validation.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
 import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
 
@@ -205,14 +208,19 @@ function dependencies(
 ): ConfigExportValidationDependencies {
   return {
     closeFile: fs.closeSync,
-    exists: fs.existsSync,
     inspectFile: (filePath) => {
       const stat = fs.lstatSync(filePath);
       return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
     },
     inspectOpenFile: (file) => {
       const stat = fs.fstatSync(file);
-      return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+      return {
+        device: stat.dev,
+        inode: stat.ino,
+        isFile: stat.isFile(),
+        linkCount: stat.nlink,
+        size: stat.size,
+      };
     },
     loadManifest: (filePath) => ({
       filePath,
@@ -318,7 +326,7 @@ function fixture(
   options: {
     artifacts?: ArtifactSink;
     dependencies?: ConfigExportValidationDependencies;
-    host?: ReturnType<typeof successfulHost>;
+    host?: ReturnType<typeof successfulHost> | HostCliClient;
     secret?: string;
   } = {},
 ) {
@@ -404,7 +412,24 @@ describe("automatic config export validation phase", () => {
       byteLength: Buffer.byteLength(raw, "utf8"),
       sha256: sha256(raw),
     });
-    expect(evidence.verifications.every((entry) => entry.passed)).toBe(true);
+    expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining([
+        "sandboxName",
+        "agent",
+        "runtimeProvider",
+        "imageRef",
+        "inferenceProvider",
+        "inferenceApi",
+        "inferenceEndpoint",
+        "model",
+        "credentialReference",
+        "routeName",
+        "policySha256",
+        "enabledFeatures",
+        "routeProviderReference",
+      ]),
+    );
+    expect(persistedEvidence.verifications.filter((entry) => !entry.passed)).toEqual([]);
     expect(evidence.producer).toEqual({
       sourceRevision: SOURCE_REVISION,
       cliVersion: "0.1.0",
@@ -760,6 +785,23 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
 
+  it("classifies a command launch failure after observation as transport failure (#11485)", async () => {
+    const host = {
+      ...successfulHost(JSON.stringify(document())),
+      nemoclaw: vi.fn().mockRejectedValue(new Error("config export launch failed")),
+    };
+    const test = fixture({ host });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "transport",
+      expected: { model: "nvidia/model" },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
   it("distinguishes a command timeout from an exporter refusal (#11485)", async () => {
     const host = {
       nemoclaw: vi.fn(async () => ({
@@ -805,12 +847,22 @@ describe("automatic config export validation phase", () => {
     expect(evidence).not.toHaveProperty("export");
   });
 
-  it("rejects an expected refusal that publishes a file (#11485)", async () => {
+  it.each([
+    {
+      outputKind: "file",
+      publish: (outputPath: string) => fs.writeFileSync(outputPath, "unexpected", "utf8"),
+    },
+    {
+      outputKind: "dangling symbolic link",
+      publish: (outputPath: string) =>
+        fs.symlinkSync(path.join(path.dirname(outputPath), "missing.yaml"), outputPath),
+    },
+  ])("rejects an expected refusal that publishes a $outputKind (#11485)", async ({ publish }) => {
     const host = {
       ...successfulHost("unexpected"),
       nemoclaw: vi.fn(async (args: string[]) => {
         const outputPath = args.at(args.indexOf("--output") + 1)!;
-        fs.writeFileSync(outputPath, "unexpected", "utf8");
+        publish(outputPath);
         return {
           exitCode: 1,
           signal: null,
@@ -826,6 +878,9 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "export",
+      passed: false,
+      command: { exitCode: 1, outputPublished: true },
+      cleanup: { succeeded: true },
     });
   });
 
@@ -842,22 +897,81 @@ describe("automatic config export validation phase", () => {
     });
   });
 
-  it("bounds exporter output while retaining an actionable failure (#11485)", async () => {
-    const host = refusalHost(`unrelated failure ${"x".repeat(128 * 1024)}`);
-    const test = fixture({ host: host as ReturnType<typeof successfulHost> });
+  it.each([
+    { stream: "stdout", tail: "stdout end" },
+    { stream: "stderr", tail: "Config export failed (unsupported)." },
+  ])(
+    "bounds exporter $stream while retaining an actionable failure (#11485)",
+    async ({ stream, tail }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-capture-"));
+      createdDirectories.push(directory);
+      const cliPath = path.join(directory, "fake-nemoclaw.cjs");
+      const openshellPath = path.join(directory, "fake-openshell.cjs");
+      fs.writeFileSync(
+        openshellPath,
+        `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(`Version: 1\n---\n${JSON.stringify(POLICY)}`)});\n`,
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        cliPath,
+        `#!${process.execPath}
+process.stdout.write("stdout start\\n" + "x".repeat(128 * 1024) + "\\nstdout end");
+process.stderr.write("stderr start\\n" + "x".repeat(128 * 1024) + "\\nConfig export failed (unsupported).");
+process.exitCode = 1;
+`,
+        { mode: 0o700 },
+      );
+      const artifacts = new ArtifactSink(directory);
+      const progress = startTestProgress(
+        "config export capture",
+        ["run export", "verify evidence"],
+        {
+          logLine: () => undefined,
+        },
+      );
+      try {
+        const probe = new ShellProbe({
+          artifacts,
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        const host = new HostCliClient(probe, { cliPath, openshellPath });
+        const execution = vi.spyOn(host, "nemoclaw");
+        const test = fixture({ artifacts, host });
+        progress.phase("run export");
 
-    await captureFailure(test.phase.from(target("required"), instance()));
+        await captureFailure(test.phase.from(target("required"), instance()));
 
-    expect(host.nemoclaw).toHaveBeenCalledWith(
-      expect.any(Array),
-      expect.objectContaining({ captureLimitBytes: 64 * 1024 }),
-    );
-    expect(test.writes.at(-1)).toMatchObject({
-      classification: "failure",
-      failureStage: "export",
-    });
-    expect(test.writes.at(-1)?.diagnostic).toHaveLength(2_048);
-  });
+        progress.phase("verify evidence");
+        expect(execution).toHaveBeenCalledOnce();
+        const result = await execution.mock.results[0]!.value;
+        const output = stream === "stdout" ? result.stdout : result.stderr;
+        expect(
+          fs.existsSync(artifacts.pathFor(`shell/config-export-automatic.${stream}.txt`)),
+        ).toBe(false);
+        const [notice, ...body] = output.split("\n");
+        expect(notice).toMatch(/^\[shell-probe omitted \d+ earlier bytes;/u);
+        expect(Buffer.byteLength(body.join("\n"), "utf8")).toBeLessThanOrEqual(64 * 1024);
+        expect(output).not.toContain(`${stream} start`);
+        expect(output.endsWith(tail)).toBe(true);
+        const evidence = JSON.parse(
+          fs.readFileSync(artifacts.pathFor("config-export-evidence.v1.json"), "utf8"),
+        ) as ConfigExportEvidenceEnvelope;
+        expect(evidence).toMatchObject({
+          classification: "failure",
+          failureStage: "export",
+          command: { exitCode: 1, signal: null, timedOut: false, outputPublished: false },
+          cleanup: { succeeded: true },
+        });
+        expect(evidence.diagnostic).toHaveLength(2_048);
+        expect(evidence.diagnostic).toContain("[shell-probe omitted");
+        expect(evidence).not.toHaveProperty("export");
+      } finally {
+        progress.stop();
+      }
+    },
+  );
 
   it("rejects and removes an oversized export file without retaining its bytes (#11485)", async () => {
     const oversizedDirectory = { path: "" };
@@ -886,6 +1000,49 @@ describe("automatic config export validation phase", () => {
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(test.writes.at(-1)?.diagnostic?.length).toBeLessThanOrEqual(2_048);
     expect(fs.existsSync(oversizedDirectory.path)).toBe(false);
+  });
+
+  it("rejects a hard-linked output before reading or publishing its bytes (#11485)", async () => {
+    const exportDirectory = { path: "" };
+    const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-hard-link-"));
+    createdDirectories.push(outsideDirectory);
+    const outsidePath = path.join(outsideDirectory, "outside.yaml");
+    const raw = JSON.stringify(document());
+    fs.writeFileSync(outsidePath, raw, "utf8");
+    const base = dependencies();
+    const readOpenFile = vi.fn(base.readOpenFile);
+    const host = successfulHost(raw);
+    host.nemoclaw.mockImplementation(async (args: string[]) => {
+      const outputPath = args.at(args.indexOf("--output") + 1)!;
+      fs.linkSync(outsidePath, outputPath);
+      return { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
+    });
+    const test = fixture({
+      dependencies: {
+        ...base,
+        makeTempDirectory: (prefix) => {
+          const directory = base.makeTempDirectory(prefix);
+          exportDirectory.path = directory;
+          return directory;
+        },
+        readOpenFile,
+      },
+      host,
+    });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      passed: false,
+      failureStage: "export",
+      cleanup: { succeeded: true },
+      diagnostic: "config export output must have exactly one hard link",
+    });
+    expect(readOpenFile).not.toHaveBeenCalled();
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(fs.existsSync(exportDirectory.path)).toBe(false);
+    expect(fs.readFileSync(outsidePath, "utf8")).toBe(raw);
   });
 
   it("rejects a path replaced after the no-follow file is inspected (#11485)", async () => {
