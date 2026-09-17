@@ -160,6 +160,7 @@ describe("initial sandbox policy real preset merge", () => {
     ({ policyCase, trustedPath }) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
+        managedStartupRelease: true,
       });
       const policy = readPreparedPolicy(prepared);
       const readOnly = policy.filesystem_policy?.read_only ?? [];

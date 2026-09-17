@@ -93,6 +93,8 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  /** Grant the image-owned hold access to its root-issued startup release marker. */
+  managedStartupRelease?: boolean;
   managedStateMounts?: readonly ManagedStateVolumeMount[];
   /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
   managedStateMountDriverId?: string | null;
