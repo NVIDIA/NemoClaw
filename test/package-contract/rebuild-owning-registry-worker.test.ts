@@ -17,7 +17,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function writeRecoveryFixture(home: string): void {
+function writeRecoveryFixture(home: string) {
   const backupPath = path.join(
     home,
     ".nemoclaw",
@@ -32,24 +32,23 @@ function writeRecoveryFixture(home: string): void {
   const sha256 = createHash("sha256").update(policy).digest("hex");
   const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
   fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
-  fs.writeFileSync(
-    path.join(backupPath, "rebuild-manifest.json"),
-    JSON.stringify({
-      version: 1,
-      sandboxName: "alpha",
-      timestamp: TIMESTAMP,
-      agentType: "openclaw",
-      agentVersion: null,
-      expectedVersion: null,
-      stateDirs: [],
-      backupComplete: true,
-      dir: "/sandbox/.openclaw",
-      backupPath,
-      blueprintDigest: null,
-      rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },
-    }),
-    { mode: 0o600 },
-  );
+  const manifest = {
+    version: 1,
+    sandboxName: "alpha",
+    timestamp: TIMESTAMP,
+    agentType: "openclaw",
+    agentVersion: null,
+    expectedVersion: null,
+    stateDirs: [],
+    backupComplete: true,
+    dir: "/sandbox/.openclaw",
+    backupPath,
+    blueprintDigest: null,
+    rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },
+  };
+  fs.writeFileSync(path.join(backupPath, "rebuild-manifest.json"), JSON.stringify(manifest), {
+    mode: 0o600,
+  });
   fs.writeFileSync(
     path.join(backupPath, ".nemoclaw-rebuild-recovery.json"),
     `${JSON.stringify({
@@ -63,6 +62,7 @@ function writeRecoveryFixture(home: string): void {
     })}\n`,
     { mode: 0o600 },
   );
+  return manifest;
 }
 
 function writeBlockingOpenShell(home: string, descendantMarker: string): string {
@@ -95,7 +95,6 @@ function writeSiblingRegistry(home: string): void {
           provider: "ollama-local",
           model: "nvidia/nemotron",
           agent: "openclaw",
-          nemoclawVersion: "0.1.0",
           dashboardPort: 18_789,
           gatewayName: "nemoclaw-9000",
           gatewayPort: 9000,
@@ -154,10 +153,9 @@ describe("compiled rebuild owning-registry worker", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-sibling-root-"));
     try {
       writeSiblingRegistry(home);
+      const recoveryManifest = writeRecoveryFixture(home);
       vi.stubEnv("HOME", home);
       vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
-      vi.stubEnv("DOCKER_HOST", `unix://${path.join(home, "missing-docker.sock")}`);
-      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", path.join(home, "missing-openshell"));
       let failure: unknown;
 
       try {
@@ -166,7 +164,7 @@ describe("compiled rebuild owning-registry worker", () => {
             operation: "rebuild",
             sandboxName: "alpha",
             options: { yes: true },
-            executionOptions: {},
+            executionOptions: { recoveryManifest },
           },
           9000,
         );
@@ -175,14 +173,16 @@ describe("compiled rebuild owning-registry worker", () => {
       }
 
       expect(failure).toBeInstanceOf(Error);
-      expect((failure as Error).message).toBe("Replacement onboarding preflight failed");
+      expect((failure as Error).message).toBe(
+        "Recovery registry entry has no NemoClaw-managed image fingerprint.",
+      );
       expect((failure as Error).cause).toEqual(
         expect.objectContaining({
           ok: false,
           operation: "rebuild",
           sandboxName: "alpha",
           gatewayPort: 9000,
-          message: "Replacement onboarding preflight failed",
+          message: "Recovery registry entry has no NemoClaw-managed image fingerprint.",
         }),
       );
     } finally {

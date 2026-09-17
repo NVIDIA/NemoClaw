@@ -6,9 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 
-import { isValidNemoClawSandboxName } from "../../../config/model";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
+import { isValidName } from "../../../sandbox-name-contract";
 import { assertGatewayStatePathSafe, listGatewayStateRoots } from "../../../state/gateway-registry";
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
@@ -294,7 +294,7 @@ export function findRebuildRecoveryStorageRoot(
   input: RetireRecoveryOwningRegistryInput,
   homeDir: string,
 ): RebuildRecoveryStorageRoot | null {
-  if (!isValidNemoClawSandboxName(input.sandboxName)) {
+  if (!isValidName(input.sandboxName)) {
     throw new Error("Invalid sandbox name.");
   }
   const matches: RebuildRecoveryStorageRoot[] = [];
