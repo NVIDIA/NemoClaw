@@ -28,6 +28,7 @@ describe("destroy timeout recovery", () => {
         code: "ETIMEDOUT",
       });
       const harness = createDestroyHarness({
+        deleteConvergenceAttempts: 3,
         deleteError,
         deleteStatus: null,
         dockerRunResult: { status: 0, stdout: "" },

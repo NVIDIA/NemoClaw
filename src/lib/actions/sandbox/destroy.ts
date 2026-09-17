@@ -12,6 +12,7 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
+  type DestroyGatewayCleanupDecision,
   isDestroyNonInteractiveEnv,
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
@@ -62,7 +63,11 @@ import {
   cleanupGatewayAfterLastSandbox,
   resolveGatewayCleanupRuntimeProviderId,
 } from "./destroy-gateway";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
+import {
+  type FinalDestroyGatewayCleanupDeps,
+  type FinalDestroyGatewayCleanupVerdict,
+  resolveFinalDestroyGatewayCleanup,
+} from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
   classifyDestroyContainerIdentity,
@@ -202,11 +207,9 @@ export type CleanupSandboxServicesDeps = {
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
-async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
-  const decision = resolveDestroyGatewayCleanupDecision(options, {
-    nonInteractive: isDestroyNonInteractiveEnv(),
-    platform: process.platform,
-  });
+async function confirmCleanupGatewayDecision(
+  decision: DestroyGatewayCleanupDecision,
+): Promise<boolean> {
   if (decision === "cleanup") return true;
   if (decision === "preserve") return false;
 
@@ -220,6 +223,39 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
+}
+
+function reportGatewayPreserved(gatewayName: string): void {
+  // `gateway remove <name>` is the modern OpenShell subcommand on every
+  // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
+  // OpenShell rejects it as unrecognized, so never recommend it (#6569).
+  const gatewayRemovalHint = `openshell gateway remove ${gatewayName}`;
+  console.log(`  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`);
+  console.log(`  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`);
+}
+
+function reportFinalGatewayLeftRunning(
+  gatewayName: string,
+  verdict: Extract<
+    FinalDestroyGatewayCleanupVerdict,
+    { status: "live-list-unavailable" | "live-sandboxes" | "not-final" }
+  >,
+  cleanupRequested: boolean,
+): void {
+  const cause =
+    verdict.status === "not-final"
+      ? "the local sandbox registry no longer confirms this was the last sandbox"
+      : verdict.status === "live-list-unavailable"
+        ? "'openshell sandbox list' failed, so NemoClaw could not confirm that no sandbox remains"
+        : `OpenShell still reports ${verdict.sandboxNames.length === 1 ? "sandbox" : "sandboxes"} ${verdict.sandboxNames
+            .map((name) => `'${name}'`)
+            .join(", ")}`;
+  console.warn(
+    `  ${YW}⚠${R} Shared NemoClaw gateway left running${cleanupRequested ? "; --cleanup-gateway was not applied" : ""}: ${cause}.`,
+  );
+  console.warn(
+    `  ${YW}⚠${R} After 'openshell sandbox list -g ${gatewayName}' reports no sandboxes, run 'openshell gateway remove ${gatewayName}' to remove it.`,
+  );
 }
 
 export async function cleanupSandboxServices(
@@ -591,6 +627,9 @@ function requestSandboxDestroyExit(exitCode: number): never {
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   try {
     return await withMcpLifecycleLock(sandboxName, () => {
@@ -603,6 +642,7 @@ export async function destroySandbox(
         sandboxName,
         options,
         removedImmutabilityMigration.stateRecord !== null,
+        deps,
       );
     });
   } catch (error) {
@@ -615,6 +655,9 @@ async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
   retireRemovedImmutabilityState = false,
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registeredSandbox = registry.getSandbox(sandboxName);
@@ -1195,18 +1238,32 @@ async function destroySandboxUnlocked(
       requestSandboxDestroyExit(1);
     }
   }
-  if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy(
-      {
-        deleteSucceededOrAlreadyGone,
-        removedRegistryEntry: registryEntryAbsent,
-        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
-      },
-      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
-    )
-  ) {
-    const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
-    if (shouldCleanupGateway) {
+  const cleanupDecision =
+    deleteSucceededOrAlreadyGone &&
+    registryEntryAbsent &&
+    registry.listSandboxes().sandboxes.length === 0
+      ? resolveDestroyGatewayCleanupDecision(normalized, {
+          nonInteractive: isDestroyNonInteractiveEnv(),
+          platform: process.platform,
+        })
+      : null;
+  if (cleanupDecision !== null && !(await confirmCleanupGatewayDecision(cleanupDecision))) {
+    reportGatewayPreserved(cleanupGatewayName);
+  } else if (cleanupDecision !== null) {
+    const finalGatewayCleanup = await withGatewayRouteMutationLock(cleanupGatewayName, async () => {
+      const verdict = await resolveFinalDestroyGatewayCleanup(
+        {
+          deleteSucceededOrAlreadyGone,
+          removedRegistryEntry: registryEntryAbsent,
+          sandboxName,
+          ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+        },
+        {
+          ...deps.finalGatewayCleanup,
+          ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
+        },
+      );
+      if (verdict.status !== "cleanup") return verdict;
       if (destroyRuntimeProviderId || destroyRuntimeSelection) {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
           ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
@@ -1215,17 +1272,15 @@ async function destroySandboxUnlocked(
       } else {
         await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
       }
-    } else {
-      // `gateway remove <name>` is the modern OpenShell subcommand on every
-      // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
-      // OpenShell rejects it as unrecognized, so never recommend it (#6569).
-      const gatewayRemovalHint = `openshell gateway remove ${cleanupGatewayName}`;
-      console.log(
-        `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
+      return verdict;
+    });
+    if (finalGatewayCleanup.status !== "cleanup") {
+      reportFinalGatewayLeftRunning(
+        cleanupGatewayName,
+        finalGatewayCleanup,
+        normalized.cleanupGateway === true,
       );
-      console.log(
-        `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,
-      );
+      if (normalized.cleanupGateway === true) requestSandboxDestroyExit(1);
     }
   }
   if (alreadyGone) {
