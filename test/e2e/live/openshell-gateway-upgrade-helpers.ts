@@ -94,7 +94,7 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
 }
 
 /** Keep the upgrade fixture on its explicit Dockerfile source across managed-image CI lanes. */
-export function isolateGatewayUpgradeInstallerEnv(
+export function isolateGatewayUpgradeFixtureEnv(
   environment: NodeJS.ProcessEnv,
   workloadSource: "" | "local-dockerfile",
 ): NodeJS.ProcessEnv {

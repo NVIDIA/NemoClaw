@@ -42,7 +42,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
-  isolateGatewayUpgradeInstallerEnv,
+  isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -459,15 +459,18 @@ async function createStoppedLegacySandboxes(
   fakeBaseUrl: string,
 ): Promise<void> {
   for (const sandboxName of ADDITIONAL_STOPPED_SANDBOXES) {
-    const onboardEnv = liveEnv({
-      COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
-      NEMOCLAW_DASHBOARD_PORT: "",
-      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-      NEMOCLAW_MODEL: "test-model",
-      NEMOCLAW_POLICY_MODE: "skip",
-      NEMOCLAW_PROVIDER: "custom",
-      NEMOCLAW_SANDBOX_NAME: sandboxName,
-    });
+    const onboardEnv = isolateGatewayUpgradeFixtureEnv(
+      liveEnv({
+        COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
+        NEMOCLAW_DASHBOARD_PORT: "",
+        NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+        NEMOCLAW_MODEL: "test-model",
+        NEMOCLAW_POLICY_MODE: "skip",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_SANDBOX_NAME: sandboxName,
+      }),
+      "",
+    );
     const onboard = await bash(host, `nemoclaw onboard --non-interactive`, {
       artifactName: `old-onboard-${sandboxName}`,
       env: onboardEnv,
@@ -536,7 +539,7 @@ async function installOldNemoclawAndClaw(
 
   // The historical bootstrap owns its pinned source Dockerfile. Isolate it
   // from both candidate local-Dockerfile selection and managed-image catalogs.
-  const installEnv = isolateGatewayUpgradeInstallerEnv(
+  const installEnv = isolateGatewayUpgradeFixtureEnv(
     liveEnv({
       PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
       COMPATIBLE_API_KEY: GATEWAY_CREDENTIAL,
@@ -608,7 +611,7 @@ async function installCurrentNemoclawUpgrade(
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentEnv = withoutEnvKeys(
-    isolateGatewayUpgradeInstallerEnv(
+    isolateGatewayUpgradeFixtureEnv(
       liveEnv({
         GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",

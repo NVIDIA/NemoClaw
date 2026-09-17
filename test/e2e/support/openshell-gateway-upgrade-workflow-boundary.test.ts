@@ -23,7 +23,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
-  isolateGatewayUpgradeInstallerEnv,
+  isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
@@ -192,10 +192,11 @@ describe("OpenShell gateway upgrade boundary", () => {
   });
 
   it.each([
-    ["historical", ""],
-    ["current", "local-dockerfile"],
-  ] as const)("isolates the %s installer from managed-image qualification", (_phase, source) => {
-    const environment = isolateGatewayUpgradeInstallerEnv(
+    ["historical installer", ""],
+    ["legacy sandbox creation", ""],
+    ["current installer", "local-dockerfile"],
+  ] as const)("isolates the %s from managed-image qualification", (_phase, source) => {
+    const environment = isolateGatewayUpgradeFixtureEnv(
       {
         E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
         E2E_MANAGED_IMAGE_COHORT_RECEIPT: "receipt",
