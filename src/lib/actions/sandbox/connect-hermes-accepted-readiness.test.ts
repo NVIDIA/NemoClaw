@@ -280,6 +280,48 @@ describe("Hermes accepted launch-readiness probe", () => {
     );
   });
 
+  it("reuses final probe evidence once and gives settlement retries fresh observers", async () => {
+    const harness = missingHermesHarness("stopped");
+    const publicationDeps: Array<Record<string, unknown>> = [];
+    harness.publishLaunchReadinessSpy.mockImplementationOnce(async (_publication, deps) => {
+      publicationDeps.push(deps as Record<string, unknown>);
+      const captureCount = harness.captureResolvedOpenshellSpy.mock.calls.length;
+      const forwardsHealthy = deps?.forwardsHealthy as (
+        sandboxName: string,
+        gatewayName: string,
+      ) => boolean;
+      const inferenceProbe = deps?.inferenceProbe as (
+        sandboxName: string,
+        agent: { name: string },
+        gatewayName: string,
+      ) => Promise<{ healthy: boolean }>;
+      expect(forwardsHealthy("alpha", "nemoclaw")).toBe(true);
+      expect(await inferenceProbe("alpha", { name: "hermes" }, "nemoclaw")).toEqual(
+        expect.objectContaining({ healthy: true }),
+      );
+      expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(captureCount);
+      return { kind: "validation-failed", category: "health" };
+    });
+    harness.publishLaunchReadinessSpy.mockImplementationOnce(async (_publication, deps) => {
+      publicationDeps.push(deps as Record<string, unknown>);
+      return { kind: "published" };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(publicationDeps).toHaveLength(2);
+    expect(publicationDeps[0]).toEqual(
+      expect.objectContaining({
+        assertPublicationCurrent: expect.any(Function),
+        forwardsHealthy: expect.any(Function),
+        inferenceProbe: expect.any(Function),
+      }),
+    );
+    expect(publicationDeps[1]?.assertPublicationCurrent).toBeUndefined();
+    expect(publicationDeps[1]?.forwardsHealthy).not.toBe(publicationDeps[0]?.forwardsHealthy);
+    expect(publicationDeps[1]?.inferenceProbe).not.toBe(publicationDeps[0]?.inferenceProbe);
+  });
+
   it("routes an unhealthy exact forward to existing recovery without fast publication", async () => {
     const harness = missingHermesHarness();
     harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
