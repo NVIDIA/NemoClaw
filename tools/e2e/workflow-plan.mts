@@ -105,6 +105,7 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
+  "tools/e2e/onboard-timeout-contract.mts",
 ] as const;
 const DCODE_SKILL_OWNING_PATHS = [
   "agents/langchain-deepagents-code/manifest.yaml",

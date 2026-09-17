@@ -140,6 +140,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
         "test/platform/images/vllm-docker-storage.test.ts",
+        "test/helpers/timeouts.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });

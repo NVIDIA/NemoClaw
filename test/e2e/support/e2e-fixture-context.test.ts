@@ -144,7 +144,7 @@ describe("E2E fixture primitives", () => {
     }
   });
 
-  it("live target artifacts match the workflow upload allowlist paths", async () => {
+  it("writes retained live target artifacts beneath one target root", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-live-artifacts-"));
     const previousArtifactDir = process.env.E2E_ARTIFACT_DIR;
     const targetId = "ubuntu-repo-cloud-openclaw";
@@ -157,6 +157,7 @@ describe("E2E fixture primitives", () => {
       "environment.result.json",
       "onboarding.result.json",
       "state-validation.result.json",
+      "config-export-evidence.v1.json",
       "cloud-onboard-trace-timing-summary.json",
     ];
     const shellEvidenceFiles = [

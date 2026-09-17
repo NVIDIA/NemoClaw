@@ -2887,8 +2887,16 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
-  if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("live job must depend on base-image-publication and generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live job must depend on base-image-publication, generate-matrix, and package-openshell-sdk",
+    );
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");
@@ -3180,6 +3188,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors,
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
   );
   requireUploadPathContains(
     errors,

@@ -500,6 +500,7 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/domain/config/export-document.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
@@ -945,10 +946,13 @@
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
-        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts",
+        "test/e2e/live/run-plan.ts"
       ],
       "fast": [
+        "test/e2e/support/e2e-live-registry-discovery.test.ts",
         "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-config-export-validation.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
