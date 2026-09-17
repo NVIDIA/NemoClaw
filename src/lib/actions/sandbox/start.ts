@@ -191,12 +191,12 @@ async function startSandboxWithinLifecycleFence(
       deps,
       log,
     );
-    if (settleHermesGatewayProcess && readiness.gatewayProcess !== true) return;
+    if (settleHermesGatewayProcess && readiness.gatewayProcess === false) return;
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
-  if (settleHermesGatewayProcess && readiness.gatewayProcess !== true) {
+  if (settleHermesGatewayProcess && readiness.gatewayProcess === false) {
     log(
       "  The sandbox started but its Hermes gateway did not become responsive before the startup settlement window expired.",
     );

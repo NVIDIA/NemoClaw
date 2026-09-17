@@ -221,7 +221,7 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
-  it("stops before process recovery when a just-started Hermes gateway stays unavailable", async () => {
+  it("hands an unavailable just-started Hermes observation to classified process recovery", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
@@ -229,6 +229,7 @@ describe("connectSandbox probe-only observe mode", () => {
       registryEntry: { stopped: true },
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       listOutput: "alpha Ready",
+      processCheck: { checked: false, wasRunning: false, recovered: false },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -236,7 +237,13 @@ describe("connectSandbox probe-only observe mode", () => {
     );
 
     expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Probe failed: could not inspect the"),
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "did not become observable and running before the startup settlement window expired",
+    );
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 

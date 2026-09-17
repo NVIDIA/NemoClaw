@@ -210,7 +210,7 @@ describe("startSandbox native lifecycle", () => {
   it("waits for the Hermes gateway process to settle before checking gateway health", async () => {
     const probeGatewayProcess = vi
       .fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>()
-      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
     const delayGatewayProcessProbe = vi.fn(async () => {});
@@ -259,16 +259,24 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it("does not verify the gateway when Hermes process observations stay unavailable", async () => {
+  it("hands an unavailable Hermes process observation to classified gateway verification", async () => {
     const probeGatewayProcess = vi.fn(async () => null);
     const delayGatewayProcessProbe = vi.fn(async () => {});
-    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    const verifyGateway = vi.fn(async () => {
+      throw new Error("supervisor probe failed before gateway verification");
+    });
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe, verifyGateway });
     h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
-    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor probe failed before gateway verification",
+    );
 
-    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
-    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(probeGatewayProcess).toHaveBeenCalledOnce();
+    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+    expect(verifyGateway).toHaveBeenCalledOnce();
+    expect(h.log.mock.calls.flat()).not.toContain(
+      "  The sandbox started but its Hermes gateway did not become responsive before the startup settlement window expired.",
+    );
   });
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {

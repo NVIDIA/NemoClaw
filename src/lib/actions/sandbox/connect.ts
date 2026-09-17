@@ -438,7 +438,7 @@ async function runSandboxConnectProbe(
         log: console.log,
       }),
     );
-    if (gatewayProcess !== true) {
+    if (gatewayProcess === false) {
       probeTiming?.markFailureStage("processes");
       console.error(
         `  Probe failed: the Hermes gateway in sandbox '${sandboxName}' did not become observable and running before the startup settlement window expired.`,

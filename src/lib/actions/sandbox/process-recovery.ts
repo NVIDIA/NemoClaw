@@ -701,7 +701,7 @@ export async function isSandboxGatewayRunningForStatus(
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
-/** Wait for a just-started Hermes gateway to become observable and running. */
+/** Retry a stopped Hermes gateway observation before returning the probe result. */
 export async function waitForStartedHermesGatewayProcess(
   sandboxName: string,
   gatewayName: string,
@@ -719,12 +719,12 @@ export async function waitForStartedHermesGatewayProcess(
       attempt += 1;
       running = await probe(sandboxName, gatewayName);
       const delayMs = HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS[attempt - 1];
-      if (running !== true && delayMs !== undefined) {
+      if (running === false && delayMs !== undefined) {
         options.log?.(
           `  Hermes gateway is still starting; checking again in ${delayMs / 1_000} seconds…`,
         );
       }
-      return running === true;
+      return running !== false;
     },
     {
       maxAttempts: HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS.length + 1,
