@@ -271,6 +271,27 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     });
   });
 
+  it("keeps the standard safeguard when a clone retains the N1x preset on another provider (#11805)", () => {
+    expect(
+      buildManagedInferenceSafeguardCompaction(
+        "inference",
+        "nvidia-prod",
+        "https://inference.local/v1",
+        "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+        32768,
+        4096,
+      ),
+    ).toEqual({
+      mode: "safeguard",
+      timeoutSeconds: 120,
+      maxHistoryShare: 0.35,
+      recentTurnsPreserve: 1,
+      qualityGuard: { enabled: true, maxRetries: 0 },
+      notifyUser: true,
+      truncateAfterCompaction: true,
+    });
+  });
+
   it("treats a missing legacy upstream provider as remote managed inference (#4781)", () => {
     expect(
       buildManagedInferenceSafeguardCompaction(

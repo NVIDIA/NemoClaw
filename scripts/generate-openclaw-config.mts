@@ -95,6 +95,7 @@ const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
 const SMALL_OLLAMA_CONTEXT_THRESHOLD =
   OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
+const LOCAL_VLLM_UPSTREAM_PROVIDER = "vllm-local";
 const N1X_MANAGED_VLLM_SERVING_PRESET = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
 const N1X_COMPACTION_TIMEOUT_SECONDS = 300;
 const MANAGED_INFERENCE_PROVIDER_KEY = "inference";
@@ -799,7 +800,9 @@ export function buildManagedInferenceSafeguardCompaction(
   if ((upstreamProvider || "").trim() === LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
     return undefined;
   }
-  const isN1xManagedVllm = (servingPreset || "").trim() === N1X_MANAGED_VLLM_SERVING_PRESET;
+  const isN1xManagedVllm =
+    (upstreamProvider || "").trim() === LOCAL_VLLM_UPSTREAM_PROVIDER &&
+    (servingPreset || "").trim() === N1X_MANAGED_VLLM_SERVING_PRESET;
   return {
     ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION,
     ...(isN1xManagedVllm
