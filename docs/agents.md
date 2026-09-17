@@ -366,7 +366,9 @@ Existing images and native state are not automatically migrated; use a fresh dep
 
 ## Pi Model Selection
 
-Pi receives the model ID from `inference.routes[].overrides.model`.
+Pi receives each model ID from `inference.routes[].overrides.model`.
+Declare named routes and an explicit `inference.default` when supplying multiple choices.
+Each choice retains its own provider endpoint, credential reference, and native model metadata.
 Omit `piModel` to use that model's OpenAI catalog entry.
 When supplied, `piModel` is an opaque object passed to Pi as a native `models.json` model definition:
 
@@ -395,8 +397,15 @@ Pi rejects invalid native values at startup, with resources retained for a corre
 The optional inference probe uses Pi's native model API; apply does not invoke it.
 
 Apply configures Pi after attaching the native provider.
-A model or metadata change stops Pi, updates its separate model configuration, and starts a new Pi runtime in the existing sandbox.
+For a single declared choice, applying changed model IDs or metadata restarts Pi in the existing sandbox.
+For multiple choices, changing the declared catalog changes the sandbox launch configuration and requires a fresh deployment.
+Changes to provider attachments also require a new sandbox.
 Unchanged apply preserves the runtime.
+
+Within one Fabric runtime, use `runtime.invoke(input={"prompt": "...", "model": "fast"})` to select a declared route by name.
+Subsequent plain-string requests keep the selected model; switching choices preserves the Pi conversation.
+An unknown choice fails before inference.
+This requires the updated Pi image; it does not provide automatic fallback or model routing.
 
 Pi's in-memory conversation does not survive a runtime restart.
 Export and readiness compare the hosted configuration with the declared model.

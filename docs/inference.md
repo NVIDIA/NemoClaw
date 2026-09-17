@@ -19,7 +19,7 @@ See [state migration](state.md#native-inference-migration) before changing an ex
 
 ## Give an Agent Multiple Model Choices
 
-OpenClaw agents can select different models from one or more providers.
+OpenClaw and Pi agents can select different models from one or more providers.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
@@ -36,13 +36,14 @@ Missing credential references still fail deployment; actual endpoint authenticat
 Use native requests to verify model selection through the agent interface separately.
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
-Multiple choices are currently supported only by OpenClaw, with at most 32 routes per inference definition.
+OpenClaw and Pi support up to 32 routes per inference definition.
 Other harnesses keep one choice.
-`reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
+For OpenClaw, `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
 Native reasoning changes remain a harness operation.
 Managed Ollama and its proxy currently manage one selected model; vLLM choices must use its declared served model.
 Additional models can use external providers alongside that managed provider.
-Changing model choices changes the sandbox launch specification and requires a fresh deployment.
+Changing OpenClaw model choices changes the sandbox launch specification and requires a fresh deployment.
+For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
 ## Combine Local and Hosted Providers
 

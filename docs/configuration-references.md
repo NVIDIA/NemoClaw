@@ -33,7 +33,7 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; multiple vLLM services, at most one managed Ollama or Ollama proxy |
-| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw supports named choices with an explicit default; other harnesses require one choice |
+| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw and Pi support named choices with an explicit default; other harnesses require one choice |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration per sandbox; all agents use that implementation |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 

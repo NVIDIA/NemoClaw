@@ -275,6 +275,24 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         )
         if harness == "remote-agent":
             config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
+    if harness == "pi" and (inference or {}).get("agents"):
+        selected = next((a for a in inference["agents"] if a["name"] == name), None)
+        if selected is None:
+            raise ValueError("Pi agent is not declared")
+        choices = selected["inference"]
+        for alias, route in choices["models"].items():
+            native = route["pi"]
+            config["models"][f"route_{alias}"] = {
+                **model_connection(route, native["model"]),
+                **(
+                    {"settings": {"model_metadata": native["piModel"]}}
+                    if "piModel" in native
+                    else {}
+                ),
+            }
+        if choices["models"][choices["default"]]["pi"] != model:
+            raise ValueError("Pi configured default differs from the declared choice")
+        config["models"]["default"] = dict(config["models"][f"route_{choices['default']}"])
     return config
 
 

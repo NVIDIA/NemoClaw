@@ -124,10 +124,12 @@ pub(super) fn constrain(root: &mut Value) {
     defs["Sandbox"]["allOf"] = json!([{
         "if": {"anyOf": [
             at("agents", json!({"minItems":2}), true),
-            at("agents", json!({"contains":{"required":["tools"]}}), true),
-            at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true)
+            at("agents", json!({"contains":{"required":["tools"]}}), true)
         ]},
         "then": at("harness/kind",json!({"const":"openclaw"}),false)
+    }, {
+        "if": at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true),
+        "then": at("harness/kind", json!({"enum":["openclaw","pi"]}), false)
     }]);
     optional_string(
         &mut defs["Image"],
@@ -420,7 +422,7 @@ pub(super) fn constrain(root: &mut Value) {
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-        "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; only OpenClaw currently supports multiple agents. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",

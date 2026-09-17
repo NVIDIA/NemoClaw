@@ -21,7 +21,7 @@ Empty or zero selects a default only where stated.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, OpenClaw-only multiple choices, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
+- The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.
 - The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
 - The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; only OpenClaw currently supports multiple agents. Shared definitions reuse configuration across sandboxes.
 - The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.
@@ -522,7 +522,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `default` | string | No | — | Initial model choice by route name. Required with multiple routes; omission selects the sole route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw. Constraints: minimum items 1; maximum items 32. |
+| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw or Pi. Constraints: minimum items 1; maximum items 32. |
 
 ## InferenceApi
 

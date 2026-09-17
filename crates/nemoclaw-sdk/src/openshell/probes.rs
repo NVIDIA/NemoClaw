@@ -222,15 +222,31 @@ impl OpenShell {
             command.push(harness.into());
         }
         if harness == "pi" {
-            command.push(
-                binding
-                    .get("pi_model_config")
-                    .filter(|value| !value.is_empty())
-                    .ok_or(Error::Conflict(
-                        "Pi configuration requires the declared route model",
-                    ))?
-                    .clone(),
-            );
+            let model = match binding
+                .get("pi_model_config")
+                .filter(|value| !value.is_empty())
+            {
+                Some(model) => model.clone(),
+                None => {
+                    // Refresh observes the immutable catalog, not the separate single-model binding.
+                    let settings =
+                        inference_settings(value(binding, "inference_json"), "fabric-pi")?
+                            .ok_or(ObservationError::Incomplete)?;
+                    let selection = settings
+                        .agents
+                        .iter()
+                        .find(|agent| agent.name == value(binding, "agent_name"))
+                        .and_then(|agent| agent.inference.as_ref())
+                        .ok_or(ObservationError::Incomplete)?;
+                    let model = selection
+                        .models
+                        .get(&selection.default)
+                        .and_then(|model| model.pi.as_ref())
+                        .ok_or(ObservationError::Incomplete)?;
+                    serde_json::to_string(model).map_err(|_| ObservationError::Query)?
+                }
+            };
+            command.push(model);
         }
         if let Some(settings) = binding.get("inference_json").filter(|s| !s.is_empty()) {
             inference_settings(settings, value(binding, "agent_runtime"))?;
@@ -442,6 +458,38 @@ impl OpenShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
+        let mut value: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../../examples/fabric-pi.yaml")).unwrap();
+        let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+        let mut fast = inference["routes"][0].clone();
+        fast["name"] = serde_json::json!("fast");
+        fast["overrides"]["model"] = serde_json::json!("fast-model");
+        inference["routes"]
+            .as_array_mut()
+            .unwrap()
+            .push(fast.clone());
+        inference["default"] = serde_json::json!("fast");
+        let doc = crate::config::Document::parse(value.to_string().as_bytes()).unwrap();
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|key| (key.into(), "a".repeat(32)))
+            .into();
+        let targets = crate::compile::targets(&doc, &generations).unwrap();
+        let mut row = targets
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values
+            .clone();
+        row.remove("pi_model_config");
+        let client =
+            OpenShell::connect(&doc.spec.gateway, std::sync::Arc::new(EnvironmentSecrets)).unwrap();
+        let (command, _) = client.configuration_command(&row).unwrap();
+        let model: serde_json::Value = serde_json::from_str(&command[5]).unwrap();
+        assert_eq!(model, fast["overrides"]);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {
         let cancel = CancellationToken::new();

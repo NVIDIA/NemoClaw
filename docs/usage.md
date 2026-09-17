@@ -7,7 +7,7 @@ Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
 Each document contains one to 32 named sandboxes, each with exactly one harness configuration.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses in one state directory.
-[OpenClaw agents](agents.md) can select models from multiple providers; other harnesses require one agent and one model choice.
+[OpenClaw and Pi agents](agents.md) can select models from multiple providers; other harnesses require one agent and one model choice.
 At most one selected provider may have [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
@@ -194,7 +194,7 @@ Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
 Sandbox-local definitions are visible only to their enclosing sandbox.
-The current Brave integration uses one deployment-wide registration, so sandboxes using search must select the same credential reference.
+Sandboxes can select distinct Brave credential references; shared references reuse one registration.
 Ordinary apply still refuses removal or replacement; destroy operates on the whole deployment.
 Use separate deployments when you need independent teardown.
 Existing state needs the [named-resource transition](state.md#named-sandbox-resources).
@@ -203,8 +203,8 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| Model choices outside Pi | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
-| Pi model or native model metadata | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
+| OpenClaw model choices or a Pi catalog with multiple choices | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
+| Pi model or native model metadata with one declared choice | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes the immutable native provider profile binding; use a separate deployment |
 | Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |

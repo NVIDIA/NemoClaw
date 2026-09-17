@@ -58,7 +58,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | Default local Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Experimental Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
 | Experimental Hermes Relay native home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
-| Pi conversation | Held in the running Pi process; changing its model or restarting the runtime loses the in-memory conversation |
+| Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
 The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) and [interface guide](interfaces.md) define these locations.
 Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.

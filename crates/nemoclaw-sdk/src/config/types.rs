@@ -362,7 +362,7 @@ pub struct Inference {
     /// Initial model choice by route name. Required with multiple routes; omission selects the sole route.
     pub default: Option<String>,
     #[serde(rename = "routes")]
-    /// One or more uniquely named model choices. Multiple choices require OpenClaw.
+    /// One or more uniquely named model choices. Multiple choices require OpenClaw or Pi.
     pub routes: Vec<Route>,
 }
 

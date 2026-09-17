@@ -251,8 +251,9 @@ impl Document {
                 )?;
 
                 require(
-                    self.agent_inference(agent)?.routes.len() == 1 || harness.kind == "openclaw",
-                    "multiple model choices require OpenClaw",
+                    self.agent_inference(agent)?.routes.len() == 1
+                        || matches!(harness.kind.as_str(), "openclaw" | "pi"),
+                    "multiple model choices require OpenClaw or Pi",
                 )?;
                 for route in &self.agent_inference(agent)?.routes {
                     let (_, scope) = self.scoped_inference(agent)?;
