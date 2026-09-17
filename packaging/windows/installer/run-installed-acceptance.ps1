@@ -31,8 +31,30 @@ $ciNode = Join-Path $WorkDirectory 'application\node\node.exe'
 if ((Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant() -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878') {
     throw 'The CI controller Node executable differs from the pinned Windows ARM64 input.'
 }
-& $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\control-installed-openclaw-input.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\run-installed-acceptance.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\qualify-finished-package.test.mts')
-if ($LASTEXITCODE -ne 0) { throw 'The Windows observer or diagnostic controls failed.' }
+$controlFiles = @(
+    'packaging/windows/installer/control-installed-openclaw-input.test.mts',
+    'packaging/windows/installer/run-installed-acceptance.test.mts',
+    'packaging/windows/installer/qualify-finished-package.test.mts')
+if ($Mode -ceq 'current-build') {
+    $controlReceiptPath = Join-Path $WorkDirectory 'application\controls\installed-acceptance-controller.json'
+    $controlReceipt = Get-Content -LiteralPath $controlReceiptPath -Raw | ConvertFrom-Json
+    if ($controlReceipt.schemaVersion -ne 1 -or $controlReceipt.classification -cne 'same-run-installed-acceptance-controller-controls' -or
+        $controlReceipt.sourceRevision -cne $controllerSource -or $controlReceipt.nodeSha256 -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878' -or
+        $controlReceipt.passed -cne $true -or @($controlReceipt.files).Count -ne $controlFiles.Count) {
+        throw 'The same-run Windows acceptance-controller proof is invalid.'
+    }
+    foreach ($relative in $controlFiles) {
+        $rows = @($controlReceipt.files | Where-Object file -CEQ $relative)
+        $file = Join-Path $SourceRoot $relative
+        if ($rows.Count -ne 1 -or $rows[0].bytes -ne (Get-Item -LiteralPath $file).Length -or
+            $rows[0].sha256 -cne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            throw 'The same-run Windows acceptance-controller input identity differs.'
+        }
+    }
+} else {
+    & $ciNode --experimental-strip-types --no-warnings --test @($controlFiles | ForEach-Object { Join-Path $SourceRoot $_ })
+    if ($LASTEXITCODE -ne 0) { throw 'The Windows observer or diagnostic controls failed.' }
+}
 
 $work = [IO.Path]::GetFullPath($WorkDirectory)
 $setup = "$work\package\NemoClawSetup-$ProductVersion-windows-arm64.exe"

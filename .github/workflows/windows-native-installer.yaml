@@ -635,6 +635,34 @@ jobs:
           & packaging/windows/app/prepare-app-node.ps1 `
             -LockPath packaging/windows/hermes/official-runtime.lock.json `
             -OutputDirectory "$env:RUNNER_TEMP\compiled-windows-app\node"
+      - name: Verify installed acceptance controller Windows compatibility
+        if: ${{ inputs.run_windows_native_installer }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\compiled-windows-app"
+          $output = "$work\controls"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $tests = @(
+            'packaging/windows/installer/control-installed-openclaw-input.test.mts',
+            'packaging/windows/installer/run-installed-acceptance.test.mts',
+            'packaging/windows/installer/qualify-finished-package.test.mts'
+          )
+          & "$work\node\node.exe" --experimental-strip-types --no-warnings --test @tests `
+            1>"$output\installed-acceptance-controller.stdout.log" `
+            2>"$output\installed-acceptance-controller.stderr.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows installed-acceptance controller controls failed.' }
+          $files = @($tests | ForEach-Object {
+            $file = Join-Path $env:GITHUB_WORKSPACE $_
+            @{ file = $_; bytes = (Get-Item -LiteralPath $file).Length; sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() }
+          })
+          [IO.File]::WriteAllText("$output\installed-acceptance-controller.json", (@{
+            schemaVersion = 1
+            classification = 'same-run-installed-acceptance-controller-controls'
+            sourceRevision = $env:GITHUB_SHA
+            nodeSha256 = (Get-FileHash -LiteralPath "$work\node\node.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            passed = $true
+            files = $files
+          } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
       - name: Restore immutable application build inputs
         if: ${{ inputs.finished_windows_agent == 'openclaw' }}
         shell: pwsh
@@ -786,6 +814,7 @@ jobs:
             ${{ runner.temp }}/compiled-windows-app/node/node-input.json
             ${{ runner.temp }}/compiled-windows-app/node/npm.cmd
             ${{ runner.temp }}/compiled-windows-app/node/node_modules/npm/
+            ${{ runner.temp }}/compiled-windows-app/controls/installed-acceptance-controller.json
             ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/playwright-core/
             ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/esbuild/
             ${{ runner.temp }}/compiled-windows-app/inputs/tools/node_modules/@esbuild/win32-arm64/
