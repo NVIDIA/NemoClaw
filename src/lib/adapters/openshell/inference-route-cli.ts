@@ -230,19 +230,32 @@ function validateRequest(
   }
 }
 
-function attemptsFor(
+function allowsLegacySelectedFallback(
   request: ObserveOpenShellInferenceRouteRequest,
   options: CliOpenShellInferenceRouteObserverOptions,
-): string[][] {
-  const attempts = [argsFor(request.target)];
-  if (
+): boolean {
+  return (
     options.allowLegacySelectedFallback === true &&
     request.target.kind === "named" &&
     request.target.gatewayName === BASE_GATEWAY_NAME
-  ) {
-    attempts.push(argsFor({ kind: "selected" }));
-  }
-  return attempts;
+  );
+}
+
+function rejectsNamedGatewayArgument(
+  result: CapturedOpenShellInferenceRouteResult,
+  observed: OpenShellInferenceRouteResult,
+): boolean {
+  if (
+    result.status !== 2 ||
+    observed.ok ||
+    observed.error.kind !== "command" ||
+    observed.error.reason !== "invalid_request"
+  )
+    return false;
+  const output = cleanTerminalText(commandOutput(result));
+  return /\b(?:unexpected|unknown|unrecognized)\s+(?:argument|option)\b[^\r\n]*(?:-g|--gateway)\b/iu.test(
+    output,
+  );
 }
 
 function observeCapturedRoute(
@@ -257,14 +270,6 @@ function processStartFailure(): OpenShellInferenceRouteResult {
     kind: "transport",
     reason: "process_start",
     message: "OpenShell could not start the inference route observation.",
-  });
-}
-
-function initialFailure(): OpenShellInferenceRouteResult {
-  return failure({
-    kind: "command",
-    reason: "indeterminate",
-    message: "OpenShell inference route observation did not run.",
   });
 }
 
@@ -287,16 +292,26 @@ export function createSynchronousCliOpenShellInferenceRouteObserver(
     observeInferenceRoute(request) {
       const requestError = validateRequest(request, options.environment ?? process.env);
       if (requestError) return failure(requestError);
-      let last = initialFailure();
-      for (const args of attemptsFor(request, options)) {
-        try {
-          last = observeCapturedRoute(capture(args, captureOptions(request)));
-        } catch {
-          last = processStartFailure();
-        }
-        if (last.ok) return last;
+      let captured: CapturedOpenShellInferenceRouteResult;
+      try {
+        captured = capture(argsFor(request.target), captureOptions(request));
+      } catch {
+        return processStartFailure();
       }
-      return last;
+      const observed = observeCapturedRoute(captured);
+      if (
+        observed.ok ||
+        !allowsLegacySelectedFallback(request, options) ||
+        !rejectsNamedGatewayArgument(captured, observed)
+      )
+        return observed;
+      try {
+        return observeCapturedRoute(
+          capture(argsFor({ kind: "selected" }), captureOptions(request)),
+        );
+      } catch {
+        return processStartFailure();
+      }
     },
   };
 }
@@ -310,19 +325,26 @@ export function createCliOpenShellInferenceRouteObserver(
     async observeInferenceRoute(request) {
       const requestError = validateRequest(request, options.environment ?? process.env);
       if (requestError) return failure(requestError);
-      let last = initialFailure();
-      for (const args of attemptsFor(request, options)) {
-        let result: CapturedOpenShellInferenceRouteResult;
-        try {
-          result = await capture(args, captureOptions(request));
-        } catch {
-          last = processStartFailure();
-          continue;
-        }
-        last = observeCapturedRoute(result);
-        if (last.ok) return last;
+      let captured: CapturedOpenShellInferenceRouteResult;
+      try {
+        captured = await capture(argsFor(request.target), captureOptions(request));
+      } catch {
+        return processStartFailure();
       }
-      return last;
+      const observed = observeCapturedRoute(captured);
+      if (
+        observed.ok ||
+        !allowsLegacySelectedFallback(request, options) ||
+        !rejectsNamedGatewayArgument(captured, observed)
+      )
+        return observed;
+      try {
+        return observeCapturedRoute(
+          await capture(argsFor({ kind: "selected" }), captureOptions(request)),
+        );
+      } catch {
+        return processStartFailure();
+      }
     },
   };
 }

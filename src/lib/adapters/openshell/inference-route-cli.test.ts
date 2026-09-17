@@ -11,6 +11,7 @@ const namedRequest = {
   target: { kind: "named", gatewayName: "nemoclaw-19090" },
   timeoutMs: 4_321,
 } as const;
+const baseRequest = { target: { kind: "named", gatewayName: "nemoclaw" } } as const;
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -107,7 +108,10 @@ describe("CLI inference route observation", () => {
   it("uses the legacy selected-gateway fallback only for the base gateway", async () => {
     const capture = vi
       .fn()
-      .mockResolvedValueOnce({ status: 1, output: "unsupported" })
+      .mockResolvedValueOnce({
+        status: 2,
+        output: "error: unexpected argument '-g' found",
+      })
       .mockResolvedValueOnce({
         status: 0,
         output: "Inference:\n  Provider: nvidia-prod\n  Model: nvidia/model",
@@ -116,13 +120,69 @@ describe("CLI inference route observation", () => {
       allowLegacySelectedFallback: true,
     });
 
-    await expect(
-      observer.observeInferenceRoute({ target: { kind: "named", gatewayName: "nemoclaw" } }),
-    ).resolves.toMatchObject({ ok: true, value: { state: "configured" } });
+    await expect(observer.observeInferenceRoute(baseRequest)).resolves.toMatchObject({
+      ok: true,
+      value: { state: "configured" },
+    });
     expect(capture.mock.calls.map(([args]) => args)).toEqual([
       ["inference", "get", "-g", "nemoclaw"],
       ["inference", "get"],
     ]);
+  });
+
+  it.each([
+    [
+      "authentication",
+      { status: 2, output: "Error: authentication failed; unknown option '-g' token=secret" },
+    ],
+    ["identity mismatch", { status: 1, output: "handshake verification failed secret" }],
+    [
+      "timeout",
+      {
+        status: null,
+        output: "secret",
+        error: Object.assign(new Error("secret"), { code: "ETIMEDOUT" }),
+      },
+    ],
+    ["transport", { status: 1, output: "connection refused secret" }],
+    ["schema", { status: 1, output: "protobuf decode error secret" }],
+    ["indeterminate", { status: null, output: "secret" }],
+  ])("does not hide a base-gateway %s failure with legacy fallback", async (_, captured) => {
+    const capture = vi.fn().mockResolvedValue(captured);
+    const result = await createCliOpenShellInferenceRouteObserver(capture, {
+      allowLegacySelectedFallback: true,
+    }).observeInferenceRoute(baseRequest);
+
+    expect(result.ok).toBe(false);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0][0]).toEqual(["inference", "get", "-g", "nemoclaw"]);
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("does not hide a base-gateway process-start failure with legacy fallback", async () => {
+    const capture = vi.fn().mockRejectedValue(new Error("secret path"));
+    const result = await createCliOpenShellInferenceRouteObserver(capture, {
+      allowLegacySelectedFallback: true,
+    }).observeInferenceRoute(baseRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "transport", reason: "process_start" },
+    });
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide a synchronous base-gateway authentication failure", () => {
+    const capture = vi.fn(() => ({
+      status: 2,
+      output: "Error: unauthorized; unexpected argument '--gateway' secret",
+    }));
+    const result = createSynchronousCliOpenShellInferenceRouteObserver(capture, {
+      allowLegacySelectedFallback: true,
+    }).observeInferenceRoute(baseRequest);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "authentication" } });
+    expect(capture).toHaveBeenCalledOnce();
   });
 
   it("never falls back from a named non-default gateway", async () => {
