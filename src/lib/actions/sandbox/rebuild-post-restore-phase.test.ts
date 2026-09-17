@@ -8,16 +8,18 @@ import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
+import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import * as rebuildConfigHash from "./rebuild-config-hash";
 import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
-import * as processRecovery from "./process-recovery";
 import {
   printHermesOperatorConfigRestoreReport,
   runRebuildPostRestorePhase,
 } from "./rebuild-post-restore-phase";
 import * as sessionModels from "./reconcile-session-models";
+
+const processRecovery = restoreWindow;
 
 describe("rebuild post-restore phase", () => {
   const runtimeKindByAgent = {
@@ -46,7 +48,7 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    vi.spyOn(restoreWindow, "beginOpenClawPostRestoreDoctor").mockImplementation(
       async (sandboxName, runtimeSelection) => {
         order.push("doctor-begin");
         return {
@@ -58,11 +60,11 @@ describe("rebuild post-restore phase", () => {
         };
       },
     );
-    vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockImplementation(async () => {
+    vi.spyOn(restoreWindow, "finishOpenClawPostRestoreDoctor").mockImplementation(async () => {
       order.push("doctor-finish");
       return { ok: true };
     });
-    vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockImplementation(async () => {
+    vi.spyOn(restoreWindow, "abortOpenClawPostRestoreDoctor").mockImplementation(async () => {
       order.push("doctor-abort");
       return { ok: true };
     });

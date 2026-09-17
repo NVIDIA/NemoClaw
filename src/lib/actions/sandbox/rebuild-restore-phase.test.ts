@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
-import * as processRecovery from "./process-recovery";
+import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
@@ -21,11 +21,11 @@ const backupManifest = {
 
 describe("rebuild filesystem restore", () => {
   beforeEach(() => {
-    vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockResolvedValue({
+    vi.spyOn(restoreWindow, "beginOpenClawPostRestoreDoctor").mockResolvedValue({
       ok: true,
       window: { sandboxName: "alpha" },
     });
-    vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+    vi.spyOn(restoreWindow, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -62,12 +62,12 @@ describe("rebuild filesystem restore", () => {
       restoreSucceeded: true,
       openClawDoctorWindow: { sandboxName: "alpha" },
     });
-    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
+    expect(restoreWindow.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       undefined,
     );
     expect(
-      vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mock.invocationCallOrder[0],
+      vi.mocked(restoreWindow.beginOpenClawPostRestoreDoctor).mock.invocationCallOrder[0],
     ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
   });
 

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as processRecovery from "../actions/sandbox/process-recovery";
+import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
@@ -31,14 +31,14 @@ import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 const fixtures: string[] = [];
 
 beforeEach(() => {
-  vi.spyOn(processRecovery, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+  vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
     window: { sandboxName: "spark-box" },
   });
-  vi.spyOn(processRecovery, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+  vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
-  vi.spyOn(processRecovery, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+  vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
 });
@@ -814,13 +814,13 @@ describe("created OpenClaw sandbox finalization", () => {
 
   it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
-    vi.mocked(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+    vi.mocked(restoreWindow.beginUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
         order.push("doctor-begin");
         return { ok: true, window: { sandboxName: "openclaw" } };
       },
     );
-    vi.mocked(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+    vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
         order.push("doctor-finish");
         return { ok: true };

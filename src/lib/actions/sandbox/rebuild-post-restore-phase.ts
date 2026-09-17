@@ -45,7 +45,7 @@ import {
   beginOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
-} from "./process-recovery";
+} from "./runtime/openclaw-lifecycle";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {

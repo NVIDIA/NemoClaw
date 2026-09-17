@@ -12,7 +12,7 @@ import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
-} from "./process-recovery";
+} from "./runtime/openclaw-lifecycle";
 import {
   applyHermesOperatorConfigSnapshot,
   type HermesOperatorConfigRestoreReport,
