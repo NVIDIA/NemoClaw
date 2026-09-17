@@ -152,7 +152,7 @@ runDashboardRemoteBindTest(
       timeoutMs: 120_000,
     });
     expect(stop.exitCode, `Sandbox stop failed before remote rebind\n${resultText(stop)}`).toBe(0);
-    expect(teardownSandboxDashboardForward(sandboxName)).toBe(true);
+    expect(await teardownSandboxDashboardForward(sandboxName)).toBe(true);
 
     const start = await host.nemoclaw([sandboxName, "start"], {
       artifactName: "dashboard-remote-bind-start-after-release",
@@ -165,7 +165,9 @@ runDashboardRemoteBindTest(
     );
 
     progress.phase("verify all-interface dashboard forward");
-    expect(isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(true);
+    expect(await isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(
+      true,
+    );
 
     const forwardReachable = await host.command(
       process.execPath,

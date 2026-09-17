@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,7 +16,7 @@ const RECEIPTS = [
   { path: "ci/pi-arm64.json", platform: "linux/arm64" as const },
 ];
 
-function receipt(platform: string, cohort = "ghrun-123-1", revision = SOURCE_REVISION): string {
+function receipt(platform: string, cohort = "ghrun-123-1"): string {
   const digest = `sha256:${(platform === "linux/amd64" ? "b" : "c").repeat(64)}`;
   return `${JSON.stringify(
     {
@@ -29,7 +28,7 @@ function receipt(platform: string, cohort = "ghrun-123-1", revision = SOURCE_REV
       reference: `ghcr.io/nvidia/nemoclaw/pi-sandbox@${digest}`,
       source: {
         repository: "NVIDIA/NemoClaw",
-        revision,
+        revision: SOURCE_REVISION,
         release: "v0.1.0",
         cohort,
       },
@@ -50,6 +49,8 @@ describe("Pi qualification receipt refresh", () => {
   let acceptedDigests: Set<string>;
 
   beforeEach(() => {
+    vi.stubEnv("GITHUB_ACTIONS", "false");
+    vi.stubEnv("GITHUB_EVENT_NAME", "");
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-receipt-refresh-"));
     fs.mkdirSync(path.join(rootDir, "agents/pi"), { recursive: true });
     fs.mkdirSync(path.join(rootDir, "ci"), { recursive: true });
@@ -77,7 +78,9 @@ describe("Pi qualification receipt refresh", () => {
     changedPaths: readonly string[],
     options: {
       accepted?: ReadonlySet<string>;
-      headRevision?: string;
+      headRevision?: string | null;
+      mergeInProgress?: boolean;
+      pullRequestHeadRevision?: string;
       sourceParity?: boolean;
       stagedPaths?: readonly string[];
     } = {},
@@ -93,18 +96,32 @@ describe("Pi qualification receipt refresh", () => {
                 status: 0,
                 stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
               }
-            : args.includes("--quiet")
-              ? args[3] === (options.headRevision ?? "HEAD")
-                ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+            : args[0] === "rev-parse"
+              ? args.join("\0") === ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"].join("\0")
+                ? options.mergeInProgress
+                  ? { status: 0, stdout: `${"e".repeat(40)}\n` }
+                  : { status: 1, stdout: "" }
+                : args.join("\0") === ["rev-parse", "--verify", "HEAD^2"].join("\0") &&
+                    options.pullRequestHeadRevision
+                  ? { status: 0, stdout: `${options.pullRequestHeadRevision}\n` }
+                  : (() => {
+                      throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
+                    })()
+              : args.includes("--quiet")
+                ? (args.includes("--cached") &&
+                    options.mergeInProgress &&
+                    args[3] === SOURCE_REVISION) ||
+                  args[3] === (options.headRevision ?? options.pullRequestHeadRevision ?? "HEAD")
+                  ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+                  : (() => {
+                      throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
+                    })()
                 : (() => {
-                    throw new Error(`Unexpected comparison revision: ${args[3]}`);
-                  })()
-              : (() => {
-                  throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
-                })(),
+                    throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
+                  })(),
       receipts: RECEIPTS,
       rootDir,
-      headRevision: options.headRevision ?? "HEAD",
+      ...(options.headRevision !== null ? { headRevision: options.headRevision ?? "HEAD" } : {}),
     });
   }
 
@@ -145,58 +162,41 @@ describe("Pi qualification receipt refresh", () => {
     ).not.toThrow();
   });
 
-  it("checks staged merge inputs and rejects staged drift after qualification", () => {
-    vi.stubEnv("GITHUB_ACTIONS", "false");
-    const gitOptions = {
-      cwd: rootDir,
-      encoding: "utf8" as const,
-      env: {
-        PATH: process.env.PATH,
-        HOME: rootDir,
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: os.devNull,
-      },
-    };
-    const git = (args: readonly string[]) => {
-      const result = spawnSync("git", [...args], gitOptions);
-      return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
-    };
-    const command = (...args: string[]) => execFileSync("git", args, gitOptions).trim();
-    command("init", "-q", "-b", "main");
-    command("config", "user.name", "Receipt fixture");
-    command("config", "user.email", "receipt-fixture@example.invalid");
-    fs.mkdirSync(path.join(rootDir, "protected/app"), { recursive: true });
-    const input = path.join(rootDir, "protected/app/config.json");
-    fs.writeFileSync(input, "old image input\n");
-    command("add", "--all");
-    command("commit", "-qm", "old inputs");
-    const oldHead = command("rev-parse", "HEAD");
-    fs.writeFileSync(input, "qualified image input\n");
-    command("add", "--all");
-    command("commit", "-qm", "qualified inputs");
-    const qualifiedRevision = command("rev-parse", "HEAD");
-    command("update-ref", "refs/remotes/origin/main", qualifiedRevision);
-    command("reset", "--mixed", oldHead);
-    const amd64 = receipt(RECEIPTS[0].platform, "ghrun-123-1", qualifiedRevision);
-    const arm64 = receipt(RECEIPTS[1].platform, "ghrun-123-1", qualifiedRevision);
-    fs.writeFileSync(path.join(rootDir, RECEIPTS[0].path), amd64);
-    fs.writeFileSync(path.join(rootDir, RECEIPTS[1].path), arm64);
-    acceptedDigests = new Set([receiptDigest(amd64), receiptDigest(arm64)]);
-    command("add", "--all");
-    const options = { acceptedDigests, baseBranch: "main", git, receipts: RECEIPTS, rootDir };
-    expect(() => checkPiQualificationReceiptRefresh(options)).not.toThrow();
-    fs.writeFileSync(input, "unqualified image input\n");
-    command("add", "--all");
-    expect(() => checkPiQualificationReceiptRefresh(options)).toThrow(
-      `Pi image inputs changed after receipt source revision ${qualifiedRevision}`,
-    );
-  });
-
-  it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {
+  it("compares receipt parity against an explicit head revision", () => {
     const headRevision = "d".repeat(40);
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
         headRevision,
+      }),
+    ).not.toThrow();
+  });
+
+  it("probes for a merge before comparing receipt parity against HEAD", () => {
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+      }),
+    ).not.toThrow();
+  });
+
+  it("compares receipt parity against the exact PR head instead of a synthetic merge", () => {
+    const pullRequestHeadRevision = "d".repeat(40);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_EVENT_NAME", "pull_request");
+
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+        pullRequestHeadRevision,
+      }),
+    ).not.toThrow();
+  });
+
+  it("compares receipt parity against the staged tree during a local merge", () => {
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+        mergeInProgress: true,
       }),
     ).not.toThrow();
   });
