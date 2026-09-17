@@ -48,7 +48,7 @@ const ADVERSARIAL_E2E_TEXT = [
   "nice gh secret list",
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
-const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
+const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "full-e2e", "security-posture"]);
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -296,7 +296,7 @@ describe("E2E recommendation normalizer", () => {
           { domain: "runtime", reason: command, confidence: "high", matchedFiles: [] },
         ],
         requiredTests: [{ id: "security-posture", reason: command }],
-        optionalTests: [{ id: "cloud-inference", reason: command }],
+        optionalTests: [{ id: "full-e2e", reason: command }],
         newE2eRecommendations: [
           { domain: "runtime", reason: "Add coverage.", suggestedTest: command, priority: "high" },
         ],
@@ -514,7 +514,7 @@ describe("E2E recommendation normalizer", () => {
         ],
         optional: [
           {
-            id: "ubuntu-repo-docker-post-reboot-recovery",
+            id: "ubuntu-policy-custom-missing-presets-negative",
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             // Model claims this optional item is actually required.
@@ -1049,7 +1049,7 @@ jobs:
           reason: "duplicate fallback",
         },
         {
-          id: "ubuntu-repo-docker-post-reboot-recovery",
+          id: "ubuntu-policy-custom-missing-presets-negative",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           required: false,
@@ -1061,7 +1061,7 @@ jobs:
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
     expect(normalized.optional.map((item) => item.id)).toEqual([
-      "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-policy-custom-missing-presets-negative",
     ]);
   });
 

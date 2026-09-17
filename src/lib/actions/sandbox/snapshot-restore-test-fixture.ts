@@ -212,11 +212,21 @@ export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
     | { status: "blocked"; reason: "authority-unproven"; removed: false }
 >(() => ({ status: "complete", removed: true }));
 export const runOpenshellMock = vi.fn((args: string[]) => {
-  if (args[0] === "sandbox" && args[1] === "delete") {
-    lifecycleMock.events.push("delete");
-    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+  switch (`${String(args[0])}:${String(args[1])}`) {
+    case "sandbox:delete":
+      lifecycleMock.events.push("delete");
+      parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+      return { status: 0, output: "", stdout: "", stderr: "" };
+    case "sandbox:get":
+      return {
+        status: 1,
+        output: "Error: sandbox beta not found",
+        stdout: "",
+        stderr: "Error: sandbox beta not found",
+      };
+    default:
+      return { status: 0, output: "", stdout: "", stderr: "" };
   }
-  return { status: 0, output: "" };
 });
 export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 0,

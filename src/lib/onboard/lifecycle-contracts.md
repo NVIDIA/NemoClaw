@@ -161,7 +161,7 @@ Pre-upgrade backup selection consumes the journal rather than registry and gatew
 When OpenShell reports the source sandbox as missing, selection continues only after the journal confirms source deletion.
 It rejects all source-proof mismatches before backup lookup, deletion, creation, or registry mutation.
 
-The installer upgrade path, where the registry row survives but OpenShell reports no sandbox, opens the journal before selection and abandons it if the custom-image plugin-provenance check blocks recreation.
+The installer upgrade path, where the registry row survives but OpenShell reports no sandbox, opens the journal before selection.
 A journal is abandoned only while its revision is still zero, so no recorded lifecycle effect can be discarded.
 
 Selection asks for the proof only after the installer signals restore intent.
@@ -169,7 +169,7 @@ Without that signal nothing restores onto the replacement, so the run opens no j
 
 Once a run binds a gateway authority, a same-name replacement that cannot open a journal stops instead of deleting the sandbox or removing its registry row.
 Every same-name replacement deletes through `SandboxRecreateRuntime.beginDelete`, and the no-transaction runtime refuses there, so a new caller that skips the journal fails before the OpenShell delete rather than passing an unproven source through.
-Custom-image plugin provenance, explicit installer restore intent, the absent-backup warning, managed-MCP routing to `rebuild`, and fail-closed handling of unknown OpenShell state stay separate contracts.
+Explicit installer restore intent, the absent-backup warning, managed-MCP routing to `rebuild`, and fail-closed handling of unknown OpenShell state stay separate contracts.
 
 ## Managed snapshot and rebuild restore authority
 

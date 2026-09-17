@@ -24,6 +24,7 @@ import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
   captureRebuildPolicyDocument,
+  bindRebuildSnapshotGpuAuthority,
   clearRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
@@ -201,7 +202,7 @@ async function rebuildSandboxUnlocked(
     rebuildAgent,
     versionCheck,
     targetConfig,
-    recreateOptions,
+    recreateOptions: stagedRecreateOptions,
     messagingPlan,
     baseImagePreflight,
     liveState,
@@ -223,6 +224,7 @@ async function rebuildSandboxUnlocked(
     credentialEnv,
     fromDockerfile,
   } = targetConfig;
+  let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
@@ -491,6 +493,13 @@ async function rebuildSandboxUnlocked(
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       });
       if (!backup) return;
+      try {
+        recreateOptions = bindRebuildSnapshotGpuAuthority(recreateOptions, backup.backupManifest);
+      } catch (error) {
+        return bail(
+          `Captured sandbox GPU authority cannot be replayed safely: ${rebuildFailureDetail(error)}`,
+        );
+      }
       rebuildPolicySourcePath = backup.policySourcePath;
       rebuildPolicySourceIsEphemeral = backup.backupManifest === null;
       rebuildPolicyHandoffManifest = backup.backupManifest;

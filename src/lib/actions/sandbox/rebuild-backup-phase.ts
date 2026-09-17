@@ -13,17 +13,14 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { resolveDockerSnapshotRecreateGpuDevice } from "../../onboard/runtime-provider/snapshot";
 import { secureTempFile } from "../../onboard/temp-files";
-import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
-import {
-  hasAuthoritativeOpenClawImagePluginProvenance,
-  readRebuildPolicyHandoff,
-  writeRebuildPolicyHandoff,
-} from "../../state/sandbox";
+import { readRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 import { captureRecordedSandboxBasePolicy } from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export {
@@ -41,6 +38,21 @@ export type RebuildBackupManifest = Exclude<
   Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
+
+/** Bind replacement creation to the provider-observed GPU selected by the source runtime. */
+export function bindRebuildSnapshotGpuAuthority(
+  options: RebuildRecreateOnboardOpts,
+  manifest: RebuildBackupManifest,
+): RebuildRecreateOnboardOpts {
+  const sandboxGpuDevice = manifest?.runtimeSnapshot
+    ? resolveDockerSnapshotRecreateGpuDevice(manifest.runtimeSnapshot)
+    : null;
+  if (!sandboxGpuDevice) return options;
+  if (options.noGpu === true || options.sandboxGpu === "disable") {
+    throw new Error("Captured GPU runtime authority conflicts with the recorded GPU opt-out.");
+  }
+  return { ...options, sandboxGpu: "enable", sandboxGpuDevice };
+}
 
 export interface RebuildBackupPhaseInput {
   sandboxName: string;
@@ -60,17 +72,6 @@ export interface RebuildBackupPhaseInput {
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
   policySourcePath: string;
-}
-
-function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): never {
-  console.error(
-    "  Custom-image OpenClaw plugin provenance is missing or invalid; rebuild cannot safely distinguish image-owned plugins from user state.",
-  );
-  console.error("  The sandbox is untouched — no data was lost.");
-  console.error(
-    "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
-  );
-  return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
 export async function captureRebuildPolicyDocument(
@@ -122,30 +123,7 @@ export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
 ): Promise<RebuildBackupPhaseResult | null> {
-  const customOpenClaw =
-    Boolean(input.sandboxEntry.fromDockerfile) &&
-    (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
   const preparedRecoveryManifest = input.preparedRecoveryManifest;
-  const hasPreparedRecovery = preparedRecoveryManifest !== null;
-  const preparedRecoveryIsAuthoritative =
-    preparedRecoveryManifest !== null &&
-    hasAuthoritativeOpenClawImagePluginProvenance(preparedRecoveryManifest);
-  const restoresCustomOpenClawState =
-    customOpenClaw && (!input.staleRecovery || hasPreparedRecovery);
-  if (
-    (hasPreparedRecovery &&
-      preparedRecoveryManifest?.reconcileOpenClawImagePluginProvenance === true &&
-      !preparedRecoveryIsAuthoritative) ||
-    (restoresCustomOpenClawState &&
-      !preparedRecoveryIsAuthoritative &&
-      (hasPreparedRecovery ||
-        !hasCompleteOpenClawImagePluginProvenance(
-          input.sandboxEntry.openclawImagePluginInstalls,
-          "/sandbox/.openclaw",
-        )))
-  ) {
-    return bailForUnsafeOpenClawPluginProvenance(input);
-  }
   const preparedRetainedPolicy = preparedRecoveryManifest
     ? readRebuildPolicyHandoff(preparedRecoveryManifest)
     : null;
@@ -167,14 +145,6 @@ export async function runRebuildBackupPhase(
       input.bail,
     ));
   if (backupManifest === undefined) return null;
-  if (
-    backupManifest &&
-    (backupManifest.reconcileOpenClawImagePluginProvenance === true ||
-      restoresCustomOpenClawState) &&
-    !hasAuthoritativeOpenClawImagePluginProvenance(backupManifest)
-  ) {
-    return bailForUnsafeOpenClawPluginProvenance(input);
-  }
   const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
   if (input.staleRecovery && !retainedPolicy) {
     return input.bail(
