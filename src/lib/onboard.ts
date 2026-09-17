@@ -3204,7 +3204,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           isOpenclawGatewayReady: (name) =>
             openclawSetup.isOpenclawGatewayReady(
               name,
-              registry.getSandbox(name)?.dashboardPort ?? CONTROL_UI_PORT,
+              registry.getSandbox(name)?.dashboardPort ?? DASHBOARD_PORT,
               sandboxExec,
             ),
           skippedStepMessage,

@@ -7,6 +7,7 @@ import {
   readSandboxConfig,
   resolveAgentConfig,
 } from "../sandbox/config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
 const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
