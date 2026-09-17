@@ -3,8 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { VllmProfile } from "../../../inference/vllm";
+import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
+import { makeDeps, makeHostState } from "../../__test-helpers__/setup-nim-flow";
+import { resolveLocalModelProfilePlan } from "../../local-model-profile/plan";
+import { createSetupNim, type SetupNimFlowDeps } from "../../setup-nim-flow";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
@@ -165,6 +170,67 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     );
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: vllmProfile,
+    });
+  });
+
+  it("persists catalog provenance through the production setupNim handoff (#11896)", async () => {
+    const catalog = loadServingCatalog();
+    const plan = resolveLocalModelProfilePlan(catalog, {
+      NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "1",
+      NEMOCLAW_LOCAL_MODEL_RUNTIME: "vllm",
+    })!;
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
+      async (_plan, _host, state) => {
+        state.provider = "vllm-local";
+        state.model = plan.recipe.spec.model.id;
+        state.endpointUrl = "http://host.openshell.internal:8000/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const productionSetupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        localModelProfileIntegration: { resolvePlan: () => plan, onboard },
+        detectInferenceProviderHostState: () =>
+          makeHostState({ vllmProfile: profile, hasVllmImage: true }),
+      }),
+    );
+    const { deps, calls } = createDeps({
+      setupNim: (gpu, sandboxName, agent, recover, gatewayName, ...rest) =>
+        productionSetupNim(
+          gpu as Parameters<typeof productionSetupNim>[0],
+          sandboxName,
+          agent as Parameters<typeof productionSetupNim>[2],
+          recover,
+          null,
+          gatewayName,
+          ...rest,
+        ),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, createSession()),
+      gpu: { type: "nvidia", platform: "spark" } as never,
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(onboard).toHaveBeenCalledOnce();
+    expect(persistedUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "vllm-local",
+          servingProfileProvenance: plan.servingProfileProvenance,
+        }),
+      ]),
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: plan.servingProfileProvenance,
     });
   });
 
