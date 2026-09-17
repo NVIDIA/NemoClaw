@@ -66,24 +66,30 @@ jobs:
               -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
               --entrypoint node nc-fabric:openclaw "/tests/$test"
           done
-  openclaw-amd64:
+  agents-amd64:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      AGENT_PLATFORM: linux/amd64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate the AMD64 OpenClaw build
+      - name: Validate AMD64 agent builds
         run: |
-          python3 -B -m unittest image.test_builds.ImageBuilds.test_openclaw_has_a_native_linux_amd64_build
-          docker buildx bake --check openclaw-amd64
-      - name: Build the AMD64 OpenClaw image locally
-        run: docker buildx bake openclaw-amd64 --load
-      - name: Verify the assembled AMD64 image and retained source hashes
+          python3 -B -m unittest discover -s image -p test_builds.py
+          docker buildx bake --check agents
+      - name: Build qualified AMD64 agent images locally
+        run: docker buildx bake agents --load
+      - name: Verify assembled AMD64 images and retained source hashes
         run: |
-          docker run --rm --runtime=runc --network none \
-            -e NEMOCLAW_TEST_HARNESS=openclaw -v "$PWD/image/test_image.py:/test.py:ro" \
-            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw-amd64 -B /test.py
+          for harness in deepagents openclaw; do
+            docker run --rm --runtime=runc --network none \
+              -e NEMOCLAW_TEST_HARNESS="$harness" -v "$PWD/image/test_image.py:/test.py:ro" \
+              --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
+          done
+      - name: Exercise AMD64 native adapters against isolated protocol fixtures
+        run: python3 tools/fabric-adapter-experiment.py --harness deepagents
       - name: Exercise AMD64 OpenClaw tools, execution, search, and tracing
         run: |
           docker run --rm --runtime=runc --network none --user 0 \
@@ -91,11 +97,11 @@ jobs:
             -e PYTHONPATH=/opt/nemoclaw \
             -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e NEMOCLAW_TEST_NATIVE_FEATURES=1 -e NEMOCLAW_TEST_NATIVE_EXECUTION=1 \
             -v "$PWD/image/fabric:/tests:ro" -w /tests \
-            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw-amd64 \
+            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
             -B -m unittest test_openclaw_adapter test_inference test_interfaces \
             test_execution test_observability test_web_search test_openclaw_tools_gateway
           for test in test_inference_probe.mts test_openclaw_tools.mts test_openclaw_disclosure.mts test_web_search.mts; do
             docker run --rm --runtime=runc --network none --user 0 \
               -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
-              --entrypoint node nc-fabric:openclaw-amd64 "/tests/$test"
+              --entrypoint node nc-fabric:openclaw "/tests/$test"
           done

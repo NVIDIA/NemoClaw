@@ -11,7 +11,7 @@ They can have different requirements; a working client binary does not qualify t
 | Role | Must be available there |
 |---|---|
 | Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credentials/TLS files, and access to the gateway and selected engine |
-| Image build host | The image recipe's toolchain and architecture; Fabric supports OpenClaw builds on Linux ARM64 or AMD64, while other agent targets use ARM64 |
+| Image build host | The image recipe's toolchain and architecture; Fabric supports Deep Agents and OpenClaw builds on Linux ARM64 or AMD64, while other agent targets use ARM64 |
 | Sandbox engine host | OpenShell's configured compute daemon and the selected immutable agent image |
 | Inference host | A reachable compatible endpoint, or the tools, image, model storage, and capacity required by the selected managed service |
 
@@ -57,7 +57,7 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](usage.md) and [inference](inference.md) |
-| Fabric agent image | OpenClaw uses a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
+| Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Local Unix engine socket, an existing network supporting published ports, reachable private endpoint, and CPU-sized model; see [managed Ollama](inference.md#run-managed-ollama) |
 | External Ollama with managed proxy | Local Linux Docker host, loopback-only daemon, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |
@@ -72,7 +72,7 @@ The example deployment UUIDs, endpoints, and local image digests must be replace
 | Deployment claim | Status |
 |---|---|
 | General DGX Station deployment and setup procedure | **TBD** — requires current implementation and host qualification |
-| Linux AMD64 OpenClaw deployment | **TBD** — the native image build and tests do not establish gateway provisioning or an end-to-end agent response |
+| Linux AMD64 Fabric deployment | **TBD** — the native Deep Agents and OpenClaw image builds and tests do not establish gateway provisioning or an end-to-end agent response |
 | AMD64 Nemotron image and GPU inference | **TBD** — configuration and build-platform tests do not establish a successful image build, model load, or agent response on the target host |
 | Windows/WSL or macOS local GPU deployment | **TBD** — native client evidence does not establish runtime support |
 | Separate physical SSH model host | **TBD** — the retained two-daemon live result used one DGX Spark |
