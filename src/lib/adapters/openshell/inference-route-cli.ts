@@ -8,6 +8,7 @@ import {
   type OpenShellGatewayEndpointEnvironment,
 } from "./gateway-scope";
 import {
+  isValidOpenShellInferenceRoute,
   type OpenShellInferenceRouteError,
   type OpenShellInferenceRouteObservation,
   type OpenShellInferenceRouteObserver,
@@ -183,7 +184,17 @@ function parseRoute(output: string): OpenShellInferenceRouteResult {
     });
   }
   if (unconfigured) return success({ state: "unconfigured" });
-  if (provider && model) return success({ state: "configured", route: { provider, model } });
+  if (provider && model) {
+    const route = { provider, model };
+    if (isValidOpenShellInferenceRoute(route)) {
+      return success({ state: "configured", route });
+    }
+    return failure({
+      kind: "schema",
+      reason: "malformed_output",
+      message: "OpenShell returned an unrecognized inference route observation.",
+    });
+  }
   if (provider !== null || model !== null) {
     return failure({
       kind: "schema",

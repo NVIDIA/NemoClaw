@@ -3,10 +3,6 @@
 
 import { isDeepStrictEqual } from "node:util";
 import {
-  createCliOpenShellInferenceRouteObserver,
-  createCliOpenShellSandboxObserver,
-} from "../../adapters/openshell/observers-cli";
-import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command-cli";
@@ -16,6 +12,7 @@ import {
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
 } from "../../adapters/openshell/sandbox-observer";
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
   captureOpenshell,
   captureResolvedOpenshell,
@@ -78,6 +75,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
+  observeGatewayInferenceRoute,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -936,10 +934,11 @@ async function verifyHermesPortableInferenceRoute(
     commandAuthority
       ? captureHermesPortableReadinessObservation(commandAuthority, args, options)
       : captureHermesPortableOpenShell(sandboxName, args, options);
-  const liveResult = await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute({
-    target: namedOpenShellGateway(authority.gatewayName),
-    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  const liveResult = await observeGatewayInferenceRoute(
+    capture,
+    authority.gatewayName,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
   if (!liveResult.ok) {
     refuseHermesPortableInferenceRoute("unreachable");
   }
@@ -1641,12 +1640,11 @@ async function ensureSandboxInferenceRouteUnlocked(
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
-    const liveResult = await createCliOpenShellInferenceRouteObserver(
+    const liveResult = await observeGatewayInferenceRoute(
       captureOpenshell,
-    ).observeInferenceRoute({
-      target: namedOpenShellGateway(gatewayName),
-      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
+      gatewayName,
+      OPENSHELL_PROBE_TIMEOUT_MS,
+    );
     if (!liveResult.ok) {
       throw new Error("the gateway inference route observation did not return a trusted result");
     }

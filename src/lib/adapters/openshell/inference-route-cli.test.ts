@@ -84,6 +84,28 @@ describe("CLI inference route observation", () => {
     });
   });
 
+  it.each([
+    ["provider characters", "unsafe provider", "nvidia/model"],
+    ["provider length", "p".repeat(129), "nvidia/model"],
+    ["model characters", "nvidia", "model;unsafe"],
+    ["model length", "nvidia", "m".repeat(513)],
+  ])("rejects configured output with unsafe %s", async (_, provider, model) => {
+    const capture = vi.fn().mockResolvedValue({
+      status: 0,
+      output: `Inference:\n  Provider: ${provider}\n  Model: ${model}\n`,
+    });
+
+    const result =
+      await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute(namedRequest);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "schema", reason: "malformed_output" },
+    });
+    expect(JSON.stringify(result)).not.toContain(provider);
+    expect(JSON.stringify(result)).not.toContain(model);
+  });
+
   it.each(["Gateway inference:\n\n  Not configured", "Inference:\n\n  Not configured"])(
     "returns a typed unconfigured route from %s",
     async (output) => {

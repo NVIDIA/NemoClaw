@@ -4,11 +4,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
+import { createCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import {
-  createCliOpenShellInferenceRouteObserver,
   type OpenShellInferenceRouteObserver,
   type OpenShellInferenceRouteResult,
-} from "../../adapters/openshell/observers-cli";
+} from "../../adapters/openshell/inference-route";
 import {
   captureOpenshellForStatus,
   getStatusProbeTimeoutMs,

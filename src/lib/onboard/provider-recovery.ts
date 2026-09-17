@@ -3,8 +3,10 @@
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { isSafeModelId } from "../validation";
-import type { OpenShellSynchronousInferenceRouteObserver } from "../adapters/openshell/inference-route";
+import {
+  isValidOpenShellInferenceRoute,
+  type OpenShellSynchronousInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import {
   createSynchronousCliOpenShellInferenceRouteObserver,
   type CaptureOpenShellInferenceRouteSynchronously,
@@ -151,10 +153,6 @@ export interface RecordedInferenceRoute {
   source: "registry" | "session";
 }
 
-const MAX_LIVE_PROVIDER_LENGTH = 128;
-const MAX_LIVE_MODEL_LENGTH = 512;
-const SAFE_LIVE_PROVIDER = /^[A-Za-z0-9._:-]+$/;
-
 export type SandboxRecoveryAuthority = "missing" | "authorized" | "unauthorized";
 
 export function classifySandboxRecoveryAuthority(
@@ -205,17 +203,9 @@ export function validateLiveGatewayInference(
 ): { provider: string; model: string } | null {
   const provider = typeof value?.provider === "string" ? value.provider.trim() : "";
   const model = typeof value?.model === "string" ? value.model.trim() : "";
-  if (
-    !provider ||
-    provider.length > MAX_LIVE_PROVIDER_LENGTH ||
-    !SAFE_LIVE_PROVIDER.test(provider) ||
-    !model ||
-    model.length > MAX_LIVE_MODEL_LENGTH ||
-    !isSafeModelId(model)
-  ) {
-    return null;
-  }
-  return { provider, model };
+  if (!provider || !model) return null;
+  const route = { provider, model };
+  return isValidOpenShellInferenceRoute(route) ? route : null;
 }
 
 function completeRecordedInferenceRoute(
