@@ -35,6 +35,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
@@ -447,22 +448,42 @@ async function verifyExactCleanup(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
+  const settled = await pollUntil({
+    artifactPrefix: `post-destroy-absence-${sandboxName}`,
+    deadlineMs: 60_000,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => {
+      const openshellList = await sandbox.list({
+        artifactName: `${artifactName}-openshell-list`,
+        env,
+        timeoutMs: 30_000,
+      });
+      const containers = await host.command(
+        "docker",
+        ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
+        {
+          artifactName: `${artifactName}-docker-inventory`,
+          env,
+          timeoutMs: 30_000,
+        },
+      );
+      return { containers, openshellList };
+    },
+    terminal: ({ containers, openshellList }) => {
+      if (openshellList.exitCode !== 0) {
+        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
+      }
+      if (containers.exitCode !== 0) {
+        return `inspect Docker inventory after managed activation destroy failed: ${resultText(containers)}`;
+      }
+      return undefined;
+    },
+    accept: ({ containers, openshellList }) =>
+      !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
+  const { containers, openshellList } = settled.value;
   assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  const containers = await host.command(
-    "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
-    {
-      artifactName: `post-destroy-docker-inventory-${sandboxName}`,
-      env,
-      timeoutMs: 30_000,
-    },
-  );
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
 }
