@@ -139,7 +139,7 @@ export function isExpectedHermesRestartRelayClosure(
   result: GatewayRestartCommandResult | null,
 ): boolean {
   if (!result || result.status === 0) return false;
-  const output = gatewayRestartOutput(result);
+  const output = gatewayRestartOutput(result).replace(/[\s│]+/gu, " ");
   return (
     output.includes(OPENSHELL_SERVICE_UNAVAILABLE) && output.includes(HERMES_RESTART_RELAY_CLOSED)
   );
