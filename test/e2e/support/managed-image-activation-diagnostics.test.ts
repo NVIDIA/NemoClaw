@@ -29,15 +29,16 @@ describe("managed image activation failure diagnostics", () => {
     const containerId = "a".repeat(64);
     const artifacts = new ArtifactSink(directory);
     const command = vi.fn(async (executable: string, args: readonly string[]) => {
-      if (executable === "docker" && args[0] === "ps") {
-        return {
-          exitCode: 0,
-          stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
-          stderr: "",
-        };
-      }
-      if (executable === "docker" && args[0] === "cp") {
-        fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+      switch (`${executable}:${String(args[0])}`) {
+        case "docker:ps":
+          return {
+            exitCode: 0,
+            stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+            stderr: "",
+          };
+        case "docker:cp":
+          fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+          break;
       }
       return { exitCode: 0, stdout: "", stderr: "" };
     });

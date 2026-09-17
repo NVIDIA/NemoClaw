@@ -53,11 +53,15 @@ describe("provider-owned managed startup root application", () => {
     ]);
     const capture = vi.fn((args: readonly string[], _timeoutMs?: number, input?: Buffer) => {
       calls.push({ args, ...(input ? { input } : {}) });
-      if (args[0] === "ps") return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
-      if (args[0] === "inspect" || (args[0] === "container" && args[1] === "inspect")) {
-        return { status: 0, stdout: inspect, stderr: "" };
+      switch (`${String(args[0])}:${String(args[1])}`) {
+        case "ps:--all":
+          return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+        case "container:inspect":
+        case "inspect:--type":
+          return { status: 0, stdout: inspect, stderr: "" };
+        default:
+          return { status: 0, stdout: "", stderr: "" };
       }
-      return { status: 0, stdout: "", stderr: "" };
     });
     const engine = (operation: string) => ({
       operation,

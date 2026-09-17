@@ -98,9 +98,6 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 function providerRegistry(providerId: "docker" | "podman") {
-  if (providerId === "docker") {
-    return createRuntimeProviderBundleRegistry([[providerId, createDockerRuntimeProviderBundle()]]);
-  }
   const engine = (operation: "host-doctor" | "sandbox-lifecycle") => ({
     operation,
     engineId: "podman",
@@ -110,17 +107,23 @@ function providerRegistry(providerId: "docker" | "podman") {
     capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   });
-  return createRuntimeProviderBundleRegistry([
-    [
-      providerId,
-      createPodmanRuntimeProviderBundle({
-        engines: {
-          hostDoctor: engine("host-doctor") as never,
-          sandboxLifecycle: engine("sandbox-lifecycle") as never,
-        },
-      }),
-    ],
-  ]);
+  const providers = {
+    docker: () =>
+      createRuntimeProviderBundleRegistry([["docker", createDockerRuntimeProviderBundle()]]),
+    podman: () =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "podman",
+          createPodmanRuntimeProviderBundle({
+            engines: {
+              hostDoctor: engine("host-doctor") as never,
+              sandboxLifecycle: engine("sandbox-lifecycle") as never,
+            },
+          }),
+        ],
+      ]),
+  };
+  return providers[providerId]();
 }
 
 describe("startSandbox native lifecycle", () => {
