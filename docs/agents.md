@@ -18,7 +18,7 @@ See [inference configuration](inference.md) for API selection, OpenClaw route tu
 
 ## Configure the Shared Harness
 
-Each sandbox runs one harness runtime.
+Each sandbox selects one harness implementation.
 Each sandbox must select exactly one configuration: inline `harness: {kind: openclaw}` or `harnessRef` from visible `harnesses` definitions.
 Every agent is an instance of the sandbox-selected harness implementation; multiple agents may share one runtime process.
 Agents retain their own inference choices, tools, and integrations.
@@ -37,10 +37,10 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 
 | Agent | Access and conversation behavior |
 |---|---|
-| OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
+| OpenClaw | [Headless request](#run-one-headless-openclaw-request) or optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
 | Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) can accompany explicitly declared interfaces |
-| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the named agent's route |
-| Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
+| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request); starts a separate runtime using the named agent's route |
+| Pi | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request) and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
 Use the deployment's gateway and workspace for OpenShell access; [interface selection](interfaces.md#select-the-gateway-and-workspace) explains how to identify them.
@@ -61,9 +61,10 @@ A failed startup stops runtimes already started by that launch.
 Changing the roster changes the immutable sandbox launch configuration; use a fresh deployment and an image built from this revision.
 To invoke a specific agent through the SDK procedure below, pass its declared name to `configuration()`.
 
-### Run One Deep Agents Request
+### Run One Deep Agents or Pi Request
 
-Use an already applied `harness: {kind: deepagents}` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
+Use an already applied Deep Agents or Pi deployment, a compatible current image, and an API/model you can invoke.
+Its gateway and inference may be managed or external.
 Follow its [harness matrix entry](reference/fabric-harnesses.md) and the shared [deployment procedure](usage.md) to create it first.
 This call starts a separate Fabric runtime inside the sandbox and sends a real model request, which can incur charges.
 It shares the selected agent’s workspace with its hosted runtime and can use that agent’s tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
@@ -71,15 +72,16 @@ Use an idle sandbox you own and preserve any files you need before running it.
 It does not attach to or resume the hosted runtime's conversation.
 
 After [selecting the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), run this from any directory on the client host.
-Replace `assistant` with the sandbox name and the final `main` with the declared agent name:
+Replace the sandbox and agent names with those in your YAML; the command below uses `assistant` for both.
+For a Deep Agents sandbox, replace the final `pi` argument with `deepagents`:
 
 ```sh
-openshell sandbox exec -n assistant --timeout 360 --no-tty -- /opt/fabric/bin/python -c '
+openshell sandbox exec -n assistant --timeout 360 --no-tty --no-login-shell -- /opt/fabric/bin/python -c '
 import asyncio, json, sys
 sys.path.insert(0, "/opt/nemoclaw")
 from fabric import configuration
 from nemo_fabric import Fabric, FabricConfig
-config = configuration(sys.argv[1], "deepagents")
+config = configuration(sys.argv[1], sys.argv[2])
 config["runtime"]["artifacts"] = "/sandbox/sdk-smoke"
 result = asyncio.run(Fabric().run(
     FabricConfig.model_validate(config),
@@ -87,8 +89,12 @@ result = asyncio.run(Fabric().run(
     base_dir="/sandbox",
 ))
 print(json.dumps(result.to_mapping()))
-' main
+' assistant pi
 ```
+
+This uses the selected agent’s default model.
+For Pi with multiple routes, replace the `input` string with `{"prompt": "Reply with exactly the word FOUR.", "model": "smart"}`, using a declared route name.
+Use the plain string for a single-model Pi deployment.
 
 Verify JSON `status: "succeeded"`, no non-null `error`, and an actual `output.response` containing the requested reply.
 A zero process exit or echoed prompt alone does not prove a successful agent response.
@@ -96,7 +102,36 @@ If execution fails or the connection is lost, inspect the returned error and ret
 Retire the sandbox using [deployment destroy](usage.md#destroy), which deletes its workspace and invocation artifacts.
 
 This follows the [native access test](../crates/nemoclaw-e2e/tests/fabric_live.rs) and [retained Linux ARM64 result](validation/rust-fabric-live-linux-arm64.json) at revision `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`.
-That result confirmed a short Deep Agents reply through OpenShell and preservation of the hosted runtime identity; it does not qualify conversation recovery or every model/tool combination.
+That result confirmed a short Deep Agents reply through OpenShell and preservation of the hosted runtime identity.
+That result does not qualify conversation recovery or every model/tool combination.
+
+### Run One Headless OpenClaw Request
+
+Use an applied OpenClaw deployment with `harness.interfaces` omitted; for dashboard-enabled deployments, use the [authenticated dashboard](interfaces.md#openclaw-dashboard).
+This command uses the existing native gateway and a named conversation separate from Fabric's hosted conversation.
+It can invoke the agent's tools, change workspace files, and incur model charges.
+Repeating the command continues this native conversation; its history remains in the sandbox until it is deleted.
+
+After [selecting the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), run this from any directory on the client host.
+Replace the sandbox name `openclaw`, agent name `assistant`, and session key with your own values:
+
+```sh
+openshell sandbox exec -n openclaw --timeout 360 --no-tty --no-login-shell \
+  --env OPENCLAW_HOME=/sandbox \
+  --env OPENCLAW_STATE_DIR=/sandbox/.openclaw \
+  --env OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
+  -- /usr/local/bin/node /app/openclaw.mjs agent \
+  --agent assistant --session-key agent:assistant:spark-demo \
+  --message "Reply with exactly the word FOUR." --timeout 300 --json
+```
+
+A new session uses the agent’s default model unless `--model` is supplied.
+For multiple declared routes, append `--model oracle` to select that model alias for the request; use your declared route name.
+Omitting `--deliver` keeps the reply in the terminal rather than delivering it through a native messaging channel.
+Verify JSON `status: "ok"`, an actual reply in `result.payloads[].text`, and no `result.meta.error`, `result.meta.aborted`, or payload `isError`.
+A gateway acknowledgment alone does not establish a completed agent response.
+If the command fails or disconnects, inspect `/sandbox/.openclaw/gateway.log` before deciding whether another request is safe; do not automatically replay an uncertain tool invocation.
+This headless path uses the sandbox-local gateway's existing authentication configuration and does not create or read a dashboard token.
 
 ## Native Controls at Initialization
 
