@@ -73,7 +73,8 @@ describe("Pi qualification receipt refresh", () => {
     changedPaths: readonly string[],
     options: {
       accepted?: ReadonlySet<string>;
-      headRevision?: string;
+      headRevision?: string | null;
+      mergeInProgress?: boolean;
       sourceParity?: boolean;
       stagedPaths?: readonly string[];
     } = {},
@@ -89,18 +90,23 @@ describe("Pi qualification receipt refresh", () => {
                 status: 0,
                 stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
               }
-            : args.includes("--quiet")
-              ? args[3] === (options.headRevision ?? "HEAD")
-                ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+            : args[0] === "rev-parse"
+              ? options.mergeInProgress
+                ? { status: 0, stdout: `${"e".repeat(40)}\n` }
+                : { status: 1, stdout: "" }
+              : args.includes("--quiet")
+                ? (args.includes("--cached") && options.mergeInProgress) ||
+                  args[3] === (options.headRevision ?? "HEAD")
+                  ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+                  : (() => {
+                      throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
+                    })()
                 : (() => {
-                    throw new Error(`Unexpected comparison revision: ${args[3]}`);
-                  })()
-              : (() => {
-                  throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
-                })(),
+                    throw new Error(`Unexpected git arguments: ${args.join(" ")}`);
+                  })(),
       receipts: RECEIPTS,
       rootDir,
-      headRevision: options.headRevision ?? "HEAD",
+      ...(options.headRevision !== null ? { headRevision: options.headRevision ?? "HEAD" } : {}),
     });
   }
 
@@ -146,6 +152,15 @@ describe("Pi qualification receipt refresh", () => {
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
         headRevision,
+      }),
+    ).not.toThrow();
+  });
+
+  it("compares receipt parity against the staged tree during a local merge", () => {
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
+        headRevision: null,
+        mergeInProgress: true,
       }),
     ).not.toThrow();
   });
