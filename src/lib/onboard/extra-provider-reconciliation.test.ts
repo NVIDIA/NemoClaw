@@ -10,6 +10,7 @@ import {
   LIMIT,
   missing,
   ok,
+  providerAdapterFromProbe,
   type ProbeResult,
   reconcile,
 } from "./extra-provider-reconciliation.test-fixtures";
@@ -25,7 +26,7 @@ describe("planRegisteredExtraProviders", () => {
     expect(
       await planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => [],
-        runOpenshell,
+        providerAdapter: providerAdapterFromProbe(runOpenshell),
       }),
     ).toEqual({ extraProviders: [], staleExtraProviders: [] });
     expect(runOpenshell).not.toHaveBeenCalled();
@@ -46,7 +47,7 @@ describe("planRegisteredExtraProviders", () => {
     const plan = await planRegisteredExtraProviders("nemoclaw", {
       listExtraProviders: () => [...recorded],
       removeExtraProvider,
-      runOpenshell,
+      providerAdapter: providerAdapterFromProbe(runOpenshell),
     });
     expect(plan).toEqual({
       extraProviders: recorded.slice(0, -1),
@@ -86,7 +87,9 @@ describe("planRegisteredExtraProviders", () => {
     const plan = await planRegisteredExtraProviders("nemoclaw", {
       listExtraProviders: () => ["healthy-provider", "stale-provider"],
       removeExtraProvider,
-      runOpenshell: (args) => (args.at(-1) === "stale-provider" ? missing("stale-provider") : ok()),
+      providerAdapter: providerAdapterFromProbe((args) =>
+        args.at(-1) === "stale-provider" ? missing("stale-provider") : ok(),
+      ),
     });
 
     expect(plan).toEqual({

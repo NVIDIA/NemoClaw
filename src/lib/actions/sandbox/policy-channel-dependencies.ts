@@ -3,7 +3,6 @@
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
-import { runOpenshell } from "../../adapters/openshell/runtime";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { getCredential, normalizeCredentialValue } from "../../credentials/store";
@@ -108,7 +107,7 @@ export const policyChannelDependencies = {
       channelIdForCredential: () => context.channelName,
     });
     return MessagingSetupApplier.applyCredentialsAtOpenShell(context.plan, {
-      providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+      providerAdapter: createCliOpenShellProviderAdapter(),
       target: namedOpenShellGateway(gatewayName),
       definitions: application.definitions,
       refreshes: application.refreshes,
@@ -126,7 +125,7 @@ export const policyChannelDependencies = {
     revalidateSandboxIdentity: (operation: string) => void,
   ) {
     return MessagingSetupApplier.cleanupProvidersAtOpenShell(providerNames, {
-      providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+      providerAdapter: createCliOpenShellProviderAdapter(),
       target: namedOpenShellGateway(gatewayName),
       allowedSandboxes: [sandboxName],
       revalidateSandboxIdentity,

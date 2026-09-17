@@ -2,23 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 
-type ExtraProviderRunOpenshell = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => {
-  status: number | null;
-  error?: Error;
-  output?: unknown;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-};
+type ExtraProviderProbe = Pick<OpenShellProviderAdapter, "getProvider">;
+
+export function createCliExtraProviderProbe(run: RunProviderCommand): ExtraProviderProbe {
+  return createCliOpenShellProviderAdapter({ run });
+}
+
+export function planRegisteredExtraProvidersWithCliRunner(
+  gatewayName: string,
+  run: RunProviderCommand,
+): Promise<ExtraProviderReconciliationPlan> {
+  return planRegisteredExtraProviders(gatewayName, {
+    providerAdapter: createCliExtraProviderProbe(run),
+  });
+}
 
 export type ReconcileExtraProvidersDeps = {
-  runOpenshell?: ExtraProviderRunOpenshell;
-  providerAdapter?: OpenShellProviderAdapter;
+  providerAdapter?: ExtraProviderProbe;
   listExtraProviders?: () => string[];
   removeExtraProvider?: (name: string) => boolean;
   nowMs?: () => number;
@@ -35,22 +41,6 @@ type IndeterminateProbeReason =
   | "ambiguous-diagnostic"
   | "probe-process-error"
   | "timeout-or-signal";
-
-function defaultRunOpenshell(
-  args: string[],
-  opts?: Record<string, unknown>,
-): ReturnType<ExtraProviderRunOpenshell> {
-  const runtime = require("../adapters/openshell/runtime") as {
-    getOpenshellBinary: () => string;
-  };
-  const { run } = require("../runner") as {
-    run: (
-      command: string[],
-      options?: Record<string, unknown>,
-    ) => ReturnType<ExtraProviderRunOpenshell>;
-  };
-  return run([runtime.getOpenshellBinary(), ...args], opts);
-}
 
 function defaultListExtraProviders(): string[] {
   const { listExtraProviders } = require("../state/registry") as {
@@ -81,7 +71,7 @@ type ProviderProbeOutcome = {
 type ProviderProbeContext = {
   gatewayName: string;
   name: string;
-  providerAdapter: OpenShellProviderAdapter;
+  providerAdapter: ExtraProviderProbe;
   nowMs: () => number;
   deadlineMs: number;
 };
@@ -139,9 +129,7 @@ export async function planRegisteredExtraProviders(
     return { extraProviders: [], staleExtraProviders: [] };
   }
   if (!gatewayName) throw new Error("OpenShell gateway name is required.");
-  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
-  const providerAdapter =
-    deps.providerAdapter ?? createCliOpenShellProviderAdapter({ run: runOpenshell });
+  const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
   const nowMs = deps.nowMs ?? monotonicNowMs;
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   const deadlineMs = nowMs() + PROVIDER_RECONCILIATION_BUDGET_MS;

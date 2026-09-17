@@ -152,7 +152,7 @@ const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const {
   applyExtraProviderReconciliation,
-  planRegisteredExtraProviders,
+  planRegisteredExtraProvidersWithCliRunner,
   runSandboxProviderPreDeleteCleanup,
 } =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
@@ -1502,7 +1502,7 @@ const sandboxCreateOrchestrationRuntime = {
   onboardSessionBootstrap,
   openshellArgv,
   path,
-  planRegisteredExtraProviders,
+  planRegisteredExtraProviders: planRegisteredExtraProvidersWithCliRunner,
   preparedDcodeRebuild,
   promptValidatedSandboxName,
   promptYesNoOrDefault,
@@ -3124,7 +3124,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
             listRegistrySandboxes: registry.listSandboxes,
             planRegisteredExtraProviders: (gatewayName) =>
-              planRegisteredExtraProviders(gatewayName, { runOpenshell }),
+              planRegisteredExtraProvidersWithCliRunner(gatewayName, runOpenshell),
             resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
             createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
               withSandboxPortReservationScope((dashboardPortReservationScope) =>

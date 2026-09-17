@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import { planRegisteredExtraProviders } from "./extra-provider-reconciliation";
+import {
+  createCliExtraProviderProbe,
+  planRegisteredExtraProviders,
+} from "./extra-provider-reconciliation";
 
 export type ProbeResult = {
   status: number | null;
@@ -21,6 +24,12 @@ export const missing = (name: string): ProbeResult => ({
   stderr: `Error: provider '${name}' not found`,
 });
 
+export function providerAdapterFromProbe(
+  run: (args: string[], options?: Record<string, unknown>) => ProbeResult,
+) {
+  return createCliExtraProviderProbe(run);
+}
+
 export function reconcile(
   recorded: string[],
   responses: Record<string, ProbeResult | (() => ProbeResult)> = {},
@@ -28,10 +37,12 @@ export function reconcile(
 ): Promise<string[]> {
   return planRegisteredExtraProviders("nemoclaw", {
     listExtraProviders: () => [...recorded],
-    runOpenshell: vi.fn((args: string[]): ProbeResult => {
-      const response = responses[args.at(-1) ?? ""];
-      return typeof response === "function" ? response() : (response ?? ok());
-    }),
+    providerAdapter: providerAdapterFromProbe(
+      vi.fn((args: string[]): ProbeResult => {
+        const response = responses[args.at(-1) ?? ""];
+        return typeof response === "function" ? response() : (response ?? ok());
+      }),
+    ),
     warn: () => undefined,
     ...extra,
   }).then((plan) => [...plan.extraProviders]);

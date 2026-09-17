@@ -6,6 +6,7 @@ import { planRegisteredExtraProviders } from "./extra-provider-reconciliation";
 import {
   missing,
   ok,
+  providerAdapterFromProbe,
   type ProbeResult,
   reconcile,
 } from "./extra-provider-reconciliation.test-fixtures";
@@ -71,7 +72,7 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
         await planRegisteredExtraProviders("nemoclaw", {
           listExtraProviders: () => [...recorded],
           nowMs: () => now,
-          runOpenshell,
+          providerAdapter: providerAdapterFromProbe(runOpenshell),
           warn,
         })
       ).extraProviders,
@@ -91,14 +92,14 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
     await expect(
       planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["custom-provider"],
-        runOpenshell,
+        providerAdapter: providerAdapterFromProbe(runOpenshell),
       }),
     ).rejects.toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
     vi.unstubAllEnvs();
     await expect(
       planRegisteredExtraProviders("", {
         listExtraProviders: () => ["custom-provider"],
-        runOpenshell,
+        providerAdapter: providerAdapterFromProbe(runOpenshell),
       }),
     ).rejects.toThrow("OpenShell gateway name is required.");
     expect(runOpenshell).not.toHaveBeenCalled();
