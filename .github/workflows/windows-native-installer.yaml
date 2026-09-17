@@ -131,11 +131,7 @@ jobs:
   windows-finished-installer:
     name: Finished Windows ${{ inputs.finished_windows_agent || 'openclaw' }} preview installer (ARM64)
     needs:
-      [
-        windows-compiled-application,
-        windows-bash-compatibility,
-        windows-bash-compatibility-reuse,
-      ]
+      [windows-compiled-application, windows-bash-compatibility, windows-bash-compatibility-reuse]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && needs.windows-compiled-application.result == 'success' && (inputs.finished_windows_agent != 'hermes' || needs.windows-bash-compatibility-reuse.result == 'success') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.finished_windows_agent == 'hermes' && 180 || 120 }}
@@ -625,6 +621,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare a fresh compiled application workspace
+        shell: pwsh
+        run: |
+          $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          $work = [IO.Path]::GetFullPath((Join-Path $runnerTemp 'compiled-windows-app'))
+          if ([IO.Path]::GetRelativePath($runnerTemp, $work) -cne 'compiled-windows-app') {
+            throw 'The compiled application workspace escaped RUNNER_TEMP.'
+          }
+          if (Test-Path -LiteralPath $work) {
+            Remove-Item -LiteralPath $work -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $work | Out-Null
       - name: Reject unsupported finished-installer validation scopes
         if: ${{ inputs.run_windows_native_installer }}
         shell: pwsh
@@ -709,7 +717,7 @@ jobs:
           & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
             --experimental-strip-types packaging/windows/app/test-compiled-openclaw.mts `
             --app-root "$env:RUNNER_TEMP\compiled-windows-app\build\app" `
-            --output "$env:RUNNER_TEMP\compiled-windows-app\controls"
+            --output "$env:RUNNER_TEMP\compiled-windows-app\controls\compiled-openclaw"
           if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows application controls failed.' }
       - name: Exercise compiled provider, tools and all packaged onboarding choices
         if: ${{ inputs.finished_windows_agent == 'openclaw' }}
