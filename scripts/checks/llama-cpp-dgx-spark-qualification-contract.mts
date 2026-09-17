@@ -39,7 +39,7 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
 export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
   "nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
-export const LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES = 50_000 as const;
+export const LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES = 1_100_000 as const;
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
   "models",
@@ -1354,7 +1354,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     serve.idleSleepSeconds !== -1 ||
     serve.flashAttention !== "enabled" ||
     serve.speculativeDecoding !== "disabled" ||
-    maxRequestBodyBytes !== 32_768 ||
+    maxRequestBodyBytes !== 1_048_576 ||
     upstreamPort === serve.port ||
     typeof kvCache.key !== "string" ||
     !allowedKvTypes.has(kvCache.key) ||
