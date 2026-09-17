@@ -7,8 +7,8 @@ These records qualify specific behaviors, revisions, and environments of NemoCla
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
-Current native inference qualification is [blocked by OpenShell main-process environment propagation](rust-native-inference-linux-arm64.md).
-The record separates passing schema and protocol fixtures from the failed live attempt.
+The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
+The newer [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the remaining managed Podman blocker.
 
 | Contract | Evidence |
 |---|---|

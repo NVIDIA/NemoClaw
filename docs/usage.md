@@ -10,7 +10,8 @@ Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share
 [OpenClaw and Pi agents](agents.md) can select multiple model choices.
 OpenClaw and Deep Agents support multiple agents in one sandbox; each Deep Agents instance selects one model.
 Other harnesses currently require one agent.
-At most one selected provider may have [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
+Multiple selected providers can own independent managed vLLM services.
+Managed Ollama and its proxy still share a singleton lifecycle; see [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
 Apply creates or changes runtime resources and can download model data.
@@ -51,8 +52,9 @@ Apply requests health from the existing hosted Fabric runtime after configuratio
 It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
-The JSON result includes a `health` entry for each sandbox and its agent roster.
-This is one shared-runtime observation, not a separate test of each agent, inference route, or integration.
+The JSON result includes a `health` entry for each hosted Fabric runtime and its agent names.
+A multi-agent Deep Agents sandbox has one entry per agent runtime; OpenClaw shares one runtime observation across its agent roster.
+These observations do not separately test every inference route or integration.
 When available, `report` retains Fabric's liveness, activity, readiness, reason codes, timestamps, and dependency observations.
 A busy runtime can complete apply if Fabric reports it responsive and ready to accept work.
 A dependency marked unsupported is not a successful check; Fabric owns its effect on overall readiness.
