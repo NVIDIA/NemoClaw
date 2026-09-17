@@ -17,15 +17,28 @@ describe("agent state directory contract", () => {
         "history",
         { path: "identity", backup: false },
         { path: "agents" },
+        { path: "native-plugins", clear_when_absent: false },
         { prefix: "agents-", backup: false },
       ],
     });
 
-    expect(stateDirectoryPaths(directories)).toEqual(["history", "identity", "agents"]);
-    expect(stateDirectoryPaths(directories, { backup: true })).toEqual(["history", "agents"]);
+    expect(stateDirectoryPaths(directories)).toEqual([
+      "history",
+      "identity",
+      "agents",
+      "native-plugins",
+    ]);
+    expect(stateDirectoryPaths(directories, { backup: true })).toEqual([
+      "history",
+      "agents",
+      "native-plugins",
+    ]);
     expect(stateDirectoryPaths(directories, { backup: false })).toEqual(["identity"]);
     expect(stateDirectoryPrefixes(directories)).toEqual(["agents-"]);
     expect(stateDirectoryPrefixes(directories, { backup: false })).toEqual(["agents-"]);
+    expect(
+      directories.find((entry) => entry.kind === "path" && entry.path === "native-plugins"),
+    ).toMatchObject({ clearWhenAbsent: false });
   });
 
   it("keeps OpenClaw machine-local authentication state out of snapshots", () => {
@@ -54,6 +67,7 @@ describe("agent state directory contract", () => {
     [{ state_dirs: [{ path: "state", prefix: "state-" }] }, /exactly one/],
     [{ state_dirs: [{ path: "state", unknown: true }] }, /unknown.*not allowed/],
     [{ state_dirs: [{ path: "state", backup: "yes" }] }, /backup.*boolean/],
+    [{ state_dirs: [{ path: "state", clear_when_absent: "no" }] }, /clear_when_absent.*boolean/],
     [{ state_dirs: ["state", "state"] }, /repeats path:state/],
     [{ state_dirs: [{ path: "state" }, { prefix: "other-" }] }, /must extend a declared/],
   ])("rejects an invalid state declaration %#", (record, expected) => {
