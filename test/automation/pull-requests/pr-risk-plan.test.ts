@@ -130,7 +130,7 @@ describe("deterministic PR risk plan", () => {
     },
   );
 
-  it.each(["cloud-inference", "security-posture", "network-policy", "jetson-nvmap-gpu"])(
+  it.each(["security-posture", "network-policy", "jetson-nvmap-gpu"])(
     "classifies %s as manual-only when the controller rejects the job",
     (jobId) => {
       expect(isPrE2eManualControllerJob(jobId)).toBe(false);
@@ -205,8 +205,8 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
   });
@@ -258,19 +258,11 @@ describe("deterministic PR risk plan", () => {
       expect.objectContaining({
         id: "focused-e2e",
         matchedFiles: changedFiles,
-        requiredJobs: [
-          "device-auth-health",
-          "issue-4462-scope-upgrade-approval",
-          "openclaw-inference-switch",
-        ],
+        requiredJobs: ["issue-4462-scope-upgrade-approval", "openclaw-inference-switch"],
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining([
-        "device-auth-health",
-        "issue-4462-scope-upgrade-approval",
-        "openclaw-inference-switch",
-      ]),
+      expect.arrayContaining(["issue-4462-scope-upgrade-approval", "openclaw-inference-switch"]),
     );
     expect(riskPlanRequiredJobIds(adjacentOnboardChange)).toEqual([
       "onboard-repair",
@@ -509,8 +501,8 @@ describe("deterministic PR risk plan", () => {
 
     expect(focusedE2eJobs).toEqual([]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
     expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
@@ -534,8 +526,8 @@ describe("deterministic PR risk plan", () => {
       },
     ]);
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
       "token-rotation",
     ]);
@@ -548,8 +540,8 @@ describe("deterministic PR risk plan", () => {
     const result = plan(".github/workflows/e2e.yaml");
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "security-posture",
     ]);
     expect(result.families.map((family) => family.id)).toEqual([
@@ -933,7 +925,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/credentials/provider-list.ts",
       family: "credentials-security",
-      jobs: ["cloud-inference", "security-posture"],
+      jobs: ["full-e2e", "security-posture"],
     },
   ])("maps $family changes to a reviewed E2E floor", ({ file, family, jobs }) => {
     const result = plan(file);
@@ -964,12 +956,12 @@ describe("deterministic PR risk plan", () => {
     {
       file: "nemoclaw-blueprint/private-networks.yaml",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "full-e2e", "security-posture"],
     },
     {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
-      jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
+      jobs: ["inference-routing", "network-policy", "full-e2e", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);
@@ -1010,7 +1002,7 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(riskPlanRequiredJobIds(result)).toEqual(
-      expect.arrayContaining(["cloud-onboard", "cloud-inference", "security-posture"]),
+      expect.arrayContaining(["cloud-onboard", "full-e2e", "security-posture"]),
     );
   });
 
@@ -1052,14 +1044,13 @@ describe("deterministic PR risk plan", () => {
     );
 
     expect(riskPlanRequiredJobIds(result)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
+      "full-e2e",
       "managed-image-multiarch-startup",
       "managed-image-protected-runtime",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",
-      "full-e2e",
       "hermes-discord",
       "hermes-e2e",
       "inference-routing",
