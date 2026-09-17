@@ -272,6 +272,16 @@ def verify(
         and proof.get("stdio") == "explicit-pipes-with-closed-input"
         and proof.get("policySha256") == policy_sha
         and proof.get("requestPolicy") == PROFILE
+        and (
+            (
+                proof.get("selectedIsolationTier") == "base-container"
+                and proof.get("needsDaclAugmentation") is False
+            )
+            or (
+                proof.get("selectedIsolationTier") == "appcontainer-dacl"
+                and proof.get("needsDaclAugmentation") is True
+            )
+        )
         and proof.get("admissionAllowed") is False,
         "Same-source system-root/MXC proof is missing or differs from the executed helper/profile.",
     )
@@ -380,6 +390,7 @@ def verify(
     )
     commands = proof.get("commands", [])
     labels = (
+        "mxc-tier-probe",
         "metadata-first",
         "metadata-repeat",
         "upstream-null-device",
@@ -409,6 +420,8 @@ def verify(
             read_file(owner / "test-system-root-mxc.ps1", 1024 * 1024)
         ),
         "requestProfile": proof["requestProfile"],
+        "selectedIsolationTier": proof["selectedIsolationTier"],
+        "needsDaclAugmentation": proof["needsDaclAugmentation"],
         "nodeAclComparison": node_comparison,
         "proofCommands": [
             {key: row[key] for key in ("label", "exitCode", "elapsedMilliseconds")}

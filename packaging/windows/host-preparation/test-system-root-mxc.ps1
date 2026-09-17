@@ -125,6 +125,12 @@ try {
     )) {
         if((Get-FileHash -LiteralPath $pin[0] -Algorithm SHA256).Hash.ToLowerInvariant()  -cne  $pin[1]){throw 'A proof executable differs from its immutable input.'}
     }
+    $selection=(Invoke-ProofProcess $wxc @('--probe') 'mxc-tier-probe' 20)|ConvertFrom-Json
+    if(($selection.tier -ceq 'base-container' -and $selection.needsDaclAugmentation -cne $false) -or
+        ($selection.tier -ceq 'appcontainer-dacl' -and $selection.needsDaclAugmentation -cne $true) -or
+        $selection.tier -notin @('base-container','appcontainer-dacl')){throw 'The exact MXC preparation-tier result is invalid.'}
+    $receipt.selectedIsolationTier=[string]$selection.tier
+    $receipt.needsDaclAugmentation=[bool]$selection.needsDaclAugmentation
     $receipt.helperSha256=(Get-FileHash -LiteralPath $HelperPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $receipt.rootSddlBefore=(Get-Acl -LiteralPath $root).Sddl
     $first=(Invoke-ProofProcess $HelperPath @('prepare-system-drive') 'metadata-first')|ConvertFrom-Json
@@ -278,7 +284,7 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or
         $guest.preservedMainPath  -ne  $true  -or  $guest.preauthorizedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
     $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\][ \t]*', '')
-    if($mxcLog -notmatch '(?m)^selected isolation tier:\s*appcontainer-dacl\s*$'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
+    if($mxcLog -notmatch ('(?m)^selected isolation tier:\s*'+[regex]::Escape($receipt.selectedIsolationTier)+'\s*$')){throw 'The actual MXC tier differed from its pinned probe result.'}
     if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}
     $receipt.guest=$guest
     $receipt.nodeSddlAfter=(Get-Acl -LiteralPath $NodePath).Sddl

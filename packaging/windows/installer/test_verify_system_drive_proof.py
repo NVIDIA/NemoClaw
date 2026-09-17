@@ -144,6 +144,8 @@ class SystemDriveProofTests(unittest.TestCase):
             "helperSha256": gate.sha(binary),
             "systemDriveRoot": "C:\\",
             "requestProfile": "existing-personal-node-compatibility",
+            "selectedIsolationTier": "appcontainer-dacl",
+            "needsDaclAugmentation": True,
             "stdio": "explicit-pipes-with-closed-input",
             "requestPolicy": copy.deepcopy(gate.PROFILE),
             "admissionAllowed": False,
@@ -237,6 +239,7 @@ class SystemDriveProofTests(unittest.TestCase):
                     "elapsedMilliseconds": 12.5,
                 }
                 for label in (
+                    "mxc-tier-probe",
                     "metadata-first",
                     "metadata-repeat",
                     "upstream-null-device",
@@ -329,6 +332,8 @@ class SystemDriveProofTests(unittest.TestCase):
             ("sourceRevision", "b" * 40),
             ("status", "failed"),
             ("requestProfile", "stronger-unproven"),
+            ("selectedIsolationTier", "unknown"),
+            ("needsDaclAugmentation", False),
             ("stdio", "inherited"),
             ("admissionAllowed", True),
             ("helperSha256", "c" * 64),
