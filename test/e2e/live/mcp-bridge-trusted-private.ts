@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { MCP_PROBE_CONTROL_BEARER } from "../../../src/lib/actions/sandbox/mcp-bridge-resolution-probe.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -144,27 +145,31 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     },
   );
   expectExitZero(status, `${options.artifactPrefix} inspects trusted-private route after add`);
-  expect(JSON.parse(status.stdout)).toMatchObject({
-    support: { supported: true, adapter: options.adapter },
-    provider: {
-      credentialResolution: {
+  const controlProbe = rebindMcp.requests
+    .slice(trustedPrivateRequestOffset)
+    .find((request) => request.auth === `Bearer ${MCP_PROBE_CONTROL_BEARER}`);
+  expect({ status: JSON.parse(status.stdout), controlProbe }).toMatchObject({
+    status: {
+      support: { adapter: options.adapter },
+      trustedPrivateTarget: {
+        host: REBIND_HOSTNAME,
+        recordedPins: [trustedPrivateAddress],
+        currentPins: [trustedPrivateAddress],
+        state: "match",
+      },
+      toolDiscovery: {
         ok: true,
-        httpStatus: 200,
-        controlHttpStatus: 401,
+        count: 2,
+        tools: ["fake_echo", "fake_status"],
+        truncated: false,
+        commandStatus: 0,
       },
     },
-    trustedPrivateTarget: {
-      host: REBIND_HOSTNAME,
-      recordedPins: [trustedPrivateAddress],
-      currentPins: [trustedPrivateAddress],
-      state: "match",
-    },
-    toolDiscovery: {
-      ok: true,
-      count: 2,
-      tools: ["fake_echo", "fake_status"],
-      truncated: false,
-      commandStatus: 0,
+    controlProbe: {
+      method: "POST",
+      path: "/mcp",
+      rpcMethod: "initialize",
+      responseStatus: 401,
     },
   });
   await assertAuthenticatedMcpDiscovery(rebindMcp, {
