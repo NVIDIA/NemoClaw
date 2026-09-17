@@ -22,6 +22,12 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import {
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawPostRestoreDoctor,
+  finishOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./runtime/openclaw-lifecycle";
 
 export {
   clearRebuildMcpHandoff,
@@ -135,15 +141,46 @@ export async function runRebuildBackupPhase(
           input.gatewayName,
           input.runtimeSelection,
         );
-  let backupManifest =
-    preparedRecoveryManifest ??
-    (await backupStateForRebuild(
-      input.sandboxName,
-      input.sandboxEntry,
-      input.staleRecovery,
-      input.log,
-      input.bail,
-    ));
+  let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  if (
+    !preparedRecoveryManifest &&
+    !input.staleRecovery &&
+    (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
+  ) {
+    input.log("Entering verified OpenClaw maintenance window before state backup");
+    const begun = await beginOpenClawPostRestoreDoctor(input.sandboxName, input.runtimeSelection);
+    if (!begun.ok) {
+      return input.bail(
+        `OpenClaw state backup could not enter its gateway-down maintenance window (${begun.stage}: ${begun.detail}).`,
+      );
+    }
+    sourceBackupWindow = begun.window;
+  }
+  let backupManifest: RebuildBackupManifest;
+  try {
+    backupManifest =
+      preparedRecoveryManifest ??
+      (await backupStateForRebuild(
+        input.sandboxName,
+        input.sandboxEntry,
+        input.staleRecovery,
+        input.log,
+        input.bail,
+      ));
+  } catch (error) {
+    if (sourceBackupWindow) await abortOpenClawPostRestoreDoctor(sourceBackupWindow);
+    throw error;
+  }
+  if (sourceBackupWindow) {
+    input.log("Releasing OpenClaw after consistent state backup");
+    const finished = await finishOpenClawPostRestoreDoctor(sourceBackupWindow);
+    if (!finished.ok) {
+      await abortOpenClawPostRestoreDoctor(sourceBackupWindow);
+      return input.bail(
+        `OpenClaw state backup completed, but its source gateway did not return healthy (${finished.stage}: ${finished.detail}).`,
+      );
+    }
+  }
   if (backupManifest === undefined) return null;
   const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
   if (input.staleRecovery && !retainedPolicy) {

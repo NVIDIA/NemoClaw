@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  abortOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawPostRestoreDoctor: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
+  finishOpenClawPostRestoreDoctor: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -25,16 +28,27 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
+  beginOpenClawPostRestoreDoctor: mocks.beginOpenClawPostRestoreDoctor,
+  finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
+}));
 
 import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.beginOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "alpha" },
+  });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
+  mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -88,6 +102,13 @@ describe("rebuild policy handoff", () => {
       "capture the live policy before sandbox replacement",
       undefined,
     );
+    expect(mocks.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      undefined,
+    );
+    expect(mocks.finishOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+    });
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {
