@@ -8,7 +8,7 @@ mod io;
 mod progress;
 use args::{Cli, Command};
 use clap::Parser;
-use nemoclaw_sdk::CancellationToken;
+use nemoclaw_sdk::{CancellationToken, config::Document};
 use std::process::ExitCode;
 
 async fn interrupt() {
@@ -40,8 +40,27 @@ async fn main() -> ExitCode {
     let result = dispatch::run(cli, tokio::io::stdin(), &cancel).await;
     signals.abort();
     match result {
+        Ok(dispatch::CommandResult::Onboard(authored)) => {
+            let path = output_path.expect("onboarding requires an output path");
+            match Document::parse(authored.yaml().as_bytes())
+                .map_err(std::io::Error::other)
+                .and_then(|published| {
+                    let credential_references = published.credential_names().join(", ");
+                    io::write_output(Some(&path), authored.yaml().as_bytes(), std::io::sink())?;
+                    Ok(credential_references)
+                }) {
+                Ok(credential_references) => {
+                    eprintln!("Credential references: {credential_references}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Ok(dispatch::CommandResult::OnboardExit) => ExitCode::SUCCESS,
         Ok(result) => {
-            let notice = result.notice();
             match result.render().and_then(|output| {
                 io::write_output(
                     output_path.as_deref(),
@@ -50,12 +69,7 @@ async fn main() -> ExitCode {
                 )?;
                 Ok(())
             }) {
-                Ok(()) => {
-                    if let Some(notice) = notice {
-                        eprintln!("{notice}");
-                    }
-                    ExitCode::SUCCESS
-                }
+                Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("{error}");
                     ExitCode::FAILURE

@@ -35,8 +35,15 @@ pub(crate) enum Command {
         #[arg(short, long, value_name = "FILE")]
         output: PathBuf,
         /// Use flags and defaults instead of prompting.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "edit")]
         non_interactive: bool,
+        /// Review and semantically edit an existing generated YAML document.
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with_all = ["name", "sandbox", "agent", "provider", "model", "credential_env"]
+        )]
+        edit: Option<PathBuf>,
         /// Deployment name.
         #[arg(long)]
         name: Option<String>,
@@ -128,6 +135,18 @@ mod tests {
                 "--output",
                 "deployment.yaml",
                 "--non-interactive",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "nemoclaw",
+                "onboard",
+                "--generate-only",
+                "--output",
+                "deployment.yaml",
+                "--edit",
+                "deployment.yaml",
             ])
             .is_ok()
         );

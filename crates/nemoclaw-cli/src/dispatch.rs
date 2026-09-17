@@ -3,7 +3,9 @@
 
 use crate::{
     args::{Cli, Command},
-    authoring::{Answers, AuthoredDocument, Capabilities, Session},
+    authoring::{
+        Answers, AuthoredDocument, Capabilities, Draft, IdentityEdits, InferenceEdits, Session,
+    },
     io::document,
 };
 use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
@@ -11,6 +13,7 @@ use tokio::io::AsyncRead;
 
 pub(crate) enum CommandResult {
     Onboard(Box<AuthoredDocument>),
+    OnboardExit,
     Export(Box<Document>),
     Operation(OperationResult),
 }
@@ -18,18 +21,9 @@ impl CommandResult {
     pub(crate) fn render(self) -> Result<String, Box<dyn std::error::Error>> {
         match self {
             Self::Onboard(authored) => Ok(authored.yaml().to_owned()),
+            Self::OnboardExit => Ok(String::new()),
             Self::Export(document) => Ok(document.yaml()?),
             Self::Operation(result) => Ok(format!("{}\n", serde_json::to_string(&result)?)),
-        }
-    }
-
-    pub(crate) fn notice(&self) -> Option<String> {
-        match self {
-            Self::Onboard(authored) => Some(format!(
-                "Credential references: {}",
-                authored.document().credential_names().join(", ")
-            )),
-            _ => None,
         }
     }
 }
@@ -59,6 +53,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             generate_only: _,
             output: _,
             non_interactive,
+            edit,
             name,
             sandbox,
             agent,
@@ -69,6 +64,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             return onboard(
                 non_interactive,
                 OnboardValues {
+                    edit,
                     name,
                     sandbox,
                     agent,
@@ -131,6 +127,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
 }
 
 struct OnboardValues {
+    edit: Option<std::path::PathBuf>,
     name: Option<String>,
     sandbox: Option<String>,
     agent: Option<String>,
@@ -145,6 +142,7 @@ async fn onboard<R: AsyncRead + Unpin>(
     stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
+    let capabilities = Capabilities::first_slice();
     let mut answers = Answers::first_slice();
     if non_interactive {
         answers.deployment_name = values.name.unwrap_or(answers.deployment_name);
@@ -153,9 +151,23 @@ async fn onboard<R: AsyncRead + Unpin>(
         answers.provider_name = values.provider.unwrap_or(answers.provider_name);
         answers.model = values.model.unwrap_or(answers.model);
         answers.credential_env = values.credential_env.unwrap_or(answers.credential_env);
+        let authored = Session::new()?.project(&capabilities, &answers)?;
+        return Ok(CommandResult::Onboard(Box::new(authored)));
+    }
+
+    use tokio::io::AsyncBufReadExt;
+    let mut lines = tokio::io::BufReader::new(stdin).lines();
+    let mut draft = if let Some(path) = values.edit {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take(nemoclaw_sdk::config::MAX_DOCUMENT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > nemoclaw_sdk::config::MAX_DOCUMENT_BYTES {
+            return Err("configuration exceeds 1 MiB".into());
+        }
+        Draft::from_yaml(&capabilities, &bytes)?
     } else {
-        use tokio::io::AsyncBufReadExt;
-        let mut lines = tokio::io::BufReader::new(stdin).lines();
         answers.deployment_name = value_or_prompt(
             values.name,
             "Deployment name",
@@ -198,9 +210,82 @@ async fn onboard<R: AsyncRead + Unpin>(
             cancel,
         )
         .await?;
+        Draft::new(Session::new()?, answers)
+    };
+
+    loop {
+        let review = draft.review(&capabilities)?;
+        eprintln!("Review authored configuration:\n{}", review.render());
+        let action = value_or_prompt(
+            None,
+            "Accept [a], edit inference [i], edit identity [d], inspect YAML [y], or exit [x]",
+            "a",
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        match action.as_str() {
+            "a" | "accept" => {
+                return Ok(CommandResult::Onboard(Box::new(review.into_authored())));
+            }
+            "x" | "exit" => return Ok(CommandResult::OnboardExit),
+            "y" | "yaml" => eprintln!("Authored YAML:\n{}", review.yaml()),
+            "d" | "identity" => {
+                let deployment_name = review.deployment_name().to_owned();
+                let sandbox_name = review.sandbox_name().to_owned();
+                let agent_name = review.agent_name().to_owned();
+                let edits = IdentityEdits {
+                    deployment_name: Some(
+                        value_or_prompt(
+                            None,
+                            "Deployment name",
+                            &deployment_name,
+                            &mut lines,
+                            cancel,
+                        )
+                        .await?,
+                    ),
+                    sandbox_name: Some(
+                        value_or_prompt(None, "Sandbox name", &sandbox_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                    agent_name: Some(
+                        value_or_prompt(None, "Agent name", &agent_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                };
+                if let Err(diagnostics) = draft.edit_identity(&capabilities, edits) {
+                    eprintln!("Edit rejected: {diagnostics}");
+                }
+            }
+            "i" | "inference" => {
+                let provider_name = review.provider_name().to_owned();
+                let model = review.model().to_owned();
+                let credential_env = review.credential_env().to_owned();
+                let edits = InferenceEdits {
+                    provider_name: Some(
+                        value_or_prompt(None, "Provider name", &provider_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                    model: Some(value_or_prompt(None, "Model", &model, &mut lines, cancel).await?),
+                    credential_env: Some(
+                        value_or_prompt(
+                            None,
+                            "Credential environment variable",
+                            &credential_env,
+                            &mut lines,
+                            cancel,
+                        )
+                        .await?,
+                    ),
+                };
+                if let Err(diagnostics) = draft.edit_inference(&capabilities, edits) {
+                    eprintln!("Edit rejected: {diagnostics}");
+                }
+            }
+            _ => eprintln!("Choose a, i, d, y, or x."),
+        }
     }
-    let authored = Session::new()?.project(&Capabilities::first_slice(), &answers)?;
-    Ok(CommandResult::Onboard(Box::new(authored)))
 }
 
 async fn value_or_prompt<R: tokio::io::AsyncBufRead + Unpin>(

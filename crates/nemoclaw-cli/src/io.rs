@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{CancellationToken, Error, config::Document};
-use std::{io::Write, path::Path};
+use std::{fs::File, io::Write, path::Path};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub(crate) async fn document<R: AsyncRead + Unpin>(
@@ -36,18 +36,25 @@ pub(crate) fn write_output(
     mut stdout: impl Write,
 ) -> std::io::Result<()> {
     match path {
-        Some(path) => {
-            let parent = path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(std::path::Path::new("."));
-            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-            temporary.write_all(bytes)?;
-            temporary.persist(path).map_err(|error| error.error)?;
-            Ok(())
-        }
+        Some(path) => write_path(path, bytes, File::sync_all),
         None => stdout.write_all(bytes),
     }
+}
+
+fn write_path(
+    path: &Path,
+    bytes: &[u8],
+    sync_file: impl FnOnce(&File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(bytes)?;
+    sync_file(temporary.as_file())?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -141,6 +148,20 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         assert!(write_output(Some(&target), YAML, Vec::new()).is_err());
         assert!(target.is_dir());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_failure_preserves_the_prior_complete_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.yaml");
+        std::fs::write(&path, b"prior complete file").unwrap();
+        let error = write_path(&path, YAML, |_| {
+            Err(io::Error::other("injected sync failure"))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(std::fs::read(&path).unwrap(), b"prior complete file");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 }
