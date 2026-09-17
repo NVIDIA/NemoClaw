@@ -14,6 +14,8 @@ import {
   createUninstallProviderAdapter,
   createUninstallGatewayLifecycle,
   createUninstallGatewayReuseObserver,
+  createUninstallSandboxLifecycle,
+  createUninstallSandboxLookup,
   type RunResult,
 } from "../../adapters/uninstall/commands";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
@@ -852,45 +854,34 @@ function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
   );
 }
 
-function isExplicitPortableSandboxAbsence(result: RunResult, sandboxName: string): boolean {
-  if (result.status === 0) return false;
-  const clean = `${result.stdout}\n${result.stderr}`.replace(/\x1b\[[0-9;]*m|\r/gu, "").trim();
-  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
-  return (
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu.test(
-      clean,
-    ) ||
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "iu",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "iu").test(clean)
-  );
-}
-
 async function deletePortableOpenShellSandbox(
   runtime: UninstallRuntime,
   sandboxName: string,
   gatewayName: string,
 ): Promise<boolean> {
-  const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
-    env: runtime.env,
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteSandbox({
+    sandboxName,
+    target: { kind: "named", gatewayName },
   });
-  const deleteReportedAbsence = isExplicitPortableSandboxAbsence(result, sandboxName);
-  if (result.status !== 0 && !deleteReportedAbsence) {
+  if (result.kind === "failed") {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+    if (result.error.kind === "command" && result.error.reason === "invalid_request") return false;
   }
-  if (result.status === 0) runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else if (deleteReportedAbsence) {
+  if (result.kind === "absent") {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
+    return true;
   }
+  const lookup = createUninstallSandboxLookup(runtime.run, runtime.env);
   for (let attempt = 0; attempt < 5; attempt++) {
     if (!(await portableGatewayIsReachable(runtime, gatewayName))) return false;
-    const verified = runtime.run("openshell", ["sandbox", "get", "-g", gatewayName, sandboxName], {
-      env: runtime.env,
+    const verified = await lookup({
+      sandboxName,
+      target: { kind: "named", gatewayName },
     });
-    if (isExplicitPortableSandboxAbsence(verified, sandboxName)) return true;
+    if (verified.result.ok && verified.result.value.state === "missing") {
+      runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
+      return true;
+    }
     if (attempt < 4) runtime.sleep(200);
   }
   runtime.warn(`OpenShell sandbox '${sandboxName}' did not reach verified absence.`);
@@ -1483,7 +1474,7 @@ async function removeOpenShellResources(
         return false;
       }
       removedSelectedResources =
-        deleteSelectedGatewaySandbox(runtime, gatewayLabel, sandboxName) &&
+        (await deleteSelectedGatewaySandbox(runtime, gatewayLabel, sandboxName)) &&
         removedSelectedResources;
     }
     if (!removedSelectedResources) {

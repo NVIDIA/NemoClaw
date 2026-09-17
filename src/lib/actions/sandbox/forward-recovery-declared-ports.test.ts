@@ -352,6 +352,40 @@ describe("declared and cleanup forward sets", () => {
     });
   });
 
+  it.each([
+    ["released", true],
+    ["bound", false],
+  ] as const)("awaits remote dashboard release verification: %s", async (state, expected) => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ dashboardRemoteBindPrepared: true }));
+    mocks.verifyForwardRelease.mockImplementationOnce(
+      async (request: VerifyOpenShellForwardReleaseRequest) => ({
+        state,
+        forwards: request.forwards,
+      }),
+    );
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    await expect(teardownSandboxDashboardForward("box")).resolves.toBe(expected);
+    expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]).toMatchObject({
+      port: 18_789,
+      localHost: "0.0.0.0",
+    });
+  });
+
+  it.each([
+    ["owned", true],
+    ["foreign", false],
+  ] as const)("awaits remote dashboard listener ownership: %s", async (state, expected) => {
+    states.set(18_789, state);
+    const { isSandboxPortForwardHealthy } = await import("./forward-recovery");
+
+    await expect(isSandboxPortForwardHealthy("box", 18_789, "0.0.0.0")).resolves.toBe(expected);
+    expect(mocks.observeForwards.mock.calls[0]?.[0].forwards[0]).toMatchObject({
+      port: 18_789,
+      localHost: "0.0.0.0",
+    });
+  });
+
   it("verifies release for the complete registered forward set", async () => {
     mocks.getSandbox.mockReturnValue(
       sandboxEntry({

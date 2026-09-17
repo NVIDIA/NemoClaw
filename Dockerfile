@@ -577,18 +577,15 @@ FROM scratch AS openclaw-runtime-payload
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
-COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
-COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
-COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
@@ -1452,13 +1449,10 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 # present. Same-UID OpenShell sandboxes retain OpenClaw's private modes. The
 # patch leaves generic credential and identity store enforcement unchanged,
 # avoids a non-owner chmod when a reviewed shared database mode is already
-# safe, keeps generated models files readable by the shared group, and ignores
-# the obsolete update-check cache migration that cannot archive across a
-# root-owned parent.
+# safe and keeps generated models files readable by the shared group.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
-# group-shared state databases and split-user cache migrations without
-# startup warnings.
+# group-shared state databases.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
@@ -1901,14 +1895,8 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
     && chmod 444 /src/lib/*.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control \
-        /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
-    && chmod 500 /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+    && chown root:root /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+    && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
     && chmod 555 /usr/local/lib/nemoclaw/openclaw-config-guard.py \
@@ -2121,12 +2109,6 @@ RUN set -eu; \
         "$config_dir/plugin-runtime-deps"; do \
         install -d -o sandbox -g sandbox -m 2770 "$dir"; \
     done; \
-    update_check="$config_dir/update-check.json"; \
-    [ ! -L "$update_check" ] \
-        || { echo "ERROR: refusing symlinked OpenClaw update-check state" >&2; exit 1; }; \
-    [ ! -e "$update_check" ] || [ -f "$update_check" ] \
-        || { echo "ERROR: refusing non-regular OpenClaw update-check state" >&2; exit 1; }; \
-    rm -f "$update_check"; \
     exec_approvals="$config_dir/exec-approvals.json"; \
     [ ! -L "$exec_approvals" ] \
         || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
@@ -2322,7 +2304,6 @@ RUN check_metadata() { \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
-    && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)

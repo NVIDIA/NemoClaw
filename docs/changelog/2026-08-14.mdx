@@ -20,7 +20,7 @@ It also strengthens managed images, Deep Agents Code login probes, Shields trans
 - Interactive onboarding now lets operators apply the configuration, edit the inference provider or model, edit the sandbox name, or exit before provider registration.
   Fresh sandbox registration now binds one lifecycle generation to the final `Ready` identity, while incomplete onboarding exits nonzero and keeps resumable state.
   Resumed and recreated sandboxes use their recorded dashboard ports, wait up to 1 minute for OpenShell's `sandbox is not ready` handoff, and start forwarding only after readiness succeeds.
-  Onboarding now reports the failed GPU trust-gate check, preserves actionable recovery for portable and legacy states, and records standalone gateway authority for a non-default gateway port.
+  Onboarding now reports the failed GPU trust-gate check and records standalone gateway authority for a non-default gateway port.
   When NemoClaw resolves the complete listener set for a gateway-port conflict, the diagnostic lists each listener by PID and by process name when available.
   Stop guidance targets only unverified listener PIDs.
   A conflict with only verified managed listeners uses port-scoped uninstall guidance.
@@ -45,8 +45,8 @@ It also strengthens managed images, Deep Agents Code login probes, Shields trans
   Related changes: [PR #9021](https://github.com/NVIDIA/NemoClaw/pull/9021), [PR #9036](https://github.com/NVIDIA/NemoClaw/pull/9036), [PR #9034](https://github.com/NVIDIA/NemoClaw/pull/9034), [PR #9056](https://github.com/NVIDIA/NemoClaw/pull/9056), and [PR #9075](https://github.com/NVIDIA/NemoClaw/pull/9075).
 - On macOS, the official Homebrew formula remains the gateway lifecycle authority through a checksum-verified, formula-scoped temporary trust boundary.
   Installation uses a standalone gateway only when Homebrew and its OpenShell formula or keg cannot retain authority, and a known unavailable `systemd` user manager follows a similarly bounded fallback on Linux.
-  Onboarding abort now stops and deletes a NemoClaw-managed gateway when no retained lifecycle authority owns it, reports incompatible gateway database recovery without discarding state, preserves a requested sandbox name during resume, and prints portable recovery commands instead of an unsupported `--resume` hint.
-  Portable onboarding avoids overlapping Personal-tier presets and preserves an explicit `NEMOCLAW_POLICY_PRESETS` selection, while `nemoclaw host probe` distinguishes remediable Docker storage from an unresolvable host failure.
+  Onboarding abort now stops and deletes a NemoClaw-managed gateway when no retained lifecycle authority owns it, reports incompatible gateway database recovery without discarding state, and preserves a requested sandbox name during resume.
+  The host probe distinguishes remediable Docker storage from an unresolvable host failure.
   For more information, refer to [Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), [System Readiness](/user-guide/openclaw/reference/system-readiness), and [Network Policies Reference](/user-guide/openclaw/reference/network-policies).
   Related changes: [PR #7739](https://github.com/NVIDIA/NemoClaw/pull/7739), [PR #8949](https://github.com/NVIDIA/NemoClaw/pull/8949), [PR #8993](https://github.com/NVIDIA/NemoClaw/pull/8993), [PR #8995](https://github.com/NVIDIA/NemoClaw/pull/8995), [PR #8958](https://github.com/NVIDIA/NemoClaw/pull/8958), [PR #8897](https://github.com/NVIDIA/NemoClaw/pull/8897), [PR #8994](https://github.com/NVIDIA/NemoClaw/pull/8994), [PR #9003](https://github.com/NVIDIA/NemoClaw/pull/9003), [PR #8922](https://github.com/NVIDIA/NemoClaw/pull/8922), and [PR #8867](https://github.com/NVIDIA/NemoClaw/pull/8867).
 - Each Hermes sandbox now receives its own recorded OpenAI-compatible API port, including forward recovery and snapshot-clone restoration.
@@ -83,8 +83,8 @@ It also strengthens managed images, Deep Agents Code login probes, Shields trans
   Selected-port uninstall also highlights retained sibling gateway environments and their cleanup commands.
   For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
   Related changes: [PR #8919](https://github.com/NVIDIA/NemoClaw/pull/8919), [PR #8976](https://github.com/NVIDIA/NemoClaw/pull/8976), and [PR #8876](https://github.com/NVIDIA/NemoClaw/pull/8876).
-- The hosted installer now preserves status `130` when onboarding is interrupted, admits the explicit experimental portable profile without bypassing unrelated readiness failures, and can authorize NVIDIA CDI repair through passwordless `sudo`.
-  Portable execution uses the numeric user ID, and manual OpenShell upgrade recovery preserves the selected non-default gateway port.
+- The hosted installer now preserves status `130` when onboarding is interrupted and can authorize NVIDIA CDI repair through passwordless `sudo`.
+  Manual OpenShell upgrade recovery preserves the selected non-default gateway port.
   On qualified N1x FASTOS hosts, the Deferred preview offers one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`; N1x remains outside the supported-platform set until physical NemoClaw Express E2E validation passes.
   For more information, refer to [Platform Support](/user-guide/openclaw/reference/platform-support), [System Readiness](/user-guide/openclaw/reference/system-readiness), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related changes: [PR #9010](https://github.com/NVIDIA/NemoClaw/pull/9010), [PR #9033](https://github.com/NVIDIA/NemoClaw/pull/9033), [PR #9011](https://github.com/NVIDIA/NemoClaw/pull/9011), [PR #9071](https://github.com/NVIDIA/NemoClaw/pull/9071), [PR #8938](https://github.com/NVIDIA/NemoClaw/pull/8938), [PR #9152](https://github.com/NVIDIA/NemoClaw/pull/9152), and [PR #8903](https://github.com/NVIDIA/NemoClaw/pull/8903).

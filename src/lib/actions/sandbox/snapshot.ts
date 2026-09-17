@@ -14,11 +14,15 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxLookupFromRunner,
+  waitForSandboxDeleteAbsence,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -68,10 +72,7 @@ import {
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
-import {
-  establishRestoredSandboxGatewayPairing,
-  waitForRestoredSandboxGatewaySupervisor,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -339,7 +340,11 @@ async function prepareSnapshotClonePolicy(
   }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
-    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(policyPath, policy, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
       policyPath,
       cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
@@ -577,12 +582,6 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
-  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
   // The pending registry row now owns any host-local inference reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
@@ -636,16 +635,31 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
       }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
-    const deleteResult = runOpenshell(["sandbox", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
+    const gatewayName = resolveSandboxGatewayName(sbMeta);
+    const deleteResult = await createCliOpenShellSandboxLifecycleFromRunner(
+      runOpenshell,
+    ).deleteSandbox({
+      sandboxName: name,
+      target: { kind: "named", gatewayName },
     });
-    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-    if (deleteResult.status !== 0 && !alreadyGone) {
+    if (deleteResult.kind === "failed" && !deleteResult.ambiguous) {
       console.error(
-        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+        `  Failed to delete '${name}' (exit ${deleteResult.exitCode ?? 1}). Aborting restore.`,
       );
       snapshotExit(1);
+    }
+    if (deleteResult.kind !== "absent") {
+      const convergence = await waitForSandboxDeleteAbsence(
+        name,
+        gatewayName,
+        createCliOpenShellSandboxLookupFromRunner(runOpenshell),
+      );
+      if (!convergence.confirmed) {
+        console.error(
+          `  OpenShell did not confirm that destination '${name}' is absent. Aborting restore.`,
+        );
+        snapshotExit(1);
+      }
     }
     if (hostLocalInferenceAuthority) {
       try {
@@ -679,7 +693,9 @@ async function deleteSandboxForRestore(name: string): Promise<void> {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    await deleteSandboxProviderRegistrations(name, "messaging", { runOpenshell });
+    await deleteSandboxProviderRegistrations(name, "messaging", {
+      runOpenshell,
+    });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
@@ -776,13 +792,6 @@ async function reconcilePendingSnapshotClone(
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
-  }
-  if (
-    (pending.agent || "openclaw") === "openclaw" &&
-    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
-  ) {
-    await deleteSandboxForRestore(targetSandbox);
-    return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(

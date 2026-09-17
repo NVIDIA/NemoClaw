@@ -63,7 +63,7 @@
     },
     {
       "file": "test/e2e/support/e2e-registry.test.ts",
-      "test": "contains only the four executable typed targets (#11407)",
+      "test": "contains only the three executable typed targets (#11407)",
       "category": "compatibility"
     },
     {

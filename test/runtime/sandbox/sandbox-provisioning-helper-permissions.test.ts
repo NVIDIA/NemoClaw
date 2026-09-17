@@ -84,22 +84,16 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
     const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
-    const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
-    const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
     const configGuardPath = path.join(localLib, "openclaw-config-guard.py");
-    const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
       path.join(localBin, "nemoclaw-managed-bootstrap"),
-      gatewayControlPath,
       path.join(localLib, "entrypoint-env-wrapper.sh"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "sandbox-rlimits.sh"),
-      gatewaySupervisorPath,
       configGuardPath,
-      managedGatewayControlPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "normalize_mutable_config_perms.py"),
       generatorPath,
@@ -174,10 +168,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       expect((fs.statSync(pluginFile).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(nestedPluginDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(nestedPluginFile).mode & 0o777).toString(8)).toBe("644");
-      expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
-      expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("555");
-      expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
