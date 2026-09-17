@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
@@ -31,30 +30,22 @@ esac
 exit 0
 `;
 
+function confirmSandboxMissingAfterDelete(markerPath: string, logPath: string): string[] {
+  return [
+    `deleted_marker=${JSON.stringify(markerPath)}`,
+    `delete_log_file=${JSON.stringify(logPath)}`,
+    'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+    '  : > "$deleted_marker"',
+    "fi",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ -e "$deleted_marker" ]; then',
+    '  printf \'%s\\n\' "$*" >> "$delete_log_file"',
+    '  printf "Error: code: \'Some requested entity was not found\', message: \\"sandbox not found\\"\\n" >&2',
+    "  exit 1",
+    "fi",
+  ];
+}
+
 describe("CLI dispatch", () => {
-  let dashboardPort: number;
-
-  beforeEach(async () => {
-    // These fake sandboxes never start a dashboard forward. Give each case its
-    // own released port so unrelated listeners cannot change cleanup policy.
-    const listener = net.createServer();
-    await new Promise<void>((resolve, reject) => {
-      listener.once("error", reject);
-      listener.listen(0, "127.0.0.1", resolve);
-    });
-    try {
-      const address = listener.address();
-      if (!address || typeof address === "string") {
-        throw new Error("The dashboard fixture did not receive a TCP port.");
-      }
-      dashboardPort = address.port;
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        listener.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
-  });
-
   it(
     "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
     testTimeoutOptions(30_000),
@@ -75,7 +66,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -86,6 +77,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -118,7 +110,7 @@ describe("CLI dispatch", () => {
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete -g nemoclaw alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -148,7 +140,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -161,6 +153,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -200,7 +193,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete -g nemoclaw-8081 alpha");
-      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -233,7 +226,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -244,6 +237,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -279,7 +273,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -301,6 +295,7 @@ describe("CLI dispatch", () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-perport-pid-"));
       const localBin = path.join(home, "bin");
       const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
       const defaultStateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
       const perPortStateDir = path.join(
         home,
@@ -325,7 +320,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -338,6 +333,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n"',
           "  exit 0",
@@ -396,7 +392,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -407,6 +403,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -471,7 +468,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            dashboardPort,
+            agent: "langchain-deepagents-code",
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -480,6 +477,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -490,6 +488,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
@@ -521,7 +520,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain(
       "sandbox delete -g nemoclaw-8081 alpha",
     );
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain(`forward stop ${dashboardPort}`);
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -546,7 +545,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            dashboardPort,
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -557,6 +556,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
@@ -587,7 +587,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain(`forward stop ${dashboardPort}`);
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -613,7 +613,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            dashboardPort,
+            agent: "langchain-deepagents-code",
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -626,6 +626,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         `active_gateway=${JSON.stringify(activeGateway)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
@@ -667,7 +668,7 @@ describe("CLI dispatch", () => {
     const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
     expect(selectIndex).toBeGreaterThanOrEqual(0);
     expect(deleteIndex).toBeGreaterThan(selectIndex);
-    expect(lines.slice(deleteIndex + 1)).toContain("sandbox list -g nemoclaw-8081");
+    expect(lines.slice(deleteIndex + 1)).toContain("sandbox get -g nemoclaw-8081 alpha");
 
     // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
     // MUST come after gateway select and before sandbox delete. Running the
@@ -707,7 +708,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -720,6 +721,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'printf \'%s\\n\' "$*" >> "$log_file"',
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
@@ -772,7 +774,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            dashboardPort,
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -786,7 +788,7 @@ describe("CLI dispatch", () => {
         `log_file=${JSON.stringify(openshellLog)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
-        '  echo "transport error: gateway unavailable" >&2',
+        '  echo "transport error: no active gateway configured" >&2',
         "  exit 1",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
@@ -806,7 +808,7 @@ describe("CLI dispatch", () => {
 
     const openshellFailureLog = fs.readFileSync(openshellLog, "utf8");
     expect(r.code, r.out).toBe(1);
-    expect(r.out).toContain("transport error: gateway unavailable");
+    expect(r.out).toContain("transport error: no active gateway configured");
     expect(r.out).toContain("Failed to destroy sandbox 'alpha'.");
     expect(r.out).not.toContain("Sandbox 'alpha' destroyed");
 
@@ -839,7 +841,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              dashboardPort,
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -894,7 +896,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -920,7 +922,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            dashboardPort,
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -931,6 +933,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         '  printf "NAME STATUS\\n" >> "$log_file"',
