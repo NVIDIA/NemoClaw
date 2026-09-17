@@ -221,6 +221,30 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
+  it("stops before recovery when a just-started Hermes gateway stays stopped", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      gatewayProcessSettlement: false,
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "did not become observable and running before the startup settlement window expired",
+      ),
+    );
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("hands an unavailable just-started Hermes observation to classified process recovery", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
