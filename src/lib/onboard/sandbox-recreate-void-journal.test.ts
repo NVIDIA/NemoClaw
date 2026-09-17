@@ -412,6 +412,22 @@ describe("sandbox recreate recovery from a void journal", () => {
           gatewayPort: 8080,
         }),
       ).toMatchObject({ action: "reject" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, endpointUrl: "http://example.com/v1" },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        ),
+      ).toMatchObject({ action: "reject" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, gatewayName: "other-gateway", gatewayPort: 9090 },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        ),
+      ).toMatchObject({ action: "reject" });
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();

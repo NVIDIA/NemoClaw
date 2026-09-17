@@ -3,7 +3,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { isN1xManagedVllmProviderModel } from "../domain/sandbox/n1x-managed-vllm-rebuild";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
@@ -231,12 +231,16 @@ export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
   ]);
 }
 
-function fingerprintLegacyDeferredN1xSandboxEntry(entry: SandboxEntry): string | null {
+function fingerprintLegacyDeferredN1xSandboxEntry(
+  entry: SandboxEntry,
+  expectedGateway: { readonly gatewayName: string; readonly gatewayPort: number },
+): string | null {
   if (
     entry.pendingRouteReservation !== true ||
     entry.deferredN1xManagedVllmAccepted !== undefined ||
-    !isN1xManagedVllmProviderModel(entry.provider, entry.model) ||
-    entry.openshellDriver !== "docker"
+    !isDeferredN1xManagedVllmAcceptanceRoute(entry) ||
+    entry.gatewayName !== expectedGateway.gatewayName ||
+    entry.gatewayPort !== expectedGateway.gatewayPort
   ) {
     return null;
   }
@@ -261,10 +265,13 @@ function fingerprintLegacyDeferredN1xSandboxEntry(entry: SandboxEntry): string |
 function sandboxRecreateSourceRowMatches(
   entry: SandboxEntry | null,
   recordedFingerprint: string,
+  expectedGateway: { readonly gatewayName: string; readonly gatewayPort: number },
 ): boolean {
   if (!entry) return recordedFingerprint === fingerprintSandboxRecreateValue(null);
   if (fingerprintSandboxRegistryEntry(entry) === recordedFingerprint) return true;
-  if (fingerprintLegacyDeferredN1xSandboxEntry(entry) === recordedFingerprint) return true;
+  if (fingerprintLegacyDeferredN1xSandboxEntry(entry, expectedGateway) === recordedFingerprint) {
+    return true;
+  }
   return (
     fingerprintDurableSandboxEntry(entry, [
       ...ROUTE_RESERVATION_FIELDS,
@@ -550,7 +557,9 @@ export function assertSandboxRecreateSourceProof(
     );
   }
   if (!check.registryEntry) return fail("the source registry row is absent");
-  if (!sandboxRecreateSourceRowMatches(check.registryEntry, proof.sourceRegistryFingerprint)) {
+  if (
+    !sandboxRecreateSourceRowMatches(check.registryEntry, proof.sourceRegistryFingerprint, proof)
+  ) {
     return fail("the source registry row changed after the transaction recorded it");
   }
   if (check.observation.state === "missing") {
@@ -896,7 +905,11 @@ function replacementIsVoid(
     onSandboxRecreateGateway(transaction, observedGateway) &&
     onSandboxRecreateGateway(transaction, registryEntry) &&
     registryEntry?.name === transaction.sandboxName &&
-    sandboxRecreateSourceRowMatches(registryEntry, transaction.sourceRegistryFingerprint) &&
+    sandboxRecreateSourceRowMatches(
+      registryEntry,
+      transaction.sourceRegistryFingerprint,
+      transaction,
+    ) &&
     registryEntry.lifecycleLiveIdentityFingerprint &&
     transaction.sourceLiveIdentityFingerprint &&
     observation.state !== "missing" &&
@@ -982,6 +995,7 @@ function planUnregisteredReplacementRecovery(
   const sourceStateUnchanged = sandboxRecreateSourceRowMatches(
     registryEntry,
     transaction.sourceRegistryFingerprint,
+    transaction,
   );
   if (transaction.phase === "completed") {
     return reject("the completed transaction no longer matches its replacement registry row");
@@ -1255,7 +1269,13 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
       }
       input.revalidateGatewayAuthority?.();
       const registryEntry = input.readRegistryEntry();
-      if (!sandboxRecreateSourceRowMatches(registryEntry, transaction.sourceRegistryFingerprint)) {
+      if (
+        !sandboxRecreateSourceRowMatches(
+          registryEntry,
+          transaction.sourceRegistryFingerprint,
+          transaction,
+        )
+      ) {
         throw new Error(
           `Cannot delete sandbox '${transaction.sandboxName}': its source registry row changed.`,
         );
