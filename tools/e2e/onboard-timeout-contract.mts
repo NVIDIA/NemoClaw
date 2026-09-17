@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ConfigExportExpectation } from "../../test/e2e/registry/types.ts";
+
 const MINUTE_MS = 60_000;
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
 const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
@@ -31,9 +33,7 @@ export type LiveTargetTimeoutContract = Readonly<{
   targetTimeoutMinutes: number;
 }>;
 
-type ConfigExportTimeoutExpectation = "required" | "expected-refusal" | "no-usable-sandbox";
-
-function configExportBudgetMs(expectation: ConfigExportTimeoutExpectation): number {
+function configExportBudgetMs(expectation: ConfigExportExpectation): number {
   if (expectation === "required") {
     return CONFIG_EXPORT_COMMAND_TIMEOUT_MS + CONFIG_EXPORT_POLICY_TIMEOUT_MS;
   }
@@ -42,7 +42,7 @@ function configExportBudgetMs(expectation: ConfigExportTimeoutExpectation): numb
 
 export function liveTargetTimeoutContract(
   lifecycle: string | undefined,
-  configExportExpectation: ConfigExportTimeoutExpectation,
+  configExportExpectation: ConfigExportExpectation,
 ): LiveTargetTimeoutContract {
   const configExportBudget = configExportBudgetMs(configExportExpectation);
   if (lifecycle === "dcode-rebuild-invalid-credential") {
