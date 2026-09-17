@@ -3000,16 +3000,6 @@ Native Podman supports stock managed-image onboarding only. Use the Docker provi
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`. For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
-### Portable onboarding state conflicts
-
-An interrupted Hermes Portable Ollama run can leave a private gateway-provider journal before it publishes its inference receipt.
-A later `--fresh` run reuses the transaction only when the canonical journal matches the sandbox, model, provider, credential name, and receipt target.
-NemoClaw preserves malformed, mismatched, or changed state rather than guessing ownership.
-
-Do not edit the journal or delete the provider manually.
-To start an isolated attempt, choose a different sandbox name, an unused `NEMOCLAW_GATEWAY_PORT`, and a separate `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`.
-Retire preserved resources only through the lifecycle authority that created them.
-
 ### Discord preset validation behind a proxy
 
 The Hermes Discord policy allows its virtual-environment Python interpreter and the concrete system paths to which that interpreter resolves. It does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.

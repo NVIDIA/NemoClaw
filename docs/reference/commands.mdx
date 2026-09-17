@@ -438,14 +438,6 @@ This surface observes the canonical onboarding session and does not accept input
 
 NemoClaw records onboarding progress so interrupted runs can continue. Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, custom Dockerfile path, read-only host-mount declarations, and any explicitly selected serving-profile provenance recorded by the original run. For a profile-backed session, resume requires the same catalog, preset, and recipe digests and exits before effects if the installed definition changed. Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition. Sessions without a serving-profile provenance record can resume when their checkpoint uses schema 4, but they cannot acquire a new `--profile` selection during resume.
 
-<AgentOnly variant="hermes">
-
-For Hermes Portable Ollama, `--fresh` replaces the onboarding checkpoint without deleting a private unfinished gateway-provider transaction.
-When the journal is canonical and its sandbox, model, provider, credential name, and receipt target match, NemoClaw keeps the transaction identity and resumes its exact phase.
-If the journal is malformed or describes different intent, NemoClaw preserves it and exits with a redacted diagnostic instead of mutating ambiguous authority.
-
-</AgentOnly>
-
 
 
 <AgentOnly variant="openclaw">
