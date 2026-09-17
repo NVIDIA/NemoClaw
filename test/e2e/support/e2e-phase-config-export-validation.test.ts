@@ -868,4 +868,42 @@ describe("automatic config export validation phase", () => {
     });
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(ENCODED_SECRET);
   });
+
+  it.each([{ name: "literal", value: INTERNAL_TRANSPORT }, ...INTERNAL_TRANSPORT_REPRESENTATIONS])(
+    "redacts $name internal credential transports from refusal diagnostics (#11485)",
+    async ({ value }) => {
+      const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-evidence-"));
+      createdDirectories.push(artifactRoot);
+      const artifacts = new ArtifactSink(artifactRoot);
+      const host = refusalHost(`Config export failed (unsupported). ${value}`);
+      const test = fixture({
+        artifacts,
+        host: host as ReturnType<typeof successfulHost>,
+      });
+
+      await test.phase.from(target("expected-refusal"), instance());
+
+      const stored = fs.readFileSync(
+        path.join(artifactRoot, "config-export-evidence.v1.json"),
+        "utf8",
+      );
+      expect(JSON.parse(stored)).toMatchObject({ diagnostic: "[REDACTED]" });
+      expect(stored).not.toContain(INTERNAL_TRANSPORT);
+      expect(stored).not.toContain(ENCODED_INTERNAL_TRANSPORT);
+    },
+  );
+
+  it("redacts encoded internal credential transports from required-export failures (#11485)", async () => {
+    const host = refusalHost(`export failed: ${ENCODED_INTERNAL_TRANSPORT}`);
+    const test = fixture({ host: host as ReturnType<typeof successfulHost> });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "export",
+      diagnostic: "[REDACTED]",
+    });
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(ENCODED_INTERNAL_TRANSPORT);
+  });
 });

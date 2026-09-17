@@ -15,8 +15,6 @@ import {
   ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS,
   ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS,
   ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS,
-  ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
-  ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
@@ -40,6 +38,7 @@ const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
 const jobHeadroomMs = 20 * MINUTE_MS;
 const workflowFinalizationHeadroomMs = 10 * MINUTE_MS;
+const postRebootRequiredTimeout = liveTargetTimeoutContract("post-reboot-recovery", "required");
 const preparationOperationCeilingMs = MINUTE_MS + 30_000 + 30_000 + 10 * MINUTE_MS + 2 * MINUTE_MS;
 const dockerRecoveryOperationCeilingMs = 3 * 15_000;
 const gatewayRestartOperationCeilingMs =
@@ -62,7 +61,7 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it("derives the post-reboot test timeout from every bounded lifecycle phase", () => {
-    expect(ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS).toBe(
+    expect(postRebootRequiredTimeout.testTimeoutMs).toBe(
       ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS +
         ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
         ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS +
@@ -122,8 +121,8 @@ describe("onboard final-handoff timeout contract", () => {
         ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS / MINUTE_MS,
       configExportCommandMinutes: CONFIG_EXPORT_COMMAND_TIMEOUT_MS / MINUTE_MS,
       configExportPolicyMinutes: CONFIG_EXPORT_POLICY_TIMEOUT_MS / MINUTE_MS,
-      postRebootTestMinutes: ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS / MINUTE_MS,
-      postRebootTargetMinutes: ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
+      postRebootTestMinutes: postRebootRequiredTimeout.testTimeoutMs! / MINUTE_MS,
+      postRebootTargetMinutes: postRebootRequiredTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
@@ -211,7 +210,7 @@ describe("onboard final-handoff timeout contract", () => {
     const contract = liveTargetTimeoutContract(target.environment.lifecycle, expectation);
     const lifecycleTestBudgetMs =
       target.environment.lifecycle === "post-reboot-recovery"
-        ? ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS -
+        ? postRebootRequiredTimeout.testTimeoutMs! -
           CONFIG_EXPORT_COMMAND_TIMEOUT_MS -
           CONFIG_EXPORT_POLICY_TIMEOUT_MS
         : LIVE_TARGET_BASE_TEST_TIMEOUT_MS;
@@ -227,7 +226,7 @@ describe("onboard final-handoff timeout contract", () => {
 
     expect(jobHeadroomMs).toBe(DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs);
     expect(contract.targetTimeoutMinutes * MINUTE_MS).toBe(
-      ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS + jobHeadroomMs,
+      postRebootRequiredTimeout.testTimeoutMs! + jobHeadroomMs,
     );
   });
 
@@ -252,8 +251,8 @@ describe("onboard final-handoff timeout contract", () => {
     ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS,
     ONBOARD_POST_REBOOT_SANDBOX_READY_BUDGET_MS,
     ONBOARD_POST_REBOOT_STATUS_VALIDATION_BUDGET_MS,
-    ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
-    ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS,
+    postRebootRequiredTimeout.targetTimeoutMinutes,
+    postRebootRequiredTimeout.testTimeoutMs!,
     ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     ONBOARD_RESUME_TEST_TIMEOUT_MS,
     ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,

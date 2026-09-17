@@ -385,7 +385,12 @@ function compareSemantics(
 
 function boundedDiagnostic(secretStore: SecretStore, value: unknown): string {
   const raw = value instanceof Error ? value.message : String(value);
-  if (containsKnownSecretText(raw, secretStore.redactionValues())) return "[REDACTED]";
+  if (
+    containsKnownSecretText(raw, secretStore.redactionValues()) ||
+    containsInternalTransportText(raw)
+  ) {
+    return "[REDACTED]";
+  }
   return secretStore.redact(raw).slice(0, MAX_DIAGNOSTIC_LENGTH);
 }
 

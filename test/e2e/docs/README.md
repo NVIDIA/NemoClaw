@@ -109,7 +109,7 @@ the security checks and cleanup pass. Failure evidence omits export metadata.
 Its failure stage distinguishes transport errors from export failures, while
 cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
 diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
-secrets before publication.
+secrets and internal credential transport markers before publication.
 
 The E2E workflow uploads `config-export-evidence.v1.json` with each target's
 retained artifacts.
