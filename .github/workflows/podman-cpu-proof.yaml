@@ -76,7 +76,10 @@ jobs:
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install locked test dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --prefer-offline --omit=optional --include=optional --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
 
       - name: Build CLI for the CPU delegation proof
         run: npm run build:cli
@@ -146,7 +149,10 @@ jobs:
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install locked test dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --prefer-offline --omit=optional --include=optional --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
 
       - name: Build and link candidate CLI
         run: |
