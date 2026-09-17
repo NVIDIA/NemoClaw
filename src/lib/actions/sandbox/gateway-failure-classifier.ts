@@ -66,7 +66,7 @@ export type SandboxContainerFailureRunners = {
   portProbe: (port: number) => Promise<boolean>;
 };
 
-export type SandboxPhaseRecoveryAction = "rebuild_missing_docker_container" | "start" | "rebuild";
+export type SandboxPhaseRecoveryAction = "replace_missing_docker_container" | "start" | "rebuild";
 
 export function classifySandboxPhaseRecoveryAction({
   phase,
@@ -79,7 +79,7 @@ export function classifySandboxPhaseRecoveryAction({
 }): SandboxPhaseRecoveryAction {
   if (phase !== "Error") return "rebuild";
   if (normalizeRuntimeProviderIdentity(openshellDriver) === "docker" && !dockerContainerName) {
-    return "rebuild_missing_docker_container";
+    return "replace_missing_docker_container";
   }
   return "start";
 }

@@ -50,7 +50,8 @@ starting the sandbox through OpenShell rather than treating the running containe
 started.
 If the container is paused, follow the printed `docker unpause` guidance instead.
 If OpenShell reports the sandbox in `Phase: Error` but Docker no longer has its driver container,
-run `$$nemoclaw <sandbox-name> rebuild --yes` to recreate the container while preserving workspace state.
+NemoClaw cannot back up the live workspace for rebuild. Destroy the stale entry, onboard a clean
+replacement, and restore a separately created snapshot afterward if one is available.
 If the sandbox is absent from the live OpenShell gateway, destroy the stale NemoClaw entry and
 onboard a clean replacement. Restore a separately created snapshot afterward if one is available;
 rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
@@ -225,9 +226,8 @@ It does not report a successful rebuild.
 If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
 
 If OpenShell still reports the sandbox in `Phase: Error` but its Docker-driver container is missing,
-use `$$nemoclaw <sandbox-name> rebuild --yes` to recreate the container with workspace state
-preserved. This recovery does not apply when the sandbox itself is absent from the live OpenShell
-gateway; use the clean replacement flow described above for that case.
+rebuild cannot back up its live workspace and stops before replacement. Use the clean replacement
+flow described above, then restore a separately created snapshot if one is available.
 
 <AgentOnly variant="hermes">
 

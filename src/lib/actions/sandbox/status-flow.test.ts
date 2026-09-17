@@ -126,6 +126,47 @@ describe("showSandboxStatus flow", () => {
     expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
   });
 
+  it.each([
+    {
+      label: "Docker",
+      openshellDriver: "docker",
+      expected: "nemoclaw alpha destroy --yes",
+      unexpected: "nemoclaw alpha start",
+    },
+    {
+      label: "native",
+      openshellDriver: "mxc",
+      expected: "nemoclaw alpha start",
+      unexpected: "nemoclaw alpha destroy --yes",
+    },
+  ])(
+    "passes the $label driver to missing-container Error recovery guidance",
+    async ({ openshellDriver, expected, unexpected }) => {
+      const harness = createStatusFlowHarness({
+        sandboxEntry: { openshellDriver },
+        lookup: {
+          state: "present",
+          output: "Name: alpha\nPhase: Error\nEndpoint: http://127.0.0.1:18789\n",
+          phase: "Error",
+          recoveredGateway: true,
+          recoveryVia: "gateway reattach",
+        },
+      });
+      harness.getSandboxDockerRuntimeSpy.mockReturnValue({
+        containerName: null,
+        health: "none",
+        paused: false,
+        running: false,
+      });
+
+      await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+      const output = harness.logSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(expected);
+      expect(output).not.toContain(unexpected);
+    },
+  );
+
   it("classifies publication while waiting for the status lifecycle fence (#9203)", async () => {
     let disposition: { readonly kind: "absent" } | ReturnType<typeof hermesPortableDisposition> = {
       kind: "absent",

@@ -284,7 +284,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("steers a Docker-driver Error sandbox without its container to rebuild", async () => {
+  it("steers a Docker-driver Error sandbox without its container to clean replacement", async () => {
     mockSandboxPhase("Error");
     getSandboxSpy.mockReturnValue({
       name: "instance-a",
@@ -311,8 +311,11 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
 
     const output = lines.join("\n");
-    expect(output).toContain("nemoclaw instance-a rebuild --yes");
-    expect(output).toContain("missing Docker-driver container");
+    expect(output).toContain("cannot back up its live workspace for rebuild");
+    expect(output).toContain("nemoclaw instance-a destroy --yes");
+    expect(output).toContain("nemoclaw onboard");
+    expect(output).toContain("separately created snapshot");
+    expect(output).not.toContain("nemoclaw instance-a rebuild --yes");
     expect(output).not.toContain("nemoclaw instance-a start");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -321,7 +324,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     ["legacy vm alias", "vm"],
     ["missing legacy metadata", undefined],
   ])(
-    "steers a Docker Error sandbox with %s and no container to rebuild",
+    "steers a Docker Error sandbox with %s and no container to clean replacement",
     async (_case, openshellDriver) => {
       mockSandboxPhase("Error");
       getSandboxSpy.mockReturnValue({
@@ -349,8 +352,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       );
 
       const output = lines.join("\n");
-      expect(output).toContain("nemoclaw instance-a rebuild --yes");
-      expect(output).toContain("missing Docker-driver container");
+      expect(output).toContain("cannot back up its live workspace for rebuild");
+      expect(output).toContain("nemoclaw instance-a destroy --yes");
+      expect(output).toContain("nemoclaw onboard");
+      expect(output).not.toContain("nemoclaw instance-a rebuild --yes");
       expect(output).not.toContain("nemoclaw instance-a start");
       expect(exitSpy).toHaveBeenCalledWith(1);
     },

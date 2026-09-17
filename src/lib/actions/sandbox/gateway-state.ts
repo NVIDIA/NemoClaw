@@ -1175,10 +1175,14 @@ export async function ensureLiveSandboxOrExit(
         openshellDriver: getKnownSandboxTarget(sandboxName)?.openshellDriver,
         dockerContainerName: dockerRuntime.containerName,
       });
-      if (recoveryAction === "rebuild_missing_docker_container") {
+      if (recoveryAction === "replace_missing_docker_container") {
         console.error(
-          `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the missing Docker-driver container (--yes skips the confirmation prompt; workspace state will be preserved).`,
+          "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",
         );
+        console.error("  To create a clean replacement:");
+        console.error(`    1. ${CLI_NAME} ${sandboxName} destroy --yes`);
+        console.error(`    2. ${CLI_NAME} onboard`);
+        console.error("  Restore a separately created snapshot afterward if one is available.");
       } else if (recoveryAction === "start") {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,

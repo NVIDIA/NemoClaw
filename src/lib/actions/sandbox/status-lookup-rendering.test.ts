@@ -217,30 +217,38 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
-  it("steers a Docker-driver sandbox without its container to rebuild", async () => {
+  it("steers a Docker-driver sandbox without its container to clean replacement", async () => {
     const cap = captureConsoleLog();
     await printGuidance({ phase: "Error", dockerRuntime: null });
     const text = cap.lines();
     cap.restore();
 
-    expect(text).toContain("nemoclaw beta rebuild --yes");
-    expect(text).toContain("missing Docker-driver container");
+    expect(text).toContain("cannot back up its live workspace for rebuild");
+    expect(text).toContain("nemoclaw beta destroy --yes");
+    expect(text).toContain("nemoclaw onboard");
+    expect(text).toContain("separately created snapshot");
+    expect(text).not.toContain("nemoclaw beta rebuild --yes");
     expect(text).not.toContain("nemoclaw beta start");
   });
 
   it.each([
     ["legacy vm alias", "vm"],
     ["missing legacy metadata", null],
-  ])("steers a Docker sandbox with %s and no container to rebuild", async (_case, driver) => {
-    const cap = captureConsoleLog();
-    await printGuidance({ phase: "Error", openshellDriver: driver, dockerRuntime: null });
-    const text = cap.lines();
-    cap.restore();
+  ])(
+    "steers a Docker sandbox with %s and no container to clean replacement",
+    async (_case, driver) => {
+      const cap = captureConsoleLog();
+      await printGuidance({ phase: "Error", openshellDriver: driver, dockerRuntime: null });
+      const text = cap.lines();
+      cap.restore();
 
-    expect(text).toContain("nemoclaw beta rebuild --yes");
-    expect(text).toContain("missing Docker-driver container");
-    expect(text).not.toContain("nemoclaw beta start");
-  });
+      expect(text).toContain("cannot back up its live workspace for rebuild");
+      expect(text).toContain("nemoclaw beta destroy --yes");
+      expect(text).toContain("nemoclaw onboard");
+      expect(text).not.toContain("nemoclaw beta rebuild --yes");
+      expect(text).not.toContain("nemoclaw beta start");
+    },
+  );
 
   it("steers a native provider without a Docker container to OpenShell start", async () => {
     const cap = captureConsoleLog();
