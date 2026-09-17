@@ -481,7 +481,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("drops legacy plugin install records without enabling WeChat", () => {
+  it("preserves native plugin install records without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -495,7 +495,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     const config = runConfigScript({});
 
-    expect(config.plugins?.installs).toBeUndefined();
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
