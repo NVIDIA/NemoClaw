@@ -32,14 +32,14 @@ const mocks = vi.hoisted(() => {
     buildVersionedUninstallUrl: vi.fn(
       (version: string) => `https://example.test/${version}/uninstall.sh`,
     ),
-    fetchGatewayAuthTokenFromSandbox: vi.fn(() => "token"),
+    fetchGatewayAuthTokenFromSandbox: vi.fn(async () => "token"),
     getVersion: vi.fn(() => "1.2.3"),
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
     listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
-    runDashboardUrlCommand: vi.fn(() => undefined),
-    runGatewayTokenCommand: vi.fn(() => undefined),
+    runDashboardUrlCommand: vi.fn(async () => undefined),
+    runGatewayTokenCommand: vi.fn(async () => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
@@ -305,7 +305,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   });
 
   it("rejects schema-5 gateway-token before fetching or printing credentials (#9203)", async () => {
-    const fetchToken = vi.fn(() => "must-not-print");
+    const fetchToken = vi.fn(async () => "must-not-print");
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
       fetchToken,
       getSandboxAgent: () => "hermes",
@@ -349,7 +349,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     // NCQ #3180: legacy dispatch did not catch the @oclif/core ExitError
     // thrown by this.exit(1), surfacing a raw JS stack trace to the user.
     // The adapter must signal failure via process.exitCode instead.
-    mocks.runGatewayTokenCommand.mockImplementationOnce(() => {
+    mocks.runGatewayTokenCommand.mockImplementationOnce(async () => {
       throw new mocks.GatewayTokenCommandError("not applicable");
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
@@ -377,7 +377,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       "  For Hermes dashboard access, run: nemohermes hermes dashboard-url",
       "  Hermes dashboard auth is read from the in-sandbox config (~/.hermes/config.yaml), not a gateway token.",
     ];
-    mocks.runGatewayTokenCommand.mockImplementationOnce(() => {
+    mocks.runGatewayTokenCommand.mockImplementationOnce(async () => {
       throw new mocks.GatewayTokenCommandError(hermesLines, 1);
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
@@ -406,7 +406,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   it("clears a stale non-zero process.exitCode on a successful gateway-token run", async () => {
     // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
     // successful invocation must still report success. Always overwrite.
-    mocks.runGatewayTokenCommand.mockReturnValueOnce(undefined);
+    mocks.runGatewayTokenCommand.mockResolvedValueOnce(undefined);
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
       fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
       getSandboxAgent: () => "openclaw",

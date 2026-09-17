@@ -144,6 +144,21 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("does not turn a zero-exit OpenShell error into an empty inventory", async () => {
+    const observer = createCliOpenShellSandboxObserver({
+      capture: () => captured(0, "Error: gateway observation failed"),
+    });
+
+    await expect(observer.listSandboxes({ target: selectedOpenShellGateway() })).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "The OpenShell sandbox observation failed.",
+      },
+    });
+  });
+
   it("keeps formatted get output on an explicit CLI-only compatibility path (#9803)", async () => {
     const capture = vi.fn(() => captured(0, "\u001b[1mName:\u001b[0m alpha\nPhase: Running\n"));
     const lookup = createCliOpenShellSandboxLookup({ capture });
@@ -346,6 +361,7 @@ describe("CLI OpenShell sandbox observer", () => {
       ignoreError: true,
       killProcessTreeOnTimeout: true,
       killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 9_000,
     });

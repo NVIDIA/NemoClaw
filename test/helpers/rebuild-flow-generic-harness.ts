@@ -432,12 +432,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const modelsCustomOpenClawImage =
-    typeof overrides.sandboxEntry?.fromDockerfile === "string" &&
-    (!overrides.sandboxEntry.agent || overrides.sandboxEntry.agent === "openclaw");
-  const customOpenClawPluginProvenance = modelsCustomOpenClawImage
-    ? { openclawImagePluginInstalls: [] }
-    : {};
   const currentSandboxEntry = {
     name: "alpha",
     provider: "ollama-local",
@@ -450,7 +444,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
-    ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
@@ -665,16 +658,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         dir: "/sandbox/.openclaw",
         backupPath,
         timestamp: "2026-06-01T00:00:00.000Z",
+        ...(overrides.backupRuntimeSnapshot
+          ? { runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot) }
+          : {}),
         ...(overrides.backupPreservedEnv
           ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
-          : {}),
-        ...(modelsCustomOpenClawImage
-          ? {
-              reconcileOpenClawImagePluginProvenance: true,
-              openclawImagePluginInstalls: structuredClone(
-                currentSandboxEntry.openclawImagePluginInstalls,
-              ),
-            }
           : {}),
       };
       registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);

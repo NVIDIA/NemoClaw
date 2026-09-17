@@ -10,8 +10,7 @@
  * state part of gateway startup, but hardens those paths to owner-only modes.
  * For that topology, keep generic credential and identity stores owner-only
  * while applying group-shared modes only to the databases. Leave private-store
- * enforcement unchanged, and ignore only the obsolete pinned-version update
- * cache when its migration cannot archive through a root-owned parent.
+ * enforcement unchanged.
  *
  * Remove this patch once upstream supports a group-shared state database for
  * split-user containers without requiring a non-owner to chmod an already
@@ -26,21 +25,12 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const MARKER = "/* nemoclaw: group-shared OpenClaw state */";
 export const AGENT_MARKER = "/* nemoclaw: group-shared OpenClaw agent state */";
-export const MIGRATION_MARKER = "/* nemoclaw: ignore legacy OpenClaw update-check state */";
 export const MODELS_MARKER = "/* nemoclaw: group-shared OpenClaw models file */";
 
 const GROUP_SHARED_ENV_HELPER = [
   "function nemoclawUsesGroupSharedState(env) {",
   "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
   '\treturn nemoclawSharedStateMarker === "1";',
-  "}",
-].join("\n");
-
-const MANAGED_RUNTIME_ENV_HELPER = [
-  "function nemoclawUsesManagedRuntime(env) {",
-  "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
-  "\tconst nemoclawOpenShellMarker = env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX;",
-  '\treturn nemoclawSharedStateMarker === "1" || nemoclawOpenShellMarker === "1" || (typeof nemoclawOpenShellMarker === "string" && /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nemoclawOpenShellMarker));',
   "}",
 ].join("\n");
 
@@ -188,33 +178,6 @@ const PATCHED_AGENT_REQUIRED_PATTERNS = [
   "(statSync(candidate).mode & 0o7777) !== nemoclawAgentFileMode",
 ] as const;
 
-const UPSTREAM_MIGRATION_FUNCTION_START = [
-  "function migrateLegacyUpdateCheckState(params) {",
-  "\tconst changes = [];",
-  "\tconst warnings = [];",
-].join("\n");
-
-const UPSTREAM_MIGRATION_START = [
-  UPSTREAM_MIGRATION_FUNCTION_START,
-  "\tif (!fileExists(params.detected.sourcePath)) return {",
-].join("\n");
-
-const PATCHED_MIGRATION_START = [
-  MANAGED_RUNTIME_ENV_HELPER,
-  UPSTREAM_MIGRATION_FUNCTION_START,
-  `\tif (nemoclawUsesManagedRuntime()) return { changes, warnings }; ${MIGRATION_MARKER}`,
-  "\tif (!fileExists(params.detected.sourcePath)) return {",
-].join("\n");
-
-const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
-  MIGRATION_MARKER,
-  "function nemoclawUsesManagedRuntime(env) {",
-  "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
-  "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
-  "function migrateLegacyUpdateCheckState(params) {",
-  "if (nemoclawUsesManagedRuntime()) return { changes, warnings };",
-] as const;
-
 const UPSTREAM_MODELS_FILE_MODE_HELPER = [
   "async function ensureModelsFileModeForModelsJson(pathname) {",
   "\tawait fs.chmod(pathname, 384).catch(() => {});",
@@ -334,27 +297,6 @@ export function patchOpenClawAgentDbText(source: string, file: string): PatchTex
   return { patched: true, status: "patched", text };
 }
 
-function validatePatchedMigrationText(source: string, file: string): void {
-  for (const pattern of PATCHED_MIGRATION_REQUIRED_PATTERNS) {
-    requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
-  }
-  if (source.includes(UPSTREAM_MIGRATION_START)) {
-    throw new Error(`${file}: patch marker is present but the upstream migration target remains`);
-  }
-}
-
-export function patchOpenClawStateMigrationText(source: string, file: string): PatchTextResult {
-  if (source.includes(MIGRATION_MARKER)) {
-    validatePatchedMigrationText(source, file);
-    return { patched: false, status: "already-patched", text: source };
-  }
-
-  requireExactlyOnce(source, UPSTREAM_MIGRATION_START, "legacy update-check migration start", file);
-  const text = source.replace(UPSTREAM_MIGRATION_START, PATCHED_MIGRATION_START);
-  validatePatchedMigrationText(text, file);
-  return { patched: true, status: "patched", text };
-}
-
 function validatePatchedModelsText(source: string, file: string): void {
   for (const pattern of PATCHED_MODELS_REQUIRED_PATTERNS) {
     requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
@@ -425,20 +367,6 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw per-agent database target in ${resolvedDist}, found ${agentCandidates.length}`,
     );
   }
-  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations-.+\.js$/).filter(
-    (file) => {
-      const source = fs.readFileSync(file, "utf8");
-      return (
-        source.includes(MIGRATION_MARKER) ||
-        source.includes("function migrateLegacyUpdateCheckState(params) {")
-      );
-    },
-  );
-  if (migrationCandidates.length !== 1) {
-    throw new Error(
-      `Expected exactly one OpenClaw state-migration target in ${resolvedDist}, found ${migrationCandidates.length}`,
-    );
-  }
   const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.js$/).filter((file) => {
     const source = fs.readFileSync(file, "utf8");
     return (
@@ -457,26 +385,19 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
 
   const stateFile = stateCandidates[0];
   const agentFile = agentCandidates[0];
-  const migrationFile = migrationCandidates[0];
   const modelsFile = modelsCandidates[0];
   const stateResult = patchOpenClawStateDbText(fs.readFileSync(stateFile, "utf8"), stateFile);
   const agentResult = patchOpenClawAgentDbText(fs.readFileSync(agentFile, "utf8"), agentFile);
-  const migrationResult = patchOpenClawStateMigrationText(
-    fs.readFileSync(migrationFile, "utf8"),
-    migrationFile,
-  );
   const modelsResult = patchOpenClawModelsConfigText(
     fs.readFileSync(modelsFile, "utf8"),
     modelsFile,
   );
   if (stateResult.patched) fs.writeFileSync(stateFile, stateResult.text);
   if (agentResult.patched) fs.writeFileSync(agentFile, agentResult.text);
-  if (migrationResult.patched) fs.writeFileSync(migrationFile, migrationResult.text);
   if (modelsResult.patched) fs.writeFileSync(modelsFile, modelsResult.text);
-  const patched =
-    stateResult.patched || agentResult.patched || migrationResult.patched || modelsResult.patched;
+  const patched = stateResult.patched || agentResult.patched || modelsResult.patched;
   return {
-    files: [stateFile, agentFile, migrationFile, modelsFile],
+    files: [stateFile, agentFile, modelsFile],
     patched,
     status: patched ? "patched" : "already-patched",
   };

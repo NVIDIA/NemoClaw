@@ -73,7 +73,6 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "name",
   "nimContainer",
   "observabilityEnabled",
-  "openclawImagePluginInstalls",
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",
@@ -277,6 +276,7 @@ const ExportInferenceSchema = Type.Union([
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
       serving: NemoClawManagedVllmServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
     },
     { additionalProperties: false },
   ),
@@ -287,9 +287,7 @@ const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
   tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
-  additionalAgents: Type.Optional(
-    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
-  ),
+  additionalAgents: Type.Optional(Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1 })),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,

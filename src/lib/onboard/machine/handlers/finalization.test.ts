@@ -79,7 +79,7 @@ function createDeps(
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
-    dashboard: vi.fn(),
+    dashboard: vi.fn(async () => undefined),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
     createExternalComponentActivationProof: vi.fn(() => activationProof),
@@ -318,6 +318,30 @@ describe("finalization handlers", () => {
       metadata: { state: "post_verify" },
     });
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  it("waits for dashboard completion before reporting readiness", async () => {
+    let resolveDashboard!: () => void;
+    const dashboardPending = new Promise<void>((resolve) => {
+      resolveDashboard = resolve;
+    });
+    const printDashboard = vi.fn(() => dashboardPending);
+    const { deps, calls } = createDeps({ printDashboard });
+    const settled = vi.fn();
+
+    const pending = handlePostVerifyState(baseOptions(deps));
+    void pending.then(settled);
+    await vi.waitFor(() => expect(printDashboard).toHaveBeenCalledOnce());
+
+    expect(calls.reportReadiness).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+
+    resolveDashboard();
+    const result = await pending;
+
+    expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(result.stateResult).toMatchObject({ type: "complete" });
   });
 
   it("uses strict Portable settlement instead of ordinary pairing settlement (#9207)", async () => {

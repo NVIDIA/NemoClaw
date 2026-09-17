@@ -13,9 +13,29 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const EXPECTED_GATE_CONDITION =
   "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true'))) }}";
 const EXPECTED_ENTRY_CONDITION = "${{ github.repository == 'NVIDIA/NemoClaw' }}";
+const EXPECTED_FAILURE_RECEIPT_COMMAND =
+  'node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/failure-artifacts.mts"';
+const EXPECTED_FAILURE_RECEIPT_ENV = {
+  ADVISOR_PREPARATION_CLASSIFICATION: "${{ steps.prepare-analysis.outputs.classification }}",
+  ADVISOR_DISPATCH_CHECKOUT_OUTCOME: "${{ steps.dispatch-checkout.outcome }}",
+  ADVISOR_DEFAULT_WORKDIR_OUTCOME: "${{ steps.default-workdir.outcome }}",
+  ADVISOR_NODE_SETUP_OUTCOME: "${{ steps.setup-node.outcome }}",
+  ADVISOR_NPM_SETUP_OUTCOME: "${{ steps.setup-npm.outcome }}",
+  ADVISOR_RUNTIME_IMAGE_OUTCOME: "${{ steps.runtime-image.outcome }}",
+  ADVISOR_PREPARATION_OUTCOME: "${{ steps.prepare-analysis.outcome }}",
+  ADVISOR_REMOVE_SYMLINKS_OUTCOME: "${{ steps.remove-symlinks.outcome }}",
+  ADVISOR_RUNTIME_DOWNLOAD_OUTCOME: "${{ steps.download-runtime.outcome }}",
+  ADVISOR_RUNTIME_RESTORE_OUTCOME: "${{ steps.restore-runtime.outcome }}",
+  ADVISOR_CONTEXT_DOWNLOAD_OUTCOME: "${{ steps.download-context.outcome }}",
+  ADVISOR_SANDBOX_INPUTS_OUTCOME: "${{ steps.sandbox-inputs.outcome }}",
+  ADVISOR_OPENSHELL_INSTALL_OUTCOME: "${{ steps.install-openshell.outcome }}",
+  ADVISOR_ANALYSIS_OUTCOME: "${{ steps.specialist-analysis.outcome }}",
+  EXPECTED_HEAD_SHA: "${{ needs.require-green-checks.outputs.head_sha }}",
+};
 
 type WorkflowPermissions = Record<string, unknown> | string;
 type WorkflowStep = {
+  if?: string;
   env?: Record<string, unknown>;
   name?: string;
   run?: string;
@@ -223,6 +243,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Download GitHub review context",
   );
   const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
+  const failureReceipt = specialistSteps.find(
+    (step) => step.name === "Preserve specialist failure status",
+  );
+  if (
+    !failureReceipt ||
+    failureReceipt.if !== "${{ failure() }}" ||
+    failureReceipt.run !== EXPECTED_FAILURE_RECEIPT_COMMAND ||
+    !isDeepStrictEqual(failureReceipt.env, EXPECTED_FAILURE_RECEIPT_ENV) ||
+    specialistUpload?.if !== "${{ always() && matrix.advisor.interest != '' }}" ||
+    specialistSteps.indexOf(specialistUpload) <= specialistSteps.indexOf(failureReceipt)
+  ) {
+    errors.push("Unified advisor failure receipt must run before upload after a failed step");
+  }
   const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
   if (
     contextUpload?.with?.name !== contextArtifactName ||
@@ -271,9 +304,66 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   ) {
     errors.push("Unified advisor blocker gate must validate exact-attempt specialist evidence");
   }
+  const coordinator = advisor.jobs?.["coordinator-shadow"] ?? {};
+  const coordinatorSteps = coordinator.steps ?? [];
+  const coordinatorContext = coordinatorSteps.find(
+    (step) => step.name === "Download GitHub review context",
+  );
+  const coordinatorArtifacts = coordinatorSteps.find(
+    (step) => step.name === "Download specialist reviews",
+  );
+  const coordinatorEvaluation = coordinatorSteps.find(
+    (step) => step.name === "Evaluate read-only coordinator decision",
+  );
+  const coordinatorUpload = coordinatorSteps.find(
+    (step) => step.name === "Upload coordinator shadow decision",
+  );
+  const coordinatorCondition =
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.outputs.pr_number != '' && needs.build-advisor-runtime.result == 'success' && needs.review-specialists.result == 'success' }}";
+  if (
+    coordinator.name !== "Evaluate review coordinator shadow" ||
+    !sameMembers(needs(coordinator), [
+      "require-green-checks",
+      "build-advisor-runtime",
+      "review-specialists",
+      "advisor-blockers",
+    ]) ||
+    coordinator.if !== coordinatorCondition ||
+    !isDeepStrictEqual(permissionMap(coordinator.permissions), {
+      actions: "read",
+      contents: "read",
+    })
+  ) {
+    errors.push("Unified advisor coordinator shadow must remain read-only and exact-head bound");
+  }
+  if (
+    coordinatorContext?.with?.name !== contextArtifactName ||
+    coordinatorArtifacts?.with?.pattern !== "pr-review-specialist-*-${{ github.run_attempt }}" ||
+    coordinatorEvaluation?.env?.PR_REVIEW_ADVISOR_ARTIFACTS !==
+      "${{ runner.temp }}/pr-review-specialists" ||
+    coordinatorEvaluation.env?.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH !==
+      "${{ runner.temp }}/pr-review-context/github-context.json" ||
+    coordinatorEvaluation.run !==
+      'node --no-warnings "$ADVISOR_DIR/tools/pr-review-coordinator/shadow.mts"' ||
+    coordinator.env?.EXPECTED_HEAD_SHA !== "${{ needs.require-green-checks.outputs.head_sha }}" ||
+    coordinator.env?.EXPECTED_BASE_SHA !== "${{ needs.require-green-checks.outputs.base_sha }}" ||
+    coordinator.env?.PR_NUMBER !== "${{ needs.require-green-checks.outputs.pr_number }}"
+  ) {
+    errors.push("Unified advisor coordinator shadow must consume exact-attempt trusted evidence");
+  }
+  if (
+    coordinatorUpload?.uses !==
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
+    coordinatorUpload.with?.name !== "pr-review-coordinator-shadow-${{ github.run_attempt }}" ||
+    coordinatorUpload.with?.path !== "artifacts/pr-review-coordinator-shadow/decision.json" ||
+    coordinatorUpload.with?.["if-no-files-found"] !== "error"
+  ) {
+    errors.push("Unified advisor coordinator shadow must retain its decision artifact");
+  }
   const publisher = advisor.jobs?.publish ?? {};
   if (
     !needs(publisher).includes("advisor-blockers") ||
+    !needs(publisher).includes("coordinator-shadow") ||
     publisher.if !==
       "${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}"
   ) {

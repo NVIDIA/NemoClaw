@@ -56,12 +56,13 @@ import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
   OnboardRestoreSnapshotDriftError,
   OnboardResumeIntentError,
-  isOnboardResumeIntentRaceError,
   resolveOnboardResumeIntent,
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
-  isOnboardDeferredExitError,
+  isTrustedOnboardError,
+  redactOnboardErrorText,
   redactOnboardDiagnosticText,
+  sanitizeOnboardFailure,
 } from "./session-bootstrap";
 
 export interface OnboardCommandOptions {
@@ -526,18 +527,46 @@ export function resolveOnboardOptions(
 // rejects these with a code so callers can treat them as deliberate
 // cancellation rather than a crash. See src/lib/credentials/store.ts.
 function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
-  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (!isTrustedOnboardError(error)) return null;
+  const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+  if (!descriptor || !("value" in descriptor)) return null;
+  const code = descriptor.value;
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
+/** Read one trusted Error data property without consulting accessors or its prototype. */
+function ownErrorData(error: Error, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(error, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+/** Recognize the internal resume race marker without consulting untrusted inherited state. */
+function isSafeResumeIntentRaceError(error: unknown): boolean {
+  return (
+    isTrustedOnboardError(error) && ownErrorData(error, "nemoclawOnboardResumeIntentRace") === true
+  );
+}
+
+/** Recover a deferred exit only from the internal Error's safe own data fields. */
+function safeDeferredExitCode(error: unknown): number | null {
+  if (!isTrustedOnboardError(error)) return null;
+  if (ownErrorData(error, Symbol.for("nemoclaw.onboard.deferred-exit-error")) !== true) return null;
+  if (ownErrorData(error, "name") !== "OnboardDeferredExitError") return null;
+  const code = ownErrorData(error, "code");
+  return typeof code === "number" && Number.isInteger(code) ? code : null;
+}
+
+/** Report operator errors without exposing multiline secrets or truncating later recovery lines. */
 function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  const redacted = message.split("\n").map(redactOnboardDiagnosticText).join("\n");
+  const redacted = redactOnboardErrorText(message);
   (deps.error ?? console.error)(redacted);
   return 1;
 }
 
+/** Preserve cancellation and failure behavior without exposing secrets through CLI errors. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   const cancellationCode = promptCancellationCode(error);
+  const sanitizedError = sanitizeOnboardFailure(error);
   if (cancellationCode === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
     // Let the onboard signal handler print resumable-step guidance and
@@ -549,14 +578,14 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // not a crash: print the validation reason as a clean single-line CLI error
   // and exit nonzero instead of re-throwing it into a Node.js stack trace
   // (#7627).
-  if (error instanceof GatewayManagementDeclarationError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
+  if (sanitizedError instanceof GatewayManagementDeclarationError) {
+    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
   }
-  if (error instanceof PortableInferenceDescriptorError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
+  if (sanitizedError instanceof PortableInferenceDescriptorError) {
+    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
   }
-  if (error instanceof OnboardRestoreSnapshotDriftError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
+  if (sanitizedError instanceof OnboardRestoreSnapshotDriftError) {
+    return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
   }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not
   // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
@@ -565,16 +594,18 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // both of those paths emitting a raw stack trace (#8103). Within onboarding
   // the recreate journal's authority revalidation is the only source of this
   // typed error, so the operation label holds however recreation was selected.
-  if (error instanceof GatewayAuthorityError) {
+  if (sanitizedError instanceof GatewayAuthorityError) {
     return reportOnboardCommandError(
       deps,
-      gatewayAuthorityFailureLines(error, "sandbox recreate").join("\n"),
+      gatewayAuthorityFailureLines(sanitizedError, "sandbox recreate").join("\n"),
     );
   }
   // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
   // print a clear message and exit non-zero instead of either crashing with
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") throw error;
+  if (cancellationCode !== "EOF") {
+    throw sanitizedError;
+  }
   return reportOnboardCommandError(deps, "  Installation cancelled");
 }
 
@@ -684,14 +715,15 @@ function handleOnboardCommandAttemptError(
   deps: RunOnboardCommandDeps,
   attempt: number,
 ): OnboardCommandAttemptResult {
-  if (isOnboardResumeIntentRaceError(error)) {
+  if (isSafeResumeIntentRaceError(error)) {
     if (attempt === 0) return "retry";
     return reportOnboardCommandError(
       deps,
       "  The onboarding checkpoint changed while resume acquired its lock. Retry the command.",
     );
   }
-  if (isOnboardDeferredExitError(error)) return error.code;
+  const deferredExitCode = safeDeferredExitCode(error);
+  if (deferredExitCode !== null) return deferredExitCode;
   return handleOnboardCommandError(error, deps) ?? "complete";
 }
 
