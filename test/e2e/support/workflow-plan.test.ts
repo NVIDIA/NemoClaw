@@ -265,6 +265,18 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/onboard/runtime-provider/contract.ts",
+    "src/lib/onboard/runtime-provider/docker.ts",
+    "src/lib/onboard/runtime-provider/mxc.ts",
+    "src/lib/onboard/runtime-provider/podman.ts",
+    "src/lib/onboard/runtime-provider/registry.ts",
+  ])("selects final gateway cleanup evidence when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "sandbox-operations",
+    );
+  });
+
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
