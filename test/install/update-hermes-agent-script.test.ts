@@ -23,6 +23,9 @@ const HERMES_MANIFEST = path.join(
   "manifest.yaml",
 );
 const TARGET_TAG = "v2026.8.27";
+const CURRENT_TARBALL_SHA256 = "e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7";
+const CURRENT_NPM_INTEGRITY =
+  "sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==";
 
 const CURRENT_INSTALLED_BASE = [
   "# Calver tag v2026.6.5 = Hermes Agent v0.16.0.",
@@ -97,7 +100,14 @@ printf 'fake archive' > "$output"
       path.join(fakeBin, "tar"),
       "#!/usr/bin/env bash\nprintf 'version = \"0.20.6\"\\n'\n",
     );
-    writeExecutable(path.join(fakeBin, "npm"), "#!/usr/bin/env bash\nprintf 'sha512-test\\n'\n");
+    writeExecutable(
+      path.join(fakeBin, "sha256sum"),
+      `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${CURRENT_TARBALL_SHA256}' "$1"\n`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' '${CURRENT_NPM_INTEGRITY}'\n`,
+    );
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
@@ -145,6 +155,74 @@ fi
       const pinnedCallCount = curlArgv.split("--proto =https --proto-redir =https").length - 1;
       expect(curlArgv).not.toBe("");
       expect(pinnedCallCount).toBe(curlCallCount);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unreviewed release identity before mutating either pin source", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-identity-"));
+    try {
+      const repo = path.join(tmp, "repo");
+      const script = path.join(repo, "scripts", "update-hermes-agent.sh");
+      const fakeBin = path.join(tmp, "bin");
+      const dockerfile = path.join(repo, "agents", "hermes", "Dockerfile.base");
+      const manifest = path.join(repo, "agents", "hermes", "manifest.yaml");
+      fs.mkdirSync(path.dirname(script), { recursive: true });
+      fs.mkdirSync(path.dirname(dockerfile), { recursive: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.copyFileSync(SCRIPT, script);
+      fs.chmodSync(script, 0o755);
+      fs.copyFileSync(HERMES_BASE_DOCKERFILE, dockerfile);
+      fs.copyFileSync(HERMES_MANIFEST, manifest);
+      const originalDockerfile = fs.readFileSync(dockerfile, "utf8");
+      const originalManifest = fs.readFileSync(manifest, "utf8");
+
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+previous=""
+for arg in "$@"; do
+  case "$previous" in
+    -o) output="$arg" ;;
+  esac
+  previous="$arg"
+done
+printf 'fake archive' > "$output"
+`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        "#!/usr/bin/env bash\nprintf 'version = \"0.21.4\"\\n'\n",
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash\nprintf '%064d  %s\\n' 0 "$1"\n`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "npm"),
+        "#!/usr/bin/env bash\nprintf 'sha512-unreviewed\\n'\n",
+      );
+
+      const run = spawnSync("bash", [script, "--tag", "v2026.9.15"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          HOME: path.join(tmp, "home"),
+          NEMOCLAW_SOURCE_ROOT: undefined,
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(
+        "ERROR: Hermes release v2026.9.15 / 0.21.4 does not have a reviewed four-field identity",
+      );
+      expect(fs.readFileSync(dockerfile, "utf8")).toBe(originalDockerfile);
+      expect(fs.readFileSync(manifest, "utf8")).toBe(originalManifest);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

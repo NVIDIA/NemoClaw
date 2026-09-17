@@ -20,6 +20,7 @@ const baseDockerfile = fs.readFileSync(
 const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
+const hermesDownloaderMarker = "download-hermes-source-archive.sh invoked";
 const reviewedHermesReleaseIdentities = [
   {
     label: "current 0.20.6",
@@ -100,7 +101,9 @@ function runHermesReleaseIdentityGuard(environment: HermesReleaseIdentityEnviron
     .slice(guardStart + "RUN ".length, guardEnd + guardEndMarker.length)
     .replaceAll("\\", "");
 
-  return spawnSync("bash", ["-eu", "-c", guard], {
+  const guardedDownload = `${guard}\nprintf '%s\\n' '${hermesDownloaderMarker}'`;
+
+  return spawnSync("bash", ["-eu", "-c", guardedDownload], {
     encoding: "utf8",
     env: { ...process.env, ...environment },
     timeout: 5000,
@@ -251,6 +254,7 @@ describe("Hermes image build probes", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(hermesDownloaderMarker);
   });
 
   it("recognizes but does not build 0.21.3 before its base-image migration is complete", () => {
@@ -261,15 +265,18 @@ describe("Hermes image build probes", () => {
       "ERROR: reviewed Hermes 0.21.3 identity requires completed base-image migration",
     );
     expect(result.stderr).not.toContain("unreviewed Hermes release identity tuple");
+    expect(result.stdout).not.toContain(hermesDownloaderMarker);
   });
 
   it.each(rejectedHermesReleaseIdentities)(
     "rejects altered $field from the $label Hermes release identity tuple",
-    ({ environment }) => {
+    ({ field, environment }) => {
       const result = runHermesReleaseIdentityGuard(environment);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("ERROR: unreviewed Hermes release identity tuple");
+      expect(result.stderr).not.toContain(environment[field]);
+      expect(result.stdout).not.toContain(hermesDownloaderMarker);
     },
   );
 

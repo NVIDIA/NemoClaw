@@ -45,6 +45,7 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
+const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
 // One-way compatibility bridges for the exact additive skills metadata change
 // in #11248 and native plugin/package restore ownership in #11766.
 // Support the two persisted manifest generations through the current and next
@@ -388,7 +389,7 @@ export function resolveHermesPortableStartupContract(
   }
   if (
     manifest.name !== "hermes" ||
-    manifest.expectedVersion !== "0.20.6" ||
+    !REVIEWED_HERMES_MANIFEST_VERSIONS.has(manifest.expectedVersion ?? "") ||
     manifest.gatewayCommand !== "hermes gateway run" ||
     manifest.runtime.interactive_command !== "hermes" ||
     manifest.healthProbe?.url !== "http://localhost:8642/health" ||
