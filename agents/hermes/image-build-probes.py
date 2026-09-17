@@ -197,6 +197,46 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_external_supervisor_restart() -> None:
+    from gateway import status as gateway_status
+    from hermes_cli import gateway as gateway_cli
+
+    original_get_running_pid = gateway_status.get_running_pid
+    original_capture = gateway_cli._capture_gateway_argv
+    original_budget = gateway_cli._get_restart_exit_wait_budget
+    original_restart = gateway_cli._graceful_restart_via_sigusr1
+    restart_requests: list[tuple[int, float]] = []
+    try:
+        gateway_status.get_running_pid = lambda: 4242
+        gateway_cli._capture_gateway_argv = lambda pid: [
+            "/usr/local/bin/hermes.real",
+            "gateway",
+            "run",
+            "--external-supervisor",
+        ]
+        gateway_cli._get_restart_exit_wait_budget = lambda: 19.0
+        gateway_cli._graceful_restart_via_sigusr1 = lambda pid, timeout: (
+            restart_requests.append((pid, timeout)) or True
+        )
+
+        assert gateway_cli._restart_via_external_supervisor()
+        assert restart_requests == [(4242, 19.0)], restart_requests
+
+        gateway_cli._capture_gateway_argv = lambda pid: [
+            "/usr/local/bin/hermes.real",
+            "gateway",
+            "run",
+        ]
+        restart_requests.clear()
+        assert not gateway_cli._restart_via_external_supervisor()
+        assert not restart_requests, restart_requests
+    finally:
+        gateway_status.get_running_pid = original_get_running_pid
+        gateway_cli._capture_gateway_argv = original_capture
+        gateway_cli._get_restart_exit_wait_budget = original_budget
+        gateway_cli._graceful_restart_via_sigusr1 = original_restart
+
+
 def verify_auxiliary_token_limit() -> None:
     """Keep explicit auxiliary limits on the managed inference route."""
     from agent.auxiliary_client import _build_call_kwargs
@@ -723,6 +763,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "discord-create": verify_discord_create,
     "discord-recovery-source": verify_discord_recovery_source,
     "discord-reopen": verify_discord_reopen,
+    "external-supervisor-restart": verify_external_supervisor_restart,
     "gateway-process-identity": verify_gateway_process_identity,
     "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,

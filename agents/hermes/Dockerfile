@@ -98,6 +98,7 @@ COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
+COPY agents/hermes/patch-external-supervisor-restart.py /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
@@ -403,7 +404,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b2932c2abfac122022e153164a6c64078f9ce4d54cd45aa840fba59a713a995a
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=149f312a2551affd995b3f4528b76da14b5fcccfeb62570ca68aa5d494ea04a0
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -429,7 +430,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b2932c2abfac122022e153164a6c64078f9ce4d54cd45aa840fba59a713a995a
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=149f312a2551affd995b3f4528b76da14b5fcccfeb62570ca68aa5d494ea04a0
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -613,6 +614,24 @@ RUN /usr/bin/python3 -I \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py gateway-process-identity
 
+# Hermes v0.21.3 does not route `gateway restart` through a live gateway's
+# declared external supervisor. Its manual fallback stops the managed gateway
+# with status 0 and tries to replace it from a transient exec session, so the
+# sandbox supervisor correctly treats the stop as final. Use Hermes's existing
+# drain-aware SIGUSR1/status-75 contract only when the verified live argv
+# contains `--external-supervisor`; every other restart path remains upstream.
+ARG NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256=ae31d7a1113b1144ef0977fb736439bac35820499a6134a66e3c6b6179d08e37
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-external-supervisor-restart.py hash mismatch (update NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
+        /opt/hermes/hermes_cli/gateway.py \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py external-supervisor-restart
+
 # Hermes v0.21.3 creates its writable cron execution-history database below
 # the directory that contains cron job definitions. Relocate only this audit
 # database to the existing cross-UID runtime boundary, and keep
@@ -648,6 +667,7 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/image-build-probes.py auxiliary-token-limit \
     && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
         /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
@@ -1384,6 +1404,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \

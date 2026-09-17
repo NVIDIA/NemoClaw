@@ -78,6 +78,7 @@ const commands = [
   "discord-create",
   "discord-recovery-source",
   "discord-reopen",
+  "external-supervisor-restart",
   "gateway-process-identity",
   "gateway-runtime-metadata",
   "googlechat-override-seams",
