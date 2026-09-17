@@ -495,6 +495,7 @@ describe("final onboard flow runtime boundary", () => {
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: recovery,
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
       });
       const dashboard = vi.fn();
       const reportReadiness = vi.fn();

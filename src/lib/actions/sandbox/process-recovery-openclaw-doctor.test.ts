@@ -13,10 +13,12 @@ import {
   beginOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
   buildOpenClawPostUpgradeDoctorAbortCommand,
+  buildOpenClawPostUpgradeDoctorDeleteRetirementCommand,
   buildOpenClawPostUpgradeDoctorMarkerCommand,
   buildOpenClawPostUpgradeDoctorReleaseCommand,
   finishOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
+  retireOpenClawPostRestoreDoctorForDelete,
 } from "./process-recovery";
 
 function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
@@ -94,6 +96,30 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         "nemoclaw-openclaw-post-upgrade-doctor-abort-v1\n",
       );
       expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the ready receipt and persistent marker at the rebuild delete edge", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-retire-"));
+    const ready = path.join(root, "doctor-ready");
+    try {
+      execFileSync("bash", [
+        "-c",
+        buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll("/sandbox/.openclaw", root),
+      ]);
+      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", {
+        mode: 0o600,
+      });
+      const command = buildOpenClawPostUpgradeDoctorDeleteRetirementCommand()
+        .replaceAll("/sandbox/.openclaw", root)
+        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
+
+      execFileSync("bash", ["-c", command], { env: fakeGnuStatEnv(root) });
+
+      expect(fs.existsSync(path.join(root, ".nemoclaw-post-upgrade-doctor"))).toBe(false);
+      expect(fs.existsSync(ready)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -327,6 +353,33 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[2]?.[1]).not.toContain("curl");
     expect(deps.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.sleep).toHaveBeenCalledOnce();
+  });
+
+  it("retires the delete-edge gate before stopping the source sandbox", async () => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const deps = {
+      captureOpenshell: capture as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      retireOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha", kind: "backup" }, deps),
+    ).resolves.toEqual({ ok: true });
+
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      buildOpenClawPostUpgradeDoctorDeleteRetirementCommand("nemoclaw-openclaw-backup-quiesce-v1"),
+      30_000,
+      { localDockerFallbackPolicy: "never" },
+    );
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(execute.mock.invocationCallOrder[0]).toBeLessThan(capture.mock.invocationCallOrder[0]!);
   });
 
   it("uses the pinned direct container while the OpenShell exec relay is intentionally offline", async () => {

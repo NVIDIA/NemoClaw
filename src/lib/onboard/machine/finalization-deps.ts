@@ -25,7 +25,9 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+  | "checkAndRecoverSandboxProcesses"
+  | "waitForRecreatedSandboxOpenShellReady"
+  | "waitForStartedNativeGatewayProcess"
 >;
 type GatewayRestartDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
@@ -375,6 +377,17 @@ export const finalizationHandlerDeps = {
     portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
+    const target = finalizationHandlerRuntime
+      .loadLaunchReadiness()
+      .resolveOrdinaryOpenClawPairingTarget(name);
+    if (target) {
+      const startup = await processRecovery.waitForStartedNativeGatewayProcess(
+        name,
+        "openclaw",
+        target.gatewayName,
+      );
+      if (startup === false) return false;
+    }
     const recover = () =>
       processRecovery.checkAndRecoverSandboxProcesses(name, {
         ...options,

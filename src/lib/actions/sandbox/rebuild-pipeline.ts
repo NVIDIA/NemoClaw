@@ -33,6 +33,7 @@ import {
   type RebuildBackupManifest,
   type RebuildBackupPhaseResult,
   releaseRebuildSourceOpenClawWindow,
+  retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
@@ -940,11 +941,12 @@ async function rebuildSandboxUnlocked(
         },
         prepareSourceForDelete: sourceWindowForDelete
           ? async () => {
-              const released = await releaseRebuildSourceOpenClawWindow(sourceWindowForDelete);
-              if (!released.ok) {
+              const retired =
+                await retireRebuildSourceOpenClawWindowForDelete(sourceWindowForDelete);
+              if (!retired.ok) {
                 return {
                   ok: false,
-                  message: `OpenClaw source backup quiesce could not return the sandbox healthy before deletion (${released.stage}: ${released.detail}).`,
+                  message: `OpenClaw source maintenance window could not be retired before deletion (${retired.stage}: ${retired.detail}).`,
                 };
               }
               sourceOpenClawDoctorWindow = null;
