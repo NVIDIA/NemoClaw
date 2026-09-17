@@ -274,9 +274,9 @@ When a managed OpenClaw sandbox uses Brave Search, the export includes its `webS
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
-For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one secondary agent that shares the primary route.
-The secondary agent has a unique name and only `tools.allow: [read]`.
-The export rejects a secondary agent with a different model, tools, execution settings, primary-agent override, or default subagent setting.
+For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more secondary agents in runtime order.
+Each secondary agent has a unique name, shares the primary hosted route, and uses only `tools.allow: [read]`.
+The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
@@ -3055,7 +3055,7 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 Before it inspects a gateway or starts a rebuild, the command validates every registered sandbox name against the NemoClaw sandbox name format. Route-only reservations are not sandboxes and are excluded from this validation. If the command finds incompatible names, it lists each name before any gateway inspection or rebuild. With `--check`, the command then returns without changing state. In a mutating mode, it exits with a nonzero status. NemoClaw does not truncate or rename a registered sandbox identity. Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
-Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. A custom OpenClaw sandbox is recoverable only when the selected backup independently carries complete authoritative image-plugin provenance.
+Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
 
 ### `$$nemoclaw backup-all`
 
@@ -3374,9 +3374,18 @@ Switch the active inference provider or model for a NemoClaw-managed Hermes sand
 
 By default, the command syncs the default registered sandbox.
 
-Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway. Before changing the route, NemoClaw compares the requested provider and model with every same-gateway registry entry, including stopped sandboxes. Custom compatible routes must also have matching normalized endpoint URLs and API families. Provider-global credential environment-variable names must also match for the same provider name. If a route conflicts or a legacy custom route lacks enough endpoint or API-family metadata to prove compatibility, the command exits non-zero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes. Align those sandboxes to the same route or remove a conflicting sandbox that you no longer need.
+Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
+Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
+When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
+Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
 
-Onboarding and `connect` can time-share compatible provider and model routes without replacing provider-global configuration. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the onboarding warnings, compatibility fields, and status drift report.
+For the same provider name, custom compatible routes must have matching normalized endpoint URLs and API families.
+Provider-global credential environment-variable names must also match.
+Endpoint, API-family, credential, incomplete-route, and invalid-gateway-binding conflicts remain fail-closed.
+The command exits nonzero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes.
+Align the provider-global configuration, repair incomplete metadata, or remove a conflicting sandbox that you no longer need.
+
+Onboarding, `connect`, and `inference set` can time-share compatible provider and model routes without replacing provider-global configuration. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route-change warnings, compatibility fields, and the status drift report.
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]

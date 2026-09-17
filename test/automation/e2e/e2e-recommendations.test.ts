@@ -514,7 +514,7 @@ describe("E2E recommendation normalizer", () => {
         ],
         optional: [
           {
-            id: "ubuntu-repo-docker-post-reboot-recovery",
+            id: "ubuntu-policy-custom-missing-presets-negative",
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             // Model claims this optional item is actually required.
@@ -1049,7 +1049,7 @@ jobs:
           reason: "duplicate fallback",
         },
         {
-          id: "ubuntu-repo-docker-post-reboot-recovery",
+          id: "ubuntu-policy-custom-missing-presets-negative",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           required: false,
@@ -1061,7 +1061,7 @@ jobs:
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
     expect(normalized.optional.map((item) => item.id)).toEqual([
-      "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-policy-custom-missing-presets-negative",
     ]);
   });
 

@@ -29,7 +29,6 @@ BASELINE_NAME = "openclaw.json.nemoclaw-baseline"
 CONFIG_NAME = "openclaw.json"
 HASH_NAME = ".config-hash"
 LAST_GOOD_NAME = "openclaw.json.last-good"
-LEGACY_UPDATE_CHECK_NAME = "update-check.json"
 
 JSON5_VALIDATOR = r"""
 const fs = require("fs");
@@ -829,101 +828,6 @@ def cleanup_staged_file(
             pass
     if temp_fd >= 0:
         os.close(temp_fd)
-
-
-def remove_legacy_update_check(config_dir: str) -> int:
-    """Remove only a stable regular legacy update-check cache file."""
-
-    parent_fd = -1
-    root_fd = -1
-    target_fd = -1
-    try:
-        (
-            parent_fd,
-            parent_metadata,
-            root_fd,
-            root_metadata,
-            config_name,
-        ) = open_config_binding(config_dir)
-        try:
-            before = os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
-                dir_fd=root_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            return 0
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_dev != root_metadata.st_dev
-            or before.st_nlink != 1
-            or before.st_size > MAX_BASELINE_BYTES
-        ):
-            raise UnsafeTree()
-
-        target_fd, opened = open_pinned(
-            root_fd, LEGACY_UPDATE_CHECK_NAME, file_flags(), before
-        )
-        if (
-            stable_file_key(opened) != stable_file_key(before)
-            or opened.st_size > MAX_BASELINE_BYTES
-        ):
-            raise UnsafeTree()
-        remaining = opened.st_size
-        while remaining:
-            chunk = os.read(target_fd, min(1024 * 1024, remaining))
-            if not chunk:
-                raise UnsafeTree()
-            remaining -= len(chunk)
-        if os.read(target_fd, 1):
-            raise UnsafeTree()
-
-        normalized = os.path.normpath(config_dir)
-        current_parent = os.stat(
-            os.path.dirname(normalized), follow_symlinks=False
-        )
-        current_root = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
-        current_target = os.stat(
-            LEGACY_UPDATE_CHECK_NAME,
-            dir_fd=root_fd,
-            follow_symlinks=False,
-        )
-        if (
-            inode_key(current_parent) != inode_key(parent_metadata)
-            or inode_key(current_root) != inode_key(root_metadata)
-            or stable_file_key(os.fstat(target_fd)) != stable_file_key(opened)
-            or stable_file_key(current_target) != stable_file_key(opened)
-        ):
-            raise UnsafeTree()
-
-        os.unlink(LEGACY_UPDATE_CHECK_NAME, dir_fd=root_fd)
-        os.fsync(root_fd)
-
-        try:
-            os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
-                dir_fd=root_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            pass
-        else:
-            raise UnsafeTree()
-        print(
-            f"[migration] Removed legacy {config_dir}/{LEGACY_UPDATE_CHECK_NAME} "
-            "before the OpenClaw startup checkpoint",
-            file=sys.stderr,
-        )
-        return 0
-    except (OSError, UnsafeTree):
-        return 1
-    finally:
-        if target_fd >= 0:
-            os.close(target_fd)
-        if root_fd >= 0:
-            os.close(root_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
 
 
 def recover_empty_config(
@@ -1765,11 +1669,6 @@ def run_root_supervisor(
 
 
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "remove-legacy-update-check":
-        if len(sys.argv) != 3:
-            return 1
-        return remove_legacy_update_check(sys.argv[2])
-
     if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
         if len(sys.argv) != 5:
             return 1

@@ -72,8 +72,9 @@ Tests in `test/automation/pull-requests/pr-review-advisor-e2e-receipt.test.ts` p
 
 ## Discovery and identity
 
-Each specialist artifact also contains `review-queue-context.json`, with kind `nemoclaw-review-queue-context-v1`.
+Each successfully completed specialist artifact also contains `review-queue-context.json`, with kind `nemoclaw-review-queue-context-v1`.
 The trusted runner writes it before model execution from the same deterministic context used by that specialist.
+A setup failure may retain only `job-failure.json`; diagnostic artifacts cannot establish queue readiness.
 It contains no GitHub discussion context or session internals. No repository code execution is required to read it.
 
 | Field | Meaning |

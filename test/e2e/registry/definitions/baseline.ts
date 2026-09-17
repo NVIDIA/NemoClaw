@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TargetDefinition } from "../types.ts";
-import {
-  ubuntuRepoDockerLifecycle,
-  ubuntuRepoManagedRuntime,
-  ubuntuRepoManagedRuntimeLifecycle,
-} from "../matrix.ts";
+import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
 import { E2E_GATEWAY_RUNTIMES } from "../../../../tools/e2e/gateway-runtime.mts";
 
 const TARGETS: readonly TargetDefinition[] = [
@@ -44,24 +40,6 @@ const TARGETS: readonly TargetDefinition[] = [
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-  },
-  {
-    id: "ubuntu-repo-docker-post-reboot-recovery",
-    description:
-      "Post-reboot recovery guard: the gateway must recover through the required user service " +
-      "while preserving the local sandbox registry and container.",
-    executionCoverage: {
-      agentRuntime: "openclaw",
-      observableOutcome: "Docker-backed sandbox recovers after a simulated host reboot",
-      environmentOrInferenceEndpoint: "Ubuntu Docker host; local recovery fixture",
-      unresolvedReason: "",
-    },
-    manifestPath: "test/e2e/manifests/openclaw-nvidia-post-reboot-recovery.yaml",
-    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
-    expectedStateId: "post-reboot-recovery-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-    gatewayRuntimes: ["docker"],
   },
   {
     id: "ubuntu-policy-custom-missing-presets-negative",
