@@ -1985,6 +1985,16 @@ By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 
+When final-sandbox gateway cleanup is enabled or you accept its prompt, `destroy` confirms through `openshell sandbox list` that no live sandbox remains on the gateway.
+A listed sandbox counts as live unless it is in the `Error` or `Failed` phase and NemoClaw confirms that no matching Docker container is running.
+With the native Podman provider, NemoClaw does not probe Docker, so every listed sandbox counts as live and gateway cleanup requires an empty list.
+If the deleted sandbox is the only listed live sandbox, `destroy` polls for up to 30 seconds until that row is gone.
+If the deleted sandbox is still listed after that wait, if a different live sandbox remains, or if the list command fails, `destroy` leaves the gateway running and names the live sandboxes or the failed command.
+When cleanup comes from the platform default, the environment, or an accepted prompt, `destroy` still exits `0` after a successful sandbox deletion.
+When you pass `--cleanup-gateway`, `destroy` exits nonzero and the message states that the flag was not applied.
+After that message, confirm that `openshell sandbox list -g <gateway-name>` reports no sandboxes.
+Then run `openshell gateway remove <gateway-name>` to remove the gateway.
+
 If the pre-delete workspace wipe exits nonzero, `destroy` continues, but the retained volume can still contain old files.
 Use a different sandbox name to avoid reusing that retained volume.
 If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result.
