@@ -135,6 +135,7 @@ const HERMES_PORTABLE_E2E_POLICY = path.join(
   "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
 );
 const HERMES_PORTABLE_E2E_BUILD_SETTINGS = {
+  baseImageRef: process.env.NEMOCLAW_HERMES_E2E_BASE_IMAGE,
   model: "qwen3-vl:4b",
   provider: "ollama-local",
   preferredInferenceApi: "openai-completions",
