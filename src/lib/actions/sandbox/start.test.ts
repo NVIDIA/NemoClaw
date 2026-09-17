@@ -339,6 +339,33 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("repeats stopped OpenClaw settlement after a timed-out start retry", async () => {
+    const probeGatewayProcess = vi
+      .fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const h = harness({
+      probeGatewayProcess,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.001" },
+    });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped: true }));
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
+      probeGatewayProcess.mock.invocationCallOrder[1],
+    );
+    expect(h.updateSandbox.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+  });
+
   it.each(["openclaw", undefined])(
     "does not wait for %s when the sandbox was already running",
     async (agent) => {

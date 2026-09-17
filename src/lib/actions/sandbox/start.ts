@@ -191,21 +191,24 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   const result = await resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
-  if (
-    resolved.sandbox.stopped === true &&
-    !registry.recordSandboxStopIntent(
-      sandboxName,
-      false,
-      deps.updateSandbox ?? registry.updateSandbox,
-    )
-  ) {
-    throw new Error(
-      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
-    );
-  }
+  const clearIntentionalStop = () => {
+    if (
+      resolved.sandbox.stopped === true &&
+      !registry.recordSandboxStopIntent(
+        sandboxName,
+        false,
+        deps.updateSandbox ?? registry.updateSandbox,
+      )
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+      );
+    }
+  };
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    clearIntentionalStop();
     return { exitCode: 0 };
   }
 
@@ -241,5 +244,6 @@ async function startSandboxWithinLifecycleFence(
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
     return { exitCode: 1 };
   }
+  clearIntentionalStop();
   return { exitCode: 0 };
 }
