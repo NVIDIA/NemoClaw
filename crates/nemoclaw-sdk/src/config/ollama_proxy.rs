@@ -40,9 +40,9 @@ impl OllamaProxy {
     ) -> Result<(), ConfigError> {
         validate_endpoint(&self.endpoint, false)?;
         let upstream = url::Url::parse(&provider.endpoint)
-            .map_err(|_| ConfigError("invalid Ollama upstream"))?;
-        let endpoint =
-            url::Url::parse(&self.endpoint).map_err(|_| ConfigError("invalid proxy endpoint"))?;
+            .map_err(|_| ConfigError::new("invalid Ollama upstream"))?;
+        let endpoint = url::Url::parse(&self.endpoint)
+            .map_err(|_| ConfigError::new("invalid proxy endpoint"))?;
         let loopback = match upstream.host() {
             Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
@@ -78,7 +78,7 @@ impl OllamaProxy {
                 .unwrap()
                 .is_match(model)
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw or Hermes completions",
             ));
         }

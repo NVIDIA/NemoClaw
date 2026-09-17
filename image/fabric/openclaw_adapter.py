@@ -60,7 +60,7 @@ def agent_entries(name, inference):
     agents = inference.get("agents") if inference else None
     if agents is None:
         return {name: {}}
-    if not isinstance(agents, list) or not agents or agents[0].get("name") != name:
+    if not isinstance(agents, list) or not agents:
         raise ValueError("invalid agent roster")
     tool_disclosure(inference)
     entries = {}
@@ -75,9 +75,7 @@ def agent_entries(name, inference):
             raise ValueError("invalid agent policy")
         agent_name = agent["name"]
         entries[agent_name] = {
-            "workspace": "/sandbox/workspace"
-            if agent_name == name
-            else f"/sandbox/workspaces/{agent_name}",
+            "workspace": f"/sandbox/workspaces/{agent_name}",
             **({"tools": {"allow": ["read"]}} if agent.get("tools") == {"allow": ["read"]} else {}),
         }
     selected = search_agents(inference)
@@ -198,7 +196,7 @@ def native_configuration(name, inference=None):
             entry["modelPolicy"] = {"allow": list(choices)}
         config["models"]["providers"] = providers
         defaults = config["agents"]["defaults"]
-        defaults["model"] = config["agents"]["entries"][name]["model"]
+        defaults.pop("model", None)
         defaults.pop("thinkingDefault", None)
     return config
 
@@ -239,7 +237,10 @@ def owned_configuration(name, inference=None):
     if inference is not None:
         native = native_configuration(name, inference)
         config["models"] = native["models"]
-        config["agents"]["defaults"]["model"] = native["agents"]["defaults"]["model"]
+        if "agents" in inference:
+            config["agents"] = native["agents"]
+        else:
+            config["agents"]["defaults"]["model"] = native["agents"]["defaults"]["model"]
         if "thinkingDefault" in native["agents"]["defaults"]:
             config["agents"]["defaults"]["thinkingDefault"] = native["agents"]["defaults"][
                 "thinkingDefault"
@@ -459,7 +460,9 @@ class OpenClawRuntime:
             raise lifecycle.LifecycleError(
                 "openclaw_runtime_unavailable", "OpenClaw runtime is unavailable; no replay"
             )
-        name, message = self.name, request.input
+        entries = agent_entries(self.name, self.inference)
+        name = next(iter(entries)) if len(entries) == 1 else None
+        message = request.input
         if isinstance(message, dict) and set(message) == {"agent", "message"}:
             name, message = message["agent"], message["message"]
         if (

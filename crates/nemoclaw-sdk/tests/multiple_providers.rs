@@ -73,7 +73,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     assert_eq!(policy["network_policies"].as_object().unwrap().len(), 2);
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["agent"]["depends_on"]
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"]
             .as_array()
             .unwrap()
             .len(),
@@ -139,7 +139,7 @@ fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_defau
             .unwrap();
     assert!(dependencies.contains(&json!("nemoclaw_ollama_model.inference")));
     assert!(
-        !graph["resource"]["nemoclaw_provider"]["inference"]["depends_on"]
+        !graph["resource"]["nemoclaw_provider"]["inference_oracle"]["depends_on"]
             .as_array()
             .unwrap()
             .contains(&json!("nemoclaw_ollama_model.inference"))

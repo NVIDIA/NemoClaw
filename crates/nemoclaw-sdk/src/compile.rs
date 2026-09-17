@@ -24,128 +24,130 @@ fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, C
         .get(kind)
         .filter(|value| !value.is_empty())
         .map(String::as_str)
-        .ok_or(ConfigError("missing resource generation"))
+        .ok_or(ConfigError::new("missing resource generation"))
 }
 pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, ConfigError> {
     document.validate()?;
     let workspace = document.workspace();
-    let provider = document.inference_provider()?;
-    let sandbox = &document.spec.sandboxes[0];
-    let agent = &sandbox.agents[0];
-    let harness = document.sandbox_harness()?;
-    let settings = document.sandbox_runtime_settings()?;
-    let providers = document.selected_inference_providers()?;
-    let mut result = Vec::new();
-    for (kind, name, logical, generation_kind, extra) in [
-        (
-            "workspace",
-            workspace.as_str(),
-            "deployment",
-            "workspace",
-            vec![],
-        ),
-        (
-            "sandbox",
-            sandbox.name.as_str(),
-            "agent",
-            "sandbox",
-            vec![
-                ("image", sandbox.image.ref_.clone()),
-                ("agent_name", agent.name.clone()),
-                ("agent_runtime", harness.runtime()),
-            ],
-        ),
-    ] {
-        let mut values: Row = [
-            ("name", name),
-            ("owner", document.metadata.uid.as_str()),
-            ("generation", generation(generations, generation_kind)?),
+    let mut result = vec![Target {
+        kind: "workspace".into(),
+        address: "nemoclaw_workspace.deployment".into(),
+        values: [
+            ("name".into(), workspace.clone()),
+            ("owner".into(), document.metadata.uid.clone()),
+            (
+                "generation".into(),
+                generation(generations, "workspace")?.into(),
+            ),
         ]
-        .into_iter()
-        .map(|(k, v)| (k.into(), v.into()))
-        .collect();
-        if kind != "workspace" {
-            values.insert("workspace".into(), workspace.clone());
-        }
-        values.extend(extra.into_iter().map(|(k, v)| (k.into(), v)));
-        if kind == "sandbox" {
-            values.insert(
+        .into(),
+    }];
+    for provider in document.selected_inference_providers()? {
+        result.extend(inference_targets(document, provider, generations)?);
+    }
+    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
+    sandboxes.sort_by_key(|sandbox| &sandbox.name);
+    for sandbox in sandboxes {
+        let harness = document.sandbox_harness(sandbox)?;
+        let settings = document.sandbox_runtime_settings(sandbox)?;
+        let agent_name = if harness.kind == "openclaw" {
+            &sandbox.name
+        } else {
+            &sandbox.sole_agent()?.name
+        };
+        let mut values: Row = [
+            ("name".into(), sandbox.name.clone()),
+            ("workspace".into(), workspace.clone()),
+            ("owner".into(), document.metadata.uid.clone()),
+            (
+                "generation".into(),
+                generation(generations, "sandbox")?.into(),
+            ),
+            ("image".into(), sandbox.image.ref_.clone()),
+            ("agent_name".into(), agent_name.clone()),
+            ("agent_runtime".into(), harness.runtime()),
+            (
                 "inference_json".into(),
-                serde_json::to_string(&settings).expect("typed sandbox runtime settings"),
+                serde_json::to_string(&settings).expect("typed sandbox settings"),
+            ),
+        ]
+        .into();
+        let mut policy = sandbox.policy_proto(
+            settings.web_search.is_some(),
+            harness.observability.as_ref(),
+        )?;
+        for provider in document.sandbox_inference_providers(sandbox)? {
+            let connection = document.provider_connection(provider)?;
+            let profile = crate::openshell::inference_profile(
+                &document.provider_key(provider),
+                &connection.endpoint,
+                &provider.provider,
+                false,
+            )
+            .map_err(|_| ConfigError::new("invalid native inference policy"))?;
+            if policy.network_policies.contains_key(&profile.id) {
+                return Err(ConfigError::new("inference policy name is reserved"));
+            }
+            policy.network_policies.insert(
+                profile.id.clone(),
+                openshell_core::proto::NetworkPolicyRule {
+                    name: profile.id,
+                    endpoints: profile.endpoints,
+                    binaries: profile.binaries,
+                },
             );
-            let mut policy = sandbox.policy_proto(
-                settings.web_search.is_some(),
-                harness.observability.as_ref(),
-            )?;
-            for provider in &providers {
-                let connection = document.provider_connection(provider)?;
-                let profile = crate::openshell::inference_profile(
-                    &provider.name,
-                    &connection.endpoint,
-                    &provider.provider,
-                    false,
-                )
-                .map_err(|_| ConfigError("invalid native inference policy"))?;
-                if policy.network_policies.contains_key(&profile.id) {
-                    return Err(ConfigError("inference policy name is reserved"));
-                }
-                policy.network_policies.insert(
-                    profile.id.clone(),
-                    openshell_core::proto::NetworkPolicyRule {
-                        name: profile.id,
-                        endpoints: profile.endpoints,
-                        binaries: profile.binaries,
-                    },
-                );
-            }
-            let policy = crate::openshell::policy_json(&policy)
-                .map_err(|_| ConfigError("cannot encode sandbox policy"))?;
-            if !policy.is_empty() {
-                values.insert("policy_json".into(), policy);
-            }
-            if let Some(proxy) = &sandbox.network.proxy {
-                values.insert("proxy_host".into(), proxy.host.clone());
-                values.insert("proxy_port".into(), proxy.port.to_string());
-            }
+        }
+        values.insert(
+            "policy_json".into(),
+            crate::openshell::policy_json(&policy)
+                .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?,
+        );
+        if let Some(proxy) = &sandbox.network.proxy {
+            values.insert("proxy_host".into(), proxy.host.clone());
+            values.insert("proxy_port".into(), proxy.port.to_string());
         }
         result.push(Target {
-            kind: kind.into(),
-            address: format!("nemoclaw_{kind}.{logical}"),
+            kind: "sandbox".into(),
+            address: format!("nemoclaw_sandbox.{}", sandbox.name),
             values,
         });
-    }
-    result.splice(1..1, inference_targets(document, provider, generations)?);
-    for selected in providers {
-        if !std::ptr::eq(selected, provider) {
-            result.extend(inference_targets(document, selected, generations)?);
-        }
-    }
-    if let Some(search) = settings.web_search {
-        for (kind, name) in [
-            ("provider_profile", "nemoclaw-brave"),
-            ("provider", "brave-search"),
-        ] {
-            let mut values: Row = [
-                ("workspace", workspace.as_str()),
-                ("name", name),
-                ("owner", document.metadata.uid.as_str()),
-                ("generation", generation(generations, "provider")?),
-            ]
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-            if kind == "provider" {
-                values.extend([
-                    ("endpoint".into(), "https://api.search.brave.com".into()),
-                    ("credential_env".into(), search.credential.env.clone()),
-                    ("provider_type".into(), "brave".into()),
-                ]);
+        if let Some(search) = settings.web_search {
+            for (kind, name) in [
+                ("provider_profile", "nemoclaw-brave"),
+                ("provider", "brave-search"),
+            ] {
+                let mut values: Row = [
+                    ("workspace".into(), workspace.clone()),
+                    ("name".into(), name.into()),
+                    ("owner".into(), document.metadata.uid.clone()),
+                    (
+                        "generation".into(),
+                        generation(generations, "provider")?.into(),
+                    ),
+                ]
+                .into();
+                if kind == "provider" {
+                    values.extend([
+                        ("endpoint".into(), "https://api.search.brave.com".into()),
+                        ("credential_env".into(), search.credential.env.clone()),
+                        ("provider_type".into(), "brave".into()),
+                    ]);
+                }
+                let target = Target {
+                    kind: kind.into(),
+                    address: format!("nemoclaw_{kind}.web_search"),
+                    values,
+                };
+                if let Some(previous) = result.iter().find(|t| t.address == target.address) {
+                    if previous != &target {
+                        return Err(ConfigError::new(
+                            "sandboxes sharing web search must use the same provider credential",
+                        ));
+                    }
+                } else {
+                    result.push(target);
+                }
             }
-            result.push(Target {
-                kind: kind.into(),
-                address: format!("nemoclaw_{kind}.web_search"),
-                values,
-            });
         }
     }
     let provider = document.lifecycle_provider()?;
@@ -155,39 +157,39 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         .is_some_and(|s| s.authentication.is_some())
     {
         let spec = runtime_targets(document, generations)
-            .map_err(|_| ConfigError("invalid managed credential source"))?
+            .map_err(|_| ConfigError::new("invalid managed credential source"))?
             .into_iter()
             .find(|t| t.kind == crate::managed::SERVICE_KIND)
-            .ok_or(ConfigError("missing managed credential source"))?
+            .ok_or(ConfigError::new("missing managed credential source"))?
             .values["spec"]
             .clone();
         let source = crate::inference_auth::Source::ManagedService {
             spec: serde_json::from_str(&spec)
-                .map_err(|_| ConfigError("invalid managed credential source"))?,
+                .map_err(|_| ConfigError::new("invalid managed credential source"))?,
         };
         result
             .iter_mut()
-            .find(|r| r.kind == "provider" && r.values["name"] == provider.name)
+            .find(|r| r.kind == "provider" && r.values["name"] == document.provider_key(provider))
             .unwrap()
             .values
             .insert("credential_source".into(), source.json()?);
     }
     if let Some(proxy) = &provider.ollama_proxy {
         let spec = crate::ollama::proxy::specification(document, generations)
-            .map_err(|_| ConfigError("invalid Ollama proxy specification"))?;
+            .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;
         let source = crate::inference_auth::Source::OllamaProxy {
             engine: proxy.engine.clone(),
             spec: Box::new(spec),
         };
         result
             .iter_mut()
-            .find(|r| r.kind == "provider" && r.values["name"] == provider.name)
+            .find(|r| r.kind == "provider" && r.values["name"] == document.provider_key(provider))
             .unwrap()
             .values
             .insert("credential_source".into(), source.json()?);
         result.extend(
             crate::ollama::proxy::targets(document, generations)
-                .map_err(|_| ConfigError("invalid proxy resources"))?,
+                .map_err(|_| ConfigError::new("invalid proxy resources"))?,
         );
     }
     Ok(result)
@@ -199,14 +201,10 @@ fn inference_targets(
     generations: &Generations,
 ) -> Result<[Target; 2], ConfigError> {
     let connection = document.provider_connection(provider)?;
-    let logical = if std::ptr::eq(provider, document.inference_provider()?) {
-        "inference".into()
-    } else {
-        format!("inference_{}", provider.name)
-    };
+    let logical = format!("inference_{}", document.provider_key(provider));
     let values: Row = [
         ("workspace".into(), document.workspace()),
-        ("name".into(), provider.name.clone()),
+        ("name".into(), document.provider_key(provider)),
         ("owner".into(), document.metadata.uid.clone()),
         (
             "generation".into(),
@@ -234,7 +232,7 @@ fn inference_targets(
     let mut profile = values.clone();
     profile.insert(
         "name".into(),
-        format!("nemoclaw-inference-{}", provider.name),
+        format!("nemoclaw-inference-{}", document.provider_key(provider)),
     );
     profile.remove("credential_env");
     profile.insert("authenticated".into(), provider.authenticated().to_string());
@@ -279,7 +277,7 @@ pub fn compile(
         let authority = inference
             .endpoint
             .strip_prefix("http://")
-            .ok_or(ConfigError("invalid Ollama endpoint"))?
+            .ok_or(ConfigError::new("invalid Ollama endpoint"))?
             .split('/')
             .next()
             .unwrap_or("");
@@ -332,7 +330,7 @@ pub fn compile(
         if target.kind == "provider" && target.address != "nemoclaw_provider.web_search" {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
-            if target.values["name"] == inference.name {
+            if target.values["name"] == document.provider_key(inference) {
                 if inference.ollama.is_some() {
                     dependencies.push("nemoclaw_ollama_model.inference".into());
                 }

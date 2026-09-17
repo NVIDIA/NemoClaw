@@ -16,7 +16,7 @@ fn native_inference_attaches_provider_without_a_managed_route() {
     assert!(
         resources
             .iter()
-            .any(|r| r.address == "nemoclaw_provider_profile.inference")
+            .any(|r| r.address == "nemoclaw_provider_profile.inference_local")
     );
     let sandbox = &resources
         .iter()

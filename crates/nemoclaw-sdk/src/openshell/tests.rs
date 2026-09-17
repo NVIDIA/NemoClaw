@@ -167,52 +167,66 @@ fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
 }
 
 #[test]
-fn loaded_policy_accepts_the_pinned_openshell_filesystem_baseline() {
+fn sparse_filesystem_policy_accepts_proxy_baseline_but_rejects_other_drift() {
     let mut declared = policy();
-    {
-        let filesystem = declared.filesystem.as_mut().unwrap();
-        filesystem.read_only = ["/usr", "/app", "/opt/fabric", "/opt/nemoclaw"]
-            .map(String::from)
-            .to_vec();
-        filesystem.read_write = vec!["/sandbox".into()];
-        filesystem.include_workdir = true;
-    }
+    declared.filesystem = Some(proto::FilesystemPolicy {
+        include_workdir: true,
+        read_only: vec![
+            "/usr".into(),
+            "/opt/fabric".into(),
+            "/opt/nemoclaw".into(),
+            "/app".into(),
+        ],
+        read_write: vec!["/sandbox".into()],
+    });
     let profile =
-        native_profile::definition("local", "http://172.30.122.1:18899/v1", "openai", false)
-            .unwrap();
+        native_profile::definition("inference", "https://example.com/v1", "openai", false).unwrap();
     declared.network_policies.insert(
-        profile.id.clone(),
+        "inference".into(),
         proto::NetworkPolicyRule {
-            name: profile.id,
+            name: "inference".into(),
             endpoints: profile.endpoints,
             binaries: profile.binaries,
         },
     );
     let expected = policy_json(&declared).unwrap();
-
-    let defaults = openshell_policy::restrictive_default_policy()
+    let mut loaded = declared.clone();
+    let fs = loaded.filesystem.as_mut().unwrap();
+    fs.read_only
+        .extend(["/lib", "/etc", "/var/log", "/proc", "/dev/urandom"].map(String::from));
+    fs.read_write
+        .extend(["/tmp", "/dev/null"].map(String::from));
+    assert!(network::loaded_policy_matches(&loaded, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
         .filesystem
-        .unwrap();
-    let filesystem = declared.filesystem.as_mut().unwrap();
-    for path in defaults.read_only {
-        if !filesystem.read_only.contains(&path) {
-            filesystem.read_only.push(path);
-        }
-    }
-    for path in defaults.read_write {
-        if !filesystem.read_write.contains(&path) {
-            filesystem.read_write.push(path);
-        }
-    }
-
-    let response = proto::GetSandboxPolicyStatusResponse {
-        active_version: 2,
-        revision: Some(proto::SandboxPolicyRevision {
-            version: 2,
-            status: proto::PolicyStatus::Loaded as i32,
-            policy: Some(declared),
-            ..Default::default()
-        }),
-    };
-    assert!(active_policy(response, &expected).is_ok());
+        .as_mut()
+        .unwrap()
+        .read_write
+        .push("/etc".into());
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .retain(|p| p != "/opt/fabric");
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    let mut drift = loaded.clone();
+    drift
+        .network_policies
+        .get_mut("inference")
+        .unwrap()
+        .endpoints[0]
+        .host = "other.example.com".into();
+    assert!(!network::loaded_policy_matches(&drift, &expected).unwrap());
+    // Existing explicit read-only restrictions must not be promoted to writable.
+    declared
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/tmp".into());
+    assert!(!network::loaded_policy_matches(&loaded, &policy_json(&declared).unwrap()).unwrap());
 }

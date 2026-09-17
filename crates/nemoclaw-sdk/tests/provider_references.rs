@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, targets},
     config::{Document, schema::input_schema},
@@ -45,7 +48,10 @@ fn provider_declaration_scope_preserves_intent_and_compiles_identically() {
                 .unwrap()
                 .is_valid(&value)
         );
-        assert_eq!(targets(&doc, &generations).unwrap(), expected);
+        assert_eq!(
+            provider_scope::normalized(targets(&doc, &generations).unwrap()),
+            expected
+        );
         assert_eq!(
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
             doc
@@ -109,7 +115,10 @@ fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
     .unwrap();
     assert_eq!(
         settings["auth"]["providerRef"],
-        doc.inference_provider().unwrap().name
+        rows.iter()
+            .find(|row| row.kind == "provider")
+            .unwrap()
+            .values["name"]
     );
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -176,7 +185,10 @@ fn inline_managed_providers_preserve_runtime_graphs_and_defaults() {
         .map(|k| (k.into(), "a".repeat(32)))
         .into();
         assert_eq!(
-            targets(&local, &generations).unwrap(),
+            provider_scope::normalized_as(
+                targets(&local, &generations).unwrap(),
+                &shared.inference_provider().unwrap().name
+            ),
             targets(&shared, &generations).unwrap()
         );
         assert_eq!(

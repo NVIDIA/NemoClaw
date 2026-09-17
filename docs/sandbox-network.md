@@ -35,6 +35,22 @@ See the [generated field reference](reference/configuration.md#explicitpolicy) f
 Use `hard_requirement` to require enforcement; the `strict` spelling used by main's exported schema maps to `hard_requirement`.
 Kernel enforcement still requires qualification on the deployment host.
 
+## Runtime Filesystem Access
+
+When an explicit policy declares `filesystem_policy`, both plan and apply check that it permits reads of the selected harness's runtime directories before opening deployment state or contacting runtime services.
+All harnesses require `/opt/fabric` and `/opt/nemoclaw`; OpenClaw also requires `/app`, Hermes requires `/opt/hermes`, and Pi requires `/opt/fabric-source`.
+The same check applies to inline harnesses and `harnessRef`, separately for every sandbox.
+
+A read-only or read-write grant for the directory or a parent directory satisfies the check.
+For example, `/opt` covers the runtime directories beneath it; `/opt/fabric-source` does not cover `/opt/fabric`.
+Use absolute sandbox paths without `..`; validation does not resolve image symlinks or inspect the client's filesystem.
+`include_workdir` does not grant access to these runtime directories.
+An omitted `filesystem_policy` retains OpenShell defaults and is outside this explicit-grant check.
+
+An error names the required path; edit the authored policy and rerun plan.
+NemoClaw does not add filesystem grants automatically.
+This check does not verify image contents, Unix permissions, writable state directories, or kernel enforcement; those still require runtime verification.
+
 ## Choose TLS Inspection and Enforcement
 
 For an explicit endpoint with a supported application protocol, choose TLS handling and request enforcement separately:

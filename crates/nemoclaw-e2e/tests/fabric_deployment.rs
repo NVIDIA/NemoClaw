@@ -141,12 +141,8 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .overrides
             .model = "another-custom-model".into();
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
-        assert!(
-            planned
-                .changes
-                .iter()
-                .any(|change| change.resource == "fabric_runtime.main")
-        );
+        assert!(planned.changes.iter().any(|change| change.resource
+            == format!("fabric_runtime.{}", document.spec.sandboxes[0].name)));
         let applied = deployment.apply(&changed_model, &cancel).await.unwrap();
         assert!(applied.changes.iter().all(|change| {
             !change

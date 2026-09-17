@@ -5,7 +5,8 @@
 
 Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`.
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
-Each document contains one sandbox with exactly one harness configuration.
+Each document contains one to 32 named sandboxes, each with exactly one harness configuration.
+Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses in one state directory.
 [OpenClaw agents](agents.md) can select models from multiple providers; other harnesses require one agent and one model choice.
 At most one selected provider may have [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
@@ -48,7 +49,7 @@ Apply requests health from the existing hosted Fabric runtime after configuratio
 It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
-The JSON result includes a `health` entry for the sandbox and its agent roster.
+The JSON result includes a `health` entry for each sandbox and its agent roster.
 This is one shared-runtime observation, not a separate test of each agent, inference route, or integration.
 When available, `report` retains Fabric's liveness, activity, readiness, reason codes, timestamps, and dependency observations.
 A busy runtime can complete apply if Fabric reports it responsive and ready to accept work.
@@ -186,6 +187,18 @@ Keep the original YAML and bundle before editing a deployment.
 Plan the proposed YAML against the existing state directory, review the changes and any `deferred` checks, then apply that same YAML.
 Apply recomputes its plan; a successful earlier plan does not reserve resources or authorize a later unchecked change.
 
+### Multiple Sandboxes
+
+Sandbox names must be unique within a deployment; agent names must be unique within their sandbox.
+Adding a named sandbox preserves existing sandbox and provider identities.
+Reordering declarations is not an update.
+Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
+Sandbox-local definitions are visible only to their enclosing sandbox.
+The current Brave integration uses one deployment-wide registration, so sandboxes using search must select the same credential reference.
+Ordinary apply still refuses removal or replacement; destroy operates on the whole deployment.
+Use separate deployments when you need independent teardown.
+Existing state needs the [named-resource transition](state.md#named-sandbox-resources).
+
 ### Choose the Change Path
 
 | Proposed change | Current behavior and next step |
@@ -247,7 +260,7 @@ Destroy verifies the container and storage without requiring model inventory, be
 
 ## Destroy
 
-Destroy removes the bound sandbox, provider registrations and profiles, and managed process containers.
+Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.
 **Sandbox files and conversation history are deleted.** Back up native agent data separately when needed.
 The workspace, model downloads, prepared data, gateway database and keys, bridge, stopped initializer, images, and local deployment state remain.
 Retained resources stay tracked.

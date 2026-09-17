@@ -119,7 +119,7 @@ impl AgentInterfaces {
         if valid {
             Ok(())
         } else {
-            Err(ConfigError(
+            Err(ConfigError::new(
                 "invalid or unsupported native interface settings",
             ))
         }

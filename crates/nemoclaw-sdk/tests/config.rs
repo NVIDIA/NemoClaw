@@ -162,7 +162,10 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
         .into();
         assert!(document.validate().is_ok());
         assert_eq!(
-            document.sandbox_harness().unwrap().runtime(),
+            document
+                .sandbox_harness(&document.spec.sandboxes[0])
+                .unwrap()
+                .runtime(),
             format!("fabric-{harness}")
         );
     }
@@ -199,7 +202,10 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
                 .starts_with("nc-multi-models@sha256:")
         );
         assert_eq!(
-            document.sandbox_harness().unwrap().runtime(),
+            document
+                .sandbox_harness(&document.spec.sandboxes[0])
+                .unwrap()
+                .runtime(),
             "fabric-openclaw"
         );
         document.spec.sandboxes[0]
@@ -217,7 +223,10 @@ fn sandbox_harness_is_the_only_implementation_selector() {
     let input = include_str!("fixtures/config/local.yaml");
     let document = Document::parse(input.as_bytes()).unwrap();
     assert_eq!(
-        document.sandbox_harness().unwrap().runtime(),
+        document
+            .sandbox_harness(&document.spec.sandboxes[0])
+            .unwrap()
+            .runtime(),
         "fabric-openclaw"
     );
     assert!(!document.yaml().unwrap().contains("type:"));

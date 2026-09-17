@@ -273,7 +273,7 @@ impl Proxy {
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "proxy requires a hostname or IPv4 address and a port from 1 through 65535",
             ));
         }
@@ -281,6 +281,39 @@ impl Proxy {
     }
 }
 impl Network {
+    pub(crate) fn validate_runtime_access(&self, harness: &str) -> Result<(), ConfigError> {
+        let Some(filesystem) = self
+            .policy
+            .as_ref()
+            .and_then(|p| p.explicit.filesystem_policy.as_ref())
+        else {
+            return Ok(());
+        };
+        for (required, diagnostic) in crate::openshell::runtime_read_requirements(harness) {
+            let covered = filesystem
+                .read_only
+                .iter()
+                .flatten()
+                .chain(filesystem.read_write.iter().flatten())
+                .any(|grant| {
+                    // Sandbox paths are POSIX paths even on a Windows client. Do not
+                    // resolve symlinks against the client filesystem or infer '..'.
+                    if !grant.starts_with('/') || grant.split('/').any(|part| part == "..") {
+                        return false;
+                    }
+                    let mut required = required.split('/').filter(|part| !part.is_empty());
+                    grant
+                        .split('/')
+                        .filter(|part| !part.is_empty() && *part != ".")
+                        .all(|part| required.next() == Some(part))
+                });
+            if !covered {
+                return Err(ConfigError::new(diagnostic));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         match &self.policy {
             Some(policy) if self.tier.is_empty() => {
@@ -288,7 +321,7 @@ impl Network {
             }
             None if self.tier == super::constraints::NETWORK_TIER => {}
             _ => {
-                return Err(ConfigError(
+                return Err(ConfigError::new(
                     "choose either isolated tier or an explicit policy",
                 ));
             }
@@ -347,7 +380,7 @@ impl PolicyEndpoint {
                     .is_some_and(|v| !choices.contains(&v.as_str()))
             })
         {
-            return Err(ConfigError(
+            return Err(ConfigError::new(
                 "invalid or conflicting policy endpoint options",
             ));
         }
@@ -357,15 +390,15 @@ impl PolicyEndpoint {
 impl ExplicitPolicy {
     pub fn to_proto(&self) -> Result<proto::SandboxPolicy, ConfigError> {
         if self.version != 1 {
-            return Err(ConfigError("explicit policy requires version 1"));
+            return Err(ConfigError::new("explicit policy requires version 1"));
         }
         for rule in self.network_policies.values() {
             for endpoint in &rule.endpoints {
                 endpoint.validate()?;
             }
         }
-        let mut input =
-            serde_json::to_value(self).map_err(|_| ConfigError("cannot encode sandbox policy"))?;
+        let mut input = serde_json::to_value(self)
+            .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
         // Main's exported schema spells strict enforcement differently from the pinned runtime.
         if input
             .pointer("/landlock/compatibility")
@@ -377,12 +410,12 @@ impl ExplicitPolicy {
         if self.landlock.as_ref().is_some_and(|l| {
             !["strict", "best_effort", "hard_requirement"].contains(&l.compatibility.as_str())
         }) {
-            return Err(ConfigError("unsupported Landlock compatibility"));
+            return Err(ConfigError::new("unsupported Landlock compatibility"));
         }
         let policy = openshell_policy::parse_sandbox_policy(&input.to_string())
-            .map_err(|_| ConfigError("invalid or unsupported explicit sandbox policy"))?;
+            .map_err(|_| ConfigError::new("invalid or unsupported explicit sandbox policy"))?;
         openshell_policy::validate_sandbox_policy(&policy)
-            .map_err(|_| ConfigError("explicit sandbox policy failed OpenShell validation"))?;
+            .map_err(|_| ConfigError::new("explicit sandbox policy failed OpenShell validation"))?;
         Ok(policy)
     }
 }

@@ -36,6 +36,16 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         guard.start()
         self.addCleanup(guard.stop)
 
+    def test_agent_workspaces_follow_names_not_roster_order_or_runtime_name(self):
+        from openclaw_adapter import agent_entries
+
+        agents = [{"name": "alice"}, {"name": "bob"}]
+        before = agent_entries("sandbox-runtime", {"agents": agents})
+        after = agent_entries("sandbox-runtime", {"agents": list(reversed(agents))})
+        self.assertEqual(before, after)
+        self.assertEqual(before["alice"]["workspace"], "/sandbox/workspaces/alice")
+        self.assertEqual(before["bob"]["workspace"], "/sandbox/workspaces/bob")
+
     async def test_uncertain_failure_is_not_replayed(self):
         runtime = FakeRuntime(TimeoutError("lost response"))
         request = SimpleNamespace(input="quotes ' and $(not-a-shell-command)\nnext")
@@ -94,6 +104,54 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeConfigurationTests(unittest.TestCase):
+    def test_explicit_models_do_not_require_a_default_agent(self):
+        from openclaw_adapter import native_configuration
+
+        model = {
+            "api": "openai-completions",
+            "tuning": {},
+            "connection": {
+                "provider": "openai",
+                "model": "qwen",
+                "base_url": "http://127.0.0.1:8000/v1",
+                "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+            },
+        }
+        options = {
+            **model,
+            "agents": [
+                {
+                    "name": "bob",
+                    "inference": {
+                        "default": "chat",
+                        "models": {"chat": model},
+                    },
+                }
+            ],
+        }
+        config = native_configuration("sandbox-runtime", options)
+        import json
+        import tempfile
+        from pathlib import Path
+
+        import openclaw_adapter as adapter
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(adapter, "ROOT", Path(directory)),
+        ):
+            (Path(directory) / "openclaw.json").write_text(json.dumps(config))
+            self.assertTrue(adapter.configuration_matches("sandbox-runtime", options))
+            original = config["agents"]["entries"]["bob"]["model"]["primary"]
+            config["agents"]["entries"]["bob"]["model"]["primary"] = "wrong/model"
+            (Path(directory) / "openclaw.json").write_text(json.dumps(config))
+            self.assertFalse(adapter.configuration_matches("sandbox-runtime", options))
+            config["agents"]["entries"]["bob"]["model"]["primary"] = original
+        self.assertNotIn("model", config["agents"]["defaults"])
+        self.assertEqual(
+            config["agents"]["entries"]["bob"]["model"]["primary"], "nemoclaw_bob_chat/qwen"
+        )
+
     def test_native_settings_survive_initialization_and_reserved_drift_is_rejected(self):
         import json
         import tempfile

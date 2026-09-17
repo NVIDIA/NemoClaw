@@ -55,7 +55,7 @@ impl Record {
             );
         }
         Ok(Self {
-            version: 2,
+            version: 3,
             digest: document.digest(),
             document,
             generations,
@@ -63,9 +63,9 @@ impl Record {
         })
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 2 {
+        if self.version != 3 {
             return Err(Error::State(
-                "deployment predates native inference; retain state and use the original NemoClaw version for recovery or teardown",
+                "deployment predates named multi-sandbox resources; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
         if self.document.validate().is_err()

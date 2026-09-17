@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+#[path = "support/provider_scope.rs"]
+mod provider_scope;
 use nemoclaw_sdk::{
     compile::{Generations, targets},
     config::Document,
@@ -81,7 +84,10 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
                 }
                 let document = parsed.unwrap();
                 let authored = document.clone();
-                assert_eq!(targets(&document, &generations).unwrap(), expected);
+                assert_eq!(
+                    provider_scope::normalized(targets(&document, &generations).unwrap()),
+                    expected
+                );
                 assert_eq!(document, authored);
                 assert_eq!(
                     Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
@@ -127,8 +133,13 @@ fn example_settings_satisfy_the_maintained_fabric_adapter_contracts() {
             continue;
         }
         let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
-        let Some(contract) = contracts.get(document.sandbox_harness().unwrap().kind.as_str())
-        else {
+        let Some(contract) = contracts.get(
+            document
+                .sandbox_harness(&document.spec.sandboxes[0])
+                .unwrap()
+                .kind
+                .as_str(),
+        ) else {
             continue;
         };
         let rows = targets(&document, &generations).unwrap();

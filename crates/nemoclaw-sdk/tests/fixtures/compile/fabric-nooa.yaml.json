@@ -6,10 +6,10 @@
   },
   "resource": {
     "nemoclaw_provider": {
-      "inference": {
+      "inference_local": {
         "credential_env": "",
         "depends_on": [
-          "nemoclaw_provider_profile.inference"
+          "nemoclaw_provider_profile.inference_local"
         ],
         "endpoint": "http://172.20.0.1:11446/v1",
         "generation": "provider-generation",
@@ -23,7 +23,7 @@
       }
     },
     "nemoclaw_provider_profile": {
-      "inference": {
+      "inference_local": {
         "authenticated": "false",
         "endpoint": "http://172.20.0.1:11446/v1",
         "generation": "provider-generation",
@@ -37,11 +37,11 @@
       }
     },
     "nemoclaw_sandbox": {
-      "agent": {
+      "assistant": {
         "agent_name": "main",
         "agent_runtime": "fabric-nooa",
         "depends_on": [
-          "nemoclaw_provider.inference"
+          "nemoclaw_provider.inference_local"
         ],
         "generation": "sandbox-generation",
         "image": "nc-prototype-fabric@sha256:c1cf75ce3036c2c438375b8e9921eeca06f302a3f7f42d1e412cd571ffd8323b",

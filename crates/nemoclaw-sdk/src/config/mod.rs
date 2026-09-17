@@ -37,12 +37,17 @@ pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
-/// Configuration errors contain fixed diagnostic text, never source values.
+/// Configuration diagnostics omit credentials and arbitrary source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigError(pub &'static str);
+pub struct ConfigError(pub String);
+impl ConfigError {
+    pub fn new(message: &'static str) -> Self {
+        Self(message.into())
+    }
+}
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&self.0)
     }
 }
 impl std::error::Error for ConfigError {}
@@ -57,12 +62,12 @@ impl Document {
         input
             .take(MAX_DOCUMENT_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| ConfigError("cannot read configuration"))?;
+            .map_err(|_| ConfigError::new("cannot read configuration"))?;
         if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(ConfigError("configuration exceeds 1 MiB"));
+            return Err(ConfigError::new("configuration exceeds 1 MiB"));
         }
-        let text =
-            std::str::from_utf8(&bytes).map_err(|_| ConfigError("configuration must be UTF-8"))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| ConfigError::new("configuration must be UTF-8"))?;
         let mut options = serde_saphyr::Options::default();
         let mut budget = serde_saphyr::Budget::default();
         budget.max_aliases = 0;
@@ -72,7 +77,7 @@ impl Document {
         options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
         options.reject_unsupported_tags = true;
         let tree: serde_json::Value = serde_saphyr::from_str_with_options(text, options)
-            .map_err(|_| ConfigError("invalid or unsupported YAML document"))?;
+            .map_err(|_| ConfigError::new("invalid or unsupported YAML document"))?;
         fn has_null(value: &serde_json::Value) -> bool {
             match value {
                 serde_json::Value::Null => true,
@@ -134,10 +139,12 @@ impl Document {
             }
         }
         if has_null(&structural) {
-            return Err(ConfigError("omit optional fields instead of using null"));
+            return Err(ConfigError::new(
+                "omit optional fields instead of using null",
+            ));
         }
         let mut document: Self = serde_json::from_value(tree).map_err(|_| {
-            ConfigError("configuration contains an unknown field or invalid field type")
+            ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
         document.defaults();
         document.validate()?;
@@ -149,11 +156,35 @@ impl Document {
     /// Returns an error if validation or serialization fails.
     pub fn yaml(&self) -> Result<String, ConfigError> {
         self.validate()?;
-        serde_saphyr::to_string(self).map_err(|_| ConfigError("cannot serialize configuration"))
+        serde_saphyr::to_string(self)
+            .map_err(|_| ConfigError::new("cannot serialize configuration"))
     }
     pub fn digest(&self) -> String {
-        // Field order, omissions, and HTML escaping are part of the document digest contract.
-        let json = serde_json::to_string(self)
+        // Named declaration order is not deployment intent; retain authored order on export.
+        let mut canonical = self.clone();
+        canonical.spec.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
+        canonical
+            .spec
+            .inference_providers
+            .sort_by(|a, b| a.name.cmp(&b.name));
+        for inference in canonical.spec.inferences.values_mut() {
+            inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        for sandbox in &mut canonical.spec.sandboxes {
+            sandbox.agents.sort_by(|a, b| a.name.cmp(&b.name));
+            sandbox
+                .inference_providers
+                .sort_by(|a, b| a.name.cmp(&b.name));
+            for inference in sandbox.inferences.values_mut().chain(
+                sandbox
+                    .agents
+                    .iter_mut()
+                    .filter_map(|agent| agent.inference.as_mut()),
+            ) {
+                inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+        }
+        let json = serde_json::to_string(&canonical)
             .expect("configuration contains only serializable values")
             .replace('&', "\\u0026")
             .replace('<', "\\u003c")
@@ -195,14 +226,18 @@ impl Document {
                 }
             }
         }
-        for binding in self.spec.sandboxes[0]
-            .integration_bindings(&self.spec.integrations)
-            .expect("validated integration references")
-        {
-            match binding.definition {
-                Integration::WebSearch(search) => names.push(&search.credential.env),
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox
+                .integration_bindings(&self.spec.integrations)
+                .expect("validated integration references")
+            {
+                match binding.definition {
+                    Integration::WebSearch(search) => names.push(&search.credential.env),
+                }
             }
         }
+        names.sort_unstable();
+        names.dedup();
         names
     }
     pub fn defaults(&mut self) {
@@ -241,10 +276,10 @@ fn default_string(value: &mut String, default: &str) {
 pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     let network = cidr
         .parse::<ipnet::Ipv4Net>()
-        .map_err(|_| ConfigError("invalid bridge network"))?;
+        .map_err(|_| ConfigError::new("invalid bridge network"))?;
     let address = u32::from(network.network())
         .checked_add(1)
-        .ok_or(ConfigError("bridge address exceeds IPv4 range"))?;
+        .ok_or(ConfigError::new("bridge address exceeds IPv4 range"))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
 impl Gateway {

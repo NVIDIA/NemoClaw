@@ -936,3 +936,98 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             || arg.contains("pi-probe"))
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let mut other = document.spec.sandboxes[0].clone();
+    other.name = "research".into();
+    other.harness.as_mut().unwrap().kind = "deepagents".into();
+    document.spec.sandboxes.push(other.clone());
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    let preview = deployment.plan(&document, &cancel).await.unwrap();
+    assert_eq!(preview.changes.len(), 5);
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    let applied = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(applied.health.len(), 2);
+    let before: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("terraform.tfstate")).unwrap())
+            .unwrap();
+    document.spec.sandboxes.reverse();
+    assert!(
+        deployment
+            .plan(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    other.name = "third".into();
+    document.spec.sandboxes.push(other);
+    let added = deployment.plan(&document, &cancel).await.unwrap();
+    assert_eq!(added.changes.len(), 1);
+    assert_eq!(added.changes[0].resource, "nemoclaw_sandbox.third");
+    fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.sandbox_phase = None;
+        for sandbox in state.sandboxes.values_mut() {
+            sandbox.status.as_mut().unwrap().phase =
+                openshell_core::proto::SandboxPhase::Ready as i32;
+        }
+    }
+    assert_eq!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .health
+            .len(),
+        3
+    );
+    let after: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("terraform.tfstate")).unwrap())
+            .unwrap();
+    for resource in before["resources"].as_array().unwrap() {
+        let retained = after["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|other| other["type"] == resource["type"] && other["name"] == resource["name"])
+            .unwrap();
+        assert_eq!(
+            retained["instances"][0]["attributes"]["id"],
+            resource["instances"][0]["attributes"]["id"]
+        );
+    }
+    let exported = deployment.export(&cancel).await.unwrap();
+    assert_eq!(exported, document);
+    assert!(
+        deployment
+            .apply(&exported, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    deployment.destroy(&cancel).await.unwrap();
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
