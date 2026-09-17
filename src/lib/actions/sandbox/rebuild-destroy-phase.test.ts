@@ -1114,10 +1114,14 @@ describe("rebuild destroy phase", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
+      prepareSourceForDelete: vi.fn(async () => {
+        order.push("source:stopped");
+        return { ok: true };
+      }),
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+    expect(order).toEqual(["journal:deleting", "source:stopped", "openshell:delete"]);
   });
 
   it("preserves recovery state when ForwardTcp ports remain after deletion", async () => {

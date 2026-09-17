@@ -34,6 +34,7 @@ import {
   type RebuildBackupPhaseResult,
   releaseRebuildSourceOpenClawWindow,
   runRebuildBackupPhase,
+  stopRebuildSourceOpenClawWindow,
   writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
@@ -795,6 +796,7 @@ async function rebuildSandboxUnlocked(
       }
 
       let preservedMcpPolicyHandoff = false;
+      const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
@@ -937,6 +939,19 @@ async function rebuildSandboxUnlocked(
             };
           }
         },
+        prepareSourceForDelete: sourceWindowForDelete
+          ? async () => {
+              const stopped = await stopRebuildSourceOpenClawWindow(sourceWindowForDelete);
+              if (!stopped.ok) {
+                return {
+                  ok: false,
+                  message: `OpenClaw source maintenance marker could not be cleared before deletion (${stopped.stage}: ${stopped.detail}).`,
+                };
+              }
+              sourceOpenClawDoctorWindow = null;
+              return { ok: true };
+            }
+          : undefined,
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {

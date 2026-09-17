@@ -87,6 +87,10 @@ export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRes
   return finished;
 }
 
+export function stopRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
+  return abortOpenClawPostRestoreDoctor(window);
+}
+
 export async function captureRebuildPolicyDocument(
   sandboxName: string,
   gatewayName: string,
