@@ -216,7 +216,8 @@ Changing an existing service to enable authentication follows the normal runtime
 Use this mode when Ollama and the route's model are already installed on the local Linux Docker host.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
-OpenClaw and Hermes can use this proxy with `openai-completions`.
+OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completions`.
+For Pi, omit provider `api` and supply `piModel` metadata when the model is absent from its registry; see the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
 Build the proxy image from the repository root:
