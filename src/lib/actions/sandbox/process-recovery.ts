@@ -343,13 +343,14 @@ async function executeSandboxExecCommandForStatus(
   commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
     { hostCwd: ROOT },
   ),
+  timeoutMilliseconds = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): Promise<SandboxCommandResult | null> {
   const markedCommand = buildSandboxExecMarkedCommand(command);
   const result = await commandExecutor.runBuffered({
     sandboxName,
     target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
     command: ["sh", "-c", markedCommand],
-    timeoutMilliseconds: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+    timeoutMilliseconds,
   });
   if (result.outcome.kind !== "completed") return null;
   const commandStdout = extractSandboxExecCommandStdout(result.stdout);
@@ -377,8 +378,8 @@ function sandboxGatewayHealthProbeCommand(probeUrl: string): string {
   return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo UNAVAILABLE ;; esac`;
 }
 
-function sandboxGatewayRecoveryProbeCommand(probeUrl: string): string {
-  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; 0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
+function sandboxGatewayRecoveryProbeCommand(probeUrl: string, starting = false): string {
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; ${starting ? "7:000|" : ""}0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
 }
 
 /**
@@ -679,6 +680,7 @@ export async function isSandboxGatewayRunningForStatus(
   gatewayName?: string,
   options: {
     getSessionAgent?: typeof agentRuntime.getSessionAgent;
+    startup?: { timeoutMs: number };
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
     requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
@@ -703,20 +705,27 @@ export async function isSandboxGatewayHttpReachableForStatus(
   sandboxName: string,
   gatewayName?: string,
   options: {
+    startup?: { timeoutMs: number };
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
   } = {},
 ): Promise<boolean | null> {
   const probeUrl = (options.getHealthProbeUrl ?? getSandboxHealthProbeUrl)(sandboxName);
-  const command = sandboxGatewayHealthProbeCommand(probeUrl);
-  return parseSandboxGatewayProbe(
-    await executeSandboxExecCommandForStatus(
-      sandboxName,
-      command,
-      gatewayName,
-      options.commandExecutor,
-    ),
+  // A refused loopback connection is expected while the native agent starts.
+  // Ordinary status observations keep treating this as unavailable evidence.
+  const command = options.startup
+    ? sandboxGatewayRecoveryProbeCommand(probeUrl, true)
+    : sandboxGatewayHealthProbeCommand(probeUrl);
+  const result = await executeSandboxExecCommandForStatus(
+    sandboxName,
+    command,
+    gatewayName,
+    options.commandExecutor,
+    options.startup?.timeoutMs,
   );
+  return options.startup
+    ? parseSandboxGatewayRecoveryProbe(result)
+    : parseSandboxGatewayProbe(result);
 }
 
 /**
@@ -859,11 +868,30 @@ export async function restartSandboxGateway(
   );
 }
 
-function readNonNegativeNumberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
+function readNonNegativeNumberEnv(
+  name: string,
+  fallback: number,
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = environment[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/** Resolve the shared override; HTTP health defaults to 30s, OpenShell readiness supplies 120s. */
+export function resolveGatewayRecoveryWaitSeconds(
+  fallbackSeconds = 30,
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  return Math.min(
+    readNonNegativeNumberEnv(
+      "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+      fallbackSeconds,
+      environment,
+    ),
+    Number.MAX_SAFE_INTEGER / 1_000,
+  );
 }
 
 const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
@@ -1027,10 +1055,7 @@ async function waitForRecreatedSandboxOpenShellReadyResult(
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
       : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    requestedTimeoutSeconds,
-  );
+  const timeoutSeconds = resolveGatewayRecoveryWaitSeconds(requestedTimeoutSeconds);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
@@ -1263,10 +1288,7 @@ export async function waitForRecoveredSandboxGateway(
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
       : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
-  const timeoutSeconds = readNonNegativeNumberEnv(
-    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-    requestedTimeoutSeconds,
-  );
+  const timeoutSeconds = resolveGatewayRecoveryWaitSeconds(requestedTimeoutSeconds);
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     3,

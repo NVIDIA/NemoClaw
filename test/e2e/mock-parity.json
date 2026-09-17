@@ -297,6 +297,10 @@
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+        "src/lib/actions/sandbox/start.test.ts",
+        "src/lib/actions/sandbox/process-recovery.test.ts",
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
