@@ -14,12 +14,12 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
-import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   applyDockerManagedStartupRootRequest,
-  finalizeDockerManagedStartupSharedState,
   releaseDockerManagedStartupHold,
-} from "../../src/lib/onboard/managed-workload/onboard-orchestration.ts";
+} from "../../src/lib/onboard/managed-startup/docker-root-apply.ts";
+import { finalizeDockerManagedStartupSharedState } from "../../src/lib/onboard/managed-startup/docker-shared-state.ts";
+import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
