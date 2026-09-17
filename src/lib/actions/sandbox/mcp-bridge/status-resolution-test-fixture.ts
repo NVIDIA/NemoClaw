@@ -5,6 +5,9 @@ import path from "node:path";
 
 import { expect } from "vitest";
 
+// This focused companion keeps its 1,498-line owner under the repository's
+// 1,500-line test budget while remaining excluded from production builds.
+
 export const statusHarnessConfig = {
   concurrency: 4,
   sourceNodeOptions: [

@@ -3,6 +3,7 @@
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { MCP_PROBE_CONTROL_BEARER } from "../../../src/lib/actions/sandbox/mcp-bridge-resolution-probe.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -22,7 +23,10 @@ import {
   setupDnsRebindingHostsFixture,
 } from "./mcp-bridge-sandbox.ts";
 import { startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
-import { assertAuthenticatedMcpDiscovery } from "./mcp-bridge-tool-discovery.ts";
+import {
+  assertAuthenticatedMcpDiscovery,
+  buildMcpStatusRequestEvidence,
+} from "./mcp-bridge-tool-discovery.ts";
 import { startRoutedPrivateRelay } from "../fixtures/routed-private-relay.ts";
 
 const SERVER_POLICY_KEY = "mcp_bridge_fake";
@@ -39,6 +43,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   cleanup: CleanupRegistry,
   options: {
     adapter: McpDnsRebindingAdapter;
+    artifacts: Pick<ArtifactSink, "writeJson">;
     artifactPrefix: string;
     assertSecretAbsent: (
       sandbox: SandboxClient,
@@ -177,6 +182,14 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     expectedSecret: REBIND_HOST_SECRET,
     label: `${options.artifactPrefix} trusted-private status discovery`,
   });
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-status-requests.json`,
+    buildMcpStatusRequestEvidence(
+      rebindMcp.requests.slice(trustedPrivateRequestOffset),
+      REBIND_HOST_SECRET,
+      MCP_PROBE_CONTROL_BEARER,
+    ),
+  );
   const rebindingPolicy = await captureManagedMcpPolicy(sandbox, {
     artifactName: `${options.artifactPrefix}-mcp-trusted-private-policy-pinned-address`,
     label: `${options.artifactPrefix} validates the trusted-private add-time DNS pin`,

@@ -19,6 +19,7 @@ import {
   assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpToolDiscovery,
+  buildMcpStatusRequestEvidence,
   hasSuccessfulAuthenticatedMcpDiscovery,
   runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
@@ -146,6 +147,42 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 
 let compatibleMock: StartedHttpServer | undefined;
 const artifactRoots: string[] = [];
+
+describe("MCP status request evidence", () => {
+  it("classifies resolved and control requests without retaining bearer values", () => {
+    const controlBearer = "probe-control-bearer";
+    const evidence = buildMcpStatusRequestEvidence(
+      [
+        request("initialize"),
+        request("initialize", {
+          auth: `Bearer ${controlBearer}`,
+          responseStatus: 401,
+          responseHasResult: false,
+        }),
+      ],
+      EXPECTED_SECRET,
+      controlBearer,
+    );
+
+    expect(evidence).toEqual({
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 200,
+          credentialKind: "resolved",
+        },
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 401,
+          credentialKind: "control",
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toMatch(new RegExp(`${EXPECTED_SECRET}|${controlBearer}`));
+  });
+});
 
 afterEach(async () => {
   await compatibleMock?.close();
