@@ -102,7 +102,9 @@ ceiling for `required` and `expected-refusal`. A `required` target also budgets
 a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
 ceiling because it does not invoke config export. The
 `dcode-rebuild-invalid-credential` lifecycle adds a 20-minute budget. With its
-expected refusal, its test and job ceilings are 52 and 72 minutes.
+expected refusal, its default test timeout is 52 minutes and its job ceiling is
+72 minutes. `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
+lower the derived test timeout.
 
 The `config-export-evidence.v1.json` artifact binds each result to the source
 revision, CLI version, and compiled CLI entry-point hash. Each record includes

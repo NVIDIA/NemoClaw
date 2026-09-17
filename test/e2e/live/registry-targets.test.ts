@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -77,7 +78,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
-        : { timeout: timeoutContract.testTimeoutMs }),
+        : { timeout: testTimeout(timeoutContract.testTimeoutMs) }),
     },
     async ({
       artifacts,
