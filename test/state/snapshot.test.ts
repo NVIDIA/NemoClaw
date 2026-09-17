@@ -588,19 +588,6 @@ describe("parseRestoreArgs", () => {
 });
 
 describe("sandbox directory backup semantics", () => {
-  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", () => {
-    writeOpenClawRegistry("custom-openclaw", {
-      fromDockerfile: "/tmp/Dockerfile.custom",
-    });
-
-    const backup = sandboxState.backupSandboxState("custom-openclaw");
-
-    expect(backup.success).toBe(false);
-    expect(backup.manifest).toBeUndefined();
-    expect(backup.error).toBe("registered OpenClaw image plugin provenance is missing or invalid");
-    expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
-  });
-
   it("backs up declared empty and dynamic directories without trusting undeclared discovery output (#8006)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
@@ -640,10 +627,7 @@ describe("sandbox directory backup semantics", () => {
         }),
       );
 
-      writeOpenClawRegistry("alpha", {
-        fromDockerfile: "/tmp/Dockerfile.custom",
-        openclawImagePluginInstalls: [],
-      });
+      writeOpenClawRegistry("alpha", { fromDockerfile: "/tmp/Dockerfile.custom" });
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.TMPDIR = stagingRoot;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
@@ -655,8 +639,6 @@ describe("sandbox directory backup semantics", () => {
       expect(backup.manifest?.backupComplete).toBe(true);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
-      expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
-      expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
       const discoveryCommand = fs
         .readFileSync(sshLog, "utf-8")
         .trim()
@@ -840,8 +822,6 @@ process.exit(0);
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/workspace");
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
-      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
     } finally {
       if (oldOpenshell === undefined) {

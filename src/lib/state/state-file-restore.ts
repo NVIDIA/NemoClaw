@@ -8,7 +8,6 @@ import path from "node:path";
 import type { StateFileRestoreOwnership } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
 import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
-import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
 
 export interface StateFileRestoreSpec {
@@ -145,8 +144,6 @@ export function restoreStateFile(
   ownership: StateFileRestoreOwnership | undefined,
   allowCustomImageWholeStateFileRestore: boolean,
   log: (message: string) => void,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   env?: NodeJS.ProcessEnv,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
@@ -163,9 +160,7 @@ export function restoreStateFile(
       backupContents,
       dir,
       env,
-      freshImagePluginInstalls,
       log,
-      previousImagePluginInstalls,
       specPath: spec.path,
       sshArgs,
     });

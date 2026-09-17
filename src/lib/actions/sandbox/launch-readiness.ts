@@ -606,11 +606,6 @@ export function buildLaunchReadinessRegistryProjection(
     hermesDashboardTui: entry.hermesDashboardTui === true,
     dashboardPort: entry.dashboardPort ?? null,
     dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true,
-    openclawImagePluginInstalls: (entry.openclawImagePluginInstalls ?? []).map((install) => ({
-      id: install.id,
-      installPath: install.installPath,
-      loadPaths: install.loadPaths ? [...install.loadPaths] : null,
-    })),
   };
 }
 
