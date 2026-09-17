@@ -40,7 +40,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildAgentsList, validateExtraAgents } from "../src/lib/extra-agents-validation.ts";
+import { buildAgentEntries, validateExtraAgents } from "../src/lib/extra-agents-validation.ts";
 import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
@@ -1027,7 +1027,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const config: JsonObject = {
     agents: {
       defaults: agentDefaults,
-      list: buildAgentsList(extraAgents, extraAgentsPayload.main),
+      entries: buildAgentEntries(extraAgents, extraAgentsPayload.main),
     },
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,

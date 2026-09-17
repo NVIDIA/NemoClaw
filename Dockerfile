@@ -1704,8 +1704,8 @@ ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
-# Each entry is appended to agents.list[] after the canonical "main" entry, so
-# the primary agent always remains the default. See generate-openclaw-config.mts
+# Each entry is written under agents.entries by id alongside the canonical
+# "main" entry, so the primary agent always remains the default. See generate-openclaw-config.mts
 # for the validator. Default: empty array (W10= == base64("[]")).
 ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # Legacy compatibility inputs retained for managed build and rebuild callers.

@@ -5417,7 +5417,7 @@ prepare_auto_pair_log
 # Provision per-agent workspaces for multi-agent OpenClaw deployments.
 #
 # OpenClaw can be configured with multiple named agents (agents.defaults.workspace
-# + agents.list[*].workspace in openclaw.json), each producing its own
+# + agents.entries.*.workspace in openclaw.json), each producing its own
 # `/sandbox/.openclaw/workspace-<name>/` directory. In the mutable-by-default
 # layout these live directly under `.openclaw/` (no symlink indirection).
 # Ensure they exist and are sandbox-writable.
@@ -5467,7 +5467,12 @@ provision_agent_workspaces() {
     }
   }
   addWorkspace(cfg?.agents?.defaults?.workspace);
-  for (const agent of cfg?.agents?.list || []) addWorkspace(agent?.workspace);
+  const roster = cfg?.agents?.entries;
+  if (roster && typeof roster === "object" && !Array.isArray(roster)) {
+    for (const agent of Object.values(roster)) addWorkspace(agent?.workspace);
+  } else {
+    for (const agent of cfg?.agents?.list || []) addWorkspace(agent?.workspace);
+  }
   for (const name of names) console.log(name);
 NODE
     )"

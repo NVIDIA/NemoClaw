@@ -1845,11 +1845,11 @@ describe("NC-2227-01: legacy migration behavior", () => {
         JSON.stringify({
           agents: {
             defaults: { workspace: "main" },
-            list: [
-              { workspace: path.join(configDir, "workspace-alpha") },
-              { workspace: "workspace-beta" },
-              { workspace: "../escape" },
-            ],
+            entries: {
+              alpha: { workspace: path.join(configDir, "workspace-alpha") },
+              beta: { workspace: "workspace-beta" },
+              invalid: { workspace: "../escape" },
+            },
           },
         }),
       );

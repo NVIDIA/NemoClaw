@@ -767,11 +767,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
-  // ─── agents.list bake ─────────────────────────────────────────────────────
-  // Even with no NEMOCLAW_EXTRA_AGENTS_JSON_B64 set, agents.list must exist
-  // with the canonical main entry pinned as default. Otherwise a wholesale
-  // list overwrite could leave OpenClaw resolving default to agents[0]
-  // without "main" present.
+  // ─── agents.entries bake ──────────────────────────────────────────────────
+  // OpenClaw 2026.9.1 persists the canonical keyed roster. Emitting that shape
+  // directly keeps native baseline setup read-only after the gateway starts.
 
   const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
 
@@ -789,14 +787,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     return Buffer.from(JSON.stringify(extras)).toString("base64");
   }
 
-  it("always writes agents.list with a default 'main' entry first", () => {
+  it("always writes agents.entries with a default 'main' entry", () => {
     const config = runConfigScript();
-    expect(Array.isArray(config.agents.list)).toBe(true);
-    expect(config.agents.list).toHaveLength(1);
-    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
+    expect(config.agents.entries).toEqual({ main: { default: true } });
+    expect(config.agents.list).toBeUndefined();
   });
 
-  it("appends NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
+  it("keys NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
     const extras = [
       makeExtra({ id: "research" }),
       makeExtra({
@@ -808,25 +805,26 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras),
     });
-    expect(config.agents.list).toHaveLength(3);
-    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
-    expect(config.agents.list[1]).toMatchObject({ id: "research" });
-    expect(config.agents.list[2]).toMatchObject({ id: "writing" });
+    expect(Object.keys(config.agents.entries)).toEqual(["main", "research", "writing"]);
+    expect(config.agents.entries.main).toEqual({ default: true });
+    expect(config.agents.entries.research).toMatchObject({
+      workspace: "/sandbox/.openclaw/workspace-research",
+    });
+    expect(config.agents.entries.writing).toMatchObject({
+      workspace: "/sandbox/.openclaw/workspace-writing",
+    });
   });
 
   it("keeps 'main' as the default even when extras are present", () => {
-    // Wholesale list replacement would leave agents[0] = first extra, so
-    // resolveDefaultAgentId would silently re-elect the first extra as
-    // default. The bake must always emit { id: "main", default: true } first.
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    const defaultEntries = config.agents.list.filter(
-      (entry: { default?: boolean }) => entry.default === true,
+    const defaultEntries = Object.entries(config.agents.entries).filter(
+      ([, entry]: [string, { default?: boolean }]) => entry.default === true,
     );
     expect(defaultEntries).toHaveLength(1);
-    expect(defaultEntries[0].id).toBe("main");
-    expect(config.agents.list[0].id).toBe("main");
+    expect(defaultEntries[0][0]).toBe("main");
+    expect(Object.keys(config.agents.entries)[0]).toBe("main");
   });
 
   it("rejects extras that claim id 'main'", () => {
@@ -952,7 +950,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    expect(config.agents.list[1]).not.toHaveProperty("subagents");
+    expect(config.agents.entries.research).not.toHaveProperty("subagents");
   });
 
   it("rejects per-agent subagents.maxSpawnDepth with a migration hint", () => {
@@ -1018,11 +1016,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
         }),
       ]),
     });
-    expect(config.agents.list[1].workspace).toBe("/sandbox/.openclaw/workspace-research");
-    expect(config.agents.list[1].agentDir).toBe("/sandbox/.openclaw/agents/research");
+    expect(config.agents.entries.research.workspace).toBe("/sandbox/.openclaw/workspace-research");
+    expect(config.agents.entries.research.agentDir).toBe("/sandbox/.openclaw/agents/research");
   });
 
-  it("strips operator entries to the allowlist when writing agents.list", () => {
+  it("strips operator entries to the allowlist when writing agents.entries", () => {
     // The validator must drop unknown keys at every nesting level before
     // they reach the baked image. (The previous tests confirm unknown
     // fields fail; this test guards against an allowlist drift where an
@@ -1044,8 +1042,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
         },
       ]),
     });
-    expect(config.agents.list[1]).toEqual({
-      id: "research",
+    expect(config.agents.entries.research).toEqual({
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
@@ -1054,12 +1051,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("matches OpenClaw's resolveDefaultAgentId fallback shape for the baked list", () => {
-    // OpenClaw's resolver: pick the first entry with default === true; if
-    // none, fall back to agents[0]. Simulate that locally over the baked
-    // list to prove the bake satisfies the upstream contract today. The
-    // authoritative resolver still lives in the openclaw npm package; see
-    // agents/openclaw/manifest.yaml -> expected_version for the pinned tag.
+  it("matches OpenClaw's canonical keyed default-agent roster", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         makeExtra({ id: "research" }),
@@ -1070,8 +1062,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
         }),
       ]),
     });
-    const list: Array<{ id: string; default?: boolean }> = config.agents.list;
-    const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
+    const entries = Object.entries(config.agents.entries) as Array<[string, { default?: boolean }]>;
+    const resolved = entries.find(([, entry]) => entry.default === true)?.[0] ?? entries[0]?.[0];
     expect(resolved).toBe("main");
   });
 

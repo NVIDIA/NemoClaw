@@ -378,6 +378,33 @@ describe("commands/migration-state", () => {
       expect(result.externalRoots.some((r) => r.kind === "agentDir")).toBe(true);
     });
 
+    it("collects external roots from canonical keyed agent entries", () => {
+      const env = { HOME: "/home/user" };
+      addDir("/home/user/.openclaw");
+      addFile(
+        "/home/user/.openclaw/openclaw.json",
+        JSON.stringify({
+          agents: {
+            entries: {
+              researcher: {
+                workspace: "/external/ws1",
+                agentDir: "/external/agentdir",
+              },
+            },
+          },
+        }),
+      );
+      addDir("/external/ws1");
+      addDir("/external/agentdir");
+
+      const result = detectHostOpenClaw(env);
+
+      expect(result.externalRoots.map((root) => root.bindings[0]?.configPath).sort()).toEqual([
+        "agents.entries.researcher.agentDir",
+        "agents.entries.researcher.workspace",
+      ]);
+    });
+
     it("collects external roots from skills.load.extraDirs", () => {
       const env = { HOME: "/home/user" };
       addDir("/home/user/.openclaw");

@@ -507,6 +507,21 @@ function updateAgentPrimary(config: ConfigObject, primaryModelRef: string): void
 }
 
 function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: string): void {
+  const entries = agents.entries;
+  if (isConfigObject(entries)) {
+    const main = entries.main;
+    if (isConfigObject(main) && typeof main.model === "string") {
+      main.model = primaryModelRef;
+      return;
+    }
+    for (const entry of Object.values(entries)) {
+      if (isConfigObject(entry) && entry.default === true && typeof entry.model === "string") {
+        entry.model = primaryModelRef;
+        return;
+      }
+    }
+    return;
+  }
   const list = agents.list;
   if (!Array.isArray(list)) return;
   let defaultAgent: ConfigObject | undefined;
