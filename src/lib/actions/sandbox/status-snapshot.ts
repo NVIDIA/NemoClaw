@@ -27,7 +27,6 @@ import {
   type ProviderHealthStatus,
   probeProviderHealth,
 } from "../../inference/health";
-import type { ServingProfileProvenance } from "../../inference/serving/types";
 import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
@@ -36,12 +35,16 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
-import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
+  canSandboxStatusRouteRealign,
   isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
@@ -162,7 +165,7 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
-  servingProfileProvenance: ServingProfileProvenance | null;
+  servingProfileProvenance: NonNullable<registry.SandboxEntry["servingProfileProvenance"]> | null;
   llamaCpp?: LlamaCppRouteDetails | null;
   recordedRoute: RecordedInferenceRoute | null;
   liveRoute: GatewayInference | null;
@@ -294,7 +297,8 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
-  findSandboxAcrossGatewayRoots?: typeof registry.findSandboxAcrossGatewayRoots;
+  findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
+  listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
   listSandboxes?: typeof registry.listSandboxes;
@@ -597,11 +601,11 @@ export async function collectSandboxStatusSnapshot(
           canConnect: Boolean(
             sb &&
             gatewayName &&
-            canSandboxGatewayRouteRealign(
+            canSandboxStatusRouteRealign(
               sandboxName,
               sb,
               gatewayName,
-              (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+              () => (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
             ),
           ),
         }
@@ -787,8 +791,7 @@ async function buildSandboxStatusReport(
     deps.getSandbox ??
     ((name: string) => {
       const entry =
-        (deps.findSandboxAcrossGatewayRoots ?? registry.findSandboxAcrossGatewayRoots)(name)
-          ?.entry ?? null;
+        (deps.findSandboxAcrossGatewayRoots ?? findSandboxAcrossGatewayRoots)(name)?.entry ?? null;
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
   const sandboxEntry = getSandbox(sandboxName);
@@ -815,7 +818,12 @@ async function buildSandboxStatusReport(
   } = snapshot;
   const dockerRuntime =
     lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
-      ? getSandboxDockerRuntime(sandboxName)
+      ? getSandboxDockerRuntime(sandboxName, {
+          getSandbox: () => sb,
+          listSandboxNames:
+            deps.listPublishedSandboxNamesAcrossGatewayRoots ??
+            listPublishedSandboxNamesAcrossGatewayRoots,
+        })
       : null;
   const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const phase = resolveSandboxStatusPhase(
