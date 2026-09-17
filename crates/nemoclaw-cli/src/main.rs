@@ -4,6 +4,7 @@
 mod args;
 mod dispatch;
 mod io;
+mod progress;
 use args::{Cli, Command};
 use clap::Parser;
 use nemoclaw_sdk::CancellationToken;

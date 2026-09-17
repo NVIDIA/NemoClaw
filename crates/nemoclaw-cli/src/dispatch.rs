@@ -45,20 +45,12 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             .into(),
     };
     let mut deployment = Deployment::new(&cli.state_dir, &bundle);
-    if cli.verbose {
-        deployment = deployment.with_progress(std::sync::Arc::new(|event| {
-            if let nemoclaw_sdk::Progress::Completed {
-                operation,
-                elapsed,
-                outcome,
-            } = event
-            {
-                use std::io::Write;
-                let _ = writeln!(
-                    std::io::stderr().lock(),
-                    "{operation} {outcome} {:.3}s",
-                    elapsed.as_secs_f64()
-                );
+    use std::io::IsTerminal;
+    if cli.verbose || std::io::stderr().is_terminal() {
+        deployment = deployment.with_progress(std::sync::Arc::new(move |event| {
+            use std::io::Write;
+            if let Some(message) = crate::progress::render(event, cli.verbose) {
+                let _ = writeln!(std::io::stderr().lock(), "{message}");
             }
         }));
     }
