@@ -874,7 +874,7 @@ assert_status_mode disabled
       const baseline = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "baseline", "deepagents-sandbox", processRoot],
-        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
       );
       expect(baseline.status, baseline.stderr).toBe(0);
       expect(baseline.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:2");
@@ -882,7 +882,7 @@ assert_status_mode disabled
       const waitFailure = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
-        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
       );
       expect(waitFailure.status, waitFailure.stderr).toBe(4);
       expect(waitFailure.stderr).toContain("did not return to baseline 1");
@@ -890,7 +890,7 @@ assert_status_mode disabled
       const recovery = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "1", processRoot],
-        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
       );
       expect(recovery.status, recovery.stderr).toBe(0);
       expect(recovery.stdout).toContain("NEMOCLAW_TUI_CALLER_RECOVERY_OK:1");
@@ -900,7 +900,7 @@ assert_status_mode disabled
       const waitSuccess = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
-        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
       );
       expect(waitSuccess.status, waitSuccess.stderr).toBe(0);
       expect(waitSuccess.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:1");
@@ -908,7 +908,7 @@ assert_status_mode disabled
       const baselineFailure = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "0", processRoot],
-        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+        { encoding: "utf8", env: guardEnv, killSignal: "SIGKILL", timeout: 10_000 },
       );
       expect(baselineFailure.status, baselineFailure.stderr).toBe(4);
       expect(baselineFailure.stderr).toContain("did not return to baseline 0");
