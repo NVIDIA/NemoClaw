@@ -172,25 +172,36 @@ describe("Hermes Portable forward recovery deadline", () => {
     expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
   });
 
-  it("restores owned children after passing the remaining allowance to the second forward (#11649, #11652)", async () => {
+  it("restores owned children after concurrent forwards share the recovery allowance (#11649, #11652)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
     Object.assign(fixture.input, { operationTimeoutMs: 100 });
     const launch = fixture.input.deps.launchForwardService!;
     const allowances: number[] = [];
+    const launchWithDelay = async (
+      target: ForwardServiceTarget,
+      options: ForwardServiceLaunchOptions,
+    ) => {
+      allowances.push(options.timeoutMs!);
+      await launch(target, options);
+      await fixture.input.deps.sleep!(options.timeoutMs!);
+    };
+    const launchWithoutDelay = async (
+      target: ForwardServiceTarget,
+      options: ForwardServiceLaunchOptions,
+    ) => {
+      allowances.push(options.timeoutMs!);
+      await launch(target, options);
+    };
     Object.assign(fixture.input.deps, {
-      launchForwardService: async (
-        target: ForwardServiceTarget,
-        options: ForwardServiceLaunchOptions,
-      ) => {
-        allowances.push(options.timeoutMs!);
-        await launch(target, options);
-        await fixture.input.deps.sleep!(Math.min(60, options.timeoutMs!));
-      },
+      launchForwardService: vi
+        .fn()
+        .mockImplementationOnce(launchWithDelay)
+        .mockImplementationOnce(launchWithoutDelay),
     });
     await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       "recovery-failed",
     );
-    expect(allowances).toEqual([100, 40]);
+    expect(allowances).toEqual([100, 100]);
     expect(fixture.elapsedMs()).toBe(100);
     expect(fixture.records.size).toBe(0);
   });

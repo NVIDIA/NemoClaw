@@ -453,8 +453,10 @@ describe("Hermes portable lifecycle", () => {
       expect.objectContaining({
         qualificationCount: 2,
         // Cold recovery performs its startup-launch currentness refresh below;
-        // it does not also issue the already-running pre-health inspection.
-        containerInspectionCount: 6,
+        // it does not also issue the already-running pre-health inspection. A
+        // successful health waiter flows directly into final qualification, so
+        // the exact container is not inspected twice at that boundary.
+        containerInspectionCount: 5,
         containerStartCount: 1,
         execReadyAttempts: 1,
         authenticatedHealthCount: 1,

@@ -154,6 +154,15 @@ function normalizeFailure(error: unknown): HermesPortableForwardRecoveryError {
     : new HermesPortableForwardRecoveryError("recovery-failed");
 }
 
+function strongestConcurrentLaunchFailure(
+  results: readonly PromiseSettledResult<void>[],
+): HermesPortableForwardRecoveryError | undefined {
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => normalizeFailure(result.reason));
+  return failures.find((error) => error.failure === "restoration-unproved") ?? failures[0];
+}
+
 function safeTimingNow(now: () => number): number | null {
   try {
     const value = now();
@@ -697,10 +706,15 @@ export async function prepareHermesPortableLaunchForwards(
     }
 
     const requiredHealthy = new Set(input.ports);
-    for (const port of missing) {
-      touchedPorts.push(port);
-      await invokeForwardServiceLaunch(input, port, timing, retained, remaining);
-    }
+    touchedPorts.push(...missing);
+    // Each forward owns a distinct loopback port and child-process handle. Wait for every
+    // launch to settle before rollback so one failure cannot race cleanup with a sibling
+    // that is still acquiring its ownership proof.
+    const launchResults = await Promise.allSettled(
+      missing.map((port) => invokeForwardServiceLaunch(input, port, timing, retained, remaining)),
+    );
+    const launchFailure = strongestConcurrentLaunchFailure(launchResults);
+    if (launchFailure) throw launchFailure;
     const final = await settleTouchedPorts(input, requiredHealthy, timing, remaining);
 
     requireNoOccupied(final.states);

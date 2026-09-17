@@ -20,7 +20,6 @@ import {
   verifyHermesPortableLaunchForwards,
 } from "./hermes-portable-forward-recovery";
 import {
-  buildForwardServiceArgs,
   ForwardServiceStartupCleanupError,
   type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
@@ -80,73 +79,6 @@ describe("Hermes Portable probe-only forward recovery", () => {
     } finally {
       clearTimeout(timer);
     }
-  });
-
-  it("starts missing forwards sequentially before one joint settlement observation (#10926)", async () => {
-    const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
-    const launch = fixture.input.deps.launchForwardService!;
-    let releaseFirst!: () => void;
-    const firstLaunch = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    Object.assign(fixture.input.deps, {
-      launchForwardService: vi.fn(launch).mockImplementationOnce((target, options) => {
-        launch(target, options);
-        return firstLaunch;
-      }),
-    });
-    const recovery = recoverHermesPortableLaunchForwards(fixture.input);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(fixture.forwardServiceLaunches.map((target) => target.localPort)).toEqual([18_789]);
-    releaseFirst();
-
-    expect(await recovery).toEqual({
-      kind: "restored",
-      restoredPorts: [18_789, 8_642],
-    });
-
-    expect(fixture.forwardServiceLaunches.map(buildForwardServiceArgs)).toEqual([
-      [
-        "--gateway",
-        "nemoclaw",
-        "--gateway-endpoint",
-        "https://127.0.0.1:8080",
-        "--workspace",
-        "default",
-        "forward",
-        "service",
-        "alpha",
-        "--target-port",
-        "18789",
-        "--target-host",
-        "127.0.0.1",
-        "--local",
-        "127.0.0.1:18789",
-      ],
-      [
-        "--gateway",
-        "nemoclaw",
-        "--gateway-endpoint",
-        "https://127.0.0.1:8080",
-        "--workspace",
-        "default",
-        "forward",
-        "service",
-        "alpha",
-        "--target-port",
-        "8642",
-        "--target-host",
-        "127.0.0.1",
-        "--local",
-        "127.0.0.1:8642",
-      ],
-    ]);
-    expect(fixture.currentCalls.filter((args) => args[1] === "stop")).toEqual([]);
-    expect(fixture.currentCalls.filter((args) => args[1] === "list")).toHaveLength(2);
-    expect(fixture.currentCaptureCalls.every((args) => args[1] === "list")).toBe(true);
-    expect(fixture.currentMutationCalls).toEqual([]);
-    expect(fixture.rollbackCalls).toEqual([]);
-    expect([...fixture.records.keys()]).toEqual([18_789, 8_642]);
   });
 
   it.each([

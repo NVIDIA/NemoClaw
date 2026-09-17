@@ -1522,15 +1522,21 @@ async function waitForHermesReadiness(
         waiterTimeoutMs + HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS &&
       ((receipt.result === "ready" && result.status === 0) ||
         (receipt.result === "not-ready" && result.status === 75));
-    timing.measure("healthPollCurrentness", () =>
-      assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
-    );
     if (accepted) credentialFileUnavailable = false;
     lastWaiterCommandFailed = !accepted && (Boolean(result.error) || result.status !== 64);
     if (accepted && receipt.result === "ready") {
       timing.increment("authenticatedHealth");
+      // The retained command proves transaction authority immediately after the
+      // authenticated response. The caller's mandatory final qualification is
+      // the next operation and re-proves the exact container, OpenShell identity,
+      // policy, and registry state. Avoid inspecting the same container once here
+      // and again there; unsuccessful attempts still require currentness before a
+      // retry or sleep.
       return qualified;
     }
+    timing.measure("healthPollCurrentness", () =>
+      assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
+    );
     if (now() >= deadline) break;
     timing.measure("healthPollSleep", () =>
       sleep(
