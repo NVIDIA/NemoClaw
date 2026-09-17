@@ -295,8 +295,10 @@ function modeOf(stat: fs.Stats): number {
   return stat.mode & 0o777;
 }
 
-function requireManagedStartupExchangeDirectory(): void {
-  const stat = fs.lstatSync(MANAGED_STARTUP_EXCHANGE_DIRECTORY);
+function requireManagedStartupExchangeDirectory(
+  exchangeDirectory: string = MANAGED_STARTUP_EXCHANGE_DIRECTORY,
+): void {
+  const stat = fs.lstatSync(exchangeDirectory);
   if (
     stat.isSymbolicLink() ||
     !stat.isDirectory() ||
@@ -1319,7 +1321,11 @@ export function verifyManagedStartupImageCompletion(
   completionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
   runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
 ): { readonly agent: ManagedStartupAgent; readonly fingerprint: string } {
-  requireManagedStartupExchangeDirectory();
+  const exchangeDirectory = path.dirname(completionFile);
+  if (path.dirname(runtimeEnvironmentFile) !== exchangeDirectory) {
+    fail("managed startup handoff files must share one exchange directory");
+  }
+  requireManagedStartupExchangeDirectory(exchangeDirectory);
   const expectedAgent = exactAgent(expectedAgentInput);
   if (!SHA256_RE.test(expectedFingerprint)) {
     fail("startup completion expected profile fingerprint is invalid");
