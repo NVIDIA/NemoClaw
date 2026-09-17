@@ -306,6 +306,7 @@ async function waitForRequiredOpenShellSupervisorReconnect(
 const RECOVERED_OPENSHELL_RECONNECTABLE_PHASES = new Set([
   "Provisioning",
   "Ready",
+  "Running",
   "Error",
   "Starting",
 ]);

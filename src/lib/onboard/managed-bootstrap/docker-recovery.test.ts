@@ -263,38 +263,44 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.sharedState).toBe("pending");
   });
 
-  it("records the handoff without republishing an already-connected supervisor", async () => {
-    const fake = fixture({ sharedState: "pending" });
-    const transaction = await prepareTransaction(fake);
-    const replacement = await transaction.adapter.activateBootstrapReplacement({
-      handle: transaction.handle,
-      snapshot: transaction.snapshot,
-      prepared: transaction.prepared,
-      durablePreparation: transaction.durable,
-    });
-    fake.deps.journalStore!.recordCompletion(
-      transaction.handle.bootstrapIdentity,
-      completion(replacement),
-    );
-    fake.deps.journalStore!.transition(
-      transaction.handle.bootstrapIdentity,
-      "cutover",
-      "bootstrap-complete",
-    );
+  it.each(["Ready", "Running"])(
+    "records the handoff without republishing a %s supervisor",
+    async (phase) => {
+      const fake = fixture({ sharedState: "pending" });
+      const transaction = await prepareTransaction(fake);
+      const replacement = await transaction.adapter.activateBootstrapReplacement({
+        handle: transaction.handle,
+        snapshot: transaction.snapshot,
+        prepared: transaction.prepared,
+        durablePreparation: transaction.durable,
+      });
+      fake.deps.journalStore!.recordCompletion(
+        transaction.handle.bootstrapIdentity,
+        completion(replacement),
+      );
+      fake.deps.journalStore!.transition(
+        transaction.handle.bootstrapIdentity,
+        "cutover",
+        "bootstrap-complete",
+      );
+      fake.deps.runCaptureOpenshell = vi.fn((args) =>
+        args[1] === "list" ? `alpha  ${phase}\n` : "Name: alpha\nID: sandbox-alpha\n",
+      );
 
-    await expect(
-      createDockerManagedBootstrapAdapter(fake.deps).recoverUnfinishedTransactions(),
-    ).resolves.toMatchObject({
-      receipts: [{ sourcePhase: "bootstrap-complete", outcome: "committed" }],
-      failures: [],
-    });
-    expect(
-      vi
-        .mocked(fake.deps.runOpenshell!)
-        .mock.calls.filter(([args]) => args[0] === "sandbox" && args[1] === "start"),
-    ).toHaveLength(0);
-    expect(fake.events).toContain("journal:openshell-handoff-complete");
-  });
+      await expect(
+        createDockerManagedBootstrapAdapter(fake.deps).recoverUnfinishedTransactions(),
+      ).resolves.toMatchObject({
+        receipts: [{ sourcePhase: "bootstrap-complete", outcome: "committed" }],
+        failures: [],
+      });
+      expect(
+        vi
+          .mocked(fake.deps.runOpenshell!)
+          .mock.calls.filter(([args]) => args[0] === "sandbox" && args[1] === "start"),
+      ).toHaveLength(0);
+      expect(fake.events).toContain("journal:openshell-handoff-complete");
+    },
+  );
 
   it("rejects committed shared state at cutover without a completion receipt", async () => {
     const fake = fixture({ sharedState: "committed" });
