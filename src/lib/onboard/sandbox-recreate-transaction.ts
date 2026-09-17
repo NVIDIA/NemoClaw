@@ -1315,6 +1315,7 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
           registryEntry,
           transaction.sourceRegistryFingerprint,
           transaction,
+          input.openingSessionId,
         )
       ) {
         throw new Error(

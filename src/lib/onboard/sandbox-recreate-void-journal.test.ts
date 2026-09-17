@@ -396,6 +396,17 @@ describe("sandbox recreate recovery from a void journal", () => {
         gatewayPort: 8080,
         sourceRegistryFingerprint: LEGACY_N1X_DURABLE_FINGERPRINT,
       };
+      const deleteStoreFor = (session: ReturnType<typeof createSession>) => ({
+        loadSession: () => session,
+        updateSession: (mutator: (current: typeof session) => typeof session | void) => {
+          mutator(session);
+          return session;
+        },
+        compareAndSwapSession: (
+          matches: (current: typeof session) => boolean,
+          mutator: (current: typeof session) => typeof session | void,
+        ) => (matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const)),
+      });
 
       expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(LEGACY_N1X_DURABLE_FINGERPRINT);
       expect(reservedEntry.deferredN1xManagedVllmAccepted).toBeUndefined();
@@ -443,6 +454,45 @@ describe("sandbox recreate recovery from a void journal", () => {
           { gatewayName: "nemoclaw", gatewayPort: 8080 },
         ),
       ).toMatchObject({ action: "reject" });
+
+      const deletingSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      deletingSession.sessionId = "session-n1x-rebuild";
+      deletingSession.checkpoint = {
+        ...deletingSession.checkpoint!,
+        sandboxRecreate: { ...legacyTransaction, phase: "planned" },
+      };
+      const expectedDelete = structuredClone(deletingSession.checkpoint.sandboxRecreate!);
+      expect(
+        beginSandboxRecreateDelete({
+          sessionStore: deleteStoreFor(deletingSession),
+          openingSessionId: deletingSession.sessionId,
+          expectedTransaction: expectedDelete,
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => reservedEntry,
+          observe: () => LIVE_SOURCE,
+        }).transaction.phase,
+      ).toBe("deleting");
+
+      const foreignSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      foreignSession.sessionId = "session-n1x-rebuild";
+      foreignSession.checkpoint = {
+        ...foreignSession.checkpoint!,
+        sandboxRecreate: { ...legacyTransaction, phase: "planned" },
+      };
+      expect(() =>
+        beginSandboxRecreateDelete({
+          sessionStore: deleteStoreFor(foreignSession),
+          openingSessionId: foreignSession.sessionId,
+          expectedTransaction: structuredClone(foreignSession.checkpoint!.sandboxRecreate!),
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => ({
+            ...reservedEntry,
+            reservationSessionId: "session-foreign",
+          }),
+          observe: () => LIVE_SOURCE,
+        }),
+      ).toThrow(/source registry row changed/);
+      expect(foreignSession.checkpoint.sandboxRecreate?.phase).toBe("planned");
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
