@@ -154,13 +154,33 @@ describe("translatePublicGlobalArgv", () => {
         kind: "publicUsageError",
         lines: expect.arrayContaining(["inspect"]),
       });
-      expect(JSON.stringify(result)).not.toContain("private-argument");
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("bogus");
+      expect(serialized).not.toContain("private-argument");
       expectNative(translatePublicGlobalArgv("diagnostics", []), "diagnostics", ["--help"]);
     } finally {
       delete metadata.diagnostics;
       delete metadata["diagnostics:inspect"];
     }
   });
+
+  /** Child-only groups must not dispatch help to an absent parent command. */
+  it.each([
+    { command: "profiles", action: "list", args: [] },
+    { command: "profiles", action: "list", args: ["help"] },
+    { command: "profiles", action: "list", args: ["--help"] },
+    { command: "profiles", action: "list", args: ["-h"] },
+    { command: "config", action: "export", args: [] },
+    { command: "host", action: "probe", args: [] },
+  ])(
+    "lists child routes for $command $args without a parent command",
+    ({ command, action, args }) => {
+      expect(translatePublicGlobalArgv(command, args)).toEqual({
+        kind: "publicUsageError",
+        lines: expect.arrayContaining([action]),
+      });
+    },
+  );
 
   it("translates simple and nested global commands to native oclif argv", () => {
     expectNative(translatePublicGlobalArgv("list", ["--json"]), "list", ["--json"]);

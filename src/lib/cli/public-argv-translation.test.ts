@@ -20,7 +20,9 @@ describe("global subcommand usage", () => {
         kind: "publicUsageError",
         lines: expect.arrayContaining([`${command} <subcommand>`, ...actions]),
       });
-      expect(JSON.stringify(result)).not.toContain("private-argument");
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("bogus");
+      expect(serialized).not.toContain("private-argument");
     },
   );
 

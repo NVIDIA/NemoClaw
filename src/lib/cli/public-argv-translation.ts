@@ -118,14 +118,17 @@ function isHelpToken(token: string | undefined): boolean {
   return token === "help" || token === "--help" || token === "-h";
 }
 
-/** Use registered action names in diagnostics so untrusted arguments stay private. */
+/**
+ * Dispatch help only to a registered parent; otherwise return registered action names.
+ * Untrusted action arguments must not appear in usage diagnostics.
+ */
 function nativeGlobalParentArgv(
   cmd: string,
   args: string[],
   subcommands: string[],
 ): PublicTranslationResult {
   const subcommand = args[0];
-  if (!subcommand || isHelpToken(subcommand)) {
+  if ((!subcommand || isHelpToken(subcommand)) && getRegisteredOclifCommandMetadata(cmd) !== null) {
     return nativeArgv(cmd, ["--help"], [cmd, "--help"]);
   }
   return {
@@ -134,6 +137,7 @@ function nativeGlobalParentArgv(
   };
 }
 
+/** Preserve sandbox parent passthrough and help semantics independently of global usage errors. */
 function nativeSandboxParentArgv(
   sandboxName: string,
   action: string,
@@ -176,6 +180,7 @@ export function translatePublicGlobalArgv(cmd: string, args: string[]): PublicTr
   return { kind: "publicUsageError", lines: [] };
 }
 
+/** Resolve sandbox aliases and registered routes while retaining the sandbox name in native arguments. */
 export function translatePublicSandboxArgv(
   sandboxName: string,
   action: string,
