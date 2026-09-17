@@ -93,6 +93,22 @@ def compare_node_acl(before, after, before_attributes, after_attributes):
     }
 
 
+def isolation_tier(log):
+    normalized = re.sub(r"\[\d+\][ \t]*", "", log)
+    tiers = re.findall(r"^selected isolation tier:[ \t]*([^\r\n]+)", normalized, re.M)
+    require(len(tiers) == 1, "The proof requires one unambiguous isolation tier.")
+    tier = tiers[0].strip()
+    require(
+        tier in ("appcontainer-dacl", "base-container"),
+        "The proof did not exercise a supported process-container tier.",
+    )
+    require(
+        "Win32k mitigation applied to child process" not in normalized,
+        "The existing Personal Node UI compatibility setting was not honored.",
+    )
+    return tier
+
+
 def verify_acl_rows(rows, *, detailed):
     expected_keys = {"sid", "mask", "inherited", "accessControlType"}
     if detailed:
@@ -285,6 +301,12 @@ def verify(
         and proof.get("admissionAllowed") is False,
         "Same-source system-root/MXC proof is missing or differs from the executed helper/profile.",
     )
+    native_log = read_file(Path(proof_directory) / "mxc-native.log", 1024 * 1024)
+    tier = isolation_tier(native_log.decode("utf-8-sig"))
+    require(
+        proof.get("selectedIsolationTier") == tier,
+        "The recorded isolation tier differs from the native execution log.",
+    )
     require(
         policy.get("version") == "0.6.0-alpha"
         and policy.get("containment") == "processcontainer"
@@ -428,6 +450,9 @@ def verify(
             for row in commands
         ],
         "systemDriveMetadataPreparation": True,
+        "selectedIsolationTier": tier,
+        "nativeLogSha256": sha(native_log),
+        "appContainerDaclExecution": tier == "appcontainer-dacl",
         "preauthorizedRuntimeReadOnly": True,
         "sameJobHostAlreadyPrepared": True,
         "installedAcceptance": False,

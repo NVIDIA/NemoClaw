@@ -23,6 +23,8 @@ function Invoke-NativeTesterResetQualification {
     $endpoint = "https://127.0.0.1:17193/tester-$nonce/v1"
     $piConfig = Join-Path $nativeConfigurationRoot 'pi\native-windows.json'
     $preserved = @{}
+    $primary = $null
+    $cleanupErrors = [Collections.Generic.List[string]]::new()
     foreach ($entry in @($script:OwnedNativeConfigurations.GetEnumerator())) {
         if ($entry.Key -ine $piConfig -and $entry.Key -ine $nativeActiveAgentPath) { $preserved[$entry.Key] = $entry.Value }
     }
@@ -140,28 +142,60 @@ function Invoke-NativeTesterResetQualification {
             restoredAgents = @($restore | ForEach-Object agent); originalSelectionReceiptRetained = $true
             screenshots = @($beforeFrame, $afterFrame)
         }
-        [IO.File]::WriteAllText((Join-Path $artifactRoot 'tester-reset.json'), (($receipt | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
-        return $receipt
+    } catch {
+        $primary = $_
     } finally {
+        $installerStopped = $true
         if ($process) {
-            if (-not $process.HasExited -and $window) {
-                try { ([Windows.Automation.WindowPattern]$window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern)).Close() } catch { }
-                if (-not $process.WaitForExit($script:OperationTimeoutMilliseconds)) { Fail-PackageQualification 'The tester-reset installer did not complete or roll back; it was not forcibly terminated.' }
+            try {
+                if (-not $process.HasExited) {
+                    if ($window) {
+                        try { ([Windows.Automation.WindowPattern]$window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern)).Close() } catch { }
+                    }
+                    $installerStopped = $process.WaitForExit($script:OperationTimeoutMilliseconds)
+                }
+            } catch {
+                $installerStopped = $false
+            } finally {
+                try { $process.Dispose() } catch { $cleanupErrors.Add('The tester-reset process handle could not be closed.') }
             }
-            $process.Dispose()
         }
-        if ($ownsKey -and $binding) {
-            $read = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--credential-read', 'compatible', '--binding', $binding)
-            if ($read.exitCode -eq 0 -and $read.stdout -ceq $canary) {
-                $cleared = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--credential-delete', 'compatible', '--binding', $binding)
-                if ($cleared.exitCode -ne 0) { Fail-PackageQualification 'The owned reset canary key could not be cleared.' }
+        if (-not $installerStopped) {
+            $cleanupErrors.Add('The tester-reset installer remains live or unconfirmed; owned data and the recovery helper were retained.')
+        } else {
+            if ($ownsKey -and $binding) {
+                try {
+                    $read = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--credential-read', 'compatible', '--binding', $binding)
+                    if ($read.exitCode -eq 0 -and $read.stdout -ceq $canary) {
+                        $cleared = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--credential-delete', 'compatible', '--binding', $binding)
+                        if ($cleared.exitCode -ne 0) { throw 'Credential removal failed.' }
+                    } elseif ($read.stdout.Length -ne 0 -or $read.exitCode -eq 0) {
+                        throw 'Credential identity changed.'
+                    }
+                } catch { $cleanupErrors.Add('The owned reset canary key could not be cleared safely.') }
+            }
+            if ($ownsState) {
+                try {
+                    $removed = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--state-remove', 'pi')
+                    if ($removed.exitCode -ne 0) { throw 'State removal failed.' }
+                } catch { $cleanupErrors.Add('The owned tester-reset state fixture could not be cleared safely.') }
+            }
+            if ($cleanupErrors.Count -eq 0) {
+                try {
+                    if ((Test-Path -LiteralPath $helper -PathType Leaf) -and
+                        (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $helperHash) { [IO.File]::Delete($helper) }
+                } catch { $cleanupErrors.Add('The tester-reset recovery helper could not be removed.') }
             }
         }
-        if ($ownsState) {
-            $removed = Invoke-NativeCredentialHelper -LauncherPath $helper -Arguments @('--state-remove', 'pi')
-            if ($removed.exitCode -ne 0) { Fail-PackageQualification 'The owned tester-reset state fixture could not be cleared safely.' }
-        }
-        if ((Test-Path -LiteralPath $helper -PathType Leaf) -and
-            (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $helperHash) { [IO.File]::Delete($helper) }
     }
+    if ($primary) {
+        if ($cleanupErrors.Count) {
+            $primary.Exception.Data['NemoClawCleanupErrors'] = $cleanupErrors.ToArray()
+            Write-Warning ($cleanupErrors -join ' ')
+        }
+        throw $primary
+    }
+    if ($cleanupErrors.Count) { Fail-PackageQualification ($cleanupErrors -join ' ') }
+    [IO.File]::WriteAllText((Join-Path $artifactRoot 'tester-reset.json'), (($receipt | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+    return $receipt
 }

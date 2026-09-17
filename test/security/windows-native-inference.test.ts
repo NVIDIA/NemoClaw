@@ -12,7 +12,8 @@ import {
   downloadPinnedAsset,
   verifyPinnedFile,
 } from "../../packaging/windows/runtime/native-inference-download.mts";
-import { verifyNativeOwnerListener } from "../../packaging/windows/runtime/native-inference.mts";
+import * as nativeInference from "../../packaging/windows/runtime/native-inference.mts";
+import { resolveNativeConfiguredInference } from "../../packaging/windows/runtime/native-configured-inference.mts";
 import { createNativeInferenceGuard } from "../../packaging/windows/runtime/native-inference-guard.mts";
 import {
   controlProof,
@@ -48,6 +49,56 @@ const hardware: NativeHardware = {
   gpuCount: 1,
 };
 const chat = { model: NATIVE_EXPRESS.model, messages: [{ role: "user", content: "Hello" }] };
+
+describe("configured native local inference", () => {
+  it.each(["hermes", "pi"])(
+    "passes the authenticated supervisor connection to %s",
+    async (agent) => {
+      const configuration = {
+        agent,
+        inference: "local",
+        localModel: NATIVE_EXPRESS.id,
+        model: "stale-model",
+        endpoint: "http://127.0.0.1:1/v1",
+        credentialStored: false,
+        profile: "personal",
+      };
+      const connection = {
+        localModel: NATIVE_EXPRESS.id,
+        model: NATIVE_EXPRESS.model,
+        endpoint: "http://127.0.0.1:54321/v1",
+        credential: "supervisor-owned-test-credential",
+      };
+      const supervisor = vi
+        .spyOn(nativeInference, "ensureNativeInference")
+        .mockResolvedValue(connection);
+      const signal = new AbortController().signal;
+      const onProgress = vi.fn();
+      const result = await resolveNativeConfiguredInference(
+        "installed-root",
+        "unused-launcher",
+        configuration,
+        {
+          signal,
+          onProgress,
+        },
+      );
+      expect(supervisor).toHaveBeenCalledExactlyOnceWith({
+        installRoot: "installed-root",
+        signal,
+        onProgress,
+      });
+      expect(result).toEqual({
+        configuration: { ...configuration, endpoint: connection.endpoint, model: connection.model },
+        credential: connection.credential,
+      });
+      supervisor.mockResolvedValue({ ...connection, localModel: "another-model" });
+      await expect(
+        resolveNativeConfiguredInference("installed-root", "unused-launcher", configuration),
+      ).rejects.toThrow("The running local model does not match the installed selection.");
+    },
+  );
+});
 
 describe("native Express eligibility and CUDA contract", () => {
   it("offers the fixed model only when native product, driver and capacity checks pass", () => {
@@ -351,8 +402,8 @@ describe("authenticated native inference guard", () => {
   it("authenticates the discovered listener using fresh non-secret loopback challenges", async () => {
     const f = await fixture();
     const signed = { ...f.record, signature: recordSignature(f.record, f.credential) };
-    const first = await verifyNativeOwnerListener(signed, f.credential);
-    const second = await verifyNativeOwnerListener(signed, f.credential);
+    const first = await nativeInference.verifyNativeOwnerListener(signed, f.credential);
+    const second = await nativeInference.verifyNativeOwnerListener(signed, f.credential);
     expect(first).toEqual({ record: signed, credential: f.credential });
     expect(second).toEqual(first);
     expect(f.requests).toHaveLength(2);
@@ -366,7 +417,7 @@ describe("authenticated native inference guard", () => {
     const f = await fixture();
     const record = { ...f.record, port };
     await expect(
-      verifyNativeOwnerListener(
+      nativeInference.verifyNativeOwnerListener(
         { ...record, signature: recordSignature(record, f.credential) },
         f.credential,
       ),
@@ -378,7 +429,7 @@ describe("authenticated native inference guard", () => {
     const f = await fixture();
     const expectedKey = randomBytes(32).toString("base64url");
     await expect(
-      verifyNativeOwnerListener(
+      nativeInference.verifyNativeOwnerListener(
         { ...f.record, signature: recordSignature(f.record, expectedKey) },
         expectedKey,
       ),
@@ -391,7 +442,7 @@ describe("authenticated native inference guard", () => {
     const server = createServer((_request, response) => response.end("x".repeat(16 * 1024 + 1)));
     const record = { ...f.record, port: await listen(server) };
     await expect(
-      verifyNativeOwnerListener(
+      nativeInference.verifyNativeOwnerListener(
         { ...record, signature: recordSignature(record, f.credential) },
         f.credential,
       ),

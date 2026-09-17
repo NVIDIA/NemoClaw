@@ -1,13 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   parseDevToolsActivePort,
   peMachine,
   standardEdgeCandidates,
   validateEdgeMetadata,
+  readNativeEdgeEndpoint,
 } from "./native-edge-browser.mts";
+
+test("Edge reads only a bounded ordinary endpoint file", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-edge-endpoint-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "DevToolsActivePort");
+  assert.equal(readNativeEdgeEndpoint(file), null);
+  fs.writeFileSync(file, "51234\n/devtools/browser/owned\n");
+  assert.deepEqual(readNativeEdgeEndpoint(file), { port: 51234, path: "/devtools/browser/owned" });
+  const link = path.join(root, "redirected");
+  fs.symlinkSync(file, link);
+  assert.throws(() => readNativeEdgeEndpoint(link), /link or changed identity/u);
+  fs.writeFileSync(file, "x".repeat(513));
+  assert.throws(() => readNativeEdgeEndpoint(file), /exceeds its limit/u);
+  fs.writeFileSync(file, "51234\nhttps://example.test/\n");
+  assert.throws(() => readNativeEdgeEndpoint(file), /valid CDP endpoint/u);
+});
 
 test("only standard Edge installation roots are candidates", () => {
   assert.deepEqual(

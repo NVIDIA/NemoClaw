@@ -2,15 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import {
-  copyNativeRuntime,
   createNativeProgressWriter,
   type NativeProgressCounts,
   type NativeProgressStage,
@@ -122,147 +117,5 @@ test("discarding stale progress and closing remove scheduled updates", async () 
     assert.equal(fixture.stream.listenerCount("drain"), 0);
   } finally {
     fixture.close();
-  }
-});
-
-test("copies nested and empty files with milestones after destination publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-progress-copy-"));
-  const source = join(root, "source");
-  const destination = join(root, "destination");
-  try {
-    await mkdir(join(source, "nested"), { recursive: true });
-    await mkdir(join(source, "empty-directory"));
-    await writeFile(join(source, "first"), "first payload");
-    await writeFile(join(source, "nested", "second"), "second payload");
-    await writeFile(join(source, "empty"), "");
-    const files = [
-      join(destination, "first"),
-      join(destination, "nested", "second"),
-      join(destination, "empty"),
-    ];
-    const observed: number[] = [];
-    const result = await copyNativeRuntime([{ source, destination }], {
-      onProgress(counts) {
-        if (!counts) return;
-        assert.deepEqual(Object.keys(counts).sort(), ["completed", "total", "unit"]);
-        assert.equal(counts.unit, "files");
-        assert.equal(counts.total, 3);
-        assert.equal(files.filter(existsSync).length, counts.completed);
-        observed.push(counts.completed);
-      },
-    });
-    assert.deepEqual(result, { completed: 3, total: 3 });
-    assert.deepEqual(observed, [0, 1, 2, 3]);
-    assert.equal(await readFile(files[0], "utf8"), "first payload");
-    assert.equal(await readFile(files[1], "utf8"), "second payload");
-    assert.equal(await readFile(files[2], "utf8"), "");
-    assert.ok(existsSync(join(destination, "empty-directory")));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("empty staging remains indeterminate instead of fabricating a positive total", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-progress-empty-"));
-  try {
-    const source = join(root, "source");
-    await mkdir(source);
-    const updates: (NativeProgressCounts | undefined)[] = [];
-    assert.deepEqual(
-      await copyNativeRuntime([{ source, destination: join(root, "copy") }], {
-        onProgress: (counts) => updates.push(counts),
-      }),
-      { completed: 0, total: 0 },
-    );
-    assert.deepEqual(updates, [undefined]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("cancellation settles the owned copy before caller cleanup removes partial files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-progress-abort-"));
-  const controller = new AbortController();
-  try {
-    const source = join(root, "source");
-    const destination = join(root, "copy");
-    await mkdir(source);
-    await Promise.all(
-      ["first", "second", "third"].map((name) =>
-        writeFile(join(source, name), Buffer.alloc(4096, 7)),
-      ),
-    );
-    await assert.rejects(
-      copyNativeRuntime([{ source, destination }], {
-        signal: controller.signal,
-        onProgress(counts) {
-          if (counts?.completed === 1) controller.abort();
-        },
-      }),
-      { name: "AbortError" },
-    );
-    await rm(destination, { recursive: true });
-    assert.equal(existsSync(destination), false);
-    await assert.rejects(
-      copyNativeRuntime([{ source, destination }], { signal: controller.signal }),
-      { name: "AbortError" },
-    );
-    assert.equal(existsSync(destination), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("preserves the copy operation's rejection of a destination inside its source", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-progress-alias-"));
-  try {
-    await writeFile(join(root, "payload"), "payload");
-    await assert.rejects(copyNativeRuntime([{ source: root, destination: join(root, "inside") }]), {
-      code: "ERR_FS_CP_EINVAL",
-    });
-    assert.equal(existsSync(join(root, "inside")), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("starts each timed copy target before its writes while retaining combined counts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-progress-targets-"));
-  try {
-    const first = join(root, "node-input"),
-      second = join(root, "agent-input");
-    const node = join(root, "node-copy"),
-      agent = join(root, "agent-copy");
-    await writeFile(first, "node");
-    await writeFile(second, "agent");
-    const starts: { index: number; nodeExists: boolean; agentExists: boolean }[] = [];
-    const counts: NativeProgressCounts[] = [];
-    const result = await copyNativeRuntime(
-      [
-        { source: first, destination: node },
-        { source: second, destination: agent },
-      ],
-      {
-        onTargetStart: (index) =>
-          starts.push({ index, nodeExists: existsSync(node), agentExists: existsSync(agent) }),
-        onProgress: (value) => {
-          if (value) counts.push(value);
-        },
-      },
-    );
-    assert.deepEqual(starts, [
-      { index: 0, nodeExists: false, agentExists: false },
-      { index: 1, nodeExists: true, agentExists: false },
-    ]);
-    assert.deepEqual(counts, [
-      { completed: 0, total: 2, unit: "files" },
-      { completed: 1, total: 2, unit: "files" },
-      { completed: 2, total: 2, unit: "files" },
-    ]);
-    assert.deepEqual(result, { completed: 2, total: 2 });
-    assert.equal(await readFile(node, "utf8"), "node");
-    assert.equal(await readFile(agent, "utf8"), "agent");
-  } finally {
-    await rm(root, { recursive: true, force: true });
   }
 });

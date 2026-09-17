@@ -19,6 +19,7 @@ import sys
 import types
 import shutil
 import subprocess
+import tomllib
 
 
 def load(name, filename):
@@ -40,6 +41,72 @@ class BuildControls(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.addCleanup(self.temporary.cleanup)
+
+    def entrypoint_fixture(self):
+        source = self.root / "source"
+        source.mkdir()
+        project = source / "pyproject.toml"
+        project.write_text(
+            '[tool.uv]\noverride-dependencies = ["cryptography>=50,<51"]\n'
+            'exclude-newer = "14 days"\n'
+            '[tool.uv.exclude-newer-package]\nmaturin = false\n',
+            encoding="utf-8",
+        )
+        return source, project
+
+    def test_entrypoint_reinstall_preserves_package_scoped_conpty_and_lock(self):
+        source, project = self.entrypoint_fixture()
+        original = project.read_bytes()
+        environment = {"UV_CACHE_DIR": "owned-cache", "UV_CONFIG_FILE": "ambient-config"}
+        with (
+            mock.patch.object(builder.conpty, "PYPROJECT_SHA256", builder.sha256(project)),
+            mock.patch.object(builder, "run_owned") as run,
+        ):
+            record = builder.regenerate_hermes_entrypoints(
+                "pinned-uv.exe", environment, source, self.root
+            )
+        executable, arguments, child_environment, cwd, evidence, label = (
+            run.call_args.args
+        )
+        self.assertEqual(executable, "pinned-uv.exe")
+        self.assertEqual(arguments, [
+            "sync", "--extra", "all", "--locked", "--offline",
+            "--reinstall-package", "hermes-agent",
+        ])
+        self.assertEqual(
+            (cwd, evidence, label),
+            (source, self.root, "regenerate-hermes-entrypoints"),
+        )
+        config = Path(child_environment["UV_CONFIG_FILE"])
+        settings = tomllib.loads(config.read_text())
+        self.assertEqual(settings.pop("config-settings-package"), {
+            "pywinpty": {"build-args": "--features winpty-rs/conpty --locked"}
+        })
+        self.assertEqual(settings, tomllib.loads(original.decode())["tool"]["uv"])
+        self.assertEqual(record["configurationSha256"], builder.sha256(config))
+        self.assertEqual(child_environment["UV_CACHE_DIR"], "owned-cache")
+        self.assertEqual(environment["UV_CONFIG_FILE"], "ambient-config")
+        self.assertEqual(project.read_bytes(), original)
+
+    def test_entrypoint_reinstall_refuses_changed_source_before_uv_execution(self):
+        source, _project = self.entrypoint_fixture()
+        with mock.patch.object(builder, "run_owned") as run:
+            with self.assertRaisesRegex(ValueError, "exact canonical source"):
+                builder.regenerate_hermes_entrypoints("uv", {}, source, self.root)
+        run.assert_not_called()
+        self.assertFalse((self.root / "entrypoint-pywinpty.uv.toml").exists())
+
+    def test_entrypoint_reinstall_propagates_build_failure_without_retry(self):
+        source, project = self.entrypoint_fixture()
+        with (
+            mock.patch.object(builder.conpty, "PYPROJECT_SHA256", builder.sha256(project)),
+            mock.patch.object(
+                builder, "run_owned", side_effect=RuntimeError("owned build failed")
+            ) as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "owned build failed"):
+                builder.regenerate_hermes_entrypoints("uv", {}, source, self.root)
+        self.assertEqual(run.call_count, 1)
 
     def test_retained_ci_archive_must_match_the_same_immutable_bytes(self):
         file = self.root / "node-input.zip"

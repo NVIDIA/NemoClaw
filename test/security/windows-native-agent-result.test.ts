@@ -34,7 +34,7 @@ describe.each(routes)("native %s request completion", (route) => {
   it("accepts a result while the creation watcher remains active", async () => {
     const fixture = await openNativeAgentResultFixture(route, "pending");
     try {
-      await fixture.write(JSON.stringify(fixture.expected));
+      await fixture.write(JSON.stringify(fixture.expected) + "\n");
       expect(JSON.parse(await fixture.wait())).toEqual(fixture.expected);
       expect(fixture.create.exitCode).toBeNull();
     } finally {
@@ -47,7 +47,7 @@ describe.each(routes)("native %s request completion", (route) => {
     async (mode) => {
       const fixture = await openNativeAgentResultFixture(route, mode);
       try {
-        await fixture.write(JSON.stringify(fixture.expected));
+        await fixture.write(JSON.stringify(fixture.expected) + "\n");
         const error = await fixture.wait(5000).catch((value: unknown) => value);
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toMatch(/OpenShell request exited|ENOENT/);
@@ -60,7 +60,7 @@ describe.each(routes)("native %s request completion", (route) => {
   it("rejects gateway loss before accepting an existing result", async () => {
     const fixture = await openNativeAgentResultFixture(route);
     try {
-      await fixture.write(JSON.stringify(fixture.expected));
+      await fixture.write(JSON.stringify(fixture.expected) + "\n");
       await fixture.stopGateway();
       await expect(fixture.wait()).rejects.toThrow("gateway stopped");
     } finally {
@@ -84,11 +84,11 @@ it.each(["Pi", "Hermes", "Deep Agents Code"])(
   async (label) => {
     const fixture = await openNativeAgentResultFixture("terminal");
     try {
-      await fixture.write(JSON.stringify({ verdict: "pass", token: "different" }));
+      await fixture.write(JSON.stringify({ verdict: "pass", token: "different" }) + "\n");
       await expect(fixture.wait(100, "OWNED_FINAL_TOKEN", label)).rejects.toThrow(
         `${label} did not publish`,
       );
-      await fixture.write(JSON.stringify(fixture.expected));
+      await fixture.write(JSON.stringify(fixture.expected) + "\n");
       expect(JSON.parse(await fixture.wait(100, "OWNED_FINAL_TOKEN", label))).toEqual(
         fixture.expected,
       );
@@ -98,11 +98,29 @@ it.each(["Pi", "Hermes", "Deep Agents Code"])(
   },
 );
 
+it("waits for the terminal receipt completion marker after its final token", async () => {
+  const fixture = await openNativeAgentResultFixture("terminal");
+  try {
+    await fixture.write(JSON.stringify(fixture.expected).slice(0, -1));
+    let settled = false;
+    const pending = fixture.wait().then((value) => {
+      settled = true;
+      return value;
+    });
+    await delay(50);
+    expect(settled).toBe(false);
+    await fixture.write(JSON.stringify(fixture.expected) + "\n");
+    expect(JSON.parse(await pending)).toEqual(fixture.expected);
+  } finally {
+    await fixture.close();
+  }
+});
+
 it("keeps the terminal receipt byte bound", async () => {
   const fixture = await openNativeAgentResultFixture("terminal");
   try {
     await fixture.write("OWNED_FINAL_TOKEN" + "x".repeat(1024 * 1024));
-    await expect(fixture.wait()).rejects.toThrow();
+    await expect(fixture.wait()).rejects.toThrow("exceeds its limit");
   } finally {
     await fixture.close();
   }

@@ -20,10 +20,10 @@ on:
       finished_windows_product_version:
         description: MSI product version for the finished preview (must be newer than the legacy preview)
         required: false
-        default: "0.1.3"
+        default: "0.1.10"
         type: string
       finished_windows_validation_scope:
-        description: Pi requires startup-only (local mock model; no live inference or migration qualification)
+        description: Full installed lifecycle with real inference, or startup-only with a local mock model
         required: false
         default: full-acceptance
         type: choice
@@ -152,8 +152,8 @@ jobs:
           OTHER_RUNTIME: ${{ inputs.test_native_windows_runtime }}
         run: |
           $parsedVersion = $null
-          if ($env:PRODUCT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or -not [version]::TryParse($env:PRODUCT_VERSION, [ref]$parsedVersion) -or $parsedVersion -le [version]'0.1.0') {
-            throw 'The finished preview needs an explicit MSI version newer than legacy 0.1.0.'
+          if ($env:PRODUCT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or -not [version]::TryParse($env:PRODUCT_VERSION, [ref]$parsedVersion) -or $parsedVersion -le [version]'0.1.4') {
+            throw 'The finished preview needs an explicit MSI version newer than migration baseline 0.1.4.'
           }
           if (@($env:OTHER_COMPONENTS, $env:OTHER_PROFILE, $env:OTHER_RUNTIME) -contains 'true') {
             throw 'The finished preview requires its own explicit dispatch.'
@@ -627,7 +627,6 @@ jobs:
           SELECTED_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}
           VALIDATION_SCOPE: ${{ inputs.finished_windows_validation_scope || 'full-acceptance' }}
         run: |
-          if ($env:SELECTED_AGENT -ceq 'pi' -and $env:VALIDATION_SCOPE -cne 'startup-only') { throw 'Pi requires startup-only; full installed acceptance is not implemented.' }
           if ($env:SELECTED_AGENT -ceq 'hermes' -and $env:VALIDATION_SCOPE -ceq 'startup-only') { throw 'Hermes requires its existing full-acceptance lane.' }
       - name: Prepare the pinned native application compiler
         shell: pwsh

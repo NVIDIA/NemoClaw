@@ -13,7 +13,6 @@ param([Parameter(Mandatory)][string]$SourceRoot,
 $ErrorActionPreference = 'Stop'
 $controllerSource = $env:GITHUB_SHA
 if ($Agent -cne 'openclaw' -and $Mode -cne 'current-build') { throw 'Only OpenClaw can reuse the historical replay lane.' }
-if ($Agent -ceq 'pi' -and $ValidationScope -cne 'startup-only') { throw 'Pi supports startup-only smoke, not full installed acceptance.' }
 if ($ValidationScope -ceq 'startup-only' -and ($Agent -ceq 'hermes' -or $Mode -cne 'current-build')) { throw 'Startup-only smoke supports current OpenClaw and Pi builds only.' }
 if ($ValidationScope -ceq 'startup-only' -and ($env:NVIDIA_API_KEY -or $env:NVIDIA_INFERENCE_API_KEY)) { throw 'Startup-only smoke must not receive inference credentials.' }
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or $PSVersionTable.PSEdition -cne 'Core' -or
@@ -54,6 +53,10 @@ if ($Mode -ceq 'current-build') {
 } else {
     & $ciNode --experimental-strip-types --no-warnings --test @($controlFiles | ForEach-Object { Join-Path $SourceRoot $_ })
     if ($LASTEXITCODE -ne 0) { throw 'The Windows observer or diagnostic controls failed.' }
+}
+if ($Agent -ceq 'pi' -and $ValidationScope -ceq 'full-acceptance') {
+    & $ciNode --experimental-strip-types --no-warnings --test (Join-Path $SourceRoot 'packaging\windows\installer\installed-console-observer.test.mts') (Join-Path $SourceRoot 'packaging\windows\installer\installed-pi-session.test.mts')
+    if ($LASTEXITCODE -ne 0) { throw 'The Pi terminal observer controls failed.' }
 }
 
 $work = [IO.Path]::GetFullPath($WorkDirectory)
@@ -102,20 +105,36 @@ try {
   )) {
     $qualification = Join-Path $SourceRoot ("packaging\windows\installer\qualify-installed-$Agent.mts")
     $driverRoot = if ($Agent -ceq 'hermes') { "$work\application\inputs\tools\node_modules\playwright-core" } else { "$work\application\build\app\node_modules\playwright-core" }
-    $caseArguments = @()
-    if ($Agent -ceq 'hermes') {
+    [string[]]$caseArguments = @()
+    if ($Agent -cin @('hermes','pi')) {
       $caseArguments = if ($case.name -ceq 'firstInstalledLaunch') { @('--preserve-configuration') } else { @('--reuse-configuration') }
+    }
+    if ($Agent -cin @('hermes','pi') -and $case.name -ceq 'warmInstalledLaunch') {
+      $caseArguments += @('--previous-acceptance', "$work\installed-acceptance\installed-$Agent-acceptance.json")
     }
     & "$work\application\node\node.exe" --experimental-strip-types --no-warnings $qualification `
       --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
       --output "$work\$($case.directory)" --browser-driver-root $driverRoot @caseArguments
     $code = $LASTEXITCODE
     $timings[$case.name] = @{ exitCode = $code; receipt = "$($case.directory)/installed-$Agent-acceptance.json";
-      modelAndToolDurationsSeparate = ($Agent -ceq 'openclaw'); conversationIntervalsSeparateFromStartup = ($Agent -ceq 'hermes'); isolatedProviderLatencyClaimed = $false; agentStateResetPerCase = ($Agent -ceq 'openclaw') }
+      modelAndToolDurationsSeparate = ($Agent -ceq 'openclaw'); conversationIntervalsSeparateFromStartup = ($Agent -cin @('hermes','pi')); isolatedProviderLatencyClaimed = $false; agentStateResetPerCase = ($Agent -ceq 'openclaw') }
     if ($code -ne 0) { throw "The $($case.name) selected-agent acceptance failed; no startup comparison is claimed." }
     $accepted = Get-Content -LiteralPath "$work\$($case.directory)\installed-$Agent-acceptance.json" -Raw | ConvertFrom-Json
     if ($accepted.verdict -cne 'pass' -or @($accepted.cleanupErrors).Count -ne 0) {
-      throw 'Ordinary launch did not finish its required model/tool checks and owned cleanup.'
+      throw 'Ordinary launch did not finish its required agent checks and owned cleanup.'
+    }
+    if ($Agent -ceq 'pi') {
+      if ($accepted.classification -cne 'installed-pi-terminal-acceptance' -or
+          $accepted.results.realTerminal -ne $true -or $accepted.results.realModelReply -ne $true -or
+          $accepted.results.fileToolsQualified -isnot [bool] -or $accepted.results.fileToolsQualified -ne $true -or
+          $accepted.results.turns[1].fileTools -isnot [bool] -or $accepted.results.turns[1].fileTools -ne $true -or
+          @($accepted.results.turns).Count -ne 2 -or
+          $accepted.results.configurationReused -ne ($case.name -ceq 'warmInstalledLaunch')) {
+        throw 'Pi acceptance did not prove the real terminal conversation and saved-configuration restart.'
+      }
+      $timings['piCodingToolsQualified'] = $false
+      $timings['piFileToolsQualified'] = $true
+      $timings['networkQualification'] = $false
     }
   }
   $timings.startupComparisonAvailable = $true
@@ -124,7 +143,7 @@ try {
       "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
       --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
     if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
-  } else { $timings['compiledRuntimeControls'] = 'Hermes acceptance validated capabilities, SEA identity and held runtime tuple.' }
+  } else { $timings['compiledRuntimeControls'] = "$Agent acceptance validated capabilities, SEA identity and held runtime tuple." }
   }
 } catch { $primary = $_ }
 finally {

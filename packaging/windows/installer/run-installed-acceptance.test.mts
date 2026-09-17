@@ -20,6 +20,152 @@ function powershellEnvironment(extra: NodeJS.ProcessEnv = {}) {
 }
 
 test(
+  "Burn fixture accepts MXC capability details but rejects ambiguous preparation decisions",
+  { skip: process.platform !== "win32" },
+  () => {
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:BURN_SOURCE, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Burn fixture source does not parse.' }
+$owner = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-DiagnosticPreparationTier' }, $true)
+if ($null -eq $owner) { throw 'Preparation decision owner missing.' }
+. ([scriptblock]::Create($owner.Extent.Text))
+foreach ($tier in @('base-container','appcontainer-dacl')) {
+    $augment = $tier -ceq 'appcontainer-dacl'
+    foreach ($extended in @($false,$true)) {
+        $record = @{tier=$tier;needsDaclAugmentation=$augment}
+        if ($extended) { $record.warnings=@();$record.probes=@{baseContainerApiPresent=(-not $augment);uiCapabilities=@{canBlockClipboardRead=$true}} }
+        if ((Read-DiagnosticPreparationTier ($record|ConvertTo-Json -Depth 5)) -cne $tier) { throw 'Valid MXC capabilities rejected.' }
+    }
+}
+$invalid = @(
+    '{broken', '{}', '[]', (' ' * 8193),
+    ('{"tier":"base-container","needsDaclAugmentation":false,"probes":' + ('[' * 9) + '0' + (']' * 9) + '}'),
+    '{"tier":"base-container","needsDaclAugmentation":true}',
+    '{"tier":"appcontainer-dacl","needsDaclAugmentation":false}',
+    '{"tier":"base-container","needsDaclAugmentation":"false"}',
+    '{"tier":"base-container","needsDaclAugmentation":null}',
+    '{"tier":"base-container","needsDaclAugmentation":0}',
+    '{"tier":"BASE-CONTAINER","needsDaclAugmentation":false}',
+    '{"tier":"unknown","needsDaclAugmentation":false}',
+    '{"tier":"base-container","tier":"appcontainer-dacl","needsDaclAugmentation":true}',
+    '{"tier":"base-container","needsDaclAugmentation":true,"needsDaclAugmentation":false}',
+    '{"tier":"base-container","needsDaclAugmentation":false,"warnings":[],"warnings":[]}'
+)
+foreach ($text in $invalid) {
+    $rejected=$false
+    try { $null=Read-DiagnosticPreparationTier $text } catch { $rejected=$true }
+    if (-not $rejected) { throw 'Ambiguous or invalid MXC capabilities accepted.' }
+}
+Write-Output 'PREPARATION_SCHEMA_19_PASS'
+`;
+    const result = spawnSync("pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: powershellEnvironment({
+        BURN_SOURCE: fileURLToPath(new URL("test-burn-diagnostics.ps1", import.meta.url)),
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /PREPARATION_SCHEMA_19_PASS/u);
+  },
+);
+
+test(
+  "tester reset preserves primary failure and retains recovery for incomplete cleanup",
+  {
+    skip: process.platform !== "win32",
+  },
+  () => {
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:RESET_SOURCE, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Reset source does not parse.' }
+$function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-NativeTesterResetQualification' }, $true)
+$statements = @($function.Body.EndBlock.Statements)
+$owner = @($statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] })[0]
+$index = [array]::IndexOf($statements, $owner)
+if ($statements[$index+1] -isnot [Management.Automation.Language.IfStatementAst] -or
+    $statements[$index+2] -isnot [Management.Automation.Language.IfStatementAst]) { throw 'Reset outcome handling changed.' }
+$body = 'try { if ($mainFailure) { throw "primary-fixture-failure" } } ' +
+  ($owner.CatchClauses.Extent.Text -join ' ') + ' finally ' + $owner.Finally.Extent.Text +
+  $statements[$index+1].Extent.Text + $statements[$index+2].Extent.Text
+$execute = [scriptblock]::Create($body)
+function Fail-PackageQualification($message) { throw $message }
+function Invoke-NativeCredentialHelper {
+  param($LauncherPath, $Arguments)
+  $calls.Add($Arguments[0])
+  switch ($Arguments[0]) {
+    '--credential-read' {
+      if ($testCase -ceq 'read-throws') { throw 'synthetic-sensitive-diagnostic' }
+      return @{ exitCode = 0; stdout = $(if ($testCase -ceq 'identity-drift') { 'other-key' } else { $canary }) }
+    }
+    '--credential-delete' { return @{ exitCode = $(if ($testCase -cin @('key-fails','both-fail')) { 1 } else { 0 }) } }
+    '--state-remove' { return @{ exitCode = $(if ($testCase -cin @('state-fails','both-fail')) { 1 } else { 0 }) } }
+    default { throw 'Unexpected cleanup operation.' }
+  }
+}
+$root = Join-Path ([IO.Path]::GetTempPath()) ('reset-cleanup-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($root) | Out-Null
+try {
+  foreach ($mainFailure in @($false,$true)) {
+    foreach ($testCase in @('pass','key-fails','state-fails','both-fail','read-throws','identity-drift','live','wait-throws')) {
+      $helper = Join-Path $root 'helper.exe'; [IO.File]::WriteAllText($helper, 'inert-test-data')
+      $helperHash = (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash.ToLowerInvariant()
+      $primary = $null; $cleanupErrors = [Collections.Generic.List[string]]::new()
+      $calls = [Collections.Generic.List[string]]::new(); $ownsKey = $true; $ownsState = $true
+      $binding = 'fixture-binding'; $canary = 'synthetic-private-key'; $window = $null
+      $script:disposed = 0; $script:waits = 0; $script:OperationTimeoutMilliseconds = 1
+      $process = [pscustomobject]@{ HasExited = $false }
+      $process | Add-Member ScriptMethod WaitForExit {
+        param($timeout)
+        $script:waits++
+        if ($testCase -ceq 'wait-throws') { throw 'query-failed' }
+        return $testCase -cne 'live'
+      }
+      $process | Add-Member ScriptMethod Dispose { $script:disposed++ }
+      $caught = $null
+      try { . $execute -WarningAction SilentlyContinue } catch { $caught = $_ }
+      $failedCleanup = $testCase -cne 'pass'
+      if (($null -ne $caught) -ne ($mainFailure -or $failedCleanup)) { throw ('Wrong outcome: ' + $testCase) }
+      if ($mainFailure -and $caught.Exception.Message -cne 'primary-fixture-failure') { throw 'Primary error replaced.' }
+      if ($mainFailure -and $failedCleanup -and -not $caught.Exception.Data.Contains('NemoClawCleanupErrors')) { throw 'Secondary errors lost.' }
+      if ($script:disposed -ne 1 -or $script:waits -ne 1) { throw 'Process was not observed and disposed.' }
+      if ($testCase -cin @('live','wait-throws')) {
+        if ($calls.Count -ne 0) { throw 'Cleanup overlapped a live or unconfirmed installer.' }
+      } elseif ($calls -notcontains '--state-remove') { throw 'State cleanup was skipped after key failure.' }
+      if ($testCase -cin @('identity-drift','read-throws') -and $calls -contains '--credential-delete') { throw 'Unowned key deleted.' }
+      if ((Test-Path -LiteralPath $helper) -ne $failedCleanup) { throw 'Wrong recovery helper retention.' }
+      if (($cleanupErrors -join ' ').Contains('synthetic-')) { throw 'Sensitive diagnostic leaked.' }
+    }
+  }
+  Write-Output 'RESET_CLEANUP_16_PASS'
+} finally { [IO.Directory]::Delete($root, $true) }
+`;
+    const result = spawnSync("pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: powershellEnvironment({
+        RESET_SOURCE: fileURLToPath(
+          new URL(
+            "../../../scripts/checks/qualify-windows-native-tester-reset.ps1",
+            import.meta.url,
+          ),
+        ),
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /RESET_CLEANUP_16_PASS/u);
+  },
+);
+
+test(
   "acceptance rejects unsupported scopes and credentials before installing",
   { skip: process.platform !== "win32" },
   () => {
@@ -28,7 +174,7 @@ test(
       "run-installed-acceptance.ps1",
     );
     for (const [agent, scope, mode, secret, expected] of [
-      ["pi", "full-acceptance", "current-build", "", "Pi supports startup-only"],
+      ["pi", "full-acceptance", "current-build", "", "requires explicit Windows CI identities"],
       ["pi", "startup-only", "built-0.1.3-replay", "", "Only OpenClaw"],
       ["hermes", "startup-only", "current-build", "", "Startup-only smoke supports"],
       ["openclaw", "startup-only", "built-0.1.3-replay", "", "Startup-only smoke supports"],
@@ -163,6 +309,90 @@ Write-Output $count
   },
 );
 
+for (const agent of ["pi", "hermes"])
+  test(
+    `${agent} installed acceptance runs cold and saved-configuration launches and rejects incomplete evidence`,
+    { skip: process.platform !== "win32" },
+    () => {
+      const source = fileURLToPath(new URL("./run-installed-acceptance.ps1", import.meta.url));
+      const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:NEMOCLAW_ACCEPTANCE_SOURCE, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Acceptance source does not parse.' }
+$owner = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] -and $null -ne $_.Finally })
+$branch = @($owner[0].Body.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] })
+# Replace only the external process boundary; execute the actual case loop,
+# argument routing and evidence checks without installing or contacting inference.
+$execute = [scriptblock]::Create($branch[0].Extent.Text.Replace('& "$work\application\node\node.exe"', '& Invoke-TestAgent'))
+$ValidationScope = 'full-acceptance'; $Agent = $env:TEST_AGENT; $SourceRoot = 'source-fixture'
+$work = 'work-fixture'; $installation = 'install-fixture'
+function Invoke-TestAgent {
+  if ($args -notcontains "source-fixture\packaging\windows\installer\qualify-installed-$Agent.mts") { throw 'Wrong agent controller.' }
+  $first = $calls.Count -eq 0
+  if (($args -contains '--preserve-configuration') -ne $first -or ($args -contains '--reuse-configuration') -eq $first) { throw ('Incorrect cold/warm configuration routing: ' + ($args -join ',') + '; first=' + $first) }
+  $previous = [array]::IndexOf($args, '--previous-acceptance')
+  if (($previous -ge 0) -ne (-not $first)) { throw 'Incorrect cold-run receipt routing.' }
+  if ($previous -ge 0 -and $args[$previous+1] -cne "work-fixture\installed-acceptance\installed-$Agent-acceptance.json") { throw 'Wrong cold-run receipt.' }
+  $calls.Add(@($args))
+  $global:LASTEXITCODE = if ($scenario -ceq 'process-failure') { 1 } else { 0 }
+}
+function Get-Content {
+  param($LiteralPath, [switch]$Raw)
+  $directory = if ($calls.Count -eq 1) { 'installed-acceptance' } else { 'installed-acceptance-warm' }
+  if ($LiteralPath -cne "work-fixture\$directory\installed-$Agent-acceptance.json") { throw 'Wrong agent receipt.' }
+  $receipt = @{ classification='installed-pi-terminal-acceptance'; verdict='pass'; cleanupErrors=@(); results=@{
+    realTerminal=$true; realModelReply=$true; fileToolsQualified=$true; turns=@(@{},@{fileTools=$true}); configurationReused=($calls.Count -eq 2)
+  } }
+  switch ($scenario) {
+    'failed-receipt' { $receipt.verdict='fail' }
+    'cleanup-failure' { $receipt.cleanupErrors=@('retained process') }
+    'no-terminal' { $receipt.results.realTerminal=$false }
+    'no-model' { $receipt.results.realModelReply=$false }
+    'one-turn' { $receipt.results.turns=@(@{}) }
+    'no-tools' { $receipt.results.fileToolsQualified=$false }
+    'no-tool-turn' { $receipt.results.turns[1].Remove('fileTools') }
+    'string-tools' { $receipt.results.fileToolsQualified='true' }
+    'wrong-controller' { $receipt.classification='startup-only' }
+    'no-restart' { $receipt.results.configurationReused=$false }
+  }
+  return ($receipt | ConvertTo-Json -Depth 6)
+}
+$count=0
+$scenarios=@('pass','process-failure','failed-receipt','cleanup-failure')
+if ($Agent -ceq 'pi') { $scenarios+=@('no-terminal','no-model','one-turn','no-tools','no-tool-turn','string-tools','wrong-controller','no-restart') }
+foreach ($scenario in $scenarios) {
+  $calls=[Collections.Generic.List[object]]::new(); $timings=@{}; $failed=$false
+  try { . $execute } catch { if ($scenario -ceq 'pass') { throw }; $failed=$true }
+  if ($failed -ne ($scenario -cne 'pass')) { throw ('Unexpected Pi acceptance result: '+$scenario) }
+  if ($scenario -ceq 'pass' -and ($calls.Count -ne 2 -or $timings.startupComparisonAvailable -ne $true)) { throw 'Incorrect launch comparison result.' }
+  if ($scenario -ceq 'pass' -and $Agent -ceq 'pi' -and ($timings.networkQualification -ne $false -or $timings.piCodingToolsQualified -ne $false)) { throw 'Incorrect Pi qualification scope.' }
+  if ($failed -and $timings.startupComparisonAvailable -eq $true) { throw 'A failed case claimed a startup comparison.' }
+  $count++
+}
+Write-Output $count
+`;
+      const result = spawnSync(
+        "pwsh.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-EncodedCommand",
+          Buffer.from(script, "utf16le").toString("base64"),
+        ],
+        {
+          env: powershellEnvironment({ NEMOCLAW_ACCEPTANCE_SOURCE: source, TEST_AGENT: agent }),
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 30_000,
+        },
+      );
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.equal(result.stdout.trim(), agent === "pi" ? "12" : "4");
+    },
+  );
+
 for (const shell of ["powershell.exe", "pwsh.exe"])
   test(
     `${shell} treats absent diagnostics as optional and preserves failures`,
@@ -244,3 +474,58 @@ ConvertTo-Json -InputObject @($results) -Compress
       assert.equal(JSON.parse(lastLine).length, 7);
     },
   );
+
+test(
+  "migration accepts Pi and only versions newer than its published baseline",
+  { skip: process.platform !== "win32" },
+  () => {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+function Parse([string]$File) {
+  $tokens=$null; $errors=$null
+  $ast=[Management.Automation.Language.Parser]::ParseFile($File,[ref]$tokens,[ref]$errors)
+  if ($errors.Count) { throw 'Migration controller does not parse.' }
+  return $ast
+}
+$ast=Parse (Join-Path $env:TEST_OWNER 'run-preview-migration.ps1')
+$guard=@($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] })[0]
+$check=[scriptblock]::Create($ast.ParamBlock.Extent.Text + '; $parsedVersion=$null; ' + $guard.Extent.Text + '; return $NewAgent')
+foreach ($agent in @('openclaw','hermes','pi')) {
+  foreach ($version in @('0.1.3','0.1.4','0.1.5','0.1.10','bad','0.1.10.1')) {
+    $failed=$false
+    try { $result=& $check -WorkDirectory 'unused-fixture' -ProductVersion $version -NewAgent $agent } catch { $failed=$true }
+    if ($failed -ne ($version -notin @('0.1.5','0.1.10'))) { throw 'Incorrect migration version admission.' }
+    if (-not $failed -and $result -cne $agent) { throw 'Incorrect migrated agent.' }
+  }
+}
+$controls=Parse (Join-Path $env:TEST_OWNER 'preview-ui-controls.ps1')
+$function=@($controls.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Set-PreviewCanaryConfiguration'},$true))[0]
+$parameters=($function.Parameters | ForEach-Object { $_.Extent.Text }) -join ','
+$choose=[scriptblock]::Create('param('+ $parameters + ') ' + $function.Body.EndBlock.Statements[0].Extent.Text + '; return $choiceId')
+foreach ($entry in @{openclaw='AgentOpenClaw';hermes='AgentHermes';pi='AgentPi'}.GetEnumerator()) {
+  if ((& $choose -Window $null -Endpoint '' -Key '' -Agent $entry.Key) -cne $entry.Value) { throw 'Wrong native UI agent choice.' }
+}
+try { $null=& $choose -Window $null -Endpoint '' -Key '' -Agent 'unrecognized'; throw 'Unexpected agent accepted.' }
+catch [System.Management.Automation.ParameterBindingException] { }
+Write-Output 'pass'
+`;
+    const result = spawnSync(
+      "pwsh.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      {
+        env: powershellEnvironment({ TEST_OWNER: fileURLToPath(new URL(".", import.meta.url)) }),
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 30000,
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout.trim(), "pass");
+  },
+);

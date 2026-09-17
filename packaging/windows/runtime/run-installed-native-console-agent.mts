@@ -684,8 +684,8 @@ async function runNativeConsoleAgentInternal(
     : null;
   if (dashboard && consoleQualification)
     fail("console qualification cannot substitute for dashboard evidence");
-  if (consoleQualification && agentId !== "hermes")
-    fail("interactive console qualification requires Hermes");
+  if (consoleQualification && !["hermes", "pi"].includes(agentId))
+    fail("interactive console qualification requires Hermes or Pi");
   const consoleEvidenceRoot = consoleQualification
     ? requiredDirectory(
         argumentValue("--artifact-directory") ?? "",
@@ -1042,7 +1042,9 @@ async function runNativeConsoleAgentInternal(
           : {}),
         NEMOCLAW_AGENT_BROKER_TOKEN: brokerToken,
         NEMOCLAW_AGENT_EXIT_RECEIPT: exitReceipt,
-        ...(consoleQualification ? { NEMOCLAW_AGENT_CONSOLE_PROBE: consoleProbePath } : {}),
+        ...(consoleQualification && agentId === "hermes"
+          ? { NEMOCLAW_AGENT_CONSOLE_PROBE: consoleProbePath }
+          : {}),
         NEMOCLAW_AGENT_MODEL: config.model,
         NEMOCLAW_AGENT_NODE: node,
         NEMOCLAW_AGENT_PROXY_PORT: String(broker.port),
@@ -1524,13 +1526,17 @@ async function runNativeConsoleAgentInternal(
       await stateSession.release();
       released = true;
     });
-    await attempt("dashboard cleanup receipt", () => {
-      if (dashboardEvidenceRoot)
+    await attempt("qualification cleanup receipt", () => {
+      for (const [directory, file, classification] of [
+        [dashboardEvidenceRoot, "dashboard-end.json", "native-hermes-dashboard-qualification"],
+        [consoleEvidenceRoot, "console-cleanup.json", "native-agent-console-qualification"],
+      ]) {
+        if (!directory) continue;
         fs.writeFileSync(
-          path.join(dashboardEvidenceRoot, "dashboard-end.json"),
+          path.join(directory, file!),
           JSON.stringify({
             schemaVersion: 1,
-            classification: "native-hermes-dashboard-qualification",
+            classification,
             agent: agentId,
             runtimeIdentity: {
               runtimeId: runtimeLease.runtimeId,
@@ -1553,6 +1559,7 @@ async function runNativeConsoleAgentInternal(
           }) + "\n",
           { flag: "wx", mode: 0o600 },
         );
+      }
     });
     diagnostics.cleanupFailed(...cleanupFailures);
     if (cleanupFailures.length)

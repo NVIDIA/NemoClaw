@@ -6,10 +6,20 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { readOpenedRegularFile } from "./native-security.mts";
 
 const execFileAsync = promisify(execFile);
 const EDGE_RELATIVE = path.join("Microsoft", "Edge", "Application", "msedge.exe");
 const DEVTOOLS = /^([1-9][0-9]{0,4})\r?\n(\/devtools\/browser\/[A-Za-z0-9-]{1,128})\r?\n?$/u;
+
+export function readNativeEdgeEndpoint(file: string) {
+  const content = readOpenedRegularFile(file, {
+    encoding: "utf8",
+    maxBytes: 512,
+    rejectLinks: true,
+  });
+  return content === null ? null : parseDevToolsActivePort(content);
+}
 
 export function standardEdgeCandidates(environment: NodeJS.ProcessEnv) {
   const roots = [
@@ -281,11 +291,9 @@ export async function startNativeEdgeBrowser(options: {
       options.signal?.throwIfAborted();
       if (child.exitCode !== null || child.signalCode !== null)
         throw new Error("Microsoft Edge exited before publishing its CDP endpoint.");
-      if (fs.existsSync(active)) {
-        const stat = fs.statSync(active);
-        if (!stat.isFile() || stat.size > 512)
-          throw new Error("Microsoft Edge published an invalid CDP endpoint file.");
-        endpoint = parseDevToolsActivePort(fs.readFileSync(active, "utf8"));
+      const published = readNativeEdgeEndpoint(active);
+      if (published !== null) {
+        endpoint = published;
         break;
       }
       await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 50))]);

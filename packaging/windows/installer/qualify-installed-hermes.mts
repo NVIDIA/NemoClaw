@@ -5,15 +5,19 @@ declare const requestAnimationFrame: typeof globalThis.requestAnimationFrame;
 // CI-only acceptance of the real installed Hermes dashboard and native Stop owner.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { captureOwned } from "./qualify-finished-package.mts";
+import {
+  acceptanceProcessesStopped,
+  captureOwned,
+  retainedAcceptance,
+} from "./qualify-finished-package.mts";
 import { childEnvironment, sanitizedFailure } from "./qualify-installed-openclaw.mts";
-import { nativeCredentialBinding } from "../runtime/native-security.mts";
+import { nativeCredentialBinding, readOpenedRegularFile } from "../runtime/native-security.mts";
 import { sampleInstalledIdle } from "../tests/performance/installed-idle.mts";
 
 export function recordedHermesTerminal(messages: any[], command: string, sentinel: string) {
@@ -412,6 +416,7 @@ async function main() {
   const cleanupErrors: string[] = [];
   let phase = "configuration",
     primary: unknown,
+    configurationOwned = false,
     binding: string | undefined;
   let guardian: ChildProcess | undefined, observer: ChildProcess | undefined;
   let guardianClosed: Promise<number> | undefined, observerClosed: Promise<number> | undefined;
@@ -442,9 +447,45 @@ async function main() {
       profile: "personal",
       options: {},
     };
+    if (!reuse)
+      assert(!fs.existsSync(state), "Fresh Hermes acceptance requires no saved configuration");
+    const configurationPath = path.join(state, "native-windows.json");
+    const retainedState = reuse
+      ? retainedAcceptance(
+          "hermes",
+          JSON.parse(
+            readOpenedRegularFile(argument("--previous-acceptance"), {
+              encoding: "utf8",
+              maxBytes: 1024 * 1024,
+              rejectLinks: true,
+            }) ?? "null",
+          ),
+          identity,
+          readOpenedRegularFile(configurationPath, {
+            encoding: "utf8",
+            maxBytes: 64 * 1024,
+            rejectLinks: true,
+          }) ?? "",
+          `${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`,
+        )
+      : undefined;
+    const ownedState = JSON.parse(await command("private state", ["--state-session", "hermes"]));
+    assert.equal(ownedState.agent, "hermes");
+    assert.equal(ownedState.leaseHeld, true);
+    assert.match(ownedState.stateRoot, /^[A-Z]:\\NemoClawState-S-1-(?:\d+-)*\d+-hermes$/u);
+    assert(
+      reuse || ownedState.created === true,
+      "Fresh Hermes acceptance cannot use pre-existing agent data",
+    );
+    if (reuse)
+      assert(
+        ownedState.created === false && ownedState.stateRoot === retainedState,
+        "Hermes restart cannot claim different or recreated agent data",
+      );
+    configurationOwned = true;
+    results.stateRoot = ownedState.stateRoot;
     binding = nativeCredentialBinding(configuration);
     if (!reuse) {
-      assert(!fs.existsSync(state), "Fresh Hermes acceptance requires no saved configuration");
       const onboardPath = path.join(output, "native-onboarding.json");
       const onboard = await captureOwned(
         path.join(process.env.ProgramFiles!, "PowerShell/7/pwsh.exe"),
@@ -471,7 +512,15 @@ async function main() {
       assert.equal(results.onboarding.rejectedEmptyIntegrationSave, true);
       assert.equal(results.onboarding.cleanupClosed, true);
     }
-    const saved = JSON.parse(fs.readFileSync(path.join(state, "native-windows.json"), "utf8"));
+    const configurationText = readOpenedRegularFile(configurationPath, {
+      encoding: "utf8",
+      maxBytes: 64 * 1024,
+      rejectLinks: true,
+    });
+    assert(configurationText !== null, "Saved Hermes configuration is missing");
+    const saved = JSON.parse(configurationText);
+    results.configurationSha256 = createHash("sha256").update(configurationText).digest("hex");
+    results.configurationReused = reuse;
     assert.equal(saved.agent, "hermes");
     assert.equal(saved.model, model);
     assert.equal(saved.inference, "nvidia");
@@ -594,6 +643,11 @@ async function main() {
       await sleep(250);
     }
     assert(ready?.agent === "hermes", "The actual Hermes dashboard did not become ready");
+    assert.equal(
+      ready.agentRuntimeRoot,
+      results.stateRoot,
+      "Hermes started with different agent data",
+    );
     results.edgeBrowser = validateHermesEdgeReceipt(
       JSON.parse(fs.readFileSync(path.join(session, "edge-browser.json"), "utf8")),
       ready.sessionId,
@@ -910,10 +964,13 @@ async function main() {
           cleanupErrors.push("observer remained live"),
         );
     }
-    if (!preserve || primary !== undefined || cleanupErrors.length) {
+    if (!acceptanceProcessesStopped(guardian, observer)) {
+      cleanupErrors.push(
+        "Processes remain live or unconfirmed; saved data and credentials retained",
+      );
+    } else if (configurationOwned && (!preserve || primary !== undefined || cleanupErrors.length)) {
       try {
-        if (fs.existsSync(state))
-          await command("remove-data", ["--remove-native-data", "--agent", "hermes"]);
+        await command("remove-data", ["--remove-native-data", "--agent", "hermes"]);
       } catch {
         cleanupErrors.push("configured Hermes data");
       }
@@ -931,9 +988,11 @@ async function main() {
     }
   }
   if (cleanupErrors.length) primary ??= new Error("Installed Hermes cleanup did not complete");
+  results.configurationPreserved = preserve && primary === undefined;
   write("installed-hermes-acceptance.json", {
     schemaVersion: 1,
     classification: "installed-canonical-hermes-acceptance",
+    controllerRun: `${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`,
     runtime: identity,
     verdict: primary === undefined ? "pass" : "fail",
     failedStage: primary === undefined ? null : phase,

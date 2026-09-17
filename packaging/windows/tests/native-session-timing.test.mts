@@ -49,7 +49,7 @@ const consoleSource = fs.readFileSync(
 const consoleWrapper = consoleSource
   .slice(
     consoleSource.indexOf("export async function runNativeConsoleAgent("),
-    consoleSource.lastIndexOf("\nif (process.argv[1]"),
+    consoleSource.indexOf("\nexport async function runNativeConsoleEntry("),
   )
   .replace("export ", "");
 const webSource = fs.readFileSync(
@@ -60,17 +60,28 @@ const webWrapper =
   "async function runWeb() {\n" +
   webSource.slice(
     webSource.indexOf("  const diagnostics = createNativeSessionDiagnostics("),
-    webSource.lastIndexOf("\nif (process.argv[1]"),
+    webSource.indexOf("\nasync function main()"),
   );
 const executableConsole = consoleWrapper;
 
 function common(diagnostics: Diagnostics) {
+  const runtimeLease = { signal: new AbortController().signal, assertHeld() {} };
   return {
     createNativeSessionDiagnostics: () => diagnostics,
     NativeSessionFailure,
     path,
     process,
     console: { log() {}, error() {} },
+    qualification: false,
+    runtimeLease,
+    bindNativeRuntimeGuard: (state: unknown) => state,
+    usingNativeRuntimeSession: async (_lease: unknown, operation: () => unknown) => operation(),
+    withNativeRuntimeSession: async (
+      _launcher: string,
+      _installation: string,
+      _agent: string,
+      operation: (lease: typeof runtimeLease) => unknown,
+    ) => operation(runtimeLease),
     requiredDirectory: (value: string) => value || os.tmpdir(),
     requiredFile: (value: string) => value,
     fail: (message: string) => {
@@ -210,6 +221,7 @@ test("actual console wrapper throws the original cause when inner cleanup throws
     await assert.rejects(
       operation({
         webSession: {
+          signal: new AbortController().signal,
           progress: (stage: string) => progressStages.push(stage),
           complete: async (...values: unknown[]) => {
             completed = values;
@@ -248,6 +260,8 @@ test("actual console wrapper saves a success record after the session control cl
     );
     await operation({
       webSession: {
+        signal: new AbortController().signal,
+        progress() {},
         complete: async (passed: boolean) => {
           assert(passed);
           stopped = true;
@@ -274,6 +288,7 @@ test("actual OpenClaw wrapper retains an early no-log failure and a later state-
         configured: true,
         selectedEvidenceRoot: root,
         openNativeWebSession: async () => ({
+          signal: new AbortController().signal,
           progress() {},
           assertRunning() {},
           complete: async (...values: unknown[]) => {
@@ -381,7 +396,7 @@ test("actual OpenClaw final handoff saves success and measures native control cl
       webSource.lastIndexOf(
         "\n  } catch (error) {\n    diagnostics.fail(error);\n    presentation =",
       ),
-      webSource.lastIndexOf("\nif (process.argv[1]"),
+      webSource.indexOf("\nasync function main()"),
     );
     assert(footer.startsWith("\n  } catch"));
     const operation = wrapper(

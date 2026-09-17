@@ -3,8 +3,13 @@
 # Separate-runner migration qualification. It does not send inference requests.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$WorkDirectory, [Parameter(Mandatory)][string]$ProductVersion,
-    [ValidateSet('openclaw','hermes')][string]$NewAgent = 'openclaw')
+    [ValidateSet('openclaw','hermes','pi')][string]$NewAgent = 'openclaw')
 Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+$parsedVersion = $null
+if ($ProductVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+    -not [version]::TryParse($ProductVersion, [ref]$parsedVersion) -or $parsedVersion -le [version]'0.1.4') {
+    throw 'Migration requires a candidate MSI version newer than baseline 0.1.4.'
+}
 $NewAgent=$NewAgent.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'preview-ui-controls.ps1')
 $work = [IO.Path]::GetFullPath($WorkDirectory)
@@ -175,27 +180,27 @@ try {
         $leaseIdentity=$identity.stdout | ConvertFrom-Json
         $expected=Get-Content -LiteralPath (Join-Path $work 'assembled\runtime-identity.json') -Raw | ConvertFrom-Json
         if ($identity.exitCode -ne 0 -or $leaseIdentity.agent -cne $NewAgent -or $leaseIdentity.leaseHeld -ne $true -or $leaseIdentity.runtimeId -cne $expected.runtimeId -or $leaseIdentity.sourceRevision -cne $env:GITHUB_SHA) { throw 'The migrated installed runtime differs from the same-run selected-agent artifact.' }
-        if ($NewAgent -ceq 'hermes') {
+        if ($NewAgent -cne 'openclaw') {
             $newConfigText=Get-Content -LiteralPath $newConfiguration -Raw
             $newConfig=$newConfigText | ConvertFrom-Json
             if ($newConfig.agent -cne $NewAgent) { throw 'The migrated configuration names another agent.' }
             $prepared=Invoke-MigrationHelper $launcher @('--configure-native','--prepare-all') $newConfigText
-            if ($prepared.exitCode -ne 0) { throw 'The migrated Hermes binding could not be inspected.' }
+            if ($prepared.exitCode -ne 0) { throw 'The migrated agent binding could not be inspected.' }
             $newBinding=($prepared.stdout | ConvertFrom-Json).inference
             if ($newBinding -cnotmatch '^[a-f0-9]{64}$' -or $newBinding -ceq $binding) { throw 'The old and new agent credential bindings are not distinct.' }
             $newRead=Invoke-MigrationHelper $launcher @('--credential-read','compatible','--binding',$newBinding)
-            if ($newRead.exitCode -ne 0 -or $newRead.stdout -cne $canary) { throw 'The migrated Hermes credential differs.' }
+            if ($newRead.exitCode -ne 0 -or $newRead.stdout -cne $canary) { throw 'The migrated agent credential differs.' }
             $newLease=Invoke-MigrationHelper $launcher @('--state-session',$NewAgent)
             $newStateReceipt=$newLease.stdout | ConvertFrom-Json
-            if ($newLease.exitCode -ne 0 -or $newStateReceipt.agent -cne $NewAgent -or $newStateReceipt.stateRoot -cne $newState -or $newStateReceipt.leaseHeld -ne $true) { throw 'The migrated Hermes state owner differs.' }
-            [IO.File]::WriteAllText((Join-Path $newState ('migration-'+$nonce+'.txt')),'Disposable migrated Hermes state '+$nonce,[Text.UTF8Encoding]::new($false))
+            if ($newLease.exitCode -ne 0 -or $newStateReceipt.agent -cne $NewAgent -or $newStateReceipt.stateRoot -cne $newState -or $newStateReceipt.leaseHeld -ne $true) { throw 'The migrated agent state owner differs.' }
+            [IO.File]::WriteAllText((Join-Path $newState ('migration-'+$nonce+'.txt')),'Disposable migrated agent state '+$nonce,[Text.UTF8Encoding]::new($false))
             $case['newAgentBindingVerified']=$true
         }
         $case.newUninstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode uninstall -LogPath (Join-Path $caseRoot 'new-uninstall.log') -RemoveAgentData -Agent $NewAgent
         Assert-MigrationRegistrations ''
-        if ($NewAgent -ceq 'hermes') {
+        if ($NewAgent -cne 'openclaw') {
             $newRead=Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$newBinding)
-            if ((Test-Path -LiteralPath $newConfiguration) -or (Test-Path -LiteralPath $newState) -or $newRead.exitCode -eq 0 -or $newRead.stdout.Length -ne 0) { throw 'Selective Hermes reset retained its owned data or credential.' }
+            if ((Test-Path -LiteralPath $newConfiguration) -or (Test-Path -LiteralPath $newState) -or $newRead.exitCode -eq 0 -or $newRead.stdout.Length -ne 0) { throw 'Selective agent reset retained its owned data or credential.' }
             Assert-MigrationCanary $marker $markerHash $configHash $canary
             $case.preservedAfterSelectiveReset=$true
             Remove-MigrationOldCanary

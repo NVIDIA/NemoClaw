@@ -3,8 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createNativeBrowserOpener } from "./native-runtime-browser.mts";
-import { join, resolve } from "node:path";
-import { cp, lstat, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import type { Writable } from "node:stream";
 import type { NativeFailurePresentation } from "./native-session-diagnostics.mts";
 
@@ -96,71 +95,6 @@ export function createNativeProgressWriter(stream: Writable) {
       stream.off("drain", flush);
     },
   };
-}
-
-type CopyTarget = { source: string; destination: string };
-type CopyOptions = {
-  signal?: AbortSignal;
-  onProgress?: (counts?: NativeProgressCounts) => void;
-  onTargetStart?: (index: number) => void;
-};
-
-/** Stage installed files without blocking Stop; the caller owns partial-copy cleanup. */
-export async function copyNativeRuntime(targets: readonly CopyTarget[], options: CopyOptions = {}) {
-  let total = 0;
-  let completed = 0;
-  options.signal?.throwIfAborted();
-  options.onProgress?.();
-
-  const visit = async (target: CopyTarget, copying: boolean): Promise<void> => {
-    options.signal?.throwIfAborted();
-    const entry = await lstat(target.source);
-    options.signal?.throwIfAborted();
-    if (entry.isDirectory()) {
-      if (copying) {
-        // Let cp retain its source/destination identity, alias, directory-mode
-        // and symlink checks. Copy just this directory; children are awaited
-        // individually so progress means a completed operation, not a queue.
-        await cp(target.source, target.destination, {
-          recursive: true,
-          filter: (source) => source === target.source,
-        });
-      }
-      for (const name of await readdir(target.source)) {
-        await visit(
-          { source: join(target.source, name), destination: join(target.destination, name) },
-          copying,
-        );
-      }
-      return;
-    }
-    if (!copying) {
-      total++;
-      if (!Number.isSafeInteger(total))
-        throw new Error("The native runtime file count is invalid.");
-      return;
-    }
-    await cp(target.source, target.destination);
-    options.signal?.throwIfAborted();
-    completed++;
-    if (completed > total) throw new Error("The installed native runtime changed during staging.");
-    options.onProgress?.({ completed, total, unit: "files" });
-  };
-
-  const normalized = targets.map(({ source, destination }) => ({
-    source: resolve(source),
-    destination: resolve(destination),
-  }));
-  for (const target of normalized) await visit(target, false);
-  if (total > 0) options.onProgress?.({ completed, total, unit: "files" });
-  for (const [index, target] of normalized.entries()) {
-    options.signal?.throwIfAborted();
-    options.onTargetStart?.(index);
-    await visit(target, true);
-  }
-  options.signal?.throwIfAborted();
-  if (completed !== total) throw new Error("The installed native runtime changed during staging.");
-  return { completed, total };
 }
 
 function validateAddress(url: string) {

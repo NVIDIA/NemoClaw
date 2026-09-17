@@ -400,7 +400,14 @@ describe("native OpenClaw session lifecycle", () => {
           null,
           controller.signal,
         );
-        const rejection = expect(monitoring).rejects.toThrow("contained OpenClaw session stopped");
+        const rejection = monitoring.then(
+          () => expect.unreachable("the monitor resolved instead of rejecting"),
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message).toContain("contained OpenClaw session stopped");
+            expect((error as Error).message).not.toContain("must-not-appear-in-the-error");
+          },
+        );
         await vi.waitFor(
           async () => {
             expect(await readFile(observed, "utf8")).toBe("queried");

@@ -80,8 +80,8 @@ export async function openNativeAgentResultFixture(
   const owned: { child: ChildProcess; closed: Promise<void> }[] = [];
   const controller = new AbortController();
   let reads = 0;
-  const launch = (program: string, executable = process.execPath) => {
-    const child = spawn(executable, ["-e", program], {
+  const launch = (program: string, executable = process.execPath, args: string[] = []) => {
+    const child = spawn(executable, ["-e", program, ...args], {
       cwd: root,
       env: process.env,
       stdio: "ignore",
@@ -133,7 +133,9 @@ export async function openNativeAgentResultFixture(
     abort: () => controller.abort(new Error("owned result monitoring cancelled")),
     publish(result: unknown = expected, delayMilliseconds = 100) {
       return launch(
-        `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(resultPath)}, ${JSON.stringify(JSON.stringify(result))}), ${delayMilliseconds});`,
+        'setTimeout(() => require("node:fs").writeFileSync(process.argv[1], process.argv[2]), Number(process.argv[3]));',
+        process.execPath,
+        [resultPath, JSON.stringify(result) + "\n", String(delayMilliseconds)],
       );
     },
     write: (content: string) => writeFile(resultPath, content),

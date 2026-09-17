@@ -1,10 +1,11 @@
 NemoClaw Native Windows Candidate Preview
 
-This package contains the NemoClaw CLI and authentic OpenClaw, Hermes Agent,
-Deep Agents Code, Pi, and NemoCUA runtime paths. Pi and NemoCUA are experimental.
-The MSI installs native ARM64 Node.js, Python, OpenShell, and Microsoft MXC
-ProcessContainer components. WSL, Docker, Linux virtual machines, and unused
-MXC backend sidecars are not part of this package.
+Each finished installer contains the NemoClaw CLI and the agent selected when
+the package was built. Its embedded availability record disables unselected
+agents. Pi and NemoCUA remain experimental. The MSI installs that agent's
+required native ARM64 runtime, OpenShell, and Microsoft MXC ProcessContainer
+components. WSL, Docker, Linux virtual machines, and unused MXC backend sidecars
+are not part of this package.
 
 Setup and onboarding share one native WPF window. Choose an agent once, select
 inference and supported optional services, and follow the named install phases.
@@ -43,9 +44,10 @@ real model response before Ready. This is an agent-independent local service;
 it does not run the Linux or WSL recipes. Generic ARM64 CI is not physical N1X
 qualification.
 
-Qualification must exercise the actual native setup, all five packaged agent
-paths, configured Hermes interactive console and dashboard, desktop links,
-repair/reinstall, default data preservation, explicit tester reset, and cleanup.
+Qualification must exercise the selected agent through native setup, its UI,
+desktop links, repair/reinstall, data preservation, explicit tester reset, and
+cleanup. Hermes requires both its interactive console and dashboard. Qualifying
+one package does not qualify agents absent from that package.
 Deterministic local inference proves runtime and transport behavior, not live
 commercial-provider or messaging-account qualification. Actual Windows screen
 captures and receipts identify the exact candidate being tested.

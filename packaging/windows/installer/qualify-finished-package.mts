@@ -3,7 +3,8 @@
 
 // CI controller only. Customer launch uses the installed compiled guardian.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -15,6 +16,68 @@ function argument(name: string) {
   if (index < 0 || !process.argv[index + 1])
     throw new Error("A finished-package input is missing.");
   return path.resolve(process.argv[index + 1]);
+}
+
+export function acceptanceProcessesStopped(
+  ...children: (Pick<ChildProcess, "exitCode" | "signalCode"> | undefined)[]
+) {
+  return children.every(
+    (child) => child === undefined || child.exitCode !== null || child.signalCode !== null,
+  );
+}
+
+export function retainedAcceptance(
+  agent: "pi" | "hermes",
+  previous: Record<string, any>,
+  identity: Record<string, any>,
+  configuration: string,
+  controllerRun: string,
+) {
+  assert.match(controllerRun, /^[1-9]\d*:[1-9]\d*$/u);
+  assert(
+    previous?.schemaVersion === 1 &&
+      previous.classification ===
+        (agent === "pi"
+          ? "installed-pi-terminal-acceptance"
+          : "installed-canonical-hermes-acceptance") &&
+      previous.verdict === "pass" &&
+      previous.controllerRun === controllerRun &&
+      Array.isArray(previous.cleanupErrors) &&
+      previous.cleanupErrors.length === 0 &&
+      previous.results?.configurationReused === false &&
+      previous.results.configurationPreserved === true &&
+      previous.results.cleanup?.cleanupSucceeded === true &&
+      previous.results.cleanup.stateRetained === true,
+    "Restart requires a successful preserved cold-run receipt",
+  );
+  for (const key of [
+    "runtimeId",
+    "manifestSha256",
+    "sourceRevision",
+    "nodeSha256",
+    "nodeVersion",
+  ]) {
+    assert.match(
+      identity[key],
+      key === "nodeVersion"
+        ? /^22\.23\.2$/u
+        : key === "sourceRevision"
+          ? /^[a-f0-9]{40}$/u
+          : /^[a-f0-9]{64}$/u,
+    );
+    assert.equal(previous.runtime?.[key], identity[key], "Restart runtime identity differs");
+  }
+  assert.equal(
+    previous.results.configurationSha256,
+    createHash("sha256").update(configuration).digest("hex"),
+    "Restart configuration differs from its cold run",
+  );
+  assert.match(
+    previous.results.stateRoot,
+    /^[A-Z]:\\NemoClawState-S-1-(?:\d+-)*\d+-(?:pi|hermes)$/u,
+  );
+  assert(previous.results.stateRoot.endsWith(`-${agent}`));
+  return previous.results.stateRoot as string;
 }
 
 export async function captureOwned(
@@ -66,7 +129,7 @@ export async function captureOwned(
   };
 }
 
-export function environment(installRoot: string, source: NodeJS.ProcessEnv = process.env) {
+export function qualificationEnvironment(source: NodeJS.ProcessEnv, observer = false) {
   const allowed = new Set([
     "systemroot",
     "windir",
@@ -85,10 +148,16 @@ export function environment(installRoot: string, source: NodeJS.ProcessEnv = pro
     "number_of_processors",
     "os",
   ]);
+  if (observer)
+    for (const key of ["github_actions", "psmodulepath", "programfiles(x86)"]) allowed.add(key);
+  return Object.fromEntries(
+    Object.entries(source).filter(([name]) => allowed.has(name.toLowerCase())),
+  );
+}
+
+export function environment(installRoot: string, source: NodeJS.ProcessEnv = process.env) {
   return {
-    ...Object.fromEntries(
-      Object.entries(source).filter(([name]) => allowed.has(name.toLowerCase())),
-    ),
+    ...qualificationEnvironment(source),
     NEMOCLAW_NATIVE_INSTALL_ROOT: installRoot,
   };
 }

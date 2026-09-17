@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { configureNativeFromStdin } from "./native-setup-configuration.mts";
@@ -104,6 +105,25 @@ test("Hermes compatibility paths and prebuilt command bind the live sealed lease
     throw new Error("lease revoked");
   };
   assert.throws(() => nativeHermesCompatibility(runtime), /lease revoked/u);
+  assert.throws(() => nativeRuntimeWorkerCommand(runtime, worker), /lease revoked/u);
+});
+
+test("Pi avoids main-entry parent traversal without changing other agents or dependency resolution", () => {
+  const runtime = heldHermesRuntime("pi");
+  const worker = path.win32.join(runtime.runtimeRoot, "workers", "native-runtime.cjs");
+  assert.deepEqual(nativeRuntimeWorkerCommand(runtime, worker), [
+    runtime.node,
+    "--preserve-symlinks-main",
+    worker,
+  ]);
+  for (const purpose of ["openclaw", "langchain-deepagents-code", "nemocua", "inference"] as const)
+    assert.deepEqual(nativeRuntimeWorkerCommand({ ...runtime, purpose }, worker), [
+      runtime.node,
+      worker,
+    ]);
+  runtime.assertHeld = () => {
+    throw new Error("lease revoked");
+  };
   assert.throws(() => nativeRuntimeWorkerCommand(runtime, worker), /lease revoked/u);
 });
 
@@ -707,15 +727,14 @@ test("Tavily selection clears previous suppression and preserves existing Hermes
   }
 });
 
-test("dashboard cleanup emits the actual held runtime tuple and contract counters", () => {
+test("dashboard and console cleanup emit their held runtime tuple and cleanup results", async () => {
   const source = fs.readFileSync(
     new URL("./run-installed-native-console-agent.mts", import.meta.url),
     "utf8",
   );
-  const marker = source.indexOf('path.join(dashboardEvidenceRoot, "dashboard-end.json")');
-  const start = source.indexOf("JSON.stringify(", marker) + "JSON.stringify(".length;
-  const end = source.indexOf(') + "\\n"', start);
-  assert(marker >= 0 && end > start);
+  const start = source.indexOf('await attempt("qualification cleanup receipt", () => {');
+  const end = source.indexOf("    diagnostics.cleanupFailed(...cleanupFailures)", start);
+  assert(start >= 0 && end > start);
   const runtimeLease = {
     runtimeId: "a".repeat(64),
     manifestSha256: "b".repeat(64),
@@ -723,27 +742,60 @@ test("dashboard cleanup emits the actual held runtime tuple and contract counter
     runtimeBytesCopied: 7,
     runtimeFilesHashedAtLaunch: 3,
   };
-  const result = runInNewContext("(" + source.slice(start, end) + ")", {
-    agentId: "hermes",
-    runtimeLease,
-    sessionPassed: true,
-    dashboardGatewayStopped: true,
-    rootsRemoved: true,
-    runRoot: "run",
-    runtimeRoot: "runtime",
-    dashboardRelayRoot: "relay",
-    statusRoot: "status",
-    agentRuntimeRoot: "state",
-    released: true,
-    cleanupFailures: [],
-    fs: { existsSync: (value: string) => value === "state" },
-  });
-  assert.equal(result.runtimeBytesCopied, runtimeLease.runtimeBytesCopied);
-  assert.equal(result.runtimeFilesHashedAtLaunch, runtimeLease.runtimeFilesHashedAtLaunch);
-  assert.equal(result.runtimeCounterSource, "held-runtime-session");
-  assert.deepEqual(JSON.parse(JSON.stringify(result.runtimeIdentity)), {
-    runtimeId: runtimeLease.runtimeId,
-    manifestSha256: runtimeLease.manifestSha256,
-    sourceRevision: runtimeLease.sourceRevision,
-  });
+  for (const agent of ["hermes", "pi"]) {
+    for (const succeeded of [true, false]) {
+      const written: { file: string; document: any; options: any }[] = [];
+      await runInNewContext(
+        "(async () => {" + stripTypeScriptTypes(source.slice(start, end)) + "})()",
+        {
+          agentId: agent,
+          dashboardEvidenceRoot: agent === "hermes" ? "/evidence" : null,
+          consoleEvidenceRoot: agent === "pi" ? "/evidence" : null,
+          attempt: async (_label: string, operation: () => unknown) => operation(),
+          path,
+          runtimeLease,
+          sessionPassed: succeeded,
+          dashboardGatewayStopped: succeeded,
+          rootsRemoved: succeeded,
+          runRoot: "run",
+          runtimeRoot: "runtime",
+          dashboardRelayRoot: "relay",
+          statusRoot: "status",
+          agentRuntimeRoot: "state",
+          released: succeeded,
+          cleanupFailures: succeeded ? [] : ["owned fixture cleanup"],
+          fs: {
+            existsSync: (value: string) => value === "state",
+            writeFileSync: (file: string, text: string, options: unknown) =>
+              written.push({ file, document: JSON.parse(text), options }),
+          },
+        },
+      );
+      assert.equal(written.length, 1);
+      assert.equal(
+        written[0].file,
+        path.join("/evidence", agent === "hermes" ? "dashboard-end.json" : "console-cleanup.json"),
+      );
+      assert.equal(written[0].options.flag, "wx");
+      const result = written[0].document;
+      assert.equal(result.agent, agent);
+      assert.equal(result.stateRetained, true);
+      for (const key of [
+        "sandboxDeleted",
+        "gatewayStopped",
+        "ephemeralRootsRemoved",
+        "leaseReleased",
+        "cleanupSucceeded",
+      ])
+        assert.equal(result[key], succeeded, key);
+      assert.equal(result.runtimeBytesCopied, runtimeLease.runtimeBytesCopied);
+      assert.equal(result.runtimeFilesHashedAtLaunch, runtimeLease.runtimeFilesHashedAtLaunch);
+      assert.equal(result.runtimeCounterSource, "held-runtime-session");
+      assert.deepEqual(JSON.parse(JSON.stringify(result.runtimeIdentity)), {
+        runtimeId: runtimeLease.runtimeId,
+        manifestSha256: runtimeLease.manifestSha256,
+        sourceRevision: runtimeLease.sourceRevision,
+      });
+    }
+  }
 });

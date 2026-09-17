@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { stripTypeScriptTypes } from "node:module";
+import { acceptanceProcessesStopped } from "./qualify-finished-package.mts";
 import {
   recordedHermesTerminal,
   hermesInstalledToolCommand,
@@ -16,6 +18,83 @@ import {
   createHermesPtyState,
   finalHermesAssistant,
 } from "./qualify-installed-hermes.mts";
+
+for (const existing of ["configuration", "agent-data"])
+  test(`fresh Hermes rejection preserves pre-existing ${existing} and credentials`, async () => {
+    const source = fs.readFileSync(
+      new URL("./qualify-installed-hermes.mts", import.meta.url),
+      "utf8",
+    );
+    const start = source.indexOf("async function main() {");
+    const end = source.indexOf("\nif (process.argv[1]", start);
+    assert(start > 0 && end > start);
+    const body = source
+      .slice(start, end)
+      .replaceAll("import.meta.url", '"file:///qualification.mts"');
+    const calls: string[][] = [];
+    const receipts: Record<string, any> = {};
+    const bindings = {
+      assert,
+      path: path.win32,
+      process: {
+        platform: "win32",
+        arch: "arm64",
+        version: "v22.23.2",
+        argv: [],
+        env: {
+          GITHUB_ACTIONS: "true",
+          NVIDIA_API_KEY: "nvapi-synthetic-fixture",
+          LOCALAPPDATA: "C:\\UserData",
+          SystemRoot: "C:\\Windows",
+        },
+      },
+      argument: (name: string, fallback?: string) =>
+        ({
+          "--install-root": "C:\\Installed",
+          "--output": "C:\\Evidence",
+          "--runtime-identity": "identity.json",
+        })[name] ?? fallback,
+      fs: {
+        readFileSync: () => "{}",
+        existsSync: (name: string) => existing === "configuration" && name !== "C:\\Evidence",
+        mkdirSync() {},
+        writeFileSync: (name: string, value: string) => {
+          receipts[name] = JSON.parse(value);
+        },
+      },
+      childEnvironment: () => ({}),
+      nativeCredentialBinding: () => "synthetic-binding",
+      acceptanceProcessesStopped,
+      captureOwned: async (_launcher: string, args: string[]) => {
+        calls.push(args);
+        assert.deepEqual(args, ["--state-session", "hermes"]);
+        return {
+          failure: null,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            agent: "hermes",
+            leaseHeld: true,
+            stateRoot: "C:\\NemoClawState-S-1-5-21-1000-hermes",
+            created: false,
+          }),
+        };
+      },
+      sanitizedFailure: (error: unknown) => String(error),
+    };
+    const main = new Function(
+      ...Object.keys(bindings),
+      `${stripTypeScriptTypes(body)}\nreturn main;`,
+    )(...Object.values(bindings));
+    await assert.rejects(
+      main(),
+      /Fresh Hermes acceptance (requires no saved configuration|cannot use pre-existing agent data)/u,
+    );
+    assert.deepEqual(calls, existing === "configuration" ? [] : [["--state-session", "hermes"]]);
+    const receipt = receipts["C:\\Evidence\\installed-hermes-acceptance.json"];
+    assert.equal(receipt.verdict, "fail");
+    assert.equal(receipt.failedStage, "configuration");
+    assert.deepEqual(receipt.cleanupErrors, []);
+  });
 
 test("Hermes Edge acceptance requires the exact browser_exec code and successful sentinel", () => {
   const code = "print('EDGE_SENTINEL')";

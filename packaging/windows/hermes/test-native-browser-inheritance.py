@@ -152,7 +152,7 @@ class BrowserInheritanceControls(unittest.TestCase):
         self.assertEqual(self.calls[-1][1], {"mode": 0o777, "exist_ok": True})
 
     def test_actual_pinned_prepare_algorithm_and_owner_record_remain(self):
-        text = SOURCE.read_text()
+        text = SOURCE.read_text(encoding="utf-8")
         self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), EXPECTED_SOURCE)
         tree = ast.parse(text)
         node = next(

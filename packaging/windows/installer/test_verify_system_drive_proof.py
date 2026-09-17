@@ -52,6 +52,9 @@ class SystemDriveProofTests(unittest.TestCase):
         self.build_path = self.root / "build.json"
         self.proof_dir = self.root / "proof"
         self.proof_dir.mkdir()
+        (self.proof_dir / "mxc-native.log").write_text(
+            "[1789582933] selected isolation tier: [1789582933] appcontainer-dacl[1789582933] \n"
+        )
         self.revision = "a" * 40
         self.node_path = r"D:\host\bin\node.exe"
         self.preauthorized_path = ntpath.join(
@@ -140,6 +143,7 @@ class SystemDriveProofTests(unittest.TestCase):
             "schemaVersion": 1,
             "classification": "actual-system-root-and-mxc-proof",
             "status": "pass",
+            "selectedIsolationTier": "appcontainer-dacl",
             "sourceRevision": self.revision,
             "helperSha256": gate.sha(binary),
             "systemDriveRoot": "C:\\",
@@ -309,6 +313,35 @@ class SystemDriveProofTests(unittest.TestCase):
             stream.write(b"changed")
         with self.assertRaisesRegex(ValueError, "exact executable"):
             self.verify()
+
+    def test_base_container_is_not_reported_as_appcontainer_dacl_evidence(self):
+        self.proof["selectedIsolationTier"] = "base-container"
+        self.proof["needsDaclAugmentation"] = False
+        (self.proof_dir / "mxc-native.log").write_text(
+            "[1789582933] selected isolation tier: [1789582933] base-container[1789582933] \n"
+        )
+        self.save()
+        result = self.verify()
+        self.assertEqual(result["selectedIsolationTier"], "base-container")
+        self.assertFalse(result["appContainerDaclExecution"])
+        self.assertFalse(result["installedAcceptance"])
+        self.proof["guest"]["deniedRead"] = False
+        self.save()
+        with self.assertRaisesRegex(ValueError, "read/deny/write"):
+            self.verify()
+
+    def test_missing_unknown_ambiguous_or_mismatched_tier_is_rejected(self):
+        for log in (
+            "missing selection",
+            "selected isolation tier: none\n",
+            "selected isolation tier: base-container\n",
+            "selected isolation tier: appcontainer-dacl\nselected isolation tier: appcontainer-dacl\n",
+            "selected isolation tier: appcontainer-dacl\nWin32k mitigation applied to child process\n",
+        ):
+            with self.subTest(log=log):
+                (self.proof_dir / "mxc-native.log").write_text(log)
+                with self.assertRaises(ValueError):
+                    self.verify()
 
     def test_non_arm64_rejected(self):
         binary = bytearray(self.helper.read_bytes())
@@ -591,15 +624,25 @@ class SystemDriveProofTests(unittest.TestCase):
         ]
         cases_path = self.root / "cases.json"
         cases_path.write_text(json.dumps(cases))
+        tier_cases = [
+            "[1789582933] selected isolation tier: [1789582933] base-container[1789582933] \r\n",
+            "selected isolation tier: appcontainer-dacl\n",
+            "selected isolation tier: none\n",
+            "no tier",
+            "selected isolation tier: base-container\nselected isolation tier: appcontainer-dacl\n",
+            "selected isolation tier: base-container\nWin32k mitigation applied to child process\n",
+        ]
+        tier_path = self.root / "tiers.json"
+        tier_path.write_text(json.dumps(tier_cases))
         link = self.root / "node-link.exe"
         link.symlink_to(self.helper)
         script = self.root / "compare.ps1"
-        script.write_text(r"""param([string]$Source,[string]$Cases,[string]$File,[string]$Directory,[string]$Link)
+        script.write_text(r"""param([string]$Source,[string]$Cases,[string]$File,[string]$Directory,[string]$Link,[string]$Tiers)
 $ErrorActionPreference='Stop'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'The actual producer did not parse.'}
-foreach($name in @('Compare-ProofNodeAcl','Get-ProofNodeAttributes')) {
+foreach($name in @('Compare-ProofNodeAcl','Get-ProofNodeAttributes','Get-ProofIsolationTier')) {
   $function=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
   if($function.Count -ne 1){throw 'The exact producer function is missing.'}
   . ([ScriptBlock]::Create($function[0].Extent.Text))
@@ -610,7 +653,10 @@ $attributes=Get-ProofNodeAttributes $File
 $directoryRejected=$false;$linkRejected=$false
 try{$null=Get-ProofNodeAttributes $Directory}catch{$directoryRejected=$true}
 try{$null=Get-ProofNodeAttributes $Link}catch{$linkRejected=$true}
-@{results=$results;fileAttributes=$attributes;directoryRejected=$directoryRejected;linkRejected=$linkRejected}|ConvertTo-Json -Depth 6
+$tierResults=@(foreach($log in (Get-Content -LiteralPath $Tiers -Raw|ConvertFrom-Json)){
+  try{Get-ProofIsolationTier $log}catch{'rejected'}
+})
+@{results=$results;fileAttributes=$attributes;directoryRejected=$directoryRejected;linkRejected=$linkRejected;tiers=$tierResults}|ConvertTo-Json -Depth 6
 """)
         result = subprocess.run(
             [
@@ -623,6 +669,7 @@ try{$null=Get-ProofNodeAttributes $Link}catch{$linkRejected=$true}
                 str(self.helper),
                 str(self.root),
                 str(link),
+                str(tier_path),
             ],
             capture_output=True,
             text=True,
@@ -636,6 +683,16 @@ try{$null=Get-ProofNodeAttributes $Link}catch{$linkRejected=$true}
         self.assertTrue(actual["directoryRejected"])
         self.assertTrue(actual["linkRejected"])
         self.assertEqual(actual["fileAttributes"] & 0x410, 0)
+        self.assertEqual(
+            actual["tiers"],
+            ["base-container", "appcontainer-dacl", *(["rejected"] * 4)],
+        )
+        for log, expected in zip(tier_cases, actual["tiers"]):
+            if expected == "rejected":
+                with self.assertRaises(ValueError):
+                    gate.isolation_tier(log)
+            else:
+                self.assertEqual(gate.isolation_tier(log), expected)
 
     def test_failure_never_overwrites_existing_gate_receipt(self):
         output = self.root / "gate.json"

@@ -11,12 +11,16 @@ The package uses only standard Windows Installer and Burn authoring. It has no
 custom actions and does not invoke PowerShell, WSL, Bash, Ubuntu, Docker, or a
 Linux virtual machine. The package installs the exact assembled ARM64 NemoClaw
 runtime payload under `%ProgramFiles%\NVIDIA\NemoClaw`. That payload contains
-the NemoClaw CLI, pinned Node.js and OpenClaw runtimes, NVIDIA/OpenShell#2721 CLI
+the NemoClaw CLI, the selected agent and its required runtime, NVIDIA/OpenShell#2721 CLI
 and gateway binaries, and only the pinned Microsoft MXC ProcessContainer
 executor and host-preparation utility. WSLC, Windows Sandbox, test-proxy,
 diagnostic, and learning-mode sidecars from the upstream SDK archive are not
 packaged. Windows Installer registers normal Add/Remove Programs metadata and
 adds the installed `bin` directory to the machine PATH.
+
+`finished_windows_agent` selects the agent included in each finished installer.
+The embedded runtime-availability record marks unselected agents `not-included`,
+and setup disables those choices. One package does not qualify all agent variants.
 
 The finished-installer workflow checks out the pinned NVIDIA/OpenShell#2721
 merge commit, applies the current compatibility patch, and builds and tests the
@@ -112,8 +116,10 @@ For Pi installer tests, select `finished_windows_validation_scope: startup-only`
 This lane installs the package, verifies the compiled runtime identity, runs three
 contained Pi turns against a local mock model, and uninstalls the package.
 It does not receive repository inference keys. Its receipt does not qualify live
-inference, interactive onboarding, migration, or N1X security. OpenClaw and Hermes
-retain the default `full-acceptance` lane; full Pi acceptance remains unimplemented.
+inference, interactive onboarding, migration, or N1X security. Pi's `full-acceptance`
+lane instead requires native onboarding, two real terminal replies, verified file
+tools, a settings-preserving restart, and owned cleanup. Implementing that lane
+does not establish a passing installed or physical N1X run.
 
 Hermes uses the corrected pywinpty ARM64 wheel, including its matched `conpty.dll`
 and `OpenConsole.exe` beside the native Python extension. The Microsoft ConPTY
@@ -161,10 +167,9 @@ reports connection permission failures without waiting for the readiness timeout
 Qualification saves redacted diagnostics under its evidence directory, so saving
 does not depend on onboarding-created directories.
 
-Package qualification drives the actual WPF controls for all five agents and
-rejects browser/WebView descendants during setup. It separately submits three
-turns through OpenClaw's Control UI, Hermes, Deep Agents Code, Pi, and NemoCUA's
-experimental browser adapter inside native MXC. The installed configured Hermes
+Package qualification drives the WPF controls for the included agent and
+rejects browser/WebView descendants during setup. Agent-specific checks must
+exercise its packaged runtime inside native MXC. The installed configured Hermes
 acceptance additionally requires its visible interactive prompt, typed input,
 a distinct deterministic provider response, a real console resize, exit, and
 sandbox cleanup. The Hermes dashboard also requires three typed turns through

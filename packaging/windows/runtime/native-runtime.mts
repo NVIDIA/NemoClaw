@@ -296,7 +296,14 @@ export function nativeHermesCompatibility(runtime: NativeRuntimeLaunchLease) {
 
 export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, workload: string) {
   runtime.assertHeld();
-  if (runtime.purpose !== "hermes") return [runtime.node, workload];
+  // These bundled workers do not need Node to walk ungranted parent directories
+  // to canonicalize their entry point. Keep filesystem policy and dependency
+  // resolution unchanged; this option applies only to the main module.
+  const command =
+    runtime.purpose === "hermes" || runtime.purpose === "pi"
+      ? [runtime.node, "--preserve-symlinks-main", workload]
+      : [runtime.node, workload];
+  if (runtime.purpose !== "hermes") return command;
   const compatibility = nativeHermesCompatibility(runtime);
   const relative = path.win32.relative(path.win32.join(runtime.runtimeRoot, "workers"), workload);
   if (
@@ -306,7 +313,7 @@ export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, wo
     path.win32.isAbsolute(relative)
   )
     throw new Error("The Hermes worker does not belong to the held sealed runtime.");
-  return [compatibility.launcher, "--", runtime.node, "--preserve-symlinks-main", workload];
+  return [compatibility.launcher, "--", ...command];
 }
 
 export function nativeHermesToolEnvironment(

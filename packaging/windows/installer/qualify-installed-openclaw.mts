@@ -10,35 +10,12 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { captureOwned } from "./qualify-finished-package.mts";
+import { captureOwned, qualificationEnvironment } from "./qualify-finished-package.mts";
 import { sampleInstalledIdle } from "../tests/performance/installed-idle.mts";
 import { sanitizeNativeDiagnostic } from "../runtime/native-session-diagnostics.mts";
 
 export function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const allowed = new Set([
-    "systemroot",
-    "windir",
-    "systemdrive",
-    "comspec",
-    "path",
-    "pathext",
-    "temp",
-    "tmp",
-    "programfiles",
-    "programdata",
-    "userprofile",
-    "localappdata",
-    "appdata",
-    "os",
-    "processor_architecture",
-    "number_of_processors",
-    "github_actions",
-    "psmodulepath",
-    "programfiles(x86)",
-  ]);
-  return Object.fromEntries(
-    Object.entries(source).filter(([key]) => allowed.has(key.toLowerCase())),
-  );
+  return qualificationEnvironment(source, true);
 }
 
 export function exactChatAddress(value: string, origin: string) {

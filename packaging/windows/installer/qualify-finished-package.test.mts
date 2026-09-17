@@ -2,19 +2,237 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import {
   environment,
+  acceptanceProcessesStopped,
+  retainedAcceptance,
+  qualificationEnvironment,
   captureOwned,
   smokeAgent,
   turnArguments,
   validateTurn,
 } from "./qualify-finished-package.mts";
 import { piWorkloadSource } from "../runtime/run-installed-native-pi.mts";
+import { retainedPiAcceptance } from "./qualify-installed-pi.mts";
+
+for (const agent of ["pi", "hermes"] as const) {
+  const identity = {
+    runtimeId: "a".repeat(64),
+    manifestSha256: "b".repeat(64),
+    sourceRevision: "c".repeat(40),
+    nodeSha256: "d".repeat(64),
+    nodeVersion: "22.23.2",
+  };
+  const configuration = JSON.stringify({ agent, credentialStored: true });
+  const previous = {
+    schemaVersion: 1,
+    classification:
+      agent === "pi" ? "installed-pi-terminal-acceptance" : "installed-canonical-hermes-acceptance",
+    verdict: "pass",
+    controllerRun: "123456:1",
+    runtime: identity,
+    cleanupErrors: [],
+    results: {
+      configurationReused: false,
+      configurationPreserved: true,
+      realTerminal: true,
+      realModelReply: true,
+      fileToolsQualified: true,
+      configurationSha256: createHash("sha256").update(configuration).digest("hex"),
+      stateRoot: `C:\\NemoClawState-S-1-5-21-1000-${agent}`,
+      cleanup: { cleanupSucceeded: true, stateRetained: true },
+    },
+  };
+  test(`${agent} restart requires the same run, artifact, agent, saved settings and successful cleanup`, () => {
+    assert.equal(
+      retainedAcceptance(agent, previous, identity, configuration, "123456:1"),
+      previous.results.stateRoot,
+    );
+    for (const changed of [
+      null,
+      {},
+      { ...previous, schemaVersion: 2 },
+      { ...previous, classification: "other-agent" },
+      { ...previous, verdict: "fail" },
+      { ...previous, controllerRun: "123457:1" },
+      { ...previous, controllerRun: "123456:2" },
+      { ...previous, cleanupErrors: ["retained sandbox"] },
+      { ...previous, results: { ...previous.results, configurationReused: true } },
+      { ...previous, results: { ...previous.results, configurationPreserved: false } },
+      {
+        ...previous,
+        results: { ...previous.results, cleanup: { cleanupSucceeded: false, stateRetained: true } },
+      },
+      {
+        ...previous,
+        results: { ...previous.results, cleanup: { cleanupSucceeded: true, stateRetained: false } },
+      },
+      { ...previous, results: { ...previous.results, stateRoot: "C:\\Unowned" } },
+      {
+        ...previous,
+        results: {
+          ...previous.results,
+          stateRoot: `C:\\NemoClawState-S-1-5-21-1000-${agent === "pi" ? "hermes" : "pi"}`,
+        },
+      },
+    ])
+      assert.throws(() =>
+        retainedAcceptance(agent, changed as any, identity, configuration, "123456:1"),
+      );
+    for (const field of Object.keys(identity))
+      assert.throws(() =>
+        retainedAcceptance(
+          agent,
+          { ...previous, runtime: { ...identity, [field]: "different" } },
+          identity,
+          configuration,
+          "123456:1",
+        ),
+      );
+    assert.throws(() =>
+      retainedAcceptance(agent, previous, identity, configuration + " ", "123456:1"),
+    );
+    assert.throws(() =>
+      retainedAcceptance(agent, { ...previous, runtime: {} }, {}, configuration, "123456:1"),
+    );
+    assert.throws(() =>
+      retainedAcceptance(agent, previous, identity, configuration, "undefined:undefined"),
+    );
+  });
+
+  for (const scenario of [
+    "missing-receipt",
+    "changed-settings",
+    "recreated-state",
+    "other-state",
+    "state-failure",
+    "owned-state",
+  ])
+    test(`${agent} actual restart cleanup refuses unowned data: ${scenario}`, async () => {
+      const source = fs.readFileSync(
+        new URL(`./qualify-installed-${agent}.mts`, import.meta.url),
+        "utf8",
+      );
+      const start = source.indexOf("async function main() {");
+      const end = source.indexOf("\nif (process.argv[1]", start);
+      assert(start > 0 && end > start);
+      const body = source
+        .slice(start, end)
+        .replaceAll("import.meta.url", '"file:///qualification.mts"');
+      const calls: string[][] = [];
+      const receipts: Record<string, any> = {};
+      const bindings = {
+        assert,
+        path: path.win32,
+        process: {
+          platform: "win32",
+          arch: "arm64",
+          version: "v22.23.2",
+          argv: ["--reuse-configuration"],
+          env: {
+            GITHUB_ACTIONS: "true",
+            GITHUB_RUN_ID: "123456",
+            GITHUB_RUN_ATTEMPT: "1",
+            NVIDIA_API_KEY: "nvapi-synthetic-fixture",
+            LOCALAPPDATA: "C:\\UserData",
+            ProgramFiles: "C:\\Program Files",
+            SystemRoot: "C:\\Windows",
+          },
+        },
+        argument: (name: string, fallback?: string) =>
+          ({
+            "--install-root": "C:\\Installed",
+            "--output": "C:\\Evidence",
+            "--runtime-identity": "identity.json",
+            "--previous-acceptance": "previous.json",
+          })[name] ?? fallback,
+        fs: {
+          readFileSync: () => JSON.stringify(identity),
+          existsSync: () => false,
+          mkdirSync() {},
+          writeFileSync: (name: string, value: string) => {
+            receipts[name] = JSON.parse(value);
+          },
+        },
+        childEnvironment: () => ({}),
+        acceptanceProcessesStopped,
+        retainedAcceptance,
+        retainedPiAcceptance,
+        readOpenedRegularFile: (name: string) =>
+          name === "previous.json"
+            ? scenario === "missing-receipt"
+              ? null
+              : JSON.stringify(previous)
+            : configuration + (scenario === "changed-settings" ? " " : ""),
+        nativeCredentialBinding: () => {
+          throw new Error("fixture-stop after ownership check");
+        },
+        captureOwned: async (_launcher: string, args: string[]) => {
+          calls.push(args);
+          return {
+            failure: scenario === "state-failure" ? "fixture state failure" : null,
+            exitCode: 0,
+            stdout: JSON.stringify({
+              agent,
+              leaseHeld: true,
+              stateRoot:
+                scenario === "other-state"
+                  ? previous.results.stateRoot.replace("1000", "2000")
+                  : previous.results.stateRoot,
+              created: scenario === "recreated-state",
+            }),
+          };
+        },
+        sanitizedFailure: (error: unknown) => String(error),
+      };
+      const main = new Function(
+        ...Object.keys(bindings),
+        `${stripTypeScriptTypes(body)}\nreturn main;`,
+      )(...Object.values(bindings));
+      await assert.rejects(main());
+      const expected = ["missing-receipt", "changed-settings"].includes(scenario)
+        ? []
+        : [["--state-session", agent]];
+      if (scenario === "owned-state") expected.push(["--remove-native-data", "--agent", agent]);
+      assert.deepEqual(calls, expected);
+      const receipt = receipts[`C:\\Evidence\\installed-${agent}-acceptance.json`];
+      assert.equal(receipt.verdict, "fail");
+      assert.equal(receipt.results.configurationPreserved, false);
+      assert.deepEqual(receipt.cleanupErrors, []);
+      if (scenario === "owned-state")
+        assert.match(receipt.error, /fixture-stop after ownership check/u);
+    });
+}
+
+test("cleanup requires confirmed exit, not a successful kill request", async (context) => {
+  assert.equal(acceptanceProcessesStopped(undefined), true);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    env: qualificationEnvironment(process.env),
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  const finished = once(child, "close");
+  context.after(async () => {
+    child.kill();
+    await finished;
+  });
+  await once(child, "spawn");
+  const stopped = { exitCode: 0, signalCode: null };
+  assert.equal(acceptanceProcessesStopped(stopped, child), false);
+  assert.equal(child.kill(), true);
+  assert.equal(acceptanceProcessesStopped(stopped, child), false);
+  await finished;
+  assert.equal(acceptanceProcessesStopped(stopped, child), true);
+});
 
 test("startup smoke excludes inherited credentials and runtime overrides", () => {
   const filtered = environment("installed", {
@@ -27,6 +245,32 @@ test("startup smoke excludes inherited credentials and runtime overrides", () =>
     NEMOCLAW_NATIVE_RUNTIME_ROOT: "substituted",
   });
   assert.deepEqual(filtered, {
+    SystemRoot: "windows",
+    PATH: "tools",
+    NEMOCLAW_NATIVE_INSTALL_ROOT: "installed",
+  });
+});
+
+test("observer additions stay out of product children and do not admit secrets", () => {
+  const input = {
+    SystemRoot: "windows",
+    PATH: "tools",
+    GITHUB_ACTIONS: "true",
+    PSModulePath: "modules",
+    "ProgramFiles(x86)": "programs",
+    NVIDIA_API_KEY: "secret",
+    NODE_OPTIONS: "--require injected",
+    NEMOCLAW_NATIVE_INSTALL_ROOT: "untrusted",
+  };
+  assert.deepEqual(qualificationEnvironment(input), { SystemRoot: "windows", PATH: "tools" });
+  assert.deepEqual(qualificationEnvironment(input, true), {
+    SystemRoot: "windows",
+    PATH: "tools",
+    GITHUB_ACTIONS: "true",
+    PSModulePath: "modules",
+    "ProgramFiles(x86)": "programs",
+  });
+  assert.deepEqual(environment("installed", input), {
     SystemRoot: "windows",
     PATH: "tools",
     NEMOCLAW_NATIVE_INSTALL_ROOT: "installed",

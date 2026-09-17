@@ -78,7 +78,7 @@ async function waitForTerminalAgentResult(
       encoding: "utf8",
       maxBytes: 1024 * 1024,
     });
-    if (result !== null && result.includes(finalToken)) return result;
+    if (result !== null && result.includes(finalToken) && result.endsWith("\n")) return result;
     await new Promise((resolve) =>
       setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))),
     );

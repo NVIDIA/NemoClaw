@@ -26,6 +26,12 @@ import zipfile
 
 UPSTREAM_COMMIT = "2237be355906fbe6065ce1815711eee52b2d646e"
 
+_conpty_spec = importlib.util.spec_from_file_location(
+    "official_runtime_conpty", Path(__file__).with_name("pywinpty-conpty.py")
+)
+conpty = importlib.util.module_from_spec(_conpty_spec)
+_conpty_spec.loader.exec_module(conpty)
+
 
 def sha256(path):
     with Path(path).open("rb") as handle:
@@ -36,6 +42,35 @@ def write_json(path, value):
     with Path(path).open("x", encoding="utf-8", newline="\n") as handle:
         json.dump(value, handle, indent=2)
         handle.write("\n")
+
+
+def regenerate_hermes_entrypoints(uv, environment, source, evidence):
+    # uv sync may rebuild a dependency even when only Hermes is explicitly
+    # reinstalled. Keep the same package-scoped ConPTY feature as the verified
+    # Python prerequisite; otherwise Git's x64 WinPTY library enters ARM64 linking.
+    configuration = evidence / "entrypoint-pywinpty.uv.toml"
+    record = conpty.prepare_configuration(
+        source / "pyproject.toml",
+        configuration,
+        evidence / "entrypoint-pywinpty-build-settings.json",
+    )
+    run_owned(
+        uv,
+        [
+            "sync",
+            "--extra",
+            "all",
+            "--locked",
+            "--offline",
+            "--reinstall-package",
+            "hermes-agent",
+        ],
+        dict(environment, UV_CONFIG_FILE=str(configuration)),
+        source,
+        evidence,
+        "regenerate-hermes-entrypoints",
+    )
+    return record
 
 
 def download(artifact, directory):
@@ -1009,21 +1044,11 @@ def main():
             UV_BUILD_CONSTRAINT=str(build_requirements),
             UV_FIND_LINKS=str(build_wheels),
         )
-        run_owned(
+        receipt["entrypointBuildSettings"] = regenerate_hermes_entrypoints(
             uv,
-            [
-                "sync",
-                "--extra",
-                "all",
-                "--locked",
-                "--offline",
-                "--reinstall-package",
-                "hermes-agent",
-            ],
             regeneration_environment,
             source,
             evidence,
-            "regenerate-hermes-entrypoints",
         )
         receipt["entrypointRegeneration"] = (
             "official-uv-relocatable-environment-and-exact-reinstall"

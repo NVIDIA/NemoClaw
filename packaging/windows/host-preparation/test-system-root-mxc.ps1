@@ -65,6 +65,20 @@ function Get-ProofNodeAttributes([string]$Path) {
     return [int]$file.Attributes
 }
 
+function Get-ProofIsolationTier([string]$Log) {
+    $normalized = [regex]::Replace($Log, '\[\d+\][ \t]*', '')
+    $tiers = [regex]::Matches($normalized, '(?m)^selected isolation tier:[ \t]*([^\r\n]+)')
+    if ($tiers.Count -ne 1) { throw 'The proof requires one unambiguous isolation tier.' }
+    $tier = $tiers[0].Groups[1].Value.Trim()
+    if ($tier -cnotin @('appcontainer-dacl', 'base-container')) {
+        throw 'The proof did not exercise a supported process-container tier.'
+    }
+    if ($normalized -match 'Win32k mitigation applied to child process') {
+        throw 'The existing Personal Node UI compatibility setting was not honored.'
+    }
+    return $tier
+}
+
 function Invoke-ProofProcess {
     param([string]$Executable,[string[]]$Arguments,[string]$Label,[int]$Seconds=30)
     $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$Executable
@@ -283,9 +297,11 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $guest=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
     if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or
         $guest.preservedMainPath  -ne  $true  -or  $guest.preauthorizedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
-    $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\][ \t]*', '')
-    if($mxcLog -notmatch ('(?m)^selected isolation tier:\s*'+[regex]::Escape($receipt.selectedIsolationTier)+'\s*$')){throw 'The actual MXC tier differed from its pinned probe result.'}
-    if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}
+    # MXC selects BaseContainer on capable hosts. Keep that evidence distinct
+    # from the AppContainer-DACL path that depends on the metadata preparation,
+    # and require execution to agree with the exact preflight selection.
+    $actualIsolationTier = Get-ProofIsolationTier (Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw)
+    if($actualIsolationTier -cne $receipt.selectedIsolationTier){throw 'The actual MXC tier differed from its pinned probe result.'}
     $receipt.guest=$guest
     $receipt.nodeSddlAfter=(Get-Acl -LiteralPath $NodePath).Sddl
     $receipt.nodeFileAttributesAfter=Get-ProofNodeAttributes $NodePath
