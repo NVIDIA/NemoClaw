@@ -32,8 +32,8 @@ export const OPENSHELL_MCP_FEATURE_MARKER = "allow_all_known_mcp_methods";
 export const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER}`;
 export const BREW_OUTCOMES = [
   ["0", "0", "reinstall", 0],
-  ["1", "1", "install", 0],
-  ["0", "1", "reinstall", 0],
+  ["1", "1", "install", 1],
+  ["0", "1", "reinstall", 1],
 ] as const;
 
 export function trustedFormulaBoundaryEvents(operation: string): string[] {

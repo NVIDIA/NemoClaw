@@ -2477,7 +2477,6 @@ const {
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
   runCaptureOpenshell,
-  runOpenshell,
   runCapture,
   cliName,
   agentProductName,

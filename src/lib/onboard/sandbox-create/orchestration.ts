@@ -1524,6 +1524,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       ensureAgentFixedForward,
       ensureDashboardForward,
       filterEnabledChannelsByAgent,
+      forwardObserver,
       formatSandboxAgentName,
       formatSandboxBuildEstimateNote,
       getDashboardForwardPort,
@@ -1669,6 +1670,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agent,
     );
     const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
+    const observeLoopbackForwardPorts = forwardObserver(sandboxName, "loopback");
     let effectivePort = 0,
       chatUiUrl = "",
       hermesApiPortReservationInput = {
@@ -1676,6 +1678,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         env: process.env,
         getSandbox: registry.getSandbox,
+        observeForwardPorts: observeLoopbackForwardPorts,
         warn: (message: string) => console.warn(message),
       };
     if (manageDashboard) {
@@ -1686,10 +1689,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
         agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
         defaultPort: DASHBOARD_PORT,
+        observeForwardPorts: forwardObserver(sandboxName),
         warn: (message: string) => console.warn(message),
       });
       ({ effectivePort, chatUiUrl } = dashboardSelection);
       dashboardPortReservationScope.current = dashboardSelection.reservation;
+      dashboardPortReservationScope.deferOwnedForwardPort(effectivePort);
     }
     const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding(
       {

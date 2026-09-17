@@ -13,7 +13,6 @@ import {
   openShellForwardIdentity,
   type OpenShellForwardRuntimeAuthority,
 } from "../adapters/openshell/forward-runtime";
-import { buildCliOpenShellForwardStartArgs } from "../adapters/openshell/forward-cli-args";
 import { createCliOpenShellSandboxTransferExecutor } from "../adapters/openshell/sandbox-transfer-cli";
 import type { OpenShellSandboxTransferExecutor } from "../adapters/openshell/sandbox-transfer";
 import type { AgentDefinition } from "../agent/defs";
@@ -35,7 +34,10 @@ import {
 } from "./dashboard-forward-control";
 import {
   createOpenShellForwardPortObserver,
+  findAvailableDashboardPortFromObserver,
   getPersistedDashboardPort,
+  getRegistryOccupiedDashboardPorts,
+  getRegistryOccupiedHermesApiPorts,
   type ListSandboxesFn,
   type OpenShellForwardPortObserver,
 } from "./dashboard-port";
@@ -56,10 +58,6 @@ type DashboardForwardRuntimeAuthority = OpenShellForwardRuntimeAuthority;
 
 export interface OnboardDashboardDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
-  runOpenshell?(
-    args: string[],
-    opts?: Record<string, unknown>,
-  ): { status: number | null; error?: Error };
   runCapture?: typeof defaultRunCapture;
   cliName(): string;
   agentProductName(): string;
@@ -390,6 +388,20 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
+  function forwardResultMessage(
+    result:
+      | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
+      | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
+  ): string {
+    if ("error" in result) return result.error.message;
+    if ("observation" in result) {
+      return result.observation.state === "foreign"
+        ? "The host port is owned by a foreign listener."
+        : "NemoClaw could not prove the forward state.";
+    }
+    return "NemoClaw could not reconcile the forward state.";
+  }
+
   async function reconcileForward(
     sandboxName: string,
     authority: DashboardForwardRuntimeAuthority,
@@ -397,36 +409,34 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void> {
-    await assertForwardGatewayCurrent(
-      authority,
-      revalidateSandboxIdentity,
-      `start ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
-    );
-    const startArgs = buildCliOpenShellForwardStartArgs(forward);
-    if (deps.runOpenshell) {
-      const result = deps.runOpenshell(startArgs, {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: 15_000,
-        killProcessTreeOnTimeout: true,
+    const adapter = forwardAdapterForAuthority(authority);
+    const assertCurrent = () =>
+      assertForwardGatewayCurrent(
+        authority,
+        revalidateSandboxIdentity,
+        `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
+      );
+    let result = await adapter.startForward({ forward, assertCurrent });
+    if (result.state === "refused" && result.observation.state === "stale") {
+      const retirement = await adapter.retireLegacyForward({
+        forward,
+        assertCurrent,
+        authorize: async () => {
+          await assertForwardGatewayCurrent(
+            authority,
+            revalidateSandboxIdentity,
+            `retire legacy ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
+          );
+        },
       });
-      if (result.error || result.status !== 0) {
-        throw new Error(
-          `OpenShell forward start failed${result.status === null ? "" : ` with exit ${String(result.status)}`}.`,
-        );
+      if (retirement.state !== "retired" && retirement.state !== "not_needed") {
+        throw new Error(forwardResultMessage(retirement));
       }
-    } else {
-      deps.runCaptureOpenshell(startArgs, {
-        timeout: 15_000,
-        killProcessTreeOnTimeout: true,
-      });
+      result = await adapter.startForward({ forward, assertCurrent });
     }
-    await assertForwardGatewayCurrent(
-      authority,
-      revalidateSandboxIdentity,
-      `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
-    );
+    if (result.state !== "started" && result.state !== "reused") {
+      throw new Error(forwardResultMessage(result));
+    }
   }
 
   async function ensureDashboardForward(
@@ -435,7 +445,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: DashboardForwardOptions = {},
   ): Promise<number> {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure } = normalizeDashboardForwardOptions(options);
+    const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingForward } =
+      normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
     const forwardGateway = resolveForwardServiceGateway(sandboxName, options);
@@ -443,7 +454,60 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       throw new Error(`ForwardTcp authority is unavailable for '${sandboxName}'`);
     }
     const authority = getForwardRuntimeAuthority(sandboxName, forwardGateway);
-    const actualPort = preferredPort;
+    const forwardAdapter = forwardAdapterForAuthority(authority);
+    const observeForwardPorts = createOpenShellForwardPortObserver({
+      adapter: forwardAdapter,
+      forwardForPort: (port) => forwardIdentity(sandboxName, authority, port, "dashboard"),
+      assertCurrent: () =>
+        assertForwardGatewayCurrent(
+          authority,
+          revalidateSandboxIdentity,
+          `inspect dashboard forwards for sandbox '${sandboxName}'`,
+        ),
+    });
+    const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    const registryOccupiedPorts = new Map([
+      ...getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
+      ...getRegistryOccupiedHermesApiPorts(sandboxName, listSandboxes),
+    ]);
+    const fixedPort = persistedPort === preferredPort || reuseExistingForward;
+    if (fixedPort && registryOccupiedPorts.has(String(preferredPort))) {
+      throw new Error(
+        `Port ${String(preferredPort)} is not available for '${sandboxName}'; another sandbox registered it.`,
+      );
+    }
+    let actualPort: number;
+    try {
+      actualPort = (
+        await findAvailableDashboardPortFromObserver(
+          sandboxName,
+          preferredPort,
+          observeForwardPorts,
+          registryOccupiedPorts,
+        )
+      ).port;
+    } catch (err) {
+      if (!rollbackSandboxOnFailure) throw err;
+      rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
+    }
+
+    if (actualPort !== preferredPort) {
+      if (!allowPortReallocation || fixedPort) {
+        throw new Error(
+          `Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`,
+        );
+      }
+      if (rollbackSandboxOnFailure) {
+        const err = new Error(
+          `Dashboard port ${preferredPort} became host-bound during sandbox build; ` +
+            `cannot reallocate to ${actualPort} after the sandbox has been created with ` +
+            `CHAT_UI_URL=${preferredPort}. Free the port and re-run \`${deps.cliName()} onboard\`, ` +
+            `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
+        );
+        rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
+      }
+      console.warn(`  ! Port ${preferredPort} is taken. Using port ${actualPort} instead.`);
+    }
 
     const actualGateway = resolveForwardServiceGateway(sandboxName, options);
     let fwdOk = false;

@@ -823,6 +823,8 @@ install_macos_homebrew_formula() {
   run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
     brew "$install_action" --formula "$formula_ref" \
     || homebrew_operation_status=$?
+  [ "$homebrew_operation_status" = "0" ] \
+    || fail "OpenShell Homebrew ${install_action} failed inside the temporary formula trust boundary (status ${homebrew_operation_status})."
 
   brew_prefix="$(brew --prefix 2>/dev/null || true)"
   openshell_bin="${brew_prefix}/bin/openshell"
@@ -830,19 +832,11 @@ install_macos_homebrew_formula() {
     openshell_bin="$(command -v openshell 2>/dev/null || true)"
   fi
   if [ -z "$openshell_bin" ] || [ ! -x "$openshell_bin" ]; then
-    fail "Homebrew did not install the openshell binary."
+    fail "Homebrew completed but the openshell binary was not found on PATH."
   fi
-  installed_version_output="$("$openshell_bin" --version 2>&1 || true)"
-  installed_version="$(printf '%s\n' "$installed_version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-  [ "$installed_version" = "$PIN_VERSION" ] \
-    || fail "Homebrew did not install the pinned OpenShell ${PIN_VERSION} binary."
   require_openshell_messaging_features "$openshell_bin"
-  info "${installed_version_output:-openshell} installed"
-  if [ "$homebrew_operation_status" = "0" ]; then
-    info "OpenShell Homebrew service staged; onboarding will start it after gateway validation."
-  else
-    warn "OpenShell Homebrew ${install_action} returned status ${homebrew_operation_status} after installing the pinned binary; onboarding will try the service and fall back to standalone startup."
-  fi
+  info "$("$openshell_bin" --version 2>&1 || echo openshell) installed"
+  info "OpenShell Homebrew service staged; onboarding will start it after gateway validation."
   exit 0
 }
 
