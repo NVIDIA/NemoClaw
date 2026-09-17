@@ -91,11 +91,17 @@ describe("Pi qualification receipt refresh", () => {
                 stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
               }
             : args[0] === "rev-parse"
-              ? options.mergeInProgress
-                ? { status: 0, stdout: `${"e".repeat(40)}\n` }
-                : { status: 1, stdout: "" }
+              ? args.join("\0") === ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"].join("\0")
+                ? options.mergeInProgress
+                  ? { status: 0, stdout: `${"e".repeat(40)}\n` }
+                  : { status: 1, stdout: "" }
+                : (() => {
+                    throw new Error(`Unexpected revision probe: ${args.join(" ")}`);
+                  })()
               : args.includes("--quiet")
-                ? (args.includes("--cached") && options.mergeInProgress) ||
+                ? (args.includes("--cached") &&
+                    options.mergeInProgress &&
+                    args[3] === SOURCE_REVISION) ||
                   args[3] === (options.headRevision ?? "HEAD")
                   ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
                   : (() => {
