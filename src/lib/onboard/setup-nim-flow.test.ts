@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import type { VllmProfile } from "../inference/vllm";
 import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
-import type { LocalModelProfilePlan } from "./local-model-profile/integration";
+import { resolveLocalModelProfilePlan } from "./local-model-profile/plan";
 import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
 
 afterEach(() => {
@@ -1346,7 +1348,11 @@ describe("createSetupNim", () => {
 
   it("routes a gated local model profile through its dedicated onboarder", async () => {
     const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
-    const plan = { runtime: "vllm" } as LocalModelProfilePlan;
+    const catalog = loadServingCatalog();
+    const plan = resolveLocalModelProfilePlan(catalog, {
+      NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "1",
+      NEMOCLAW_LOCAL_MODEL_RUNTIME: "vllm",
+    })!;
     const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
       async (_plan, host, state) => {
         expect(host).toMatchObject({
@@ -1375,7 +1381,11 @@ describe("createSetupNim", () => {
 
     await expect(
       setupNim({ type: "nvidia", spark: true, platform: "spark" } as never),
-    ).resolves.toMatchObject({ provider: "vllm-local", model: "catalog/model" });
+    ).resolves.toMatchObject({
+      provider: "vllm-local",
+      model: "catalog/model",
+      servingProfileProvenance: servingProfileProvenance(catalog, plan.preset.metadata.id),
+    });
     expect(onboard).toHaveBeenCalledOnce();
   });
 

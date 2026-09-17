@@ -8,6 +8,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
+
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
@@ -20,6 +23,7 @@ import type {
 } from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
+  plan,
   digest,
   IMAGE,
   invariant,
@@ -71,6 +75,8 @@ function receiptWriter(
 }
 
 beforeEach(() => {
+  subprocess.spawnSync.mockReset();
+  subprocess.spawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-life-")));
   cacheRoot = path.join(temporaryRoot, "cache");
   modelPath = path.join(
@@ -90,40 +96,6 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
-
-function plan(): LlamaCppGgufCachePlan {
-  const payload = {
-    schemaVersion: 1 as const,
-    recipeId: "llama-cpp.nemotron.spark.v1",
-    acquisition: {
-      ref: "hugging-face-exact-file/v1" as const,
-      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
-      url: `https://huggingface.co/example/model/resolve/${REVISION}/${MODEL_FILENAME}`,
-      authentication: {
-        mode: "optional" as const,
-        environment: "HF_TOKEN" as const,
-      },
-      source: {
-        repository: "example/model",
-        revision: REVISION,
-        file: {
-          path: MODEL_FILENAME,
-          digest: MODEL_DIGEST,
-          sizeBytes: MODEL_CONTENT.length,
-        },
-      },
-    },
-    cache: {
-      ref: "hugging-face-shared-cache/v1" as const,
-      root: "user-cache" as const,
-      key: "sha256-model",
-      reuse: "verify-exact-file" as const,
-      sharing: "host-user" as const,
-      cleanup: "preserve" as const,
-    },
-  };
-  return { ...payload, planDigest: digest(payload) };
-}
 
 function identity() {
   const status = fs.lstatSync(modelPath, { bigint: true });
@@ -339,11 +311,12 @@ type HostLoopbackProbe = NonNullable<
 function hostProbeLifecycle(
   probe: HostLoopbackProbe = () => ({ status: 0, stdout: "", stderr: "" }),
   store = journalStore(),
+  readinessTimeoutSeconds = 1_800,
 ) {
   const fixture = dockerFixture();
   const hostLoopbackProbe = vi.fn<HostLoopbackProbe>(probe);
   const lifecycle = createLifecycle(
-    { ...options(fixture, store), loopbackProbe: "host-process" },
+    { ...options(fixture, store), loopbackProbe: "host-process", readinessTimeoutSeconds },
     { hostLoopbackProbe },
   );
   return { fixture, hostLoopbackProbe, lifecycle, store };
@@ -568,11 +541,23 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
-    const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle();
+    const fixture = dockerFixture();
+    const lifecycle = createLifecycle({
+      ...options(fixture),
+      loopbackProbe: "host-process",
+      readinessTimeoutSeconds: 86_400,
+    });
 
-    lifecycle.start(receiptWriter());
-
-    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    const receipt = lifecycle.start(receiptWriter());
+    expect(receipt.runtime).toMatchObject({ kind: "container", runtimeId: RUNTIME_ID });
+    const probeScript = expect.stringMatching(
+      /docker-llama-cpp-private-bridge-probe-process\.js$/u,
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledExactlyOnceWith(
+      process.execPath,
+      [probeScript, "http://127.0.0.1:8081/health", "86400"],
+      { timeout: 86_415_000 },
+    );
     expect(hostNetworkRuns(fixture)).toEqual([]);
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining([
@@ -647,7 +632,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       hostLoopbackProbe.mockClear();
 
       expect(run()).toEqual(receipt);
-      expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+      expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
+        "http://127.0.0.1:8081/health",
+        1_800,
+      );
       expect(hostNetworkRuns(fixture)).toEqual([]);
       expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
         expect.arrayContaining(["--network", "openshell-docker"]),
@@ -693,7 +681,10 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
     expect(replayWriter.writeExact).toHaveBeenCalledOnce();
     expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
-    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:8081/health",
+      1_800,
+    );
     expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
