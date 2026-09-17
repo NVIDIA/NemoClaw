@@ -256,6 +256,9 @@ $$nemoclaw config export my-assistant --output -
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
+Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
+Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
+
 The v0 command projects verified source state into the v1 YAML shape. The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
