@@ -27,14 +27,14 @@
       "generatedProbeConditions": 250
     },
     "unique": {
-      "expectCalls": 1857,
-      "matcherAssertions": 1830,
+      "expectCalls": 1851,
+      "matcherAssertions": 1824,
       "nodeAssertions": 112,
       "namedAssertionHelpers": 705,
       "failCalls": 1,
-      "throwGuards": 542,
+      "throwGuards": 540,
       "objectFieldAssertions": 249,
-      "assertionPoints": 3439,
+      "assertionPoints": 3431,
       "generatedProbeBlocks": 237,
       "generatedProbeConditions": 845
     },
@@ -86,7 +86,7 @@
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],
-      "test/e2e/live/native-runtime-qualification-case.test.ts": [0,0,15,92,0],
+      "test/e2e/live/native-runtime-qualification-case.test.ts": [0,0,9,84,0],
       "test/e2e/live/network-policy.test.ts": [21,22,21,22,1],
       "test/e2e/live/ollama-auth-proxy.test.ts": [21,29,21,29,0],
       "test/e2e/live/onboard-policy-preset-sequencing.test.ts": [7,7,7,7,1],

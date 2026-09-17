@@ -32,8 +32,10 @@ const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
 
 describe("provider-owned managed startup root application", () => {
-  it("applies, commits, and releases through the exact Podman runtime", () => {
+  it("retries a failed hold release on resume through the same exact Podman runtime", () => {
     const calls: Array<{ args: readonly string[]; input?: Buffer }> = [];
+    let committed = false;
+    let releaseAttempts = 0;
     const inspect = JSON.stringify([
       {
         Id: CONTAINER_ID,
@@ -54,6 +56,25 @@ describe("provider-owned managed startup root application", () => {
     ]);
     const capture = vi.fn((args: readonly string[], _timeoutMs?: number, input?: Buffer) => {
       calls.push({ args, ...(input ? { input } : {}) });
+      const operation = [
+        "--shared-state-transaction-status",
+        "--commit-shared-state-transaction",
+        "--release-startup-hold",
+      ].find((candidate) => args.includes(candidate));
+      switch (operation) {
+        case "--shared-state-transaction-status":
+          return { status: 0, stdout: committed ? "committed\n" : "pending\n", stderr: "" };
+        case "--commit-shared-state-transaction":
+          committed = true;
+          break;
+        case "--release-startup-hold":
+          releaseAttempts += 1;
+          switch (releaseAttempts) {
+            case 1:
+              return { status: 1, stdout: "", stderr: "release unavailable" };
+          }
+          break;
+      }
       switch (`${String(args[0])}:${String(args[1])}`) {
         case "ps:--all":
           return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
@@ -108,17 +129,45 @@ describe("provider-owned managed startup root application", () => {
         supervisorReady: true,
       }),
     ).toEqual({ supervisorReady: true, failure: null });
+    expect(() =>
+      releaseProviderManagedStartupHold({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        transaction: transaction!,
+        profileFingerprint: request.profileFingerprint,
+      }),
+    ).toThrow(/release unavailable/u);
+    const resumedTransaction = applyProviderManagedStartupRootRequest({
+      runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      bootstrapIdentity: "c".repeat(64),
+      request,
+      environment: {},
+    });
+    expect(resumedTransaction).toEqual(transaction);
+    expect(
+      finalizeProviderManagedStartupSharedState({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        transaction: resumedTransaction,
+        supervisorReady: true,
+      }),
+    ).toEqual({ supervisorReady: true, failure: null });
     releaseProviderManagedStartupHold({
       runtimeProvider,
       sandboxName: SANDBOX_NAME,
       sandboxId: SANDBOX_ID,
-      transaction: transaction!,
+      transaction: resumedTransaction!,
       profileFingerprint: request.profileFingerprint,
     });
 
     expect(calls.some(({ args }) => args.includes("--apply-root-stdin"))).toBe(true);
     expect(calls.some(({ args }) => args.includes("--commit-shared-state-transaction"))).toBe(true);
     expect(calls.some(({ args }) => args.includes("--release-startup-hold"))).toBe(true);
+    expect(releaseAttempts).toBe(2);
     expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain("docker");
   });
 

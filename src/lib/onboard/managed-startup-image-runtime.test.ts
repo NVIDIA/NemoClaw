@@ -435,6 +435,34 @@ describe("managed startup image runtime", () => {
     expect(write).toHaveBeenCalledWith("pending\n");
   });
 
+  it("reports committed in-sandbox transaction state for resume recovery", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const profileFingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("committed");
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await mainManagedStartupImageRuntime([
+      "--shared-state-transaction-status",
+      "--agent",
+      profile.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+    ]);
+
+    expect(status).toHaveBeenCalledWith({
+      agent: profile.agent,
+      profileFingerprint,
+      bootstrapIdentity,
+    });
+    expect(write).toHaveBeenCalledWith("committed\n");
+  });
+
   it("rolls back a pending transaction inside its exact managed sandbox", async () => {
     const bootstrapIdentity = "b".repeat(64);
     vi.spyOn(process, "geteuid").mockReturnValue(0);

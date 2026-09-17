@@ -14,7 +14,6 @@ import {
   selectManagedStartupApplicationRuntimeEnvironment,
   serializeManagedStartupRootApplyRequest,
 } from "./root-apply";
-import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-transaction";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
@@ -197,12 +196,16 @@ export function applyDockerManagedStartupRootRequest(
     pinned.containerId,
     "/usr/bin/env",
     "-i",
-    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    "/bin/sh",
-    "-c",
-    'if [ -d "$1" ] && [ ! -L "$1" ]; then exit 0; fi; if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi; exit 2',
-    "nemoclaw-transaction-probe",
-    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    ...FIXED_ROOT_ENV,
+    "/usr/local/bin/node",
+    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+    "--shared-state-transaction-status",
+    "--agent",
+    transaction.agent,
+    "--profile-fingerprint",
+    input.request.profileFingerprint,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
   ];
 
   let lastFailure = "";
@@ -220,8 +223,11 @@ export function applyDockerManagedStartupRootRequest(
         encoding: "utf8",
         timeout: 30_000,
       });
-      if (receiptProbe.status === 0) return transaction;
-      if (receiptProbe.status === 1) return null;
+      const phase = String(receiptProbe.stdout ?? "").trim();
+      if (receiptProbe.status === 0 && (phase === "pending" || phase === "committed")) {
+        return transaction;
+      }
+      if (receiptProbe.status === 0 && phase === "absent") return null;
       const receiptProbeDetail = commandDetail(receiptProbe);
       const error = new Error(
         `Managed startup root application completed, but transaction state could not be verified in exact container ${pinned.containerId.slice(0, 12)}${

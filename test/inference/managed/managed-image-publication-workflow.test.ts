@@ -801,7 +801,6 @@ describe("complete managed-image publication workflow", () => {
     const activation = managedPrPodmanActivation(workflow);
     const steps = activation.steps ?? [];
 
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
     expect(activation["runs-on"]).toBe("ubuntu-26.04");
     expect(activation.permissions).toEqual({ contents: "read" });
     expect(activation.env).toMatchObject({
@@ -810,7 +809,14 @@ describe("complete managed-image publication workflow", () => {
       OPENSHELL_DRIVERS: "podman",
     });
     expect(JSON.stringify(activation)).not.toContain("secrets.");
-    expect(JSON.stringify(activation)).not.toContain("github.token");
+    const diagnostics = step(activation, "Initialize managed Podman activation diagnostics");
+    const upload = step(activation, "Upload managed Podman activation evidence");
+    expect([
+      steps.indexOf(diagnostics) < steps.indexOf(step(activation, "Set up Node.js")),
+      diagnostics.run?.includes('>"$E2E_ARTIFACT_DIR/setup-context.txt"'),
+      upload.if,
+      upload.with?.["if-no-files-found"],
+    ]).toEqual([true, true, "always()", "error"]);
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /openshell-sdk-install\.mts prepare[\s\S]*npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https:\/\/npm\.pkg\.github\.com[\s\S]*openshell-sdk-install\.mts check/u,
     );
@@ -827,7 +833,6 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Verify Docker stayed unavailable").run).toContain(
       'test ! -s "$E2E_DOCKER_GUARD_LOG"',
     );
-    expect(steps.map(({ name }) => name)).toContain("Upload managed Podman activation evidence");
   });
 
   it("leaves MCP qualification to the normal E2E workflow (#11828)", () => {

@@ -19,7 +19,6 @@ import {
   selectManagedStartupApplicationRuntimeEnvironment,
   serializeManagedStartupRootApplyRequest,
 } from "./root-apply";
-import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-transaction";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
@@ -210,6 +209,26 @@ function sharedStateTransactionCommand(
   ];
 }
 
+function sharedStateStatusCommand(
+  request: ManagedStartupRootApplyRequest,
+  transaction: ProviderManagedStartupTransaction,
+): readonly string[] {
+  return [
+    "/usr/bin/env",
+    "-i",
+    ...FIXED_ROOT_ENV,
+    "/usr/local/bin/node",
+    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+    "--shared-state-transaction-status",
+    "--agent",
+    transaction.agent,
+    "--profile-fingerprint",
+    request.profileFingerprint,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
+  ];
+}
+
 export function applyProviderManagedStartupRootRequest(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly sandboxName: string;
@@ -269,23 +288,20 @@ export function applyProviderManagedStartupRootRequest(input: {
       timeoutMs: ROOT_APPLY_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      const receipt = executeExact(
+      const status = executeExact(
         runtime,
-        [
-          "/usr/bin/env",
-          "-i",
-          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-          "/bin/sh",
-          "-c",
-          'if [ -d "$1" ] && [ ! -L "$1" ]; then exit 0; fi; if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi; exit 2',
-          "nemoclaw-transaction-probe",
-          MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
-        ],
-        { timeoutMs: 30_000 },
+        sharedStateStatusCommand(input.request, runtime.transaction),
+        {
+          timeoutMs: 30_000,
+        },
       );
-      if (receipt.status === 0) return runtime.transaction;
-      if (receipt.status === 1) return null;
-      lastFailure = commandDetail(receipt);
+      const phase = String(status.stdout).trim();
+      if (status.status === 0 && (phase === "pending" || phase === "committed")) {
+        return runtime.transaction;
+      }
+      if (status.status === 0 && phase === "absent") return null;
+      lastFailure =
+        commandDetail(status) || `unexpected transaction status ${JSON.stringify(phase)}`;
       break;
     }
     lastFailure = commandDetail(result);

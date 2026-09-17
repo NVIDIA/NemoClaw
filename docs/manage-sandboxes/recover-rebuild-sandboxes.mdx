@@ -44,11 +44,13 @@ $$nemoclaw <sandbox-name> start
 ```
 
 This path preserves the sandbox workspace and leaves lifecycle ownership with OpenShell. `start`
-also reconciles a sandbox that OpenShell still reports as `Stopped` instead of treating provider
-state as independent lifecycle authority. NemoClaw does not directly restart or unpause the
-underlying provider container for a standard sandbox. If OpenShell can no longer identify or start
-the sandbox, destroy the stale NemoClaw entry and onboard a clean replacement.
-Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+and `recover` reconcile a sandbox that OpenShell still reports as `Stopped`; neither command
+directly restarts or unpauses the underlying provider container. Before destructive replacement,
+run `$$nemoclaw <sandbox-name> status`. The status and connect recovery path can restore an
+OpenShell-missing standard Docker sandbox only when its exact labeled Docker-driver container
+still remains. If that check cannot identify or recover the sandbox, destroy the stale NemoClaw
+entry and onboard a clean replacement. Restore a separately created snapshot afterward if one is
+available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.

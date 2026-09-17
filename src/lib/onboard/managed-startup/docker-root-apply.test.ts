@@ -15,7 +15,6 @@ import {
   createManagedStartupRootApplyRequest,
   parseManagedStartupRootApplyRequest,
 } from "./root-apply";
-import { MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY } from "./shared-state-transaction";
 
 const CONTAINER_ID = "b".repeat(64);
 const IMAGE_ID = `sha256:${"c".repeat(64)}`;
@@ -44,16 +43,22 @@ function stableInspect(overrides: Record<string, unknown> = {}): string {
   ]);
 }
 
-function successfulSpawnResult() {
+function successfulSpawnResult(stdout = "") {
   return {
     status: 0,
     signal: null,
-    stdout: "",
+    stdout,
     stderr: "",
     output: [null, "", ""],
     pid: 1,
     error: undefined,
   };
+}
+
+function successfulManagedStartupSpawn(argv: readonly string[]) {
+  return successfulSpawnResult(
+    argv.includes("--shared-state-transaction-status") ? "pending\n" : "",
+  );
 }
 
 describe("Docker managed-startup root applicator", () => {
@@ -174,7 +179,9 @@ describe("Docker managed-startup root applicator", () => {
     (agent) => {
       const request = requestFor(agent);
       const dockerCapture = vi.fn(() => stableInspect());
-      const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+      const dockerSpawnSync = vi.fn((argv: readonly string[]) =>
+        successfulManagedStartupSpawn(argv),
+      );
 
       expect(
         applyDockerManagedStartupRootRequest(
@@ -233,12 +240,20 @@ describe("Docker managed-startup root applicator", () => {
           CONTAINER_ID,
           "/usr/bin/env",
           "-i",
+          "HOME=/root",
+          "LANG=C.UTF-8",
+          "LC_ALL=C.UTF-8",
+          "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
           "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-          "/bin/sh",
-          "-c",
-          'if [ -d "$1" ] && [ ! -L "$1" ]; then exit 0; fi; if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi; exit 2',
-          "nemoclaw-transaction-probe",
-          MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+          "/usr/local/bin/node",
+          "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+          "--shared-state-transaction-status",
+          "--agent",
+          agent,
+          "--profile-fingerprint",
+          request.profileFingerprint,
+          "--bootstrap-identity",
+          BOOTSTRAP_IDENTITY,
         ],
         { encoding: "utf8", timeout: 30_000 },
       ]);
@@ -246,7 +261,7 @@ describe("Docker managed-startup root applicator", () => {
   );
 
   it("forwards only allowlisted application-runtime controls through the clean root exec", () => {
-    const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+    const dockerSpawnSync = vi.fn((argv: readonly string[]) => successfulManagedStartupSpawn(argv));
 
     applyDockerManagedStartupRootRequest(
       {
@@ -276,7 +291,7 @@ describe("Docker managed-startup root applicator", () => {
   });
 
   it("omits an unsupported MCP shadow diagnostics value from the clean root exec", () => {
-    const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+    const dockerSpawnSync = vi.fn((argv: readonly string[]) => successfulManagedStartupSpawn(argv));
 
     applyDockerManagedStartupRootRequest(
       {
@@ -305,7 +320,7 @@ describe("Docker managed-startup root applicator", () => {
       .fn()
       .mockReturnValueOnce({ ...successfulSpawnResult(), status: 1, stderr: "lost ack" })
       .mockReturnValueOnce(successfulSpawnResult())
-      .mockReturnValueOnce(successfulSpawnResult());
+      .mockReturnValueOnce(successfulSpawnResult("pending\n"));
 
     applyDockerManagedStartupRootRequest(
       { bootstrapIdentity: BOOTSTRAP_IDENTITY, containerId: CONTAINER_ID, request },
@@ -321,7 +336,7 @@ describe("Docker managed-startup root applicator", () => {
     const dockerSpawnSync = vi
       .fn()
       .mockReturnValueOnce(successfulSpawnResult())
-      .mockReturnValueOnce({ ...successfulSpawnResult(), status: 1 });
+      .mockReturnValueOnce(successfulSpawnResult("absent\n"));
 
     expect(
       applyDockerManagedStartupRootRequest(

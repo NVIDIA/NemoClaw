@@ -1176,6 +1176,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Initialize managed Podman activation diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          printf 'candidate_sha=%s\nphase=setup\n' "$CANDIDATE_SHA" \
+            >"$E2E_ARTIFACT_DIR/setup-context.txt"
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
