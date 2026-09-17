@@ -1,27 +1,68 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nTrusted-base allowance for PR #11919's accepted #11859 fixed Linux/AMD64 managed-vLLM roster qualification. Bounds are the reviewed qualification's census: +61 direct and +87 transitive assertion points, with one owned lifecycle companion. This policy must land on main before #11919. Remove the exception after #11919 merges; its resulting census becomes the normal no-growth baseline.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nTrusted-base allowances for accepted #11858/#11859 roster qualifications. PR #11918 adds exactly 4 direct/transitive assertion points; PR #11919 adds 61 direct and 87 transitive points plus one owned lifecycle companion. Each record uses the reviewed combined ceiling and that ceiling minus only its own approved delta as baseline, so either merge order preserves both independent bounds. These policy baselines describe the other qualification already merged, not current main. This policy must land on main first. Remove each record in its feature PR; the resulting census becomes the ordinary no-growth baseline.",
   "schemaVersion": 1,
   "exceptions": [
     {
-      "pullRequest": 11919,
-      "paths": [
-        "test/e2e/live/gpu-e2e.test.ts",
-        "test/e2e/live/gpu-vllm-export-owner.ts"
-      ],
+      "pullRequest": 11918,
+      "paths": ["test/e2e/live/gpu-e2e.test.ts"],
       "baseline": {
-        "liveFileCount": 193,
-        "direct": { "expectCalls": 1442, "assertionPoints": 2261 },
-        "unique": { "expectCalls": 1890, "assertionPoints": 3510 },
+        "liveFileCount": 194,
+        "direct": {
+          "expectCalls": 1486,
+          "assertionPoints": 2322
+        },
+        "unique": {
+          "expectCalls": 1960,
+          "assertionPoints": 3597
+        },
         "files": {
-          "test/e2e/live/gpu-e2e.test.ts": [39, 44, 72, 90, 3]
+          "test/e2e/live/gpu-e2e.test.ts": [83, 105, 142, 177, 3]
         }
       },
       "maximum": {
         "liveFileCount": 194,
-        "direct": { "expectCalls": 1486, "assertionPoints": 2322 },
-        "unique": { "expectCalls": 1960, "assertionPoints": 3597 },
+        "direct": {
+          "expectCalls": 1488,
+          "assertionPoints": 2326
+        },
+        "unique": {
+          "expectCalls": 1962,
+          "assertionPoints": 3601
+        },
         "files": {
-          "test/e2e/live/gpu-e2e.test.ts": [83, 105, 142, 177, 3]
+          "test/e2e/live/gpu-e2e.test.ts": [85, 109, 144, 181, 3]
+        }
+      }
+    },
+    {
+      "pullRequest": 11919,
+      "paths": ["test/e2e/live/gpu-e2e.test.ts", "test/e2e/live/gpu-vllm-export-owner.ts"],
+      "baseline": {
+        "liveFileCount": 193,
+        "direct": {
+          "expectCalls": 1444,
+          "assertionPoints": 2265
+        },
+        "unique": {
+          "expectCalls": 1892,
+          "assertionPoints": 3514
+        },
+        "files": {
+          "test/e2e/live/gpu-e2e.test.ts": [41, 48, 74, 94, 3]
+        }
+      },
+      "maximum": {
+        "liveFileCount": 194,
+        "direct": {
+          "expectCalls": 1488,
+          "assertionPoints": 2326
+        },
+        "unique": {
+          "expectCalls": 1962,
+          "assertionPoints": 3601
+        },
+        "files": {
+          "test/e2e/live/gpu-e2e.test.ts": [85, 109, 144, 181, 3]
         }
       }
     }

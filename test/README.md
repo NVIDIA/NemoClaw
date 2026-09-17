@@ -80,7 +80,16 @@ A reviewed qualification can use a PR-specific allowance in
 `ci/e2e-assertion-growth-exceptions.json`. The guard reads this policy only from the trusted base;
 candidate policy cannot grant itself an allowance. Each allowance names the exact changed live
 files and bounds both the increase and final census. Other PRs and files retain the no-growth rule.
-Remove an allowance after its PR merges, when the resulting census becomes the normal baseline.
+When two approved qualifications share an owner, each record can use their combined ceiling
+and that ceiling minus its own delta as baseline. The delta bound preserves each PR's allowance
+before or after the other qualification merges.
+The current records allow PR #11918 two extra `expect` calls and four assertion points in each
+view. PR #11919 may add 44 direct `expect` calls and 61 points, 70 transitive `expect` calls and
+87 points, and one lifecycle companion. `e2e-qualification-policy.test.ts` checks both merge
+orders. It and `growth-guardrail-parsers.test.ts` reject excess growth, unrelated paths or PRs,
+and candidate-supplied policy. Remove each allowance in its feature PR, alongside the census
+that becomes the normal baseline. The empty-policy case keeps enforcing no-growth after the
+last record is removed.
 For local checks of that PR, set `NEMOCLAW_GROWTH_PR_NUMBER` to its number. This hint selects an
 existing trusted-base allowance; it grants no authorization. Hosted `PR_NUMBER` takes precedence.
 
