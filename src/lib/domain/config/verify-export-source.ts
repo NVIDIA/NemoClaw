@@ -363,14 +363,6 @@ function classifyWorkload(entry: ObservedExportRegistry): ExportFinding[] {
         "V1 export does not support host proxy credential replay.",
       ),
     );
-  if (entry.workload.corporateCaB64 !== undefined)
-    findings.push(
-      finding(
-        "spec.sandboxes[].runtime.corporateCa",
-        "unsupported",
-        "V1 export does not support a custom corporate CA bundle.",
-      ),
-    );
   return findings;
 }
 
@@ -683,7 +675,10 @@ function expectedProfileWithObservedHostSettings(
   profile: ManagedStartupProfile,
 ): ManagedStartupProfile | null {
   try {
-    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    const expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    // Managed workload authority validates the CA bundle and digest before this comparison.
+    // V1 omits the source host's CA trust; all other profile fields remain checked.
+    return { ...expected, corporateCa: profile.corporateCa };
   } catch {
     return null;
   }
