@@ -65,8 +65,9 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 
 ## Build Agent Images
 
-Use Docker with Buildx and a native Linux ARM64 builder.
-The image locks select CPython ARM64 wheels; this workflow does not qualify other platforms.
+Use Docker with Buildx on a native host that matches the selected image target.
+The `agents` matrix and default `openclaw` target use Linux ARM64 locks.
+The separate `openclaw-amd64` target uses a Linux AMD64 lock; other agent targets remain ARM64-only.
 Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
 The `nooa`, `nooa-bench`, and `hermes` targets use Python 3.13.15 because their pinned upstream releases require Python below 3.14.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
@@ -86,6 +87,17 @@ Examples that omit `image` use the SDK's default OpenClaw pin from `versions.jso
 The sandbox compute daemon must have access to that exact image.
 Build metadata records the exported digest separately under the target's `containerimage.digest` key.
 The commands build and load local images; they do not publish images or launch a deployment.
+
+On a native Linux AMD64 host, build OpenClaw with its architecture-specific target:
+
+```sh
+mkdir -p .build
+docker buildx bake openclaw-amd64 --load --metadata-file .build/agent-images-amd64.json
+docker image inspect nc-fabric:openclaw-amd64 --format '{{index .RepoDigests 0}}'
+```
+
+Use the printed immutable reference in `sandboxes[].image.ref`.
+The AMD64 build and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
 Select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `docker buildx bake agents --load`.
 `docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`.

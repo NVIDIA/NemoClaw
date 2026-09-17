@@ -48,6 +48,19 @@ target "agents" {
   tags = ["${IMAGE_PREFIX}:${harness}"]
 }
 
+# OpenClaw's native AMD64 dependency lock is separate from the ARM64 agent matrix.
+target "openclaw-amd64" {
+  inherits = ["_fabric"]
+  target = "openclaw"
+  platforms = ["linux/amd64"]
+  args = {
+    HARNESS = "openclaw"
+    ADAPTER = ""
+    LOCKFILE = "sdk-dependencies-linux-amd64.lock"
+  }
+  tags = ["${IMAGE_PREFIX}:openclaw-amd64"]
+}
+
 target "ollama-proxy" {
   context = "."
   dockerfile = "image/ollama-proxy/Dockerfile"

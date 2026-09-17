@@ -45,6 +45,12 @@ class ImageBuilds(unittest.TestCase):
     def test_individual_selection_does_not_build_other_harnesses(self):
         self.assertEqual(set(self.plan("pi")["target"]), {"pi"})
 
+    def test_openclaw_has_a_native_linux_amd64_build(self):
+        target = self.plan("openclaw-amd64")["target"]["openclaw-amd64"]
+        self.assertEqual(target["target"], "openclaw")
+        self.assertEqual(target["platforms"], ["linux/amd64"])
+        self.assertEqual(target["args"]["LOCKFILE"], "sdk-dependencies-linux-amd64.lock")
+
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]
         self.assertEqual(set(targets), {"ollama-proxy"})
