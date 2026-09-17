@@ -5,6 +5,8 @@ mod args;
 mod authoring;
 mod dispatch;
 mod io;
+#[cfg(test)]
+mod parity;
 mod progress;
 use args::{Cli, Command};
 use clap::Parser;
