@@ -7,7 +7,11 @@ import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { isTerminalSandboxPhase } from "../../state/gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import {
+  classifySandboxPhaseRecoveryAction,
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import { printSandboxGatewayStateHint, printWrongGatewayActiveGuidance } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -22,7 +26,9 @@ type SandboxGatewayLookupStatusContext = {
   registered: boolean;
   lookup: SandboxGatewayState;
   phase: string | null;
+  openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
+  dockerRuntimeDown: boolean;
   effectivePreflight: SandboxStatusPreflightResult;
 };
 
@@ -133,7 +139,7 @@ function printMissingLiveSandboxStatusGuidance({
     `  Retry \`${CLI_NAME} ${sandboxName} status\` after the gateway finishes reconnecting.`,
   );
   console.log(
-    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} list\` to inspect the remaining sandboxes or \`${CLI_NAME} onboard\` to create a new one.`,
+    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} ${sandboxName} destroy --yes\` to remove the stale local entry, then \`${CLI_NAME} onboard\` to create a replacement.`,
   );
 }
 
@@ -141,7 +147,9 @@ function printPresentSandboxGatewayLookupStatus({
   sandboxName,
   lookup,
   phase,
+  openshellDriver,
   dockerRuntime,
+  dockerRuntimeDown,
 }: SandboxGatewayLookupStatusContext): void {
   console.log("");
   if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
@@ -166,7 +174,13 @@ function printPresentSandboxGatewayLookupStatus({
       ? lookup.output.replace(/^(\s*Phase:\s*)\S+\s*$/gmu, "$1Stopped")
       : lookup.output;
   if (renderedOutput) console.log(renderedOutput);
-  printNonReadySandboxPhaseGuidance({ sandboxName, phase, dockerRuntime });
+  printNonReadySandboxPhaseGuidance({
+    sandboxName,
+    phase,
+    openshellDriver,
+    dockerRuntime,
+    dockerRuntimeDown,
+  });
 }
 
 function printWrongGatewayActiveLookupStatus({
@@ -262,11 +276,15 @@ async function printUnknownGatewayLookupStatus({
 function printNonReadySandboxPhaseGuidance({
   sandboxName,
   phase,
+  openshellDriver,
   dockerRuntime,
+  dockerRuntimeDown,
 }: {
   sandboxName: string;
   phase: string | null;
+  openshellDriver: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
+  dockerRuntimeDown: boolean;
 }): void {
   if (!phase || phase === "Ready") return;
   if (
@@ -318,7 +336,26 @@ function printNonReadySandboxPhaseGuidance({
     "  This usually happens when a process crash inside the sandbox prevented clean startup.",
   );
   console.log("");
-  if (phase === "Error") {
+  const recoveryAction = classifySandboxPhaseRecoveryAction({
+    phase,
+    openshellDriver,
+    dockerContainerName: dockerRuntime?.containerName,
+  });
+  if (recoveryAction === "replace_missing_docker_container" && dockerRuntimeDown) {
+    printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
+    deferSandboxLifecycleExit(1);
+  }
+  if (recoveryAction === "replace_missing_docker_container") {
+    console.log(
+      "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",
+    );
+    console.log("  To create a clean replacement:");
+    console.log(`    1. ${CLI_NAME} ${sandboxName} destroy --yes`);
+    console.log(`    2. ${CLI_NAME} onboard`);
+    console.log("  Restore a separately created snapshot afterward if one is available.");
+    return;
+  }
+  if (recoveryAction === "start") {
     console.log(
       `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
     );

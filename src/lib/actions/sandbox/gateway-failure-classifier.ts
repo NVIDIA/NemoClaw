@@ -63,6 +63,25 @@ export type SandboxContainerFailureRunners = {
   portProbe: (port: number) => Promise<boolean>;
 };
 
+export type SandboxPhaseRecoveryAction = "replace_missing_docker_container" | "start" | "rebuild";
+
+export function classifySandboxPhaseRecoveryAction({
+  phase,
+  openshellDriver,
+  dockerContainerName,
+}: {
+  phase: string;
+  openshellDriver: string | null | undefined;
+  dockerContainerName: string | null | undefined;
+}): SandboxPhaseRecoveryAction {
+  if (phase !== "Error") return "rebuild";
+  const driver = openshellDriver?.trim().toLowerCase();
+  if ((!driver || driver === "docker") && !dockerContainerName) {
+    return "replace_missing_docker_container";
+  }
+  return "start";
+}
+
 function defaultDockerInfo(): boolean {
   return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;
 }

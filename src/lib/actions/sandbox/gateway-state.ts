@@ -101,7 +101,11 @@ import {
 } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import {
+  classifySandboxPhaseRecoveryAction,
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
   state: string;
@@ -1166,7 +1170,30 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      if (phase === "Error") {
+      const openshellDriver = getKnownSandboxTarget(sandboxName)?.openshellDriver;
+      const recoveryAction = classifySandboxPhaseRecoveryAction({
+        phase,
+        openshellDriver,
+        dockerContainerName: dockerRuntime.containerName,
+      });
+      if (
+        recoveryAction === "replace_missing_docker_container" &&
+        isDockerRuntimeDown(sandboxName, {
+          getSandbox: () => ({ openshellDriver }),
+        })
+      ) {
+        printDockerRuntimeDownGuidance(sandboxName);
+        exit(1);
+      }
+      if (recoveryAction === "replace_missing_docker_container") {
+        console.error(
+          "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",
+        );
+        console.error("  To create a clean replacement:");
+        console.error(`    1. ${CLI_NAME} ${sandboxName} destroy --yes`);
+        console.error(`    2. ${CLI_NAME} onboard`);
+        console.error("  Restore a separately created snapshot afterward if one is available.");
+      } else if (recoveryAction === "start") {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
         );

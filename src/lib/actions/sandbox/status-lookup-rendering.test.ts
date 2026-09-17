@@ -16,8 +16,12 @@ function captureConsoleLog(): { lines: () => string; restore: () => void } {
 async function printGuidance({
   phase,
   dockerRuntime,
+  openshellDriver = "docker",
+  dockerRuntimeDown = false,
 }: {
   phase: string;
+  openshellDriver?: string | null;
+  dockerRuntimeDown?: boolean;
   dockerRuntime: {
     health: "none";
     paused: boolean;
@@ -30,12 +34,14 @@ async function printGuidance({
     registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
     phase,
+    openshellDriver,
     dockerRuntime,
+    dockerRuntimeDown,
     effectivePreflight: {
       failure: null,
-      failureLayer: null,
-      suppressInferenceProbe: false,
-      exitCode: 0,
+      failureLayer: dockerRuntimeDown ? "docker_unreachable" : null,
+      suppressInferenceProbe: dockerRuntimeDown,
+      exitCode: dockerRuntimeDown ? 1 : 0,
     },
   });
 }
@@ -115,7 +121,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       registered: true,
       lookup: { state: "missing", output: "sandbox beta not found" },
       phase: "Stopped",
+      openshellDriver: "docker",
       dockerRuntime: null,
+      dockerRuntimeDown: false,
       effectivePreflight: {
         failure: null,
         failureLayer: null,
@@ -142,7 +150,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
         registered: true,
         lookup: { state: "gateway_schema_mismatch", output: "gateway schema mismatch" },
         phase: "Stopped",
+        openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
@@ -172,7 +182,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
             "  Sandbox 'beta' is running, but NemoClaw could not clear its stale intentional-stop record.",
         },
         phase: "Running",
+        openshellDriver: "docker",
         dockerRuntime: null,
+        dockerRuntimeDown: false,
         effectivePreflight: {
           failure: null,
           failureLayer: null,
@@ -211,9 +223,60 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
-  it("steers a provider without a Docker container to the OpenShell start path", async () => {
+  it("steers a Docker-driver sandbox without its container to clean replacement", async () => {
     const cap = captureConsoleLog();
     await printGuidance({ phase: "Error", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("cannot back up its live workspace for rebuild");
+    expect(text).toContain("nemoclaw beta destroy --yes");
+    expect(text).toContain("nemoclaw onboard");
+    expect(text).toContain("separately created snapshot");
+    expect(text).not.toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("reports a Docker outage instead of treating an uninspectable container as missing", async () => {
+    const cap = captureConsoleLog();
+    await expect(
+      printGuidance({ phase: "Error", dockerRuntime: null, dockerRuntimeDown: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Docker daemon is not reachable");
+    expect(text).toContain("do not rebuild, destroy, or re-onboard");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+    expect(text).not.toContain("nemoclaw onboard");
+  });
+
+  it("steers a Docker sandbox with missing legacy metadata and no container to clean replacement", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: null, dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("cannot back up its live workspace for rebuild");
+    expect(text).toContain("nemoclaw beta destroy --yes");
+    expect(text).toContain("nemoclaw onboard");
+    expect(text).not.toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("steers a VM sandbox without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "vm", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+  });
+
+  it("steers a native provider without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "mxc", dockerRuntime: null });
     const text = cap.lines();
     cap.restore();
 

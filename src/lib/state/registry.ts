@@ -60,6 +60,7 @@ export {
   requireSandboxHostLocalInferenceProvenance,
 };
 export { hasLegacyDgxStationQualificationAuthority } from "./registry/rebuild-authority";
+export { findSandboxAcrossGatewayRoots } from "./registry/cross-port";
 export {
   addExtraProvider,
   listExtraProviders,

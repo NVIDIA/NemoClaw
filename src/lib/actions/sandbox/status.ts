@@ -8,7 +8,6 @@ import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-
 import { getGatewayPresets } from "../../policy";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
-import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
   qualifyPortableAgentLifecycleAuthority,
@@ -71,7 +70,7 @@ function inspectHermesPortableStatus(
 }
 
 function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null {
-  const entry = findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+  const entry = registry.findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 
@@ -177,7 +176,8 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 }
 
 async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
-  const preflight = await getSandboxStatusPreflight(getPublishedSandbox(sandboxName));
+  const sandboxEntry = getPublishedSandbox(sandboxName);
+  const preflight = await getSandboxStatusPreflight(sandboxEntry);
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
@@ -185,6 +185,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     preflight,
+    sandboxEntry,
   });
   const {
     sb,
@@ -202,14 +203,10 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
-  const phase = resolveSandboxStatusPhase(
-    observedPhase,
-    snapshot.postRecoveryPreflight ?? preflight,
-  );
-  const effectivePreflight = withoutTerminalPhasePreflight(
-    snapshot.postRecoveryPreflight ?? preflight,
-    phase,
-  );
+  const observedPreflight = snapshot.postRecoveryPreflight ?? preflight;
+  const phase = resolveSandboxStatusPhase(observedPhase, observedPreflight);
+  const dockerRuntimeDown = observedPreflight.failureLayer === "docker_unreachable";
+  const effectivePreflight = withoutTerminalPhasePreflight(observedPreflight, phase);
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   printSandboxStatusPreflightHeader(effectivePreflight);
   if (effectivePreflight.exitCode !== 0) {
@@ -250,7 +247,9 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     registered: sb !== null,
     lookup,
     phase,
+    openshellDriver: sb?.openshellDriver ?? null,
     dockerRuntime,
+    dockerRuntimeDown,
     effectivePreflight,
   });
 
