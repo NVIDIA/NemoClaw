@@ -574,5 +574,18 @@
       "Does not treat a passing result alone as a complete live contract.",
       "Routes an incomplete handoff back to implementation before publication."
     ]
+  },
+  {
+    "id": "require-retained-live-lower-layer-disposition",
+    "question": "Publish my NemoClaw branch. The retained live assertion names the sandbox policy boundary, the denied-request outcome, the regression that unauthorized egress could succeed, its canonical live test, and the smallest assertion that the request is rejected before reaching the fixture. The handoff does not name a lower-layer evidence owner or state that no deterministic behavior applies.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An otherwise complete retained-live handoff remains incomplete until it records the lower-layer evidence owner or explicitly states that no deterministic behavior applies.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Recognizes that the real boundary, semantic outcome, distinct regression, canonical live test, and smallest live assertion are present.",
+      "Identifies the lower-layer evidence disposition as the only missing retained-live field.",
+      "Routes the handoff back to implementation for that missing disposition.",
+      "Does not publish the incomplete handoff."
+    ]
   }
 ]
