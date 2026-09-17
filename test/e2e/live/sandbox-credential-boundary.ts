@@ -13,12 +13,11 @@ export function buildSandboxCredentialScanCommand(
   const roots = directories.map((directory) => shellQuote(directory)).join(" ");
   return [
     `for dir in ${roots}; do`,
-    '  directory=$(find "$dir" -prune -type d -print 2>/dev/null)',
-    "  find_status=$?",
-    '  case "$find_status:$directory" in',
-    '    "0:$dir") ;;',
-    "    0:|1:) continue ;;",
-    '    *) exit "$find_status" ;;',
+    '  exists_status=$(test -e "$dir"; printf \'%s\' "$?")',
+    '  case "$exists_status" in',
+    "    0) ;;",
+    "    1) continue ;;",
+    '    *) exit "$exists_status" ;;',
     "  esac",
     `  matches=$(grep -rlE '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$dir")`,
     "  scan_status=$?",

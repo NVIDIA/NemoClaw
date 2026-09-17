@@ -76,6 +76,24 @@ describe("sandbox credential scan", () => {
     expect(scan(root)).toBe("");
   });
 
+  it("skips a sandbox state root that does not exist", () => {
+    const root = createScanRoot();
+
+    expect(scan(path.join(root, "missing"))).toBe("");
+  });
+
+  it("fails closed when an existing sandbox state root cannot be inspected", () => {
+    const root = createScanRoot();
+    const blocked = path.dirname(writeFixture(root, "blocked/state.txt", "ordinary state\n"));
+    fs.chmodSync(blocked, 0o000);
+
+    try {
+      expect(() => scan(blocked)).toThrow();
+    } finally {
+      fs.chmodSync(blocked, 0o700);
+    }
+  });
+
   it.each([
     ["NVIDIA", "nvapi-nemoclaw-credential-boundary-canary"],
     ["GitHub", `ghp_${"a".repeat(36)}`],

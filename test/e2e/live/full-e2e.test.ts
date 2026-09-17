@@ -216,6 +216,7 @@ export default plugin;
   ].join("\n");
 }
 
+/** Invoke the installed native weather plugin and verify its versioned response. */
 async function invokeNativeWeatherPlugin(
   sandbox: SandboxClient,
   version: NativePluginVersion,
