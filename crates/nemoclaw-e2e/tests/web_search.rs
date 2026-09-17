@@ -57,7 +57,9 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
     let profile = recovered.into_parts().0.unwrap();
     let target = &targets
         .iter()
-        .find(|t| t.address == "nemoclaw_provider.web_search")
+        .find(|t| {
+            t.kind == "provider" && t.values.get("provider_type").is_some_and(|v| v == "brave")
+        })
         .unwrap()
         .values;
     let result = client.ensure("provider", target).await;
@@ -68,7 +70,7 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
             .unwrap()
             .contains("owned-search-key")
     );
-    let key = format!("{}/brave-search", doc.workspace());
+    let key = format!("{}/{}", doc.workspace(), provider["name"]);
     {
         let state = fixture.state.lock().unwrap();
         let stored = &state.providers[&key];
@@ -113,4 +115,68 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
         .await
         .unwrap();
     assert!(fixture.state.lock().unwrap().profiles.is_empty());
+}
+
+#[tokio::test]
+async fn separate_search_credentials_reach_only_their_selected_sandbox_attachments() {
+    struct Keys;
+    impl Secrets for Keys {
+        fn resolve(&self, reference: &str) -> Result<String, ObservationError> {
+            match reference {
+                "SEARCH_A" | "SEARCH_B" => Ok(format!("fixture-{reference}")),
+                _ => Err(ObservationError::Authentication),
+            }
+        }
+    }
+    let fixture = Fixture::start().await;
+    let mut doc =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    doc.spec.gateway.endpoint = fixture.endpoint.clone();
+    let mut other = doc.spec.sandboxes[0].clone();
+    other.name = "other".into();
+    doc.spec.sandboxes.push(other);
+    for (sandbox, reference) in doc.spec.sandboxes.iter_mut().zip(["SEARCH_A", "SEARCH_B"]) {
+        sandbox.integrations = serde_json::from_value(serde_json::json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":reference}}})).unwrap();
+        sandbox.agents[0].integration_refs = vec!["search".into()];
+    }
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|k| (k.into(), "a".repeat(32)))
+        .into();
+    let targets = targets(&doc, &generations).unwrap();
+    let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Keys)).unwrap();
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        for target in targets.iter().filter(|t| t.kind == kind) {
+            let result = client.ensure(kind, &target.values).await;
+            assert!(result.error().is_none(), "{kind}: {:?}", result.error());
+        }
+    }
+    let state = fixture.state.lock().unwrap();
+    for (sandbox, reference) in doc.spec.sandboxes.iter().zip(["SEARCH_A", "SEARCH_B"]) {
+        let provider = targets
+            .iter()
+            .find(|t| {
+                t.kind == "provider"
+                    && t.values
+                        .get("credential_env")
+                        .is_some_and(|v| v == reference)
+            })
+            .unwrap();
+        let stored = &state.providers[&format!("{}/{}", doc.workspace(), provider.values["name"])];
+        assert_eq!(
+            stored.credentials["BRAVE_API_KEY"],
+            format!("fixture-{reference}")
+        );
+        let attached = &state.sandboxes[&format!("{}/{}", doc.workspace(), sandbox.name)]
+            .spec
+            .as_ref()
+            .unwrap()
+            .providers;
+        assert_eq!(
+            attached
+                .iter()
+                .filter(|name| name.starts_with("brave-search-"))
+                .collect::<Vec<_>>(),
+            vec![&provider.values["name"]]
+        );
+    }
 }

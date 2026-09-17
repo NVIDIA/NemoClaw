@@ -112,9 +112,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
             values,
         });
         if let Some(search) = settings.web_search {
+            let provider_name = crate::config::search_provider_name(&search.credential.env);
             for (kind, name) in [
                 ("provider_profile", "nemoclaw-brave"),
-                ("provider", "brave-search"),
+                ("provider", provider_name.as_str()),
             ] {
                 let mut values: Row = [
                     ("workspace".into(), workspace.clone()),
@@ -135,13 +136,20 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 }
                 let target = Target {
                     kind: kind.into(),
-                    address: format!("nemoclaw_{kind}.web_search"),
+                    address: if kind == "provider" {
+                        format!(
+                            "nemoclaw_provider.web_search_{}",
+                            provider_name.strip_prefix("brave-search-").unwrap()
+                        )
+                    } else {
+                        "nemoclaw_provider_profile.web_search".into()
+                    },
                     values,
                 };
                 if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                     if previous != &target {
                         return Err(ConfigError::new(
-                            "sandboxes sharing web search must use the same provider credential",
+                            "web search provider registration conflicts with an existing target",
                         ));
                     }
                 } else {
@@ -327,7 +335,12 @@ pub fn compile(
                 "nemoclaw_ollama_external_model.inference"
             ]);
         }
-        if target.kind == "provider" && target.address != "nemoclaw_provider.web_search" {
+        if target.kind == "provider"
+            && target
+                .values
+                .get("provider_type")
+                .is_none_or(|kind| kind != "brave")
+        {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
             if target.values["name"] == document.provider_key(inference) {
@@ -340,7 +353,12 @@ pub fn compile(
             }
             attributes["depends_on"] = json!(dependencies);
         }
-        if target.address == "nemoclaw_provider.web_search" {
+        if target.kind == "provider"
+            && target
+                .values
+                .get("provider_type")
+                .is_some_and(|kind| kind == "brave")
+        {
             attributes["depends_on"] = json!(["nemoclaw_provider_profile.web_search"]);
         }
         attributes["lifecycle"] = json!({"prevent_destroy":true});

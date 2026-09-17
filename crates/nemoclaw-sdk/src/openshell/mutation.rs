@@ -25,7 +25,8 @@ impl OpenShell {
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
             "brave"
-                if value(want, "name") == "brave-search"
+                if value(want, "name")
+                    == crate::config::search_provider_name(value(want, "credential_env"))
                     && value(want, "endpoint") == "https://api.search.brave.com"
                     && !value(want, "credential_env").is_empty() =>
             {
