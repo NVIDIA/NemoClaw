@@ -41,6 +41,8 @@ async fn main() -> ExitCode {
     signals.abort();
     match result {
         Ok(dispatch::CommandResult::Onboard(authored)) => {
+            let authoring::CompletionBoundary::GeneratedDesiredState =
+                authored.completion_boundary();
             let path = output_path.expect("onboarding requires an output path");
             match Document::parse(authored.yaml().as_bytes())
                 .map_err(std::io::Error::other)

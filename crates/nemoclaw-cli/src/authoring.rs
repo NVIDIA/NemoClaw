@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{Document, InferenceApi};
 use serde_json::json;
 use std::fmt;
 
@@ -10,6 +10,7 @@ const NVIDIA_MODEL: &str = "nvidia/nemotron-3-super-120b-a12b";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HarnessChoice {
     OpenClaw,
+    Hermes,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +23,12 @@ pub(crate) enum InferenceChoice {
     NvidiaHosted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApiChoice {
+    OpenAiCompletions,
+    OpenAiResponses,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Answers {
     pub(crate) deployment_name: String,
@@ -30,9 +37,43 @@ pub(crate) struct Answers {
     pub(crate) harness: HarnessChoice,
     pub(crate) runtime: RuntimeChoice,
     pub(crate) inference: InferenceChoice,
+    pub(crate) api: ApiChoice,
     pub(crate) provider_name: String,
     pub(crate) model: String,
     pub(crate) credential_env: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DirectInputs {
+    pub(crate) deployment_name: Option<String>,
+    pub(crate) sandbox_name: Option<String>,
+    pub(crate) agent_name: Option<String>,
+    pub(crate) harness: Option<HarnessChoice>,
+    pub(crate) runtime: Option<RuntimeChoice>,
+    pub(crate) inference: Option<InferenceChoice>,
+    pub(crate) api: Option<ApiChoice>,
+    pub(crate) provider_name: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) credential_env: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InteractiveInputs {
+    pub(crate) deployment_name: String,
+    pub(crate) sandbox_name: String,
+    pub(crate) agent_name: String,
+    pub(crate) harness: HarnessChoice,
+    pub(crate) runtime: RuntimeChoice,
+    pub(crate) inference: InferenceChoice,
+    pub(crate) api: ApiChoice,
+    pub(crate) provider_name: String,
+    pub(crate) model: String,
+    pub(crate) credential_env: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompletionBoundary {
+    GeneratedDesiredState,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +81,13 @@ struct ScenarioCapability {
     harness: HarnessChoice,
     runtime: RuntimeChoice,
     inference: InferenceChoice,
+    api: ApiChoice,
+    harness_kind: &'static str,
+    provider_kind: &'static str,
+    provider_api: &'static str,
+    endpoint: &'static str,
+    network_binary: &'static str,
+    filesystem_read_only: &'static str,
     models: &'static [&'static str],
 }
 
@@ -49,31 +97,90 @@ pub(crate) struct Capabilities {
 }
 
 impl Capabilities {
-    pub(crate) fn first_slice() -> Self {
+    pub(crate) fn available() -> Self {
         Self {
-            scenarios: vec![ScenarioCapability {
-                harness: HarnessChoice::OpenClaw,
-                runtime: RuntimeChoice::Docker,
-                inference: InferenceChoice::NvidiaHosted,
-                models: &[NVIDIA_MODEL],
-            }],
+            scenarios: vec![
+                ScenarioCapability {
+                    harness: HarnessChoice::OpenClaw,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiCompletions,
+                    harness_kind: "openclaw",
+                    provider_kind: "openai",
+                    provider_api: "openai-completions",
+                    endpoint: "https://integrate.api.nvidia.com/v1",
+                    network_binary: "/usr/bin/openclaw",
+                    filesystem_read_only: "/app",
+                    models: &[NVIDIA_MODEL],
+                },
+                ScenarioCapability {
+                    harness: HarnessChoice::OpenClaw,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiResponses,
+                    harness_kind: "openclaw",
+                    provider_kind: "openai",
+                    provider_api: "openai-responses",
+                    endpoint: "https://integrate.api.nvidia.com/v1",
+                    network_binary: "/usr/bin/openclaw",
+                    filesystem_read_only: "/app",
+                    models: &[NVIDIA_MODEL],
+                },
+                ScenarioCapability {
+                    harness: HarnessChoice::Hermes,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiCompletions,
+                    harness_kind: "hermes",
+                    provider_kind: "openai",
+                    provider_api: "openai-completions",
+                    endpoint: "https://integrate.api.nvidia.com/v1",
+                    network_binary: "/opt/fabric/bin/python",
+                    filesystem_read_only: "/opt/hermes",
+                    models: &[NVIDIA_MODEL],
+                },
+            ],
         }
     }
 
-    pub(crate) fn models(
+    fn scenario(
         &self,
         harness: HarnessChoice,
         runtime: RuntimeChoice,
         inference: InferenceChoice,
-    ) -> &[&'static str] {
-        self.scenarios
+        api: ApiChoice,
+    ) -> Option<&ScenarioCapability> {
+        self.scenarios.iter().find(|scenario| {
+            scenario.harness == harness
+                && scenario.runtime == runtime
+                && scenario.inference == inference
+                && scenario.api == api
+        })
+    }
+
+    fn unavailable_field(&self, answers: &Answers) -> &'static str {
+        if !self
+            .scenarios
             .iter()
-            .find(|scenario| {
-                scenario.harness == harness
-                    && scenario.runtime == runtime
-                    && scenario.inference == inference
-            })
-            .map_or(&[], |scenario| scenario.models)
+            .any(|row| row.harness == answers.harness)
+        {
+            return "harness";
+        }
+        if !self
+            .scenarios
+            .iter()
+            .any(|row| row.harness == answers.harness && row.runtime == answers.runtime)
+        {
+            return "runtime";
+        }
+        if !self.scenarios.iter().any(|row| {
+            row.harness == answers.harness
+                && row.runtime == answers.runtime
+                && row.inference == answers.inference
+        }) {
+            return "inference";
+        }
+        "api"
     }
 }
 
@@ -125,6 +232,7 @@ impl std::error::Error for Diagnostics {}
 pub(crate) struct AuthoredDocument {
     yaml: String,
     document: Document,
+    completion_boundary: CompletionBoundary,
 }
 
 impl AuthoredDocument {
@@ -134,6 +242,10 @@ impl AuthoredDocument {
 
     pub(crate) fn document(&self) -> &Document {
         &self.document
+    }
+
+    pub(crate) fn completion_boundary(&self) -> CompletionBoundary {
+        self.completion_boundary
     }
 }
 
@@ -146,9 +258,39 @@ impl Answers {
             harness: HarnessChoice::OpenClaw,
             runtime: RuntimeChoice::Docker,
             inference: InferenceChoice::NvidiaHosted,
+            api: ApiChoice::OpenAiCompletions,
             provider_name: "hosted-nvidia-prod".into(),
             model: NVIDIA_MODEL.into(),
             credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
+        }
+    }
+
+    pub(crate) fn from_direct(mut defaults: Self, inputs: DirectInputs) -> Self {
+        defaults.deployment_name = inputs.deployment_name.unwrap_or(defaults.deployment_name);
+        defaults.sandbox_name = inputs.sandbox_name.unwrap_or(defaults.sandbox_name);
+        defaults.agent_name = inputs.agent_name.unwrap_or(defaults.agent_name);
+        defaults.harness = inputs.harness.unwrap_or(defaults.harness);
+        defaults.runtime = inputs.runtime.unwrap_or(defaults.runtime);
+        defaults.inference = inputs.inference.unwrap_or(defaults.inference);
+        defaults.api = inputs.api.unwrap_or(defaults.api);
+        defaults.provider_name = inputs.provider_name.unwrap_or(defaults.provider_name);
+        defaults.model = inputs.model.unwrap_or(defaults.model);
+        defaults.credential_env = inputs.credential_env.unwrap_or(defaults.credential_env);
+        defaults
+    }
+
+    pub(crate) fn from_interactive(inputs: InteractiveInputs) -> Self {
+        Self {
+            deployment_name: inputs.deployment_name,
+            sandbox_name: inputs.sandbox_name,
+            agent_name: inputs.agent_name,
+            harness: inputs.harness,
+            runtime: inputs.runtime,
+            inference: inputs.inference,
+            api: inputs.api,
+            provider_name: inputs.provider_name,
+            model: inputs.model,
+            credential_env: inputs.credential_env,
         }
     }
 }
@@ -196,14 +338,23 @@ impl Draft {
                 "editing requires one generated onboarding agent",
             ));
         };
-        if !matches!(
-            document.sandbox_harness(sandbox),
-            Ok(harness) if harness.kind == "openclaw"
-        ) || sandbox.runtime.provider != "docker"
+        let harness = match document
+            .sandbox_harness(sandbox)
+            .map(|value| value.kind.as_str())
         {
+            Ok("openclaw") => HarnessChoice::OpenClaw,
+            Ok("hermes") => HarnessChoice::Hermes,
+            _ => {
+                return Err(diagnostic(
+                    "document",
+                    "editing requires a supported harness",
+                ));
+            }
+        };
+        if sandbox.runtime.provider != "docker" {
             return Err(diagnostic(
                 "document",
-                "editing requires the supported OpenClaw Docker scenario",
+                "editing requires the Docker runtime",
             ));
         }
         let provider = document
@@ -224,13 +375,29 @@ impl Draft {
             .ok_or_else(|| diagnostic("document", "editing requires a credential reference"))?
             .env
             .clone();
+        let api = match provider.api.unwrap_or_else(|| {
+            InferenceApi::for_harness(match harness {
+                HarnessChoice::OpenClaw => "openclaw",
+                HarnessChoice::Hermes => "hermes",
+            })
+        }) {
+            InferenceApi::OpenaiCompletions => ApiChoice::OpenAiCompletions,
+            InferenceApi::OpenaiResponses => ApiChoice::OpenAiResponses,
+            InferenceApi::AnthropicMessages => {
+                return Err(diagnostic(
+                    "document",
+                    "editing requires a supported inference API",
+                ));
+            }
+        };
         let answers = Answers {
             deployment_name: document.metadata.name.clone(),
             sandbox_name: sandbox.name.clone(),
             agent_name: agent.name.clone(),
-            harness: HarnessChoice::OpenClaw,
+            harness,
             runtime: RuntimeChoice::Docker,
             inference: InferenceChoice::NvidiaHosted,
+            api,
             provider_name: provider.name.clone(),
             model: route.overrides.model.clone(),
             credential_env,
@@ -355,13 +522,29 @@ impl Review {
             .as_ref()
             .expect("generated review has inline inference")
             .routes[0];
+        let sandbox = &self.authored.document.spec.sandboxes[0];
+        let harness = self
+            .authored
+            .document
+            .sandbox_harness(sandbox)
+            .expect("generated review has a harness");
+        let api = match self.authored.document.spec.inference_providers[0]
+            .api
+            .unwrap_or_else(|| InferenceApi::for_harness(&harness.kind))
+        {
+            InferenceApi::OpenaiCompletions => "openai-completions",
+            InferenceApi::OpenaiResponses => "openai-responses",
+            InferenceApi::AnthropicMessages => "anthropic-messages",
+        };
         format!(
-            "Deployment: {}\nUID: {}\nSandbox: {}\nAgent: {}\nProvider: {}\nModel: {}\nCredential references: {}\n",
+            "Deployment: {}\nUID: {}\nSandbox: {}\nHarness: {}\nAgent: {}\nProvider: {}\nAPI: {}\nModel: {}\nCredential references: {}\n",
             self.deployment_name(),
             self.uid(),
             self.sandbox_name(),
+            harness.kind,
             self.agent_name(),
             self.provider_name(),
+            api,
             route.overrides.model,
             self.credential_references().join(", ")
         )
@@ -442,18 +625,38 @@ impl Session {
                 message: "must be an uppercase environment variable name".into(),
             });
         }
-        let models = capabilities.models(answers.harness, answers.runtime, answers.inference);
-        if !models.contains(&answers.model.as_str()) {
-            items.push(Diagnostic {
-                field: "model",
-                message:
-                    "is not available for the selected harness, runtime, and inference provider"
+        let scenario = capabilities.scenario(
+            answers.harness,
+            answers.runtime,
+            answers.inference,
+            answers.api,
+        );
+        match scenario {
+            Some(scenario) if !scenario.models.contains(&answers.model.as_str()) => {
+                items.push(Diagnostic {
+                    field: "model",
+                    message: "is not available for the selected harness, runtime, inference provider, and API"
                         .into(),
-            });
+                });
+            }
+            None => items.push(Diagnostic {
+                field: capabilities.unavailable_field(answers),
+                message:
+                    "the selected harness, runtime, inference provider, and API are not available"
+                        .into(),
+            }),
+            Some(_) => {}
         }
         if !items.is_empty() {
             return Err(Diagnostics { items });
         }
+        let scenario = scenario.expect("validated scenario capability");
+        let read_only = [
+            "/usr",
+            "/opt/fabric",
+            "/opt/nemoclaw",
+            scenario.filesystem_read_only,
+        ];
 
         let source = json!({
             "apiVersion": nemoclaw_sdk::config::API_VERSION,
@@ -463,14 +666,14 @@ impl Session {
                 "gateway": {"management": "managed"},
                 "inferenceProviders": [{
                     "name": answers.provider_name,
-                    "provider": "openai",
-                    "api": "openai-completions",
-                    "endpoint": "https://integrate.api.nvidia.com/v1",
+                    "provider": scenario.provider_kind,
+                    "api": scenario.provider_api,
+                    "endpoint": scenario.endpoint,
                     "credential": {"env": answers.credential_env}
                 }],
                 "sandboxes": [{
                     "name": answers.sandbox_name,
-                    "harness": {"kind": "openclaw"},
+                    "harness": {"kind": scenario.harness_kind},
                     "runtime": {"provider": "docker"},
                     "network": {"policy": {"explicit": {
                         "version": 1,
@@ -478,11 +681,11 @@ impl Session {
                         "network_policies": {"hosted-inference": {
                             "name": "hosted-inference",
                             "endpoints": [{"host": "integrate.api.nvidia.com", "port": 443}],
-                            "binaries": [{"path": "/usr/bin/openclaw"}]
+                            "binaries": [{"path": scenario.network_binary}]
                         }},
                         "filesystem_policy": {
                             "include_workdir": true,
-                            "read_only": ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
+                            "read_only": read_only,
                             "read_write": ["/sandbox"]
                         }
                     }}},
@@ -501,7 +704,11 @@ impl Session {
             .map_err(|_| diagnostic("document", "could not serialize configuration"))?;
         let document = Document::parse(yaml.as_bytes())
             .map_err(|error| diagnostic("document", &error.to_string()))?;
-        Ok(AuthoredDocument { yaml, document })
+        Ok(AuthoredDocument {
+            yaml,
+            document,
+            completion_boundary: CompletionBoundary::GeneratedDesiredState,
+        })
     }
 }
 
@@ -544,6 +751,7 @@ mod tests {
             harness: HarnessChoice::OpenClaw,
             runtime: RuntimeChoice::Docker,
             inference: InferenceChoice::NvidiaHosted,
+            api: ApiChoice::OpenAiCompletions,
             provider_name: "hosted-nvidia-prod".into(),
             model: "nvidia/nemotron-3-super-120b-a12b".into(),
             credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
@@ -552,14 +760,18 @@ mod tests {
 
     #[test]
     fn fixed_hosted_openclaw_answers_project_to_parser_accepted_intent() {
-        let capabilities = Capabilities::first_slice();
+        let capabilities = Capabilities::available();
         assert_eq!(
-            capabilities.models(
-                HarnessChoice::OpenClaw,
-                RuntimeChoice::Docker,
-                InferenceChoice::NvidiaHosted,
-            ),
-            ["nvidia/nemotron-3-super-120b-a12b"]
+            capabilities
+                .scenario(
+                    HarnessChoice::OpenClaw,
+                    RuntimeChoice::Docker,
+                    InferenceChoice::NvidiaHosted,
+                    ApiChoice::OpenAiCompletions,
+                )
+                .unwrap()
+                .models,
+            [NVIDIA_MODEL]
         );
         let session = Session::with_uid(UID).unwrap();
         let first = session.project(&capabilities, &answers()).unwrap();
@@ -619,20 +831,282 @@ mod tests {
     }
 
     #[test]
+    fn representable_scenarios_share_one_parser_validated_table() {
+        struct Scenario {
+            name: &'static str,
+            variation: &'static str,
+            direct_inputs: DirectInputs,
+            interactive_inputs: InteractiveInputs,
+            available_models: &'static [&'static str],
+            expected_harness: &'static str,
+            expected_api: InferenceApi,
+            expected_binary: &'static str,
+            expected_read_only: &'static str,
+            credential_references: &'static [&'static str],
+            completion_boundary: CompletionBoundary,
+            authored_source_assertions: &'static [(&'static str, &'static str)],
+        }
+
+        let scenarios = [
+            Scenario {
+                name: "hosted OpenClaw completions",
+                variation: "baseline OpenClaw harness with OpenAI Completions",
+                direct_inputs: DirectInputs::default(),
+                interactive_inputs: InteractiveInputs {
+                    deployment_name: "openclaw-nvidia-hosted".into(),
+                    sandbox_name: "assistant".into(),
+                    agent_name: "primary".into(),
+                    harness: HarnessChoice::OpenClaw,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiCompletions,
+                    provider_name: "hosted-nvidia-prod".into(),
+                    model: NVIDIA_MODEL.into(),
+                    credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
+                },
+                available_models: &[NVIDIA_MODEL],
+                expected_harness: "openclaw",
+                expected_api: InferenceApi::OpenaiCompletions,
+                expected_binary: "/usr/bin/openclaw",
+                expected_read_only: "/app",
+                credential_references: &["NVIDIA_INFERENCE_API_KEY"],
+                completion_boundary: CompletionBoundary::GeneratedDesiredState,
+                authored_source_assertions: &[("/spec/sandboxes/0/runtime/provider", "docker")],
+            },
+            Scenario {
+                name: "hosted OpenClaw responses",
+                variation: "same harness and provider with the OpenAI Responses API",
+                direct_inputs: DirectInputs {
+                    deployment_name: Some("openclaw-responses".into()),
+                    api: Some(ApiChoice::OpenAiResponses),
+                    provider_name: Some("responses-nvidia".into()),
+                    credential_env: Some("NVIDIA_RESPONSES_API_KEY".into()),
+                    ..DirectInputs::default()
+                },
+                interactive_inputs: InteractiveInputs {
+                    deployment_name: "openclaw-responses".into(),
+                    sandbox_name: "assistant".into(),
+                    agent_name: "primary".into(),
+                    harness: HarnessChoice::OpenClaw,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiResponses,
+                    provider_name: "responses-nvidia".into(),
+                    model: NVIDIA_MODEL.into(),
+                    credential_env: "NVIDIA_RESPONSES_API_KEY".into(),
+                },
+                available_models: &[NVIDIA_MODEL],
+                expected_harness: "openclaw",
+                expected_api: InferenceApi::OpenaiResponses,
+                expected_binary: "/usr/bin/openclaw",
+                expected_read_only: "/app",
+                credential_references: &["NVIDIA_RESPONSES_API_KEY"],
+                completion_boundary: CompletionBoundary::GeneratedDesiredState,
+                authored_source_assertions: &[(
+                    "/spec/inferenceProviders/0/api",
+                    "openai-responses",
+                )],
+            },
+            Scenario {
+                name: "hosted Hermes completions",
+                variation: "Hermes harness policy and filesystem requirements",
+                direct_inputs: DirectInputs {
+                    deployment_name: Some("hermes-nvidia-hosted".into()),
+                    sandbox_name: Some("hermes-assistant".into()),
+                    agent_name: Some("hermes".into()),
+                    harness: Some(HarnessChoice::Hermes),
+                    provider_name: Some("hermes-nvidia".into()),
+                    credential_env: Some("HERMES_INFERENCE_API_KEY".into()),
+                    ..DirectInputs::default()
+                },
+                interactive_inputs: InteractiveInputs {
+                    deployment_name: "hermes-nvidia-hosted".into(),
+                    sandbox_name: "hermes-assistant".into(),
+                    agent_name: "hermes".into(),
+                    harness: HarnessChoice::Hermes,
+                    runtime: RuntimeChoice::Docker,
+                    inference: InferenceChoice::NvidiaHosted,
+                    api: ApiChoice::OpenAiCompletions,
+                    provider_name: "hermes-nvidia".into(),
+                    model: NVIDIA_MODEL.into(),
+                    credential_env: "HERMES_INFERENCE_API_KEY".into(),
+                },
+                available_models: &[NVIDIA_MODEL],
+                expected_harness: "hermes",
+                expected_api: InferenceApi::OpenaiCompletions,
+                expected_binary: "/opt/fabric/bin/python",
+                expected_read_only: "/opt/hermes",
+                credential_references: &["HERMES_INFERENCE_API_KEY"],
+                completion_boundary: CompletionBoundary::GeneratedDesiredState,
+                authored_source_assertions: &[("/spec/sandboxes/0/harness/kind", "hermes")],
+            },
+        ];
+
+        let capabilities = Capabilities::available();
+        for scenario in scenarios {
+            assert!(!scenario.variation.is_empty());
+            let direct_answers =
+                Answers::from_direct(Answers::first_slice(), scenario.direct_inputs.clone());
+            let interactive_answers =
+                Answers::from_interactive(scenario.interactive_inputs.clone());
+            assert_eq!(direct_answers, interactive_answers, "{}", scenario.name);
+            let capability = capabilities
+                .scenario(
+                    direct_answers.harness,
+                    direct_answers.runtime,
+                    direct_answers.inference,
+                    direct_answers.api,
+                )
+                .unwrap_or_else(|| panic!("{}: capability is unavailable", scenario.name));
+            assert_eq!(
+                capability.models, scenario.available_models,
+                "{}",
+                scenario.name
+            );
+            let session = Session::with_uid(UID).unwrap();
+            let authored = session
+                .project(&capabilities, &direct_answers)
+                .unwrap_or_else(|error| panic!("{} direct: {error}", scenario.name));
+            let interactive = session
+                .project(&capabilities, &interactive_answers)
+                .unwrap_or_else(|error| panic!("{} interactive: {error}", scenario.name));
+            assert_eq!(
+                authored.yaml(),
+                interactive.yaml(),
+                "{} direct and interactive answers",
+                scenario.name
+            );
+            assert_eq!(
+                authored.completion_boundary(),
+                scenario.completion_boundary,
+                "{}",
+                scenario.name
+            );
+            let reparsed = Document::parse(authored.yaml().as_bytes()).unwrap();
+            assert_eq!(&reparsed, authored.document());
+            let reopened = Draft::from_yaml(&capabilities, authored.yaml().as_bytes()).unwrap();
+            let review = reopened.review(&capabilities).unwrap();
+            assert!(
+                review
+                    .render()
+                    .contains(&format!("Harness: {}", scenario.expected_harness)),
+                "{}",
+                scenario.name
+            );
+            let expected_api_name = match scenario.expected_api {
+                InferenceApi::OpenaiCompletions => "openai-completions",
+                InferenceApi::OpenaiResponses => "openai-responses",
+                InferenceApi::AnthropicMessages => "anthropic-messages",
+            };
+            assert!(
+                review
+                    .render()
+                    .contains(&format!("API: {expected_api_name}")),
+                "{}",
+                scenario.name
+            );
+            assert_eq!(reparsed.metadata.name, direct_answers.deployment_name);
+            assert_eq!(reparsed.metadata.uid, UID);
+            assert_eq!(reparsed.spec.gateway.management, "managed");
+            let provider = reparsed.inference_provider().unwrap();
+            assert_eq!(provider.name, direct_answers.provider_name);
+            assert_eq!(provider.provider, "openai");
+            assert_eq!(
+                provider.api,
+                Some(scenario.expected_api),
+                "{}",
+                scenario.name
+            );
+            assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
+            assert_eq!(
+                provider.credential.as_ref().unwrap().env,
+                direct_answers.credential_env
+            );
+            assert_eq!(
+                reparsed.credential_names(),
+                scenario.credential_references,
+                "{}",
+                scenario.name
+            );
+            let sandbox = &reparsed.spec.sandboxes[0];
+            assert_eq!(sandbox.name, direct_answers.sandbox_name);
+            assert_eq!(
+                reparsed.sandbox_harness(sandbox).unwrap().kind,
+                scenario.expected_harness,
+                "{}",
+                scenario.name
+            );
+            assert_eq!(sandbox.runtime.provider, "docker");
+            let agent = &sandbox.agents[0];
+            assert_eq!(agent.name, direct_answers.agent_name);
+            let route = &reparsed.agent_inference(agent).unwrap().routes[0];
+            assert_eq!(route.provider_ref.as_deref(), Some(provider.name.as_str()));
+            assert_eq!(route.overrides.model, direct_answers.model);
+            let policy = &sandbox.network.policy.as_ref().unwrap().explicit;
+            let process = policy.process.as_ref().unwrap();
+            assert_eq!(process.run_as_user.as_deref(), Some("1000"));
+            assert_eq!(process.run_as_group.as_deref(), Some("1000"));
+            let hosted = &policy.network_policies["hosted-inference"];
+            assert_eq!(hosted.name, "hosted-inference");
+            assert_eq!(
+                hosted.endpoints[0].host.as_deref(),
+                Some("integrate.api.nvidia.com")
+            );
+            assert_eq!(hosted.endpoints[0].port, Some(443));
+            assert_eq!(
+                hosted.binaries[0].path, scenario.expected_binary,
+                "{}",
+                scenario.name
+            );
+            let filesystem = policy.filesystem_policy.as_ref().unwrap();
+            assert_eq!(filesystem.include_workdir, Some(true));
+            assert_eq!(
+                filesystem.read_only.as_ref().unwrap(),
+                &[
+                    "/usr",
+                    "/opt/fabric",
+                    "/opt/nemoclaw",
+                    scenario.expected_read_only
+                ]
+            );
+            assert_eq!(filesystem.read_write.as_ref().unwrap(), &["/sandbox"]);
+            let source: serde_json::Value = serde_saphyr::from_str(authored.yaml()).unwrap();
+            for (path, expected) in scenario.authored_source_assertions {
+                assert_eq!(
+                    source.pointer(path).and_then(serde_json::Value::as_str),
+                    Some(*expected),
+                    "{} source path {path}",
+                    scenario.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unsupported_answers_return_field_diagnostics_without_approximation() {
         let mut unsupported = answers();
         unsupported.model = "unoffered/model".into();
         let diagnostics = Session::with_uid(UID)
             .unwrap()
-            .project(&Capabilities::first_slice(), &unsupported)
+            .project(&Capabilities::available(), &unsupported)
             .unwrap_err();
         assert_eq!(diagnostics.items()[0].field(), "model");
+        assert!(diagnostics.items()[0].message().contains("not available"));
+
+        let mut unavailable_combination = answers();
+        unavailable_combination.harness = HarnessChoice::Hermes;
+        unavailable_combination.api = ApiChoice::OpenAiResponses;
+        let diagnostics = Session::with_uid(UID)
+            .unwrap()
+            .project(&Capabilities::available(), &unavailable_combination)
+            .unwrap_err();
+        assert_eq!(diagnostics.items()[0].field(), "api");
         assert!(diagnostics.items()[0].message().contains("not available"));
     }
 
     #[test]
     fn semantic_edits_preserve_uid_and_unaffected_answers() {
-        let capabilities = Capabilities::first_slice();
+        let capabilities = Capabilities::available();
         let mut draft = Draft::new(Session::with_uid(UID).unwrap(), answers());
         let initial_answers = draft.answers.clone();
         let initial = draft.review(&capabilities).unwrap();
@@ -664,6 +1138,7 @@ mod tests {
         assert_eq!(draft.answers.harness, initial_answers.harness);
         assert_eq!(draft.answers.runtime, initial_answers.runtime);
         assert_eq!(draft.answers.inference, initial_answers.inference);
+        assert_eq!(draft.answers.api, initial_answers.api);
         assert_eq!(draft.answers.model, initial_answers.model);
         assert_eq!(
             inference_edit.credential_references(),
@@ -705,6 +1180,7 @@ mod tests {
         assert_eq!(draft.answers.harness, initial_answers.harness);
         assert_eq!(draft.answers.runtime, initial_answers.runtime);
         assert_eq!(draft.answers.inference, initial_answers.inference);
+        assert_eq!(draft.answers.api, initial_answers.api);
         assert_eq!(draft.answers.model, initial_answers.model);
         assert_eq!(draft.answers.provider_name, "edited-provider");
         assert_eq!(draft.answers.credential_env, "EDITED_INFERENCE_KEY");
@@ -716,7 +1192,7 @@ mod tests {
 
     #[test]
     fn existing_generated_yaml_reopens_as_a_semantic_draft_with_the_same_uid() {
-        let capabilities = Capabilities::first_slice();
+        let capabilities = Capabilities::available();
         let generated = Session::with_uid(UID)
             .unwrap()
             .project(&capabilities, &answers())

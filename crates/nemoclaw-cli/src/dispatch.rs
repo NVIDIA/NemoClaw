@@ -4,7 +4,8 @@
 use crate::{
     args::{Cli, Command},
     authoring::{
-        Answers, AuthoredDocument, Capabilities, Draft, IdentityEdits, InferenceEdits, Session,
+        Answers, AuthoredDocument, Capabilities, DirectInputs, Draft, IdentityEdits,
+        InferenceEdits, InteractiveInputs, Session,
     },
     io::document,
 };
@@ -142,22 +143,37 @@ async fn onboard<R: AsyncRead + Unpin>(
     stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
-    let capabilities = Capabilities::first_slice();
-    let mut answers = Answers::first_slice();
+    let OnboardValues {
+        edit,
+        name,
+        sandbox,
+        agent,
+        provider,
+        model,
+        credential_env,
+    } = values;
+    let capabilities = Capabilities::available();
+    let defaults = Answers::first_slice();
     if non_interactive {
-        answers.deployment_name = values.name.unwrap_or(answers.deployment_name);
-        answers.sandbox_name = values.sandbox.unwrap_or(answers.sandbox_name);
-        answers.agent_name = values.agent.unwrap_or(answers.agent_name);
-        answers.provider_name = values.provider.unwrap_or(answers.provider_name);
-        answers.model = values.model.unwrap_or(answers.model);
-        answers.credential_env = values.credential_env.unwrap_or(answers.credential_env);
+        let answers = Answers::from_direct(
+            defaults,
+            DirectInputs {
+                deployment_name: name,
+                sandbox_name: sandbox,
+                agent_name: agent,
+                provider_name: provider,
+                model,
+                credential_env,
+                ..DirectInputs::default()
+            },
+        );
         let authored = Session::new()?.project(&capabilities, &answers)?;
         return Ok(CommandResult::Onboard(Box::new(authored)));
     }
 
     use tokio::io::AsyncBufReadExt;
     let mut lines = tokio::io::BufReader::new(stdin).lines();
-    let mut draft = if let Some(path) = values.edit {
+    let mut draft = if let Some(path) = edit {
         use std::io::Read;
         let mut bytes = Vec::new();
         std::fs::File::open(path)?
@@ -168,48 +184,59 @@ async fn onboard<R: AsyncRead + Unpin>(
         }
         Draft::from_yaml(&capabilities, &bytes)?
     } else {
-        answers.deployment_name = value_or_prompt(
-            values.name,
+        let deployment_name = value_or_prompt(
+            name,
             "Deployment name",
-            &answers.deployment_name,
+            &defaults.deployment_name,
             &mut lines,
             cancel,
         )
         .await?;
-        answers.sandbox_name = value_or_prompt(
-            values.sandbox,
+        let sandbox_name = value_or_prompt(
+            sandbox,
             "Sandbox name",
-            &answers.sandbox_name,
+            &defaults.sandbox_name,
             &mut lines,
             cancel,
         )
         .await?;
-        answers.agent_name = value_or_prompt(
-            values.agent,
+        let agent_name = value_or_prompt(
+            agent,
             "Agent name",
-            &answers.agent_name,
+            &defaults.agent_name,
             &mut lines,
             cancel,
         )
         .await?;
-        answers.provider_name = value_or_prompt(
-            values.provider,
+        let provider_name = value_or_prompt(
+            provider,
             "Provider name",
-            &answers.provider_name,
+            &defaults.provider_name,
             &mut lines,
             cancel,
         )
         .await?;
-        answers.model =
-            value_or_prompt(values.model, "Model", &answers.model, &mut lines, cancel).await?;
-        answers.credential_env = value_or_prompt(
-            values.credential_env,
+        let model = value_or_prompt(model, "Model", &defaults.model, &mut lines, cancel).await?;
+        let credential_env = value_or_prompt(
+            credential_env,
             "Credential environment variable",
-            &answers.credential_env,
+            &defaults.credential_env,
             &mut lines,
             cancel,
         )
         .await?;
+        let answers = Answers::from_interactive(InteractiveInputs {
+            deployment_name,
+            sandbox_name,
+            agent_name,
+            harness: defaults.harness,
+            runtime: defaults.runtime,
+            inference: defaults.inference,
+            api: defaults.api,
+            provider_name,
+            model,
+            credential_env,
+        });
         Draft::new(Session::new()?, answers)
     };
 
