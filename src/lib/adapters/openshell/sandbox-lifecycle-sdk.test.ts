@@ -212,7 +212,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       .fn()
       .mockResolvedValueOnce({ id: sandboxId, phase: "ready" })
       .mockResolvedValueOnce({ id: sandboxId, phase: "stopping" })
-      .mockResolvedValueOnce({ id: sandboxId, phase: "stopped" });
+      .mockResolvedValueOnce({ id: sandboxId, phase: "Stopped" });
     const waitForStopPoll = vi.fn(async () => undefined);
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => ({

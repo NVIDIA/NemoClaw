@@ -196,7 +196,7 @@ async function mutate(
             },
           };
         }
-        if (stopped.phase === "stopped") break;
+        if (stopped.phase.toLowerCase() === "stopped") break;
         await Promise.race([waitForStopPoll(controller.signal), aborted]);
       }
     }
