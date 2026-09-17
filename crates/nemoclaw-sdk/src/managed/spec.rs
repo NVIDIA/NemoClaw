@@ -26,6 +26,8 @@ pub use crate::artifact_pins::SUPERVISOR_IMAGE;
 pub struct Spec {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub layout: u32,
+    #[serde(default = "docker_driver", skip_serializing_if = "is_docker_driver")]
+    pub compute_driver: String,
     pub kind: String,
     pub name: String,
     pub owner: String,
@@ -33,6 +35,12 @@ pub struct Spec {
     pub gateway: Gateway,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<Service>,
+}
+fn docker_driver() -> String {
+    "docker".into()
+}
+fn is_docker_driver(value: &str) -> bool {
+    value == "docker"
 }
 fn is_zero(value: &u32) -> bool {
     *value == 0
@@ -63,6 +71,11 @@ impl Spec {
             return Err(Error::Conflict(
                 "managed resource lacks ownership or generation",
             ));
+        }
+        if !matches!(self.compute_driver.as_str(), "docker" | "podman")
+            || self.kind == SERVICE_KIND && self.compute_driver != "docker"
+        {
+            return Err(Error::Conflict("unsupported managed compute driver"));
         }
         if self.service.as_ref().is_none_or(|s| s.placement.is_none()) {
             self.gateway.validate_managed()?;
@@ -108,6 +121,25 @@ impl Spec {
             ));
         }
         Ok(())
+    }
+    pub(crate) fn binding_namespace(
+        &self,
+        engine_id: Option<&str>,
+        network_id: Option<&str>,
+    ) -> Result<String, Error> {
+        if self.compute_driver == "podman" {
+            let network = network_id
+                .filter(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
+                .ok_or(crate::ObservationError::Incomplete)?;
+            // Podman 4.x generates a new compatibility /info.ID on each call.
+            // Its retained, owned network UUID anchors this gateway's namespace.
+            Ok(format!("podman-{network}"))
+        } else {
+            engine_id
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .ok_or(crate::ObservationError::Incomplete.into())
+        }
     }
     pub fn engine(&self) -> &str {
         self.service
@@ -209,7 +241,19 @@ impl Spec {
                     .to_string()
             ]);
             host["NetworkMode"] = json!("host");
-            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":"/var/run/docker.sock","Target":"/var/run/docker.sock"}]);
+            if self.compute_driver == "podman" {
+                config["Hostname"] = json!(self.name);
+                config["Env"].as_array_mut().unwrap().extend([
+                    json!("container=podman"),
+                    json!("HOME=/root"),
+                    json!(format!("XDG_DATA_HOME={data_path}/data")),
+                    json!(format!("HOSTNAME={}", self.name)),
+                ]);
+                host["PidMode"] = json!("private");
+                host["IpcMode"] = json!("private");
+                host["Ulimits"] = json!([{"Name":"nofile","Soft":65536,"Hard":65536},{"Name":"nproc","Soft":8192,"Hard":8192}]);
+            }
+            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
         } else {
             let service = self.service.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no inference service",
@@ -253,7 +297,14 @@ impl Spec {
     }
     pub fn gateway_config(&self, data_path: &str) -> String {
         format!(
-            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\nnetwork_name = {:?}\nsandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+            self.compute_driver,
+            self.compute_driver,
+            if self.compute_driver == "podman" {
+                "\nsocket_path = \"/var/run/docker.sock\""
+            } else {
+                ""
+            },
             self.network(),
             SANDBOX_RUNTIME_IMAGE,
             SUPERVISOR_IMAGE,

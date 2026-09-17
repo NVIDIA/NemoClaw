@@ -463,7 +463,7 @@
     },
     "Gateway": {
       "additionalProperties": false,
-      "description": "Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.",
+      "description": "Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.\nChoose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.",
       "if": {
         "properties": {
           "endpoint": {
@@ -507,11 +507,15 @@
               "default": "http://127.0.0.1:17681"
             },
             "engine": {
-              "default": "unix:///var/run/docker.sock",
-              "enum": [
-                "",
-                "unix:///var/run/docker.sock"
-              ]
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "pattern": "^unix:///"
+                }
+              ],
+              "default": "unix:///var/run/docker.sock"
             },
             "image": {
               "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
@@ -590,7 +594,7 @@
           "x-nemoclaw-required": "When external"
         },
         "engine": {
-          "description": "Managed gateway Docker socket. Omit or leave empty for an external gateway.",
+          "description": "Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects unix:///var/run/docker.sock."
         },
@@ -2625,7 +2629,7 @@
         },
         "runtime": {
           "$ref": "#/$defs/Runtime",
-          "description": "Sandbox driver; omission selects Docker. A managed gateway requires Docker."
+          "description": "Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver."
         }
       },
       "required": [
@@ -3650,56 +3654,6 @@
           },
           {
             "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "gateway": {
-                      "properties": {
-                        "management": {
-                          "const": "managed"
-                        }
-                      },
-                      "required": [
-                        "management"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "gateway"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "runtime": {
-                            "properties": {
-                              "provider": {
-                                "enum": [
-                                  "",
-                                  "docker"
-                                ]
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
               "allOf": [
                 {
                   "properties": {
@@ -4703,56 +4657,6 @@
                                       "api"
                                     ]
                                   }
-                                ]
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "gateway": {
-                      "properties": {
-                        "management": {
-                          "const": "managed"
-                        }
-                      },
-                      "required": [
-                        "management"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "gateway"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "runtime": {
-                            "properties": {
-                              "provider": {
-                                "enum": [
-                                  "",
-                                  "docker"
                                 ]
                               }
                             }
@@ -5827,56 +5731,6 @@
                                     }
                                   }
                                 }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "gateway": {
-                      "properties": {
-                        "management": {
-                          "const": "managed"
-                        }
-                      },
-                      "required": [
-                        "management"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "gateway"
-                  ]
-                }
-              },
-              "required": [
-                "spec"
-              ]
-            },
-            "then": {
-              "properties": {
-                "spec": {
-                  "properties": {
-                    "sandboxes": {
-                      "items": {
-                        "properties": {
-                          "runtime": {
-                            "properties": {
-                              "provider": {
-                                "enum": [
-                                  "",
-                                  "docker"
-                                ]
                               }
                             }
                           }
@@ -7041,7 +6895,7 @@
   "type": "object",
   "x-nemoclaw-parser-checks": [
     "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
-    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
+    "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
     "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
@@ -7049,7 +6903,7 @@
     "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; OpenClaw and Deep Agents support multiple agents. Shared definitions reuse configuration across sandboxes.",
     "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]

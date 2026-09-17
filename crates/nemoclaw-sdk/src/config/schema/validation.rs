@@ -245,7 +245,7 @@ pub(super) fn constrain(root: &mut Value) {
         {"title": "Managed gateway", "properties": {
             "management": {"const": "managed"},
             "endpoint": {"anyOf": [{"const": ""}, {"pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"}], "default": c::GATEWAY_ENDPOINT},
-            "engine": {"enum": ["", c::GATEWAY_ENGINE], "default": c::GATEWAY_ENGINE},
+            "engine": {"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE},
             "image": {"enum": ["", DEFAULT_GATEWAY_IMAGE], "default": DEFAULT_GATEWAY_IMAGE},
             "networkCIDR": {"anyOf": [{"const": ""}, {"pattern": "/24$"}]}
         }, "allOf": [forbid(&["credential", "tls"])]},
@@ -392,8 +392,6 @@ pub(super) fn constrain(root: &mut Value) {
         let service = format!("{provider}/service");
         let rules = json!([
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
-            {"if": at("spec/gateway/management", json!({"const": "managed"}), true),
-             "then": at(runtime, json!({"enum": ["", "docker"]}), false)},
             {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
                 at("spec/gateway/management", json!({"const": "external"}), true),
                 at(runtime, json!({"const": "podman"}), true)
@@ -422,7 +420,7 @@ pub(super) fn constrain(root: &mut Value) {
     }
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse remains authoritative. It rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB.",
-        "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, Docker engine syntax, and publication address/port/network agreement.",
+        "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
         "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
@@ -430,7 +428,7 @@ pub(super) fn constrain(root: &mut Value) {
         "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; OpenClaw and Deep Agents support multiple agents. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed inference dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);

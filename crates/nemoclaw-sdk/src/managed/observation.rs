@@ -187,7 +187,7 @@ pub(crate) fn verify_container(
         || host.privileged.unwrap_or(false)
         || !host.cap_add.as_ref().is_none_or(Vec::is_empty)
         || host.auto_remove.unwrap_or(false)
-        || !host.pid_mode.as_deref().unwrap_or("").is_empty()
+        || host.pid_mode.as_deref().unwrap_or("") != expected_host.pid_mode.as_deref().unwrap_or("")
         || (if host.ipc_mode.as_deref().is_none_or(|m| m.is_empty()) {
             "private"
         } else {
@@ -281,7 +281,7 @@ impl Engine {
         }
         let work = async {
             let info = self.info().await?;
-            let container = self.container(&spec.name).await?;
+            let container = self.managed_container(spec, &spec.name).await?;
             let volume = self.volume(&spec.volume()).await?;
             let network = self.network(&spec.network()).await?;
             if container.is_none()
@@ -342,7 +342,7 @@ impl Engine {
             let container_id = container.id.ok_or(ObservationError::Incomplete)?;
             let mut actual = format!(
                 "{}/{}/{}/{}",
-                info.id.ok_or(ObservationError::Incomplete)?,
+                spec.binding_namespace(info.id.as_deref(), network.id.as_deref())?,
                 container_id,
                 volume.created_at.ok_or(ObservationError::Incomplete)?,
                 network.id.ok_or(ObservationError::Incomplete)?
@@ -413,9 +413,22 @@ impl Engine {
             ));
         }
         let info = self.info().await?;
+        let network = if spec.compute_driver == "podman" {
+            let network = self
+                .network(&spec.network())
+                .await?
+                .ok_or(ObservationError::Incomplete)?;
+            verify_network(spec, &network)?;
+            Some(network)
+        } else {
+            None
+        };
         if !id.starts_with(&format!(
             "{}/",
-            info.id.ok_or(ObservationError::Incomplete)?
+            spec.binding_namespace(
+                info.id.as_deref(),
+                network.as_ref().and_then(|n| n.id.as_deref())
+            )?
         )) {
             return Err(ObservationError::BindingMismatch.into());
         }

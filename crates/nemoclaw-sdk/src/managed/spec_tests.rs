@@ -152,3 +152,26 @@ fn without_null_members(mut value: serde_json::Value) -> serde_json::Value {
     }
     value
 }
+
+#[test]
+fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.compute_driver = "podman".into();
+    let network = "a".repeat(64);
+    let first = spec
+        .binding_namespace(Some("random-first"), Some(&network))
+        .unwrap();
+    assert_eq!(
+        first,
+        spec.binding_namespace(Some("random-next"), Some(&network))
+            .unwrap()
+    );
+    assert_ne!(
+        first,
+        spec.binding_namespace(Some("random-first"), Some(&"b".repeat(64)))
+            .unwrap()
+    );
+    assert!(spec.binding_namespace(Some("random-first"), None).is_err());
+}
