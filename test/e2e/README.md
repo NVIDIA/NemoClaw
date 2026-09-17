@@ -495,14 +495,15 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon
+shared by primary OpenClaw, researcher, and reviewer. Both secondary agents have only the read tool.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
 daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
+the candidate CLI and real SDK, validates both documents, compares their specs, ordered roster, selected model name and digest,
 checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
 definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
+removed through the cleanup registry; retained evidence contains only the agent names, selected model, ports,
 managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
 scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
 before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
@@ -511,6 +512,10 @@ timeout, for at most 20 reads. It records each attempt and stops on any other fa
 preparation, onboarding, and export mutations are not retried.
 After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
 models through the saved endpoint. It destroys the sandbox before stopping that daemon.
+The roster assertion replaces three redundant assertion points. Image agreement remains covered by
+the complete adapter tests and hosted export qualification. Container health and later Ready-state
+checks cover running state. The removed restart-mode check only matched a fixture-generated label;
+the retained model-unload and inference-recovery checks prove restart behavior.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
