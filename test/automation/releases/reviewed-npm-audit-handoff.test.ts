@@ -278,6 +278,9 @@ describe("npm audit handoff", () => {
       npmVersion: auditConfig.npmVersion as string,
     };
     const acceptedAdvisory = "GHSA-aaaa-bbbb-cccc";
+    const activeExceptionExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
     const rawReport = `${JSON.stringify({
       auditReportVersion: 2,
       vulnerabilities: {
@@ -344,7 +347,7 @@ describe("npm audit handoff", () => {
               advisory: acceptedAdvisory,
               compensatingControls: ["The vulnerable input is rejected before use."],
               decision: "temporary-risk-acceptance",
-              expires: "2026-09-16",
+              expires: activeExceptionExpiry,
               graph: "mcporter-runtime",
               installedVersion: "1.0.0",
               owner: "security-maintainers",

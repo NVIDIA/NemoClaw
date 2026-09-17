@@ -157,7 +157,6 @@ describe("managed snapshot restore authority", () => {
       expect(
         await sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
           targetAgentType: "openclaw",
-          freshOpenClawImagePluginInstalls: [],
           authority: contentAuthority!,
           validateBeforeMutation,
         }),
@@ -212,7 +211,6 @@ it.each([
     const restoring = sandboxState
       .restoreRecreatedSandboxState("alpha", manifest.backupPath, {
         targetAgentType: "openclaw",
-        freshOpenClawImagePluginInstalls: [],
         authority: contentAuthority,
         validateBeforeMutation: async () => {
           entered();

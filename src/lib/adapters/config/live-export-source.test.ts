@@ -748,12 +748,13 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("exports a secondary agent through SDK observations without copying provider credentials (#11434)", async () => {
+  it("exports an ordered agent roster through SDK observations without provider credentials (#11854)", async () => {
     const built = buildManagedStartupProfile({
       ...startupInput,
       environment: {
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
-          { id: "reviewer-2", tools: { allow: ["read"] } },
+          { id: "researcher", tools: { allow: ["read"] } },
+          { id: "reviewer", tools: { allow: ["read"] } },
         ]),
       },
     });
@@ -769,14 +770,22 @@ describe("live export snapshot reader", () => {
     expect(result.ok).toBe(true);
     const yaml = writeStdout.mock.calls[0]![0];
     const config = validateNemoClawConfig(YAML.parse(yaml));
-    const [primary, secondary] = config.spec.sandboxes[0]!.agents;
+    const [primary, ...additional] = config.spec.sandboxes[0]!.agents;
     expect(primary!.name).toBe("primary");
-    expect(secondary).toEqual({
-      name: "reviewer-2",
-      type: "openclaw",
-      tools: { allow: ["read"] },
-      inference: primary!.inference,
-    });
+    expect(additional).toEqual([
+      {
+        name: "researcher",
+        type: "openclaw",
+        tools: { allow: ["read"] },
+        inference: primary!.inference,
+      },
+      {
+        name: "reviewer",
+        type: "openclaw",
+        tools: { allow: ["read"] },
+        inference: primary!.inference,
+      },
+    ]);
     expect(config.spec.inferenceProviders).toHaveLength(1);
     expect(yaml).not.toContain(readFailureCanary);
     expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
