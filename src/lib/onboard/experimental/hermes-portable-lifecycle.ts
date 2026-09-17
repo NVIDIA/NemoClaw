@@ -1844,26 +1844,26 @@ export async function recoverHermesPortableSandboxLifecycle(
       commandBudget(1);
       fail("did not reconnect to the selected OpenShell gateway");
     }
-    qualified = await timing.measureAsync("preHealthCurrentness", () =>
-      refreshLifecycleCurrentness(
-        sandboxName,
-        context,
-        instrumentedDeps,
-        qualified,
-        timing,
-        true,
-        ["Ready"],
-        currentnessTiming,
-      ),
-    );
-    const transactionContainerDeps = measuredHealthContainerDeps(
-      qualified,
-      timing,
-      createAuthenticatedHealthCapture(qualified.receipt, capture),
-    );
     primaryFailureClass = "authenticated-health";
     // A container started by this recovery cannot be healthy until its managed startup is launched.
     if (!startedByRecovery) {
+      qualified = await timing.measureAsync("preHealthCurrentness", () =>
+        refreshLifecycleCurrentness(
+          sandboxName,
+          context,
+          instrumentedDeps,
+          qualified,
+          timing,
+          true,
+          ["Ready"],
+          currentnessTiming,
+        ),
+      );
+      const transactionContainerDeps = measuredHealthContainerDeps(
+        qualified,
+        timing,
+        createAuthenticatedHealthCapture(qualified.receipt, capture),
+      );
       timing.increment("authenticatedHealth");
       const initialHealth = timing.measure("authenticatedHealth", () =>
         observeHermesPortableAuthenticatedHealth(
