@@ -55,7 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phase changes and `Progress::Completed` timing events.
+The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, and `Progress::Completed` events.
+Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with elapsed seconds; raw messages, addresses, IDs, and output values are omitted.
+Resources of the same kind share a label.
+Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
 They cover bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request, and contain no diagnostic payloads.
 Callbacks run synchronously; keep them short.

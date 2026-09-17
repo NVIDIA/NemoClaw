@@ -47,6 +47,11 @@ Help and version output are plain text.
 A supported Fabric health failure writes JSON to stderr with `error: fabric_readiness`, the `health` observation, and `resourcesRetained: true`.
 See [apply health](../usage.md#fabric-health-during-apply) for unsupported checks, image requirements, and recovery.
 
+When stderr is a terminal, commands show deployment phases, OpenTofu resource operations, and elapsed waiting time.
+Readiness waits report elapsed time every 10 seconds; resource updates follow OpenTofu's event stream.
+These messages do not measure download percentage or establish successful inference.
+Redirected stderr contains errors only unless `--verbose` enables progress output.
+
 With `--verbose`, completed bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed seconds on stderr.
 For example, `bundle.verify succeeded 0.092s` reports one bundle verification.
 Timing events contain no configuration values, credentials, or error diagnostics; ordinary errors are reported separately.
