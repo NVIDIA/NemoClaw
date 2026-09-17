@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { VllmProfile } from "../../../inference/vllm";
 import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
+import * as onboardSession from "../../../state/onboard-session";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import { makeDeps, makeHostState } from "../../__test-helpers__/setup-nim-flow";
 import { resolveLocalModelProfilePlan } from "../../local-model-profile/plan";
+import { buildCreatedSandboxRegistryEntry } from "../../sandbox-registration";
 import { createSetupNim, type SetupNimFlowDeps } from "../../setup-nim-flow";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
@@ -198,7 +200,12 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),
       }),
     );
-    const { deps, calls } = createDeps({
+    const session = createSession({ sandboxName: "spark-agent" });
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
+      Object.assign(session, onboardSession.filterSafeUpdates(updates));
+      return session;
+    });
+    const { deps } = createDeps({
       setupNim: (gpu, sandboxName, agent, recover, gatewayName, ...rest) =>
         productionSetupNim(
           gpu as Parameters<typeof productionSetupNim>[0],
@@ -209,15 +216,16 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
           gatewayName,
           ...rest,
         ),
+      recordStepComplete,
     });
 
     await handleProviderInferenceState({
-      ...baseOptions(deps, createSession()),
+      ...baseOptions(deps, session),
       gpu: { type: "nvidia", platform: "spark" } as never,
       sandboxName: "spark-agent",
     });
 
-    const persistedUpdates = calls.complete.mock.calls.map(
+    const persistedUpdates = recordStepComplete.mock.calls.map(
       ([, updates]) => updates as SessionUpdates,
     );
     expect(onboard).toHaveBeenCalledOnce();
@@ -232,6 +240,47 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: plan.servingProfileProvenance,
     });
+
+    const loadSession = vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+    const entry = (() => {
+      try {
+        return buildCreatedSandboxRegistryEntry({
+          sandboxName: "spark-agent",
+          inferenceSelection: {
+            model: session.model!,
+            provider: session.provider!,
+            endpointUrl: session.endpointUrl ?? null,
+            credentialEnv: session.credentialEnv ?? null,
+            preferredInferenceApi: session.preferredInferenceApi ?? null,
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: session.nimContainer ?? null,
+          },
+          runtimeFields: {
+            gpuEnabled: true,
+            hostGpuDetected: true,
+            sandboxGpuEnabled: true,
+            sandboxGpuMode: "auto",
+            sandboxGpuDevice: null,
+            openshellDriver: "docker",
+            openshellVersion: "0.1.2",
+          },
+          agent: null,
+          agentVersionKnown: true,
+          imageTag: null,
+          plannedMessagingState: undefined,
+          hermesToolGateways: [],
+          hermesDashboardState: { enabled: false, config: null },
+          dashboardPort: 18789,
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        });
+      } finally {
+        loadSession.mockRestore();
+      }
+    })();
+
+    expect(entry.servingProfileProvenance).toEqual(plan.servingProfileProvenance);
   });
 
   it("does not authorize vLLM profile provenance from session-only state (#11896)", async () => {
