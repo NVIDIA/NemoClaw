@@ -15,9 +15,12 @@ pub enum Error {
     Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
-    #[error("sandbox startup failed: {phase}, exit code {exit_code}; resources retained")]
+    #[error(
+        "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
+    )]
     SandboxStartup {
         phase: &'static str,
+        reason: &'static str,
         exit_code: String,
     },
     #[error("OpenTofu {operation} failed: {diagnostic}")]

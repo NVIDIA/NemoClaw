@@ -15,6 +15,22 @@ fn startup_phase(status: proto::SandboxStatus) -> Result<i32, Error> {
     {
         return Err(Error::SandboxStartup {
             phase: phase.as_str_name(),
+            // Conditions are backend-controlled. Only fixed known reasons may
+            // cross the diagnostic boundary; messages can contain credentials.
+            reason: status
+                .conditions
+                .iter()
+                .find_map(|condition| {
+                    if condition.r#type != "Ready" || condition.status != "False" {
+                        return None;
+                    }
+                    match condition.reason.as_str() {
+                        "ControlSupervisorExited" => Some("ControlSupervisorExited"),
+                        "ContainerExited" => Some("ContainerExited"),
+                        _ => None,
+                    }
+                })
+                .unwrap_or("unknown"),
             exit_code: status
                 .exit_code
                 .map_or_else(|| "unknown".into(), |code| code.to_string()),
@@ -455,6 +471,40 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "terminal");
         assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn terminal_sandbox_reports_known_failure_without_backend_text() {
+        for (kind, status, reason, expected) in [
+            (
+                "Ready",
+                "False",
+                "ControlSupervisorExited",
+                "ControlSupervisorExited",
+            ),
+            ("Ready", "False", "ContainerExited", "ContainerExited"),
+            ("Ready", "False", "secret-sentinel", "unknown"),
+            ("Ready", "True", "ControlSupervisorExited", "unknown"),
+            ("Other", "False", "ControlSupervisorExited", "unknown"),
+        ] {
+            let error = startup_phase(proto::SandboxStatus {
+                phase: proto::SandboxPhase::Error as i32,
+                conditions: vec![proto::SandboxCondition {
+                    r#type: kind.into(),
+                    status: status.into(),
+                    reason: reason.into(),
+                    message: "secret-sentinel".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(&format!("reason {expected}")), "{error}");
+            assert!(error.contains("exit code unknown"));
+            assert!(error.contains("resources retained"));
+            assert!(!error.contains("secret-sentinel"));
+        }
     }
 
     #[test]

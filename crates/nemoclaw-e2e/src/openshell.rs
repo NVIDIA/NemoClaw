@@ -20,6 +20,7 @@ pub struct State {
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
     pub sandbox_phase: Option<p::SandboxPhase>,
+    pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub exec_exit: i32,
     pub health_report: Option<serde_json::Value>,
     pub inference_exit: i32,
@@ -453,6 +454,7 @@ fn create_sandbox(
         spec: q.spec,
         status: Some(p::SandboxStatus {
             phase: state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready) as i32,
+            conditions: state.sandbox_conditions.clone(),
             ..Default::default()
         }),
         ..Default::default()

@@ -28,6 +28,11 @@ pub(crate) fn render_error(error: &(dyn std::error::Error + 'static)) -> String 
         })
         .to_string();
     }
+    if let Some(Error::SandboxStartup { .. }) = error.downcast_ref::<Error>() {
+        return format!(
+            "{error}\nInspect with openshell sandbox get NAME -o json using the deployment's gateway and workspace. Collect OpenShell gateway and supervisor logs before cleanup."
+        );
+    }
     error.to_string()
 }
 
@@ -103,6 +108,20 @@ mod tests {
         let result = CommandResult::Operation(serde_json::from_value(value.clone()).unwrap());
         let output: serde_json::Value = serde_json::from_str(&result.render().unwrap()).unwrap();
         assert_eq!(output, value);
+    }
+
+    #[test]
+    fn sandbox_failure_points_to_openshell_diagnostics() {
+        let error = Error::SandboxStartup {
+            phase: "SANDBOX_PHASE_ERROR",
+            reason: "ControlSupervisorExited",
+            exit_code: "unknown".into(),
+        };
+        let output = render_error(&error);
+        assert!(output.contains("ControlSupervisorExited"));
+        assert!(output.contains("openshell sandbox get NAME -o json"));
+        assert!(output.contains("gateway and workspace"));
+        assert!(output.contains("resources retained"));
     }
 
     #[test]

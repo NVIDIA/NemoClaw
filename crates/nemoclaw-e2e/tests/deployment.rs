@@ -636,7 +636,21 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
-    assert!(deployment.apply(&document, &cancel).await.is_err());
+    fixture.state.lock().unwrap().sandbox_conditions =
+        vec![openshell_core::proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ControlSupervisorExited".into(),
+            message: "private-backend-diagnostic".into(),
+            ..Default::default()
+        }];
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("ControlSupervisorExited"));
+    assert!(!error.contains("private-backend-diagnostic"));
     let state_path = directory.path().join("terraform.tfstate");
     let established = fs::read(&state_path).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
