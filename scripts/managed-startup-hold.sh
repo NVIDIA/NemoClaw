@@ -71,7 +71,7 @@ fi
 
 if [ -L "$_nemoclaw_runtime_env" ] \
   || [ ! -f "$_nemoclaw_runtime_env" ] \
-  || [ "$(stat -c '%u:%g:%a:%h' "$_nemoclaw_runtime_env")" != "0:0:444:1" ]; then
+  || [ "$(stat -c '%u:%g:%a' "$_nemoclaw_runtime_env")" != "0:0:444" ]; then
   fail "runtime environment failed root ownership validation"
 fi
 
