@@ -145,18 +145,19 @@ function startProgressActivity(progress: AgentTurnProgress | undefined, label: s
   };
 }
 
-async function runCleanupStep(
+async function runCleanupStep<T>(
   label: string,
-  run: () => Promise<unknown>,
+  run: () => Promise<T>,
   progress?: AgentTurnProgress,
   acceptNonzero?: (value: unknown) => boolean,
-): Promise<void> {
+): Promise<T> {
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
     const result = await run();
     requireCleanupSuccess(label, result, acceptNonzero);
     emitProgressEvent(progress, `${label} passed`);
+    return result;
   } catch (error) {
     emitProgressEvent(progress, `${label} failed`);
     if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
@@ -365,6 +366,17 @@ export async function cleanupTurnSandboxes(
   inference: AgentTurnInference,
   progress?: AgentTurnProgress,
 ): Promise<void> {
+  const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
+  const gatewayName = cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
+  const gatewayPresent = await runCleanupStep(
+    "inspect OpenShell gateway",
+    () =>
+      sandbox.hasGatewayForInitialCleanup(gatewayName, {
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    progress,
+  );
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
@@ -374,18 +386,20 @@ export async function cleanupTurnSandboxes(
       () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
-    await runCleanupStep(
-      `delete ${agent} sandbox`,
-      () =>
-        sandbox.openshell(["sandbox", "delete", name], {
-          artifactName: `cleanup-${agent}-delete`,
-          env: env(name, agent, inference),
-          onOutput: progress?.onOutput,
-          timeoutMs: 60_000,
-        }),
-      progress,
-      isMissingSandboxResult,
-    );
+    if (gatewayPresent) {
+      await runCleanupStep(
+        `delete ${agent} sandbox`,
+        () =>
+          sandbox.openshell(["sandbox", "delete", name], {
+            artifactName: `cleanup-${agent}-delete`,
+            env: env(name, agent, inference),
+            onOutput: progress?.onOutput,
+            timeoutMs: 60_000,
+          }),
+        progress,
+        isMissingSandboxResult,
+      );
+    }
   }
   await runCleanupStep(
     "stop Hermes API forward",
@@ -401,7 +415,7 @@ export async function cleanupTurnSandboxes(
   await runCleanupStep(
     "remove OpenShell gateway",
     () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
+      host.cleanupGatewayRegistration(gatewayName, {
         artifactName: "cleanup-gateway-destroy-turn-latency",
         env: buildAvailabilityProbeEnv(),
         onOutput: progress?.onOutput,
