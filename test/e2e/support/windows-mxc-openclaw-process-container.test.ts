@@ -628,8 +628,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
   it("selects the combined upstream package for the live relay configuration without credentials (#8178)", () => {
     const input = {
       agentPath: "C:\\artifact\\node.exe",
-      distributionRevision: "bbe31651ed1cb90e8eb42dc31f5b651a0b3bb66a",
-      distributionVersion: "0.0.117-dev.181+gbbe31651e",
+      distributionRevision: "9a0946a3ccc76a6b8fdeacdf70c76feda6f16c0b",
+      distributionVersion: "0.0.117-dev.153+g9a0946a3c",
       egressProxyPort: 18080,
       relayPath: "C:\\probe\\share\\openshell-supervisor-relay.exe",
       shareDirectory: "C:\\probe\\share",
@@ -639,7 +639,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     const { content: config, distributionAuthority } = createWindowsMxcGatewayConfiguration(input);
     expect(config).toMatch(/^\[openshell\]\nversion = 2\n/u);
     expect(distributionAuthority).toMatchObject({
-      profileId: "openshell-combined-bbe31651-mxc-v0-8-0-qualification",
+      profileId: "openshell-windows-tip-9a0946a3-mxc-v0-8-0-qualification",
       acceptance: "qualification",
       nativeArchitecture: "arm64",
     });

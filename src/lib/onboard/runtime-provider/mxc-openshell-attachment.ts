@@ -13,7 +13,7 @@ export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
   "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
 export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
-  "openshell-combined-bbe31651-mxc-v0-8-0-qualification" as const;
+  "openshell-windows-tip-9a0946a3-mxc-v0-8-0-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -178,7 +178,7 @@ export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneA
   },
 });
 
-/** Qualification-only combined upstream runtime and tooling package. */
+/** Qualification-only repaired Windows-tip runtime and tooling package. */
 export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
   profileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
   acceptance: "qualification" as const,
@@ -190,17 +190,17 @@ export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndD
   },
   expectation: {
     distribution: {
-      version: "0.0.117-dev.181+gbbe31651e",
-      revision: "bbe31651ed1cb90e8eb42dc31f5b651a0b3bb66a",
-      sha256: "a2b346b8930474541d41ac94d55b88518ff6b02732cca029410d582cb1db45ce",
+      version: "0.0.117-dev.153+g9a0946a3c",
+      revision: "9a0946a3ccc76a6b8fdeacdf70c76feda6f16c0b",
+      sha256: "e1004bd83028ce745fcbd78f7f240f65d65c3b9f1786df7a09e4704c894703f9",
     },
     components: {
-      cliSha256: "cbf51dd6f27dc62e94af75efb6c8c8cdf0cd470f756d625f2214422ce589a7d7",
-      gatewaySha256: "86b5c673278cb63b70c196359f50ae3bf0823ce2a8555eb3ae41db9d2517bdd7",
+      cliSha256: "05e725968c04db97a7702cd5c95bd2f1d5bfdfe003d70590a290d3fd61a848b2",
+      gatewaySha256: "7c15de65fab0db48fd147fb693d4fa88cba2f36aab5095c7fa9c0908f7897e7c",
       wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
     },
     gateway: {
-      configSha256: "b7188bec20ef2cb7a31a63addbe6ad3720ceebf7fbdfa778c8f727e096c026bb",
+      configSha256: "6f5113f2b5d976d52da159d725f73660352f6b7108119b41d892deb5f2e2661c",
       driver: "mxc" as const,
       backend: "process_container" as const,
     },
