@@ -22,10 +22,11 @@ Direct E2E implementations now live in Vitest. The former
 | Task | Source |
 | --- | --- |
 | Live target IDs and metadata | `tools/e2e/target-inventory.mts`; typed scenario data in `test/e2e/registry/definitions/baseline.ts`; specialized definitions in `tools/e2e/target-definitions/workflows.mts` |
-| GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
+| GitHub Actions selection and matrix emission | `tools/e2e/workflow-plan.mts` |
+| Typed live-target matrix | `test/e2e/registry/run.ts --emit-live-matrix` |
+| All registered execution routes | `test/e2e/registry/run.ts --list-inventory` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
 | Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |
-| Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
 | Migration status and retirement decisions | GitHub issues and pull requests |
