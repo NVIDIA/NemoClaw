@@ -368,12 +368,51 @@ mod live {
                     ids.insert(address.clone(), attributes["id"].as_str().unwrap().into())
                         .is_none()
                 );
-                if address == "nemoclaw_sandbox.agent" {
+                if resource["type"] == "nemoclaw_sandbox" {
+                    assert!(sandbox.is_none(), "scenario must have exactly one sandbox");
                     sandbox = Some(serde_json::from_value(attributes.clone()).unwrap());
                 }
             }
         }
         (ids, sandbox)
+    }
+
+    #[test]
+    fn state_bindings_follow_compiled_resource_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = json!({
+            "resources": [
+                {
+                    "type": "nemoclaw_provider",
+                    "name": "inference_hosted-nvidia-prod",
+                    "instances": [{"attributes": {"id": "provider-id"}}]
+                },
+                {
+                    "type": "nemoclaw_sandbox",
+                    "name": "assistant",
+                    "instances": [{"attributes": {"id": "sandbox-id", "name": "assistant"}}]
+                }
+            ]
+        });
+        fs::write(
+            directory.path().join("terraform.tfstate"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+
+        let (ids, sandbox) = state_bindings(directory.path());
+        assert_eq!(
+            ids,
+            [
+                (
+                    "nemoclaw_provider.inference_hosted-nvidia-prod".into(),
+                    "provider-id".into(),
+                ),
+                ("nemoclaw_sandbox.assistant".into(), "sandbox-id".into()),
+            ]
+            .into()
+        );
+        assert_eq!(sandbox.unwrap()["id"], "sandbox-id");
     }
 
     fn environment() -> Value {
@@ -552,15 +591,17 @@ mod live {
         assert!(!apply.changes.is_empty());
         evidence.record("initialApply", apply);
         let (before, sandbox) = state_bindings(&directory);
+        let provider = &document.spec.inference_providers[0];
+        let sandbox_name = &document.spec.sandboxes[0].name;
         assert_eq!(
-            before.keys().map(String::as_str).collect::<Vec<_>>(),
+            before.keys().cloned().collect::<Vec<_>>(),
             [
-                "nemoclaw_gateway_storage.runtime",
-                "nemoclaw_managed_gateway.runtime",
-                "nemoclaw_provider.inference",
-                "nemoclaw_provider_profile.inference",
-                "nemoclaw_sandbox.agent",
-                "nemoclaw_workspace.deployment",
+                "nemoclaw_gateway_storage.runtime".into(),
+                "nemoclaw_managed_gateway.runtime".into(),
+                format!("nemoclaw_provider.inference_{}", provider.name),
+                format!("nemoclaw_provider_profile.inference_{}", provider.name),
+                format!("nemoclaw_sandbox.{sandbox_name}"),
+                "nemoclaw_workspace.deployment".into(),
             ]
         );
         evidence.record("resourceIdentities", &before);
