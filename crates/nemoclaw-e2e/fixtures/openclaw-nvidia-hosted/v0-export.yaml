@@ -1,22 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-# Modeled from config export at NVIDIA/NemoClaw revision
-# f47724f29838fe08898993fad1c8c6b7fcb3e080.
-# 2026-09-15: reduced the explicit policy to deterministic representative rules.
-
-apiVersion: nemoclaw.nvidia.com/v1
+apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: openclaw-nvidia-hosted
   uid: b8f25ac9-8e58-4c0b-98c3-17648f9a5575
 spec:
   gateway:
-    management: nemoclaw
-    name: nemoclaw
-    port: 17691
+    management: managed
+    endpoint: http://127.0.0.1:17691
   inferenceProviders:
     - name: hosted-nvidia-prod
-      provider: nvidia-prod
+      provider: openai
       api: openai-completions
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
@@ -25,15 +18,13 @@ spec:
     - name: assistant
       runtime:
         provider: docker
-        image:
-          ref: nemoclaw-sandbox-local@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       network:
         policy:
           explicit:
             version: 1
             process:
-              run_as_user: sandbox
-              run_as_group: sandbox
+              run_as_user: "1000"
+              run_as_group: "1000"
             network_policies:
               hosted-inference:
                 name: hosted-inference
@@ -46,11 +37,15 @@ spec:
               include_workdir: true
               read_only:
                 - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
               read_write:
                 - /sandbox
+      harness:
+        kind: openclaw
       agents:
         - name: primary
-          type: openclaw
           inference:
             routes:
               - name: primary

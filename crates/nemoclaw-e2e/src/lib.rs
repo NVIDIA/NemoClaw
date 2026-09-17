@@ -3,7 +3,6 @@
 
 //! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod openshell;
-pub mod v0_export;
 
 #[cfg(unix)]
 #[path = "../../test-support/docker.rs"]

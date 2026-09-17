@@ -7,33 +7,31 @@ This scenario implements the first checklist item in [NVIDIA/NemoClaw issue #118
 It treats a redacted v0 configuration export as an input artifact and validates a new v1 deployment.
 It does not run, patch, or inspect the v0 test harness.
 
-The checked-in synthetic export permits deterministic development before v0 E2E workflows produce representative exports.
-It is modeled from `test/e2e/manifests/openclaw-nvidia.yaml` at NVIDIA/NemoClaw revision `f47724f29838fe08898993fad1c8c6b7fcb3e080`.
-Updating the fixture is a manual review step: redact and inspect a representative v0 export, copy it into this repository, and update the expected v1 document in the same change.
+The checked-in export is raw output from the public v0 `nemoclaw config export` path aligned by [NVIDIA/NemoClaw issue #11977](https://github.com/NVIDIA/NemoClaw/issues/11977) and merged at revision `b6934c6300c4e1e175757e9281ae3a641d9a5b1f`.
+Updating the fixture is a manual review step: run the public command against a representative supported deployment, inspect the output for credential values, copy the redacted bytes into this repository without reshaping them, and update the expected parsed document in the same change.
 The v0 E2E export mechanism is a convenient producer of candidate inputs, not a pipeline dependency of the v1 test.
 Source scenario, revision, date, or executable identity may be retained with the fixture as useful audit metadata, but the v1 test does not require or resolve an exact v0 version.
 
 This scenario creates a new v1 deployment.
 It does not adopt a v0 deployment or migrate its workspace, conversations, credentials, or runtime state.
 
-## Artifact and Translation Contract
+## Artifact and Parser Contract
 
 The caller supplies an absolute path to manually curated, redacted YAML.
 The runner computes and records the SHA-256 of the bytes it actually consumes.
 An optional free-form source note may identify the producing scenario or revision for later audits; it is not an execution or qualification gate.
 
-The translator rejects unknown v0 fields instead of silently dropping them.
-It carries portable deployment identity, gateway port, inference, agent, and network intent into v1.
-The caller separately binds the v1 gateway engine, gateway image, gateway network, Fabric image, and process principal because v0 exports do not identify those v1 runtime dependencies.
-Process translation names both sides and fails unless the source export contains the declared v0 user and group.
-The current candidate maps v0 `sandbox:sandbox` to the v1 Fabric image's numeric `1000:1000` principal and records the product-decision reference with the evidence.
-This is an explicit compatibility difference, not an inferred equivalence; qualification requires review of that decision.
+The runner passes the raw bytes to the ordinary v1 `Document::parse` path.
+The v0 exporter owns projection of portable identity, gateway endpoint, inference, agent, policy, and process-principal intent into the v1 vocabulary.
+The v1 parser owns target defaults, including the gateway engine and image, gateway network, and agent image.
+No compatibility translator or caller-supplied runtime binding participates in the scenario.
 
 The checked-in contract lives under `crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/`:
 
+- `NOTICE.md` records producer revision, refresh date, and artifact handling.
 - `v0.yaml` is the unmodified reference manifest with its upstream revision and hash.
-- `v0-export.yaml` is the representative redacted export.
-- `v1.yaml` is the expected translated v1 desired state.
+- `v0-export.yaml` is the raw representative redacted export from the supported public path.
+- `v1.yaml` is the expected document after ordinary v1 parsing and defaulting.
 
 Run the deterministic checks without Docker or a credential:
 
@@ -45,11 +43,11 @@ cargo test -p nemoclaw-e2e --test hosted_parity
 
 The live test performs this v1 lifecycle:
 
-1. Verify redaction and strict translation, then record the consumed artifact's computed hash and optional source note.
-2. Plan and apply the translated desired state in an owned state directory.
+1. Verify redaction, parse the raw export, then record the consumed artifact's computed hash and optional source note.
+2. Plan and apply the parsed desired state in an owned state directory.
 3. Require a real OpenClaw reply through the NVIDIA hosted endpoint.
 4. Require unchanged plan and apply with stable resource identities.
-5. Export v1 desired state and compare it with the translated document.
+5. Export v1 desired state and compare it with the parsed raw export.
 6. Reapply the v1 export without changes.
 7. Preview and destroy the owned workloads.
 8. Confirm that only the owned workspace and gateway storage remain.
@@ -59,7 +57,7 @@ A feedback-only run may reapply the identical pending intent after a failure.
 A Linux qualification candidate must start from fresh state.
 
 The test writes `openclaw-nvidia-hosted-parity.json` and `exported.yaml` under the state directory.
-The evidence records the computed artifact hash, optional source note, v1 revision and bundle, redacted input, v1-only bindings, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
+The evidence records the computed artifact hash, optional source note, parsed v1 input, v1 revision and bundle, redacted input, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
 Review retained files for credentials before sharing them.
 
 ## Prerequisites and Ownership
@@ -68,8 +66,7 @@ Use an owned Docker daemon, deployment UID, port, subnet, state directory, and N
 The key must be available only as `NVIDIA_INFERENCE_API_KEY`; do not place its value in YAML, arguments, state, evidence, or repository files.
 The test does not revoke it.
 
-Build a verified bundle and an immutable `nc-prototype-fabric` image for the Docker daemon's architecture.
-Use the exact managed gateway image pinned by the SDK revision.
+Build a verified bundle and ensure that the immutable gateway and agent images pinned by the SDK revision exist in the owned Docker daemon.
 Create a private state directory with this marker before running:
 
 ```json
@@ -89,15 +86,6 @@ export NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml
 export NEMOCLAW_LIVE_V0_SOURCE='producer scenario or revision'
 export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-state
 export NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle
-export NEMOCLAW_LIVE_GATEWAY_ENGINE=unix:///var/run/docker.sock
-export NEMOCLAW_LIVE_GATEWAY_IMAGE=ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
-export NEMOCLAW_LIVE_GATEWAY_NETWORK_CIDR=owned-cidr
-export NEMOCLAW_LIVE_FABRIC_IMAGE=nc-prototype-fabric@sha256:local-digest
-export NEMOCLAW_LIVE_V0_PROCESS_USER=sandbox
-export NEMOCLAW_LIVE_V0_PROCESS_GROUP=sandbox
-export NEMOCLAW_LIVE_V1_PROCESS_USER=1000
-export NEMOCLAW_LIVE_V1_PROCESS_GROUP=1000
-export NEMOCLAW_LIVE_PROCESS_MAPPING_DECISION='reviewed issue or PR URL'
 ```
 
 For a Linux qualification candidate, use a clean checkout and the candidate acknowledgement:
@@ -143,7 +131,7 @@ Review its price before creation, keep credentials out of startup metadata and s
 
 ## Recovery and Cleanup
 
-After a failed apply, keep the exact artifact, bindings, bundle, and state directory.
+After a failed apply, keep the exact artifact, bundle, and state directory.
 Reapply only the identical desired state while diagnosing a pending intent.
 Do not create a second state directory for the same deployment UID.
 

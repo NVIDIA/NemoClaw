@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Generated from the representative v0 export modeled at NVIDIA/NemoClaw revision
-# f47724f29838fe08898993fad1c8c6b7fcb3e080.
-# 2026-09-15: bound explicit v1 gateway and Fabric runtime identities.
-# 2026-09-16: updated the v1 schema and bound sandbox:sandbox to numeric 1000:1000.
-# 2026-09-17: granted read-only access to the bound Fabric runtime roots.
+# Parsed and defaulted form of the raw v0 export produced by NVIDIA/NemoClaw
+# b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
+# 2026-09-17: refreshed from the public v0 config export contract in #11977.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -17,7 +15,7 @@ spec:
     endpoint: http://127.0.0.1:17691
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
-    networkCIDR: 172.30.111.0/24
+    networkCIDR: 172.30.60.0/24
   inferenceProviders:
     - name: hosted-nvidia-prod
       provider: openai
@@ -30,7 +28,7 @@ spec:
       harness:
         kind: openclaw
       image:
-        ref: nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd
+        ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
       runtime:
         provider: docker
       network:
@@ -52,9 +50,9 @@ spec:
               include_workdir: true
               read_only:
                 - /usr
-                - /app
                 - /opt/fabric
                 - /opt/nemoclaw
+                - /app
               read_write:
                 - /sandbox
       agents:

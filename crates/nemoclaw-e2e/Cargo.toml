@@ -14,7 +14,6 @@ nemoclaw-provider = { path = "../nemoclaw-provider" }
 async-trait.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-serde-saphyr.workspace = true
 sha2.workspace = true
 tf-provider.workspace = true
 tokio.workspace = true

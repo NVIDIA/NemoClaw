@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::v0_export::{
-    V1ProcessPrincipalBinding, V1RuntimeBindings, desired_state_from_v0_export,
-};
 use nemoclaw_sdk::config::Document;
 use sha2::{Digest, Sha256};
 
@@ -11,7 +8,7 @@ const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
 
 #[test]
-fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
+fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
     let v0 = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml");
     let digest = Sha256::digest(v0)
         .iter()
@@ -20,20 +17,8 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     assert_eq!(digest, V0_MANIFEST_SHA256);
     assert_eq!(V0_REVISION.len(), 40);
 
-    let v1 = desired_state_from_v0_export(
+    let v1 = Document::parse(
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-        V1RuntimeBindings {
-            gateway_engine: "unix:///var/run/docker.sock".into(),
-            gateway_image: nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE.into(),
-            gateway_network_cidr: "172.30.111.0/24".into(),
-            sandbox_image: "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd".into(),
-            process_principal: V1ProcessPrincipalBinding {
-                source_user: "sandbox".into(),
-                source_group: "sandbox".into(),
-                target_user: "1000".into(),
-                target_group: "1000".into(),
-            },
-        },
     )
     .unwrap();
     let expected =
@@ -43,6 +28,7 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     let gateway = &v1.spec.gateway;
     assert_eq!(gateway.management, "managed");
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
+    assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 
     let provider = &v1.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");
@@ -56,6 +42,10 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     assert!(provider.ollama.is_none());
 
     let sandbox = &v1.spec.sandboxes[0];
+    assert_eq!(
+        sandbox.image.ref_,
+        nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
+    );
     assert_eq!(sandbox.runtime.provider, "docker");
     assert!(sandbox.network.tier.is_empty());
     let process = sandbox
@@ -84,7 +74,7 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     for runtime_root in ["/app", "/opt/fabric", "/opt/nemoclaw"] {
         assert!(
             read_only.iter().any(|path| path == runtime_root),
-            "translated policy must grant the v1 runtime root {runtime_root}"
+            "raw export policy must grant the v1 runtime root {runtime_root}"
         );
     }
     let agent = &sandbox.agents[0];
@@ -100,65 +90,7 @@ fn hosted_openclaw_scenario_derives_v1_desired_state_from_the_v0_export() {
     );
 }
 
-#[test]
-fn hosted_openclaw_translation_rejects_unrepresented_v0_fields() {
-    let source = std::str::from_utf8(include_bytes!(
-        "../fixtures/openclaw-nvidia-hosted/v0-export.yaml"
-    ))
-    .unwrap();
-    let source = source.replace(
-        "        - name: primary\n",
-        "        - name: primary\n          tools: []\n",
-    );
-    let error = desired_state_from_v0_export(
-        source.as_bytes(),
-        V1RuntimeBindings {
-            gateway_engine: "unix:///var/run/docker.sock".into(),
-            gateway_image: "gateway@sha256:digest".into(),
-            gateway_network_cidr: "172.30.111.0/24".into(),
-            sandbox_image: "fabric@sha256:digest".into(),
-            process_principal: V1ProcessPrincipalBinding {
-                source_user: "sandbox".into(),
-                source_group: "sandbox".into(),
-                target_user: "1000".into(),
-                target_group: "1000".into(),
-            },
-        },
-    )
-    .unwrap_err();
-
-    assert_eq!(error.to_string(), "invalid or unsupported v0 export");
-}
-
-#[test]
-fn hosted_openclaw_translation_refuses_an_unexpected_source_principal() {
-    let error = desired_state_from_v0_export(
-        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-        V1RuntimeBindings {
-            gateway_engine: "unix:///var/run/docker.sock".into(),
-            gateway_image: nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE.into(),
-            gateway_network_cidr: "172.30.111.0/24".into(),
-            sandbox_image: "nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd".into(),
-            process_principal: V1ProcessPrincipalBinding {
-                source_user: "node".into(),
-                source_group: "node".into(),
-                target_user: "1000".into(),
-                target_group: "1000".into(),
-            },
-        },
-    )
-    .unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        "v0 process principal does not match the explicit binding"
-    );
-}
-
 mod live {
-    use nemoclaw_e2e::v0_export::{
-        V1ProcessPrincipalBinding, V1RuntimeBindings, desired_state_from_v0_export,
-    };
     use nemoclaw_sdk::{
         CancellationToken, Deployment,
         backend::Row,
@@ -286,17 +218,12 @@ mod live {
     }
 
     #[test]
-    fn live_translation_requires_an_explicit_immutable_local_fabric_image() {
-        let valid = "nc-prototype-fabric@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        validate_fabric_image(valid);
+    fn aligned_export_uses_immutable_v1_default_images() {
+        validate_immutable_image(
+            "default agent image",
+            nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE,
+        );
         validate_gateway_image(nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
-        for invalid in [
-            "nc-prototype-fabric:openclaw",
-            "other@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "nc-prototype-fabric@sha256:0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
-        ] {
-            assert!(std::panic::catch_unwind(|| validate_fabric_image(invalid)).is_err());
-        }
         assert!(
             std::panic::catch_unwind(|| validate_gateway_image(
                 "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792"
@@ -322,14 +249,6 @@ mod live {
         );
     }
 
-    fn validate_fabric_image(image: &str) {
-        validate_immutable_image("live Fabric image", image);
-        assert!(
-            image.starts_with("nc-prototype-fabric@sha256:"),
-            "live Fabric image must use the owned local repository"
-        );
-    }
-
     fn validate_gateway_image(image: &str) {
         validate_immutable_image("live gateway image", image);
         assert_eq!(
@@ -340,6 +259,9 @@ mod live {
     }
 
     fn validate_scenario_document(document: &Document) {
+        assert_eq!(document.spec.gateway.management, "managed");
+        assert_eq!(document.spec.gateway.engine, "unix:///var/run/docker.sock");
+        validate_gateway_image(&document.spec.gateway.image);
         let provider = &document.spec.inference_providers[0];
         assert_eq!(provider.provider, "openai");
         assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
@@ -348,6 +270,11 @@ mod live {
             Some("NVIDIA_INFERENCE_API_KEY")
         );
         let sandbox = &document.spec.sandboxes[0];
+        assert_eq!(
+            sandbox.image.ref_,
+            nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
+        );
+        validate_immutable_image("default agent image", &sandbox.image.ref_);
         assert_eq!(sandbox.runtime.provider, "docker");
         let process = sandbox
             .network
@@ -438,7 +365,7 @@ mod live {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires a manually curated redacted v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    #[ignore = "requires a manually curated redacted raw v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
     async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
         let gate = std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").unwrap();
         let qualification_candidate = match gate.as_str() {
@@ -482,43 +409,8 @@ mod live {
         let mut v0_export_evidence = v0_artifact_audit(&v0_export_bytes, v0_source.as_deref());
         v0_export_evidence["redactedYaml"] =
             json!(String::from_utf8(v0_export_bytes.clone()).unwrap());
-        let image = std::env::var("NEMOCLAW_LIVE_FABRIC_IMAGE").unwrap();
-        validate_fabric_image(&image);
-        let gateway_engine = std::env::var("NEMOCLAW_LIVE_GATEWAY_ENGINE").unwrap();
-        assert_eq!(
-            gateway_engine, "unix:///var/run/docker.sock",
-            "this scenario requires the local Linux Docker socket"
-        );
-        let gateway_image = std::env::var("NEMOCLAW_LIVE_GATEWAY_IMAGE").unwrap();
-        validate_gateway_image(&gateway_image);
-        let process_mapping_decision =
-            std::env::var("NEMOCLAW_LIVE_PROCESS_MAPPING_DECISION").unwrap();
-        assert!(
-            !process_mapping_decision.trim().is_empty(),
-            "the process-principal mapping requires an explicit decision reference"
-        );
-        if qualification_candidate {
-            assert!(
-                process_mapping_decision.starts_with("https://github.com/NVIDIA/NemoClaw/issues/")
-                    || process_mapping_decision
-                        .starts_with("https://github.com/NVIDIA/NemoClaw/pull/"),
-                "qualification requires a NemoClaw issue or pull-request decision reference"
-            );
-        }
-        let bindings = V1RuntimeBindings {
-            gateway_engine,
-            gateway_image,
-            gateway_network_cidr: std::env::var("NEMOCLAW_LIVE_GATEWAY_NETWORK_CIDR").unwrap(),
-            sandbox_image: image.clone(),
-            process_principal: V1ProcessPrincipalBinding {
-                source_user: std::env::var("NEMOCLAW_LIVE_V0_PROCESS_USER").unwrap(),
-                source_group: std::env::var("NEMOCLAW_LIVE_V0_PROCESS_GROUP").unwrap(),
-                target_user: std::env::var("NEMOCLAW_LIVE_V1_PROCESS_USER").unwrap(),
-                target_group: std::env::var("NEMOCLAW_LIVE_V1_PROCESS_GROUP").unwrap(),
-            },
-        };
-        let document = desired_state_from_v0_export(v0_export_bytes.as_slice(), bindings.clone())
-            .expect("the curated v0 export must translate without dropping fields");
+        let document = Document::parse(v0_export_bytes.as_slice())
+            .expect("the curated raw v0 export must parse through the ordinary v1 path");
         validate_scenario_document(&document);
         let image = &document.spec.sandboxes[0].image.ref_;
         assert_eq!(
@@ -530,7 +422,7 @@ mod live {
                 "{{index .RepoDigests 0}}"
             ])),
             *image,
-            "the exact live Fabric image must exist in the owned Docker daemon"
+            "the exact default agent image must exist in the owned Docker daemon"
         );
 
         let ownership: Value = serde_json::from_slice(
@@ -557,17 +449,15 @@ mod live {
                 "passed": false,
                 "qualified": false,
                 "qualificationCandidate": qualification_candidate,
-                "qualificationNote": "qualification requires review of the curated input, the process-principal decision, and lifecycle evidence",
+                "qualificationNote": "qualification requires review of the curated input and lifecycle evidence",
                 "resumedAfterFailedApply": !fresh,
                 "startedEpoch": now(),
                 "v1Revision": v1_revision,
                 "v1SourceWorktreeClean": source_status.is_empty(),
                 "credentialInputs": {"NVIDIA_INFERENCE_API_KEY": "environment reference; value omitted"},
                 "v0Export": v0_export_evidence,
-                "translation": {
-                    "contract": "strict-v0-export-to-v1alpha1-desired-state-v1",
-                    "v1OnlyRuntimeBindings": bindings,
-                    "processPrincipalMappingDecision": process_mapping_decision,
+                "input": {
+                    "contract": "raw-v0-v1alpha1-export-v1",
                     "v1Input": serde_json::to_value(&document).unwrap()
                 },
                 "environment": current_environment,
@@ -656,7 +546,7 @@ mod live {
         evidence.record(
             "desiredStateComparison",
             json!({
-                "translatedV0EqualsV1Export": true,
+                "rawV0EqualsV1Export": true,
                 "v1ExportSha256": sha256(&exported_bytes)
             }),
         );
@@ -699,7 +589,7 @@ mod live {
         );
         evidence.record(
             "verdict",
-            "v0 export is representable and its v1 lifecycle and agent behavior are verified",
+            "raw v0 export parses directly and its v1 lifecycle and agent behavior are verified",
         );
         evidence.record("passed", true);
     }
