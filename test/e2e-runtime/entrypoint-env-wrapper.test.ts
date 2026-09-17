@@ -270,6 +270,12 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(invalidHighPort.status).toBe(1);
       expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
       expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
+
+      const invalidLeadingZeroPort = runScenario("set -- nemoclaw-start openclaw agent", {
+        NEMOCLAW_DASHBOARD_PORT: "018789",
+      });
+      expect(invalidLeadingZeroPort.status).toBe(1);
+      expect(invalidLeadingZeroPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='018789'");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(tmpDir, { recursive: true, force: true });
