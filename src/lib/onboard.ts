@@ -634,8 +634,6 @@ async function promptYesNoOrDefault(
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
 const {
   getDockerDriverGatewayEndpoint,
   getGatewayClusterImageDrift,
@@ -3181,7 +3179,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
-        managedOpenclawStartup: !agent && preparedSandboxWorkload.source.kind === "managed-image",
+        managedOpenclawStartup:
+          !agent &&
+          registry.getSandbox(finalFlowContext.sandboxName)?.workload?.kind === "managed-image",
         portableRuntimeContext:
           agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,

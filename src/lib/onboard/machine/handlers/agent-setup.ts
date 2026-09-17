@@ -53,7 +53,6 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
-      managedProfileApplied?: boolean,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -61,6 +60,7 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
+      managedProfileApplied?: boolean,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
