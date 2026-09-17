@@ -9,9 +9,8 @@
  * one-shot, and agent paths as the sandbox identity. OpenClaw 2026.9.1 makes
  * shared and per-agent SQLite state part of gateway startup and hardens those
  * paths to owner-only modes. Generic credential and identity stores remain owner-only.
- * Preserve those private modes and ignore only the obsolete
- * pinned-version update cache when its migration cannot archive through a
- * root-owned parent.
+ * Preserve those private modes. OpenClaw owns its native state migrations;
+ * this patch validates but does not modify the update-check migration.
  *
  * Remove this patch once upstream no longer needs these managed-runtime
  * permission and legacy-cache compatibility changes.
@@ -25,21 +24,12 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const MARKER = "/* nemoclaw: group-shared OpenClaw state */";
 export const AGENT_MARKER = "/* nemoclaw: group-shared OpenClaw agent state */";
-export const MIGRATION_MARKER = "/* nemoclaw: ignore legacy OpenClaw update-check state */";
 export const MODELS_MARKER = "/* nemoclaw: group-shared OpenClaw models file */";
 
 const GROUP_SHARED_ENV_HELPER = [
   "function nemoclawUsesGroupSharedState(env) {",
   "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
   '\treturn nemoclawSharedStateMarker === "1";',
-  "}",
-].join("\n");
-
-const MANAGED_RUNTIME_ENV_HELPER = [
-  "function nemoclawUsesManagedRuntime(env) {",
-  "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
-  "\tconst nemoclawOpenShellMarker = env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX;",
-  '\treturn nemoclawSharedStateMarker === "1" || nemoclawOpenShellMarker === "1" || (typeof nemoclawOpenShellMarker === "string" && /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nemoclawOpenShellMarker));',
   "}",
 ].join("\n");
 
@@ -338,44 +328,14 @@ const UPSTREAM_MIGRATION_START = [
   "\tif (!fileExists(params.detected.sourcePath)) return {",
 ].join("\n");
 
-const PATCHED_MIGRATION_START = [
-  MANAGED_RUNTIME_ENV_HELPER,
-  UPSTREAM_MIGRATION_FUNCTION_START,
-  `\tif (nemoclawUsesManagedRuntime()) return { changes, warnings }; ${MIGRATION_MARKER}`,
-  "\tif (!fileExists(params.detected.sourcePath)) return {",
-].join("\n");
-
 const UPSTREAM_MIGRATION_START_20260901 = [
   "function migrateLegacyUpdateCheckState(params) {",
   "\treturn migrateLegacyJsonState({",
 ].join("\n");
 
-const PATCHED_MIGRATION_START_20260901 = [
-  MANAGED_RUNTIME_ENV_HELPER,
-  "function migrateLegacyUpdateCheckState(params) {",
-  `\tif (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] }; ${MIGRATION_MARKER}`,
-  "\treturn migrateLegacyJsonState({",
-].join("\n");
-
-const MIGRATION_START_SHAPES = [
-  { patched: PATCHED_MIGRATION_START, upstream: UPSTREAM_MIGRATION_START },
-  {
-    patched: PATCHED_MIGRATION_START_20260901,
-    upstream: UPSTREAM_MIGRATION_START_20260901,
-  },
-] as const;
-
-const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
-  MIGRATION_MARKER,
-  "function nemoclawUsesManagedRuntime(env) {",
-  "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
-  "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
-  "function migrateLegacyUpdateCheckState(params) {",
-] as const;
-
-const PATCHED_MIGRATION_GUARD_PATTERNS = [
-  "if (nemoclawUsesManagedRuntime()) return { changes, warnings };",
-  "if (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] };",
+const NATIVE_MIGRATION_STARTS = [
+  UPSTREAM_MIGRATION_START,
+  UPSTREAM_MIGRATION_START_20260901,
 ] as const;
 
 const UPSTREAM_MODELS_FILE_MODE_HELPER = [
@@ -406,7 +366,7 @@ const PATCHED_MODELS_REQUIRED_PATTERNS = [
   "await fs.chmod(pathname, nemoclawModelsFileMode).catch(() => {});",
 ] as const;
 
-type PatchStatus = "patched" | "already-patched";
+type PatchStatus = "patched" | "already-patched" | "unchanged";
 
 export interface PatchTextResult {
   readonly patched: boolean;
@@ -539,40 +499,14 @@ export function patchOpenClawAgentDbText(source: string, file: string): PatchTex
   return { patched: true, status: "patched", text };
 }
 
-function validatePatchedMigrationText(source: string, file: string): void {
-  for (const pattern of PATCHED_MIGRATION_REQUIRED_PATTERNS) {
-    requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
-  }
-  const guardCount = PATCHED_MIGRATION_GUARD_PATTERNS.reduce(
-    (count, pattern) => count + countOccurrences(source, pattern),
-    0,
-  );
-  if (guardCount !== 1) {
-    throw new Error(
-      `${file}: expected exactly one patched legacy update-check guard, found ${guardCount}`,
-    );
-  }
-  if (MIGRATION_START_SHAPES.some((shape) => source.includes(shape.upstream))) {
-    throw new Error(`${file}: patch marker is present but the upstream migration target remains`);
-  }
-}
-
 export function patchOpenClawStateMigrationText(source: string, file: string): PatchTextResult {
-  if (source.includes(MIGRATION_MARKER)) {
-    validatePatchedMigrationText(source, file);
-    return { patched: false, status: "already-patched", text: source };
-  }
-
-  const matches = MIGRATION_START_SHAPES.filter((shape) => source.includes(shape.upstream));
+  const matches = NATIVE_MIGRATION_STARTS.filter((start) => source.includes(start));
   if (matches.length !== 1) {
     throw new Error(
       `${file}: expected exactly one legacy update-check migration start, found ${matches.length}`,
     );
   }
-  const shape = matches[0];
-  const text = source.replace(shape.upstream, shape.patched);
-  validatePatchedMigrationText(text, file);
-  return { patched: true, status: "patched", text };
+  return { patched: false, status: "unchanged", text: source };
 }
 
 function validatePatchedModelsText(source: string, file: string): void {
@@ -648,10 +582,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
   const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
-      return (
-        source.includes(MIGRATION_MARKER) ||
-        source.includes("function migrateLegacyUpdateCheckState(params) {")
-      );
+      return source.includes("function migrateLegacyUpdateCheckState(params) {");
     },
   );
   if (migrationCandidates.length !== 1) {

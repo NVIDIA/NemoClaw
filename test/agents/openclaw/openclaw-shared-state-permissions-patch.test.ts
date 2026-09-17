@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_MARKER,
   MARKER,
-  MIGRATION_MARKER,
   MODELS_MARKER,
   patchOpenClawAgentDbText,
   patchOpenClawModelsConfigText,
@@ -385,14 +384,11 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       UPSTREAM_STATE_MIGRATION_20260901_SOURCE,
       "state-migrations.doctor-fixture.js",
     );
-    expect(patched.status).toBe("patched");
-    expect(patched.text).toContain(MIGRATION_MARKER);
-    expect(patched.text).toContain(
-      "if (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] };",
-    );
-    expect(
-      patchOpenClawStateMigrationText(patched.text, "state-migrations.doctor-fixture.js").status,
-    ).toBe("already-patched");
+    expect(patched).toEqual({
+      patched: false,
+      status: "unchanged",
+      text: UPSTREAM_STATE_MIGRATION_20260901_SOURCE,
+    });
   });
 
   it("applies every exact target once through the CLI and remains idempotent", () => {
@@ -409,7 +405,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       const patchedModels = fs.readFileSync(fixture.modelsFiles[0], "utf8");
       expect(patchedState.split(MARKER)).toHaveLength(2);
       expect(patchedAgent.split(AGENT_MARKER)).toHaveLength(2);
-      expect(patchedMigration.split(MIGRATION_MARKER)).toHaveLength(2);
+      expect(patchedMigration).toBe(UPSTREAM_STATE_MIGRATION_SOURCE);
       expect(patchedModels.split(MODELS_MARKER)).toHaveLength(2);
       expect(patchedState).toContain("NEMOCLAW_SHARED_STATE_DIR_MODE = 0o700");
       expect(patchedAgent).toContain("NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o700");
@@ -755,40 +751,6 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     },
   );
 
-  it.each([
-    ["NEMOCLAW_OPENCLAW_SHARED_STATE", "1"],
-    ["OPENSHELL_SANDBOX", "sandbox-name"],
-  ] as const)(
-    "ignores legacy update-check migration state under %s",
-    async (markerName, markerValue) => {
-      const fixture = makeFixture();
-      const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      const previousOpenShell = process.env.OPENSHELL_SANDBOX;
-      try {
-        patchOpenClawSharedStatePermissions(fixture.dist);
-        delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-        delete process.env.OPENSHELL_SANDBOX;
-        process.env[markerName] = markerValue;
-        const cache = path.join(fixture.root, "update-check.json");
-        fs.writeFileSync(cache, "not even valid JSON");
-        const runtime = await importMigrationFixture(fixture.migrationFiles[0]);
-
-        expect(
-          runtime.migrateLegacyUpdateCheckState({
-            detected: { sourcePath: cache },
-          }),
-        ).toEqual({
-          changes: [],
-          warnings: [],
-        });
-      } finally {
-        restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
-        restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
-        fs.rmSync(fixture.root, { recursive: true, force: true });
-      }
-    },
-  );
-
   it("retains the upstream update-check migration behavior outside NemoClaw", async () => {
     const fixture = makeFixture();
     const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
@@ -1001,12 +963,6 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     ).toThrow("expected exactly one patched pattern");
     expect(() =>
       patchOpenClawAgentDbText(`${UPSTREAM_AGENT_DB_SOURCE}\n${AGENT_MARKER}\n`, "partial.js"),
-    ).toThrow("expected exactly one patched pattern");
-    expect(() =>
-      patchOpenClawStateMigrationText(
-        `${UPSTREAM_STATE_MIGRATION_SOURCE}\n${MIGRATION_MARKER}\n`,
-        "partial.js",
-      ),
     ).toThrow("expected exactly one patched pattern");
     expect(() =>
       patchOpenClawModelsConfigText(

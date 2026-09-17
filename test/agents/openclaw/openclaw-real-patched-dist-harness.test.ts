@@ -128,8 +128,20 @@ function createSedWrapper(tmp: string): string {
   return fakeBin;
 }
 
+function sha512SriContent(value: string | Buffer): string {
+  return `sha512-${crypto.createHash("sha512").update(value).digest("base64")}`;
+}
+
 function sha512Sri(file: string): string {
-  return `sha512-${crypto.createHash("sha512").update(fs.readFileSync(file)).digest("base64")}`;
+  return sha512SriContent(fs.readFileSync(file));
+}
+
+function nativeUpdateCheckMigrationSource(file: string): string {
+  const source = fs.readFileSync(file, "utf-8");
+  return (
+    source.match(/^function migrateLegacyUpdateCheckState\(params\) \{\n[\s\S]*?^\}/mu)?.[0] ??
+    runtimeMismatch("missing", "one complete native update-check migration", file)
+  );
 }
 
 function runtimeMismatch(actual: string, expected: string, label: string): never {
@@ -780,7 +792,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const stateMigrationTargets = fs
           .readdirSync(dist)
-          .filter((file) => /^state-migrations-.+\.js$/.test(file))
+          .filter((file) => /^state-migrations[.-].+\.js$/.test(file))
           .map((file) => path.join(dist, file))
           .filter((file) =>
             fs
@@ -792,7 +804,9 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "1",
           "native update-check migration target count",
         );
-        const stateMigrationIntegrity = stateMigrationTargets.map(sha512Sri);
+        const stateMigrationIntegrity = stateMigrationTargets.map((file) =>
+          sha512SriContent(nativeUpdateCheckMigrationSource(file)),
+        );
 
         const sharedStatePatch = spawnSync(
           nodeRuntime.executable,
@@ -877,7 +891,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         );
         stateMigrationTargets.forEach((file, index) => {
           requireRuntimeEqual(
-            sha512Sri(file),
+            sha512SriContent(nativeUpdateCheckMigrationSource(file)),
             stateMigrationIntegrity[index],
             "native update-check migration remains unchanged",
           );
