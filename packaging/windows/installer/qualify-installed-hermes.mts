@@ -122,7 +122,7 @@ export function validateHermesEdgeReceipt(receipt: any, sessionId: string) {
   assert.equal(receipt?.identity?.architecture, "arm64");
   assert.equal(receipt?.identity?.machine, 0xaa64);
   assert.equal(receipt?.identity?.signatureStatus, "Valid");
-  assert.match(receipt?.identity?.signer ?? "", /Microsoft Corporation/iu);
+  assert.match(receipt?.identity?.signerSubject ?? "", /Microsoft Corporation/iu);
   assert.equal(receipt?.identity?.provenance, "standard-windows-microsoft-edge-installation");
   assert.match(
     receipt?.identity?.path ?? "",

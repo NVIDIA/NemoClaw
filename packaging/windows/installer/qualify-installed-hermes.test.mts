@@ -54,7 +54,7 @@ test("Hermes Edge receipt is bound to the exact native session", () => {
       architecture: "arm64",
       machine: 0xaa64,
       signatureStatus: "Valid",
-      signer: "Microsoft Corporation",
+      signerSubject: "Microsoft Corporation",
       provenance: "standard-windows-microsoft-edge-installation",
       path: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       sha256: "a".repeat(64),
