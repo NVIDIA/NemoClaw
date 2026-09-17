@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { vi } from "vitest";
 import type { ContainerEngine } from "../../../src/lib/adapters/container-engine";
+import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity";
+import { createSdkOpenShellSandboxStateLifecycle } from "../../../src/lib/adapters/openshell/sandbox-lifecycle-sdk";
 import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
@@ -21,13 +23,8 @@ import {
   portableDemoLifecycleInternals,
 } from "../../../src/lib/onboard/experimental/portable-demo-lifecycle";
 import { inspectPortablePodmanReadiness } from "../../../src/lib/onboard/experimental/portable-runtime-readiness";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderLifecycleInput,
-  RuntimeProviderLifecycleSurface,
-} from "../../../src/lib/onboard/runtime-provider/contract";
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman";
-import type { SandboxEntry } from "../../../src/lib/state/registry/types";
+import { PODMAN_SANDBOX_ID_LABEL } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -78,8 +75,6 @@ const E2E_PHASES = [
   "record successful final at-rest state",
 ] as const;
 
-type SupportedLifecycle = Extract<RuntimeProviderLifecycleSurface, { supported: true }>;
-
 function candidateAuthority() {
   const expectedSourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
   expect(expectedSourceRevision).toMatch(/^[a-f0-9]{40}$/u);
@@ -102,11 +97,6 @@ function engines(): {
       socketAuthority,
     }),
   };
-}
-
-function supportedLifecycle(bundle: RuntimeProviderBundle): SupportedLifecycle {
-  expect(bundle.lifecycle.supported).toBe(true);
-  return bundle.lifecycle as SupportedLifecycle;
 }
 
 test(
@@ -408,25 +398,18 @@ exit 1
       progress.phase("exercise exact-container stop and start");
       for (const { agent, sandboxName } of AGENTS) {
         const agentEngines = engines();
-        const agentBundle = createPodmanRuntimeProviderBundle({ engines: agentEngines });
-        const lifecycle = supportedLifecycle(agentBundle);
-        const sandbox: SandboxEntry = {
-          agent,
-          gatewayName: GATEWAY_NAME,
-          name: sandboxName,
-          openshellDriver: "podman",
-        };
-        const input: RuntimeProviderLifecycleInput = {
-          environment: {
-            ...cliEnv,
-            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
-          },
-          log: vi.fn(),
-          sandbox,
-          sandboxName,
-        };
+        const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+          env: { ...cliEnv, NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+        });
         const beforeStop = vi.fn();
         const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
+        const request = {
+          sandboxName,
+          sandboxIdentityFingerprint: fingerprintOpenShellSandboxId(
+            initial.Config.Labels[PODMAN_SANDBOX_ID_LABEL]!,
+          )!,
+          target: { kind: "named" as const, gatewayName: GATEWAY_NAME },
+        };
         const verifyRestartedAgent = vi.fn(async () => {
           await runCommand(
             shellProbe,
@@ -450,24 +433,18 @@ exit 1
           );
         });
 
-        await expect(lifecycle.stop(input, { beforeStop })).resolves.toEqual({
-          exitCode: 0,
-          state: "stopped",
-        });
+        beforeStop();
+        await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
         expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
         const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(stopped.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
 
-        expect(agentBundle.preflightDoctor.preflightLifecycle("start", input)).toBeNull();
-        await expect(lifecycle.start(input)).resolves.toEqual({ exitCode: 0 });
-        await lifecycle.verifyStarted(input, verifyRestartedAgent);
+        await expect(lifecycle.startSandbox(request)).resolves.toEqual({ kind: "accepted" });
+        await verifyRestartedAgent();
         const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
-        await expect(lifecycle.stop(input, { beforeStop: vi.fn() })).resolves.toEqual({
-          exitCode: 0,
-          state: "stopped",
-        });
+        await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
       }

@@ -50,8 +50,6 @@ const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -412,7 +410,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
   }
   if (
     bundle.capabilities.hostLocalInference !== true ||
-    bundle.capabilities.directLifecycle !== true ||
     bundle.capabilities.workloadImageCleanup !== true
   ) {
     throw new RuntimeProviderActivationError(

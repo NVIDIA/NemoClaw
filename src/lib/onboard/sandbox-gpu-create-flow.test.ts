@@ -337,7 +337,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         route: "none",
         persistStartupCommand: true,
         externalRecreation: true,
-        requiredUlimits: input.requiredUlimits,
+        requiredUlimits: null,
       }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
@@ -554,6 +554,28 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("keeps managed-image limits inside the exact OpenShell-created runtime", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalRecreation: true,
+        persistStartupCommand: true,
+        requiredUlimits: null,
+      }),
+    );
+  });
+
   it.each([
     {
       failure: "image build",
@@ -660,14 +682,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
 
-  it("uses the provided lifecycle generation for portable setup and registration (#8942)", async () => {
+  it("preserves standard lifecycle generation without enrolling Portable ownership", async () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
     input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(
-      (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
-    );
+    deps.installPortableDemoLifecycle = vi.fn(() => "unexpected-portable-generation");
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -676,54 +696,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       lifecycleGeneration: "current-generation",
     });
 
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-      process.env,
-      {
-        registryGeneration: "current-generation",
-        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
-      },
-    );
-  });
-
-  it("preserves the provided lifecycle generation when portable setup is unavailable (#8942)", async () => {
-    const input = createInput();
-    input.lifecycleGeneration = "fresh-generation";
-    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => null);
-
-    const result = await runSandboxGpuCreateFlow(input, deps);
-
-    expect(result.lifecycleRegistrationFields).toEqual({
-      lifecycleGeneration: "fresh-generation",
-    });
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
-      input.sandboxName,
-      input.sandboxStartupCommand,
-      process.env,
-      {
-        registryGeneration: "fresh-generation",
-        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
-      },
-    );
-  });
-
-  it("keeps a created sandbox when portable lifecycle setup fails (#8441)", async () => {
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      throw new Error("Authorization: Bearer portable-secret");
-    });
-
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
-      route: "native",
-    });
-
-    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
-    expect(warning).toContain("Portable demo lifecycle setup did not complete");
-    expect(warning).toContain("Authorization: Bearer <REDACTED>");
-    expect(warning).not.toContain("portable-secret");
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
   });
 
   it("uses the exact portable lifecycle without Docker container substitution (#9068)", async () => {

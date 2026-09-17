@@ -31,8 +31,6 @@ export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
   | "registration"
-  | "start"
-  | "stop"
   | "inference-set"
   | "rebuild"
   | "clone"
@@ -182,7 +180,6 @@ export type RuntimeProviderReadOnlyHostMountCapability =
 
 export interface RuntimeProviderNormalizedCapabilities {
   readonly hostLocalInference: boolean;
-  readonly directLifecycle: boolean;
   readonly legacyGatewayContainerInspection: boolean;
   readonly workloadImageCleanup: boolean;
   readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
@@ -442,10 +439,6 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   ): string[];
 }
 
-export interface RuntimeProviderLifecycleStopHooks {
-  readonly beforeStop: () => void;
-}
-
 export type RuntimeProviderProviderDetachResult = {
   readonly detached: string[];
   readonly failures: Array<{ readonly name: string; readonly output: string }>;
@@ -625,20 +618,9 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
-      /** Provider-owned timeout for direct container lifecycle mutations. */
+      /** Provider-owned timeout for exact privileged container mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(
-        input: RuntimeProviderLifecycleInput,
-      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
-      verifyStarted(
-        input: RuntimeProviderLifecycleInput,
-        verifyGateway: (sandboxName: string) => Promise<void>,
-      ): Promise<void>;
-      stop(
-        input: RuntimeProviderLifecycleInput,
-        hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 

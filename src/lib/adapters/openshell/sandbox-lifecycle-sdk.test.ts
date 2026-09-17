@@ -3,34 +3,40 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import { createSdkOpenShellSandboxStateLifecycle } from "./sandbox-lifecycle-sdk";
 
 const target = { kind: "named" as const, gatewayName: "nemoclaw" };
+const sandboxId = "sandbox-alpha";
+const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
+const request = { sandboxName: "alpha", sandboxIdentityFingerprint, target };
 
 function harness() {
   const startSandbox = vi.fn(async () => ({}));
   const stopSandbox = vi.fn(async () => ({}));
+  const get = vi.fn(async () => ({ id: sandboxId }));
   const waitReady = vi.fn(async () => ({}));
   const connect = vi.fn(async () => ({
     raw: { startSandbox, stopSandbox },
-    sandbox: { waitReady },
+    sandbox: { get, waitReady },
   }));
   const lifecycle = createSdkOpenShellSandboxStateLifecycle({ connect });
-  return { connect, lifecycle, startSandbox, stopSandbox, waitReady };
+  return { connect, get, lifecycle, startSandbox, stopSandbox, waitReady };
 }
 
 describe("OpenShell SDK sandbox lifecycle", () => {
   it("starts and stops the named sandbox through typed SDK RPCs", async () => {
-    const { connect, lifecycle, startSandbox, stopSandbox, waitReady } = harness();
+    const { connect, get, lifecycle, startSandbox, stopSandbox, waitReady } = harness();
 
-    await expect(lifecycle.startSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
+    await expect(lifecycle.startSandbox(request)).resolves.toEqual({
       kind: "accepted",
     });
-    await expect(lifecycle.stopSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
+    await expect(lifecycle.stopSandbox(request)).resolves.toEqual({
       kind: "accepted",
     });
 
     expect(connect).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(2);
     expect(startSandbox).toHaveBeenCalledWith(
       { name: "alpha", workspace: "default" },
       { signal: expect.any(AbortSignal) },
@@ -48,7 +54,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
   it("rejects an invalid name before it connects", async () => {
     const { connect, lifecycle } = harness();
 
-    await expect(lifecycle.startSandbox({ sandboxName: "../alpha", target })).resolves.toEqual({
+    await expect(lifecycle.startSandbox({ ...request, sandboxName: "../alpha" })).resolves.toEqual({
       kind: "failed",
       error: { kind: "schema", message: "Invalid sandbox request." },
     });
@@ -59,7 +65,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     const denied = Object.assign(new Error("token=secret"), { code: "auth" });
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => ({
-        sandbox: { waitReady: async () => ({}) },
+        sandbox: { get: async () => ({ id: sandboxId }), waitReady: async () => ({}) },
         raw: {
           startSandbox: async () => Promise.reject(denied),
           stopSandbox: async () => ({}),
@@ -67,7 +73,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       }),
     });
 
-    await expect(lifecycle.startSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
+    await expect(lifecycle.startSandbox(request)).resolves.toEqual({
       kind: "failed",
       error: { kind: "authentication", message: "OpenShell denied access." },
     });
@@ -81,7 +87,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       connect: async () => Promise.reject(missing),
     });
 
-    await expect(lifecycle.stopSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
+    await expect(lifecycle.stopSandbox(request)).resolves.toEqual({
       kind: "failed",
       error: {
         kind: "transport",
@@ -92,16 +98,19 @@ describe("OpenShell SDK sandbox lifecycle", () => {
   });
 
   it("bounds a connection that never settles", async () => {
+    let connectionSignal: AbortSignal | undefined;
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
-      connect: () => new Promise(() => undefined),
+      connect: (_target, { signal }) => {
+        connectionSignal = signal;
+        return new Promise(() => undefined);
+      },
     });
 
-    await expect(
-      lifecycle.startSandbox({ sandboxName: "alpha", target, timeoutMs: 5 }),
-    ).resolves.toEqual({
+    await expect(lifecycle.startSandbox({ ...request, timeoutMs: 5 })).resolves.toEqual({
       kind: "failed",
       error: { kind: "timeout", message: "OpenShell timed out." },
     });
+    expect(connectionSignal?.aborted).toBe(true);
   });
 
   it("bounds a connected lifecycle RPC that never settles", async () => {
@@ -111,15 +120,53 @@ describe("OpenShell SDK sandbox lifecycle", () => {
           startSandbox: () => new Promise(() => undefined),
           stopSandbox: async () => ({}),
         },
-        sandbox: { waitReady: async () => ({}) },
+        sandbox: { get: async () => ({ id: sandboxId }), waitReady: async () => ({}) },
       }),
     });
 
-    await expect(
-      lifecycle.startSandbox({ sandboxName: "alpha", target, timeoutMs: 5 }),
-    ).resolves.toEqual({
+    await expect(lifecycle.startSandbox({ ...request, timeoutMs: 5 })).resolves.toEqual({
       kind: "failed",
       error: { kind: "timeout", message: "OpenShell timed out." },
     });
+  });
+
+  it("bounds readiness after the start mutation is accepted", async () => {
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => ({
+        raw: {
+          startSandbox: async () => ({}),
+          stopSandbox: async () => ({}),
+        },
+        sandbox: {
+          get: async () => ({ id: sandboxId }),
+          waitReady: () => new Promise(() => undefined),
+        },
+      }),
+    });
+
+    await expect(lifecycle.startSandbox({ ...request, timeoutMs: 5 })).resolves.toEqual({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
+  });
+
+  it("rejects a reused sandbox name before lifecycle mutation", async () => {
+    const { lifecycle, startSandbox, stopSandbox } = harness();
+
+    await expect(
+      lifecycle.stopSandbox({
+        ...request,
+        sandboxIdentityFingerprint: fingerprintOpenShellSandboxId("replacement-id")!,
+      }),
+    ).resolves.toEqual({
+      kind: "failed",
+      error: {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "OpenShell sandbox identity changed.",
+      },
+    });
+    expect(startSandbox).not.toHaveBeenCalled();
+    expect(stopSandbox).not.toHaveBeenCalled();
   });
 });

@@ -28,10 +28,10 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {
+    const containerEngine = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "Podman" : "Docker";
     await artifacts.target.declare({
       id: "managed-image-activation",
-      boundary:
-        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, gateway restart readiness, and exact cleanup",
+      boundary: `exact candidate CLI and published all-agent managed-image digests through real ${containerEngine}, OpenShell, agent turns, gateway restart readiness, and exact cleanup`,
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",

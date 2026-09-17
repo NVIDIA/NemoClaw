@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  collectOnboardFailureDockerDiagnostics,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
@@ -15,6 +21,48 @@ import {
 describe("managed image activation failure diagnostics", () => {
   it("retains redacted Docker logs for failed startup diagnosis", () => {
     expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
+  });
+
+  it("redacts a copied failed-startup log before artifact publication", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
+    const secret = "supplied-startup-diagnostic-secret";
+    const containerId = "a".repeat(64);
+    const artifacts = new ArtifactSink(directory);
+    const command = vi.fn(async (executable: string, args: readonly string[]) => {
+      if (executable === "docker" && args[0] === "ps") {
+        return {
+          exitCode: 0,
+          stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+          stderr: "",
+        };
+      }
+      if (executable === "docker" && args[0] === "cp") {
+        fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    try {
+      await collectOnboardFailureDockerDiagnostics(
+        artifacts,
+        { command } as never,
+        "openclaw",
+        "managed-openclaw",
+        {},
+        [secret],
+      );
+
+      const published = fs.readFileSync(
+        artifacts.pathFor(
+          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
+        ),
+        "utf8",
+      );
+      expect(published).toContain("[REDACTED]");
+      expect(published).not.toContain(secret);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("installs activation proof plugins through native OpenClaw ownership", () => {

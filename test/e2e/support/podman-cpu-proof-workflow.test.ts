@@ -353,6 +353,12 @@ describe("native Podman CPU proof workflow", () => {
   it.each([
     "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts",
     "src/lib/adapters/openshell/sdk.ts",
+    "src/lib/onboard/managed-startup/**",
+    "src/lib/onboard/sandbox-create/**",
+    "src/lib/onboard/sandbox-create-launch.ts",
+    "src/lib/onboard/sandbox-create-step.ts",
+    "src/lib/onboard/sandbox-gpu-create-flow.ts",
+    "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
   ])("selects the proof when %s changes", (adapterPath) => {
     const selectedPath = workflow().on.pull_request.paths.find(
       (candidate) => candidate === adapterPath,

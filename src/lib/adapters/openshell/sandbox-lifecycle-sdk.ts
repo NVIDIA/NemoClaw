@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isValidName } from "../../name-validation";
+import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
 
 export type MutateOpenShellSandboxRequest = Readonly<{
   sandboxName: string;
+  sandboxIdentityFingerprint: string;
   target: Extract<OpenShellGatewayTarget, { kind: "named" }>;
   timeoutMs?: number;
 }>;
@@ -22,6 +24,7 @@ export interface OpenShellSandboxStateLifecycle {
 type CallOptions = Readonly<{ signal: AbortSignal }>;
 type SdkClient = Readonly<{
   sandbox: Readonly<{
+    get(name: string, options: CallOptions): Promise<Readonly<{ id: string }>>;
     waitReady(name: string, timeoutSecs: number, options: CallOptions): Promise<unknown>;
   }>;
   raw: Readonly<{
@@ -37,7 +40,7 @@ type SdkClient = Readonly<{
 }>;
 
 export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
-  connect?: (target: OpenShellGatewayTarget) => Promise<SdkClient>;
+  connect?: (target: OpenShellGatewayTarget, options: CallOptions) => Promise<SdkClient>;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<unknown>;
@@ -87,11 +90,12 @@ function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxErro
 async function mutate(
   action: "start" | "stop",
   request: MutateOpenShellSandboxRequest,
-  connect: (target: OpenShellGatewayTarget) => Promise<SdkClient>,
+  connect: (target: OpenShellGatewayTarget, options: CallOptions) => Promise<SdkClient>,
 ): Promise<OpenShellSandboxMutationSubmission> {
   if (
     !isValidName(request.sandboxName) ||
     !isValidName(request.target.gatewayName) ||
+    !/^[a-f0-9]{64}$/u.test(request.sandboxIdentityFingerprint) ||
     (request.timeoutMs !== undefined &&
       (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0))
   ) {
@@ -113,7 +117,24 @@ async function mutate(
     );
   });
   try {
-    const client = await Promise.race([connect(request.target), aborted]);
+    const client = await Promise.race([
+      connect(request.target, { signal: controller.signal }),
+      aborted,
+    ]);
+    const observed = await Promise.race([
+      client.sandbox.get(request.sandboxName, { signal: controller.signal }),
+      aborted,
+    ]);
+    if (fingerprintOpenShellSandboxId(observed.id) !== request.sandboxIdentityFingerprint) {
+      return {
+        kind: "failed",
+        error: {
+          kind: "transport",
+          reason: "identity_mismatch",
+          message: "OpenShell sandbox identity changed.",
+        },
+      };
+    }
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     await Promise.race([
       operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
@@ -143,11 +164,12 @@ export function createSdkOpenShellSandboxStateLifecycle(
 ): OpenShellSandboxStateLifecycle {
   const connect =
     deps.connect ??
-    (async (target) => {
+    (async (target, options) => {
       const { connectManagedOpenShellSdk } = require("./sdk") as typeof import("./sdk");
       return (await connectManagedOpenShellSdk(target, {
         ...(deps.env ? { env: deps.env } : {}),
         ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+        signal: options.signal,
         ...(deps.loadSdk
           ? {
               loadSdk: deps.loadSdk as import("./sdk").OpenShellSdkConnectionDeps["loadSdk"],

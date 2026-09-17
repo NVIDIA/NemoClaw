@@ -1370,10 +1370,7 @@ For a stopped standard sandbox, `recover` asks OpenShell to start that exact san
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-The `recover` command requires a Podman sandbox to be running and ready in OpenShell before it delegates an in-sandbox gateway failure to the registered runtime provider.
-The provider restarts the exact managed container without changing its identity.
-If provider recovery fails, NemoClaw reports the provider diagnostic and stops before it restores host-side forwards.
-If the Podman container itself is stopped, the command cannot reach provider recovery through the readiness gate; run `$$nemoclaw <name> start` before `recover`.
+The `recover` command requires a standard Podman sandbox to be running and ready in OpenShell. It does not restart or replace the provider-owned container. If the sandbox is stopped, run `$$nemoclaw <name> start` first.
 
 After the sandbox is available, `recover` sends authenticated requests only to repair supported in-sandbox agent processes and host forwards. Standard sandbox start and stop remain OpenShell-owned.
 The host selects the controller from the live container topology.

@@ -15,6 +15,7 @@ import {
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero,
@@ -157,6 +158,7 @@ function commandEnv(
   catalogPath: string,
   endpointUrl: string,
 ): NodeJS.ProcessEnv {
+  const gatewayRuntime = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   return {
     ...guard.env,
     COMPATIBLE_API_KEY: API_KEY,
@@ -164,13 +166,14 @@ function commandEnv(
     NEMOCLAW_COMPAT_MODEL: MODEL,
     NEMOCLAW_ENDPOINT_URL: endpointUrl,
     NEMOCLAW_IGNORE_RUNTIME_RESOURCES: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: gatewayRuntime,
     NEMOCLAW_MANAGED_ACTIVATION_CATALOG: catalogPath,
     NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PREFERRED_API: "openai-completions",
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
-    OPENSHELL_DRIVERS: "docker",
+    OPENSHELL_DRIVERS: gatewayRuntime,
     OPENSHELL_GATEWAY: GATEWAY,
   };
 }
@@ -422,16 +425,20 @@ async function verifyExactCleanup(
   });
   assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
+  const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   const containers = await host.command(
-    "docker",
+    containerEngine,
     ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
     {
-      artifactName: `post-destroy-docker-inventory-${sandboxName}`,
+      artifactName: `post-destroy-${containerEngine}-inventory-${sandboxName}`,
       env,
       timeoutMs: 30_000,
     },
   );
-  assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
+  assertExitZero(
+    containers,
+    `inspect ${containerEngine} inventory after managed activation destroy`,
+  );
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
 }
 
@@ -477,13 +484,18 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-async function collectOnboardFailureDockerDiagnostics(
+export async function collectOnboardFailureDockerDiagnostics(
   artifacts: ArtifactSink,
   host: HostCliClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  artifactRedactionValues: readonly string[] = [API_KEY],
 ): Promise<void> {
+  artifacts.addRedactionValues(artifactRedactionValues);
+  const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
+  const managedLabel =
+    containerEngine === "podman" ? "openshell.managed=true" : "openshell.ai/managed-by=openshell";
   try {
     await host.command(
       "tail",
@@ -505,13 +517,13 @@ async function collectOnboardFailureDockerDiagnostics(
       },
     );
     const inventory = await host.command(
-      "docker",
+      containerEngine,
       [
         "ps",
         "--all",
         "--no-trunc",
         "--filter",
-        "label=openshell.ai/managed-by=openshell",
+        `label=${managedLabel}`,
         "--filter",
         `label=openshell.ai/sandbox-name=${sandboxName}`,
         "--format",
@@ -531,7 +543,7 @@ async function collectOnboardFailureDockerDiagnostics(
     await Promise.allSettled(
       containerIds.map((containerId, index) =>
         host.command(
-          "docker",
+          containerEngine,
           [
             "inspect",
             "--format",
@@ -549,7 +561,7 @@ async function collectOnboardFailureDockerDiagnostics(
     );
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
-        const logs = await host.command("docker", ["logs", "--tail", "1000", containerId], {
+        const logs = await host.command(containerEngine, ["logs", "--tail", "1000", containerId], {
           artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
@@ -567,7 +579,7 @@ async function collectOnboardFailureDockerDiagnostics(
         const copiedLog = path.join(copyRoot, "nemoclaw-start.log");
         try {
           const copy = await host.command(
-            "docker",
+            containerEngine,
             ["cp", `${containerId}:/tmp/nemoclaw-start.log`, copiedLog],
             {
               artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-log-copy`,
@@ -698,15 +710,19 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   progress.phase("validate exact candidate catalog and host runtime");
   const catalogPath = requiredCatalogPath();
   const contracts = exactCatalog(catalogPath);
-  const guard = createDockerBuildGuard();
-  cleanup.trackDisposable("remove managed activation Docker guard", guard.dispose);
+  const containerEngine = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
+  const guard: DockerBuildGuard =
+    containerEngine === "docker"
+      ? createDockerBuildGuard()
+      : { env: buildAvailabilityProbeEnv(), tracePath: "", dispose: () => undefined };
+  cleanup.trackDisposable("remove managed activation build guard", guard.dispose);
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "managed-activation-docker-info",
+  const runtimeInfo = await host.command(containerEngine, ["info"], {
+    artifactName: `managed-activation-${containerEngine}-info`,
     env: guard.env,
     timeoutMs: 30_000,
   });
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  expect(runtimeInfo.exitCode, resultText(runtimeInfo)).toBe(0);
   const inference = await startFakeOpenAiCompatibleServer({
     apiKey: API_KEY,
     chatContent: "PONG",
@@ -759,6 +775,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,
     agentTurns: chatRequests.length,
     buildCommands: 0,
+    containerEngine,
     catalog: [...contracts.values()].map((contract) => ({
       agent: contract.agent,
       reference: contract.reference,

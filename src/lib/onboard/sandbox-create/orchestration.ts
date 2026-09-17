@@ -2944,20 +2944,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   if (!managedBootstrapIdentity) {
                     throw new Error("Managed startup launch has no exact bootstrap identity.");
                   }
+                  if (!managedWorkloadRuntime.runtimeProvider) {
+                    throw new Error("Managed startup launch has no selected runtime provider.");
+                  }
                   console.log("  Applying managed startup profile to the verified sandbox...");
-                  const containerId = managedWorkloadOnboard.resolveDockerManagedStartupContainer({
-                    sandboxName,
-                    sandboxId: identity.sandboxId,
-                  });
-                  console.log("  ✓ Selected the exact managed startup runtime");
                   let managedStartupTransaction: ReturnType<
-                    typeof managedWorkloadOnboard.applyDockerManagedStartupRootRequest
+                    typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
                   >;
                   try {
                     managedStartupTransaction =
-                      managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
+                      managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
                         bootstrapIdentity: managedBootstrapIdentity,
-                        containerId,
                         request: managedStartupRootApplyRequest,
                       });
                   } catch (error) {
@@ -2972,7 +2972,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   if (managedStartupTransaction) {
                     console.log("  Committing managed startup shared state...");
                     const sharedState =
-                      managedWorkloadOnboard.finalizeDockerManagedStartupSharedState({
+                      managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
                         transaction: managedStartupTransaction,
                         supervisorReady: true,
                       });
@@ -2989,7 +2990,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     }
                     console.log("  ✓ Committed managed startup shared state");
                     try {
-                      managedWorkloadOnboard.releaseDockerManagedStartupHold({
+                      managedWorkloadOnboard.releaseProviderManagedStartupHold({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
                         transaction: managedStartupTransaction,
                         profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
                       });
@@ -3241,7 +3245,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       if (managedStartupRootApplyRequest || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
-          "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
+          "Hermes portable onboarding cannot use managed startup root application or Docker GPU compatibility.",
         );
       }
       if (!inferenceRouteReservationAuthority?.sessionId) {

@@ -16,7 +16,11 @@ export async function isOpenclawGatewayReady(
   sandboxName: string,
   port: number,
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  timeoutMs = 3_000,
 ): Promise<boolean> {
+  const boundedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(3_000, Math.floor(timeoutMs)) : 3_000;
+  const curlTimeoutSeconds = String(Math.max(1, boundedTimeoutMs) / 1_000);
   try {
     const result = await sandboxCommandExecutor.runBuffered({
       sandboxName,
@@ -28,7 +32,7 @@ export async function isOpenclawGatewayReady(
         "-w",
         "%{http_code}",
         "--max-time",
-        "3",
+        curlTimeoutSeconds,
         `http://127.0.0.1:${String(port)}/health`,
       ],
       tty: false,
@@ -46,12 +50,13 @@ export function createOpenclawGatewayReadinessProbe(
   readSandbox: (sandboxName: string) => { dashboardPort?: number | null } | null,
   defaultPort: number,
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
-): (sandboxName: string) => Promise<boolean> {
-  return (sandboxName) =>
+): (sandboxName: string, timeoutMs?: number) => Promise<boolean> {
+  return (sandboxName, timeoutMs) =>
     isOpenclawGatewayReady(
       sandboxName,
       readSandbox(sandboxName)?.dashboardPort ?? defaultPort,
       sandboxCommandExecutor,
+      timeoutMs,
     );
 }
 

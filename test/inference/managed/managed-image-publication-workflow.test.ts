@@ -77,6 +77,13 @@ function managedPrActivation(workflow: Workflow): Job {
   );
 }
 
+function managedPrPodmanActivation(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-managed-podman-activation"],
+    "managed-image workflow is missing its exact rootless Podman activation gate",
+  );
+}
+
 describe("complete managed-image publication workflow", () => {
   it("restricts npm audit cache publication to trusted callers (#11028)", () => {
     const action = readAction("ci-reviewed-npm-audit") as ReturnType<typeof readAction> & {
@@ -570,6 +577,10 @@ describe("complete managed-image publication workflow", () => {
       step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
         ?.pattern,
     ).toBe("managed-pr-contract-${{ github.run_id }}-*");
+    expect(
+      step(managedPrPodmanActivation(workflow), "Download exact published all-agent contracts").with
+        ?.pattern,
+    ).toBe("managed-pr-contract-${{ github.run_id }}-*");
     expect(contract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(".[0].RootFS.Layers | length");
@@ -783,6 +794,37 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+  });
+
+  it("runs the exact all-agent cohort on rootless Podman with Docker unavailable", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const activation = managedPrPodmanActivation(workflow);
+    const steps = activation.steps ?? [];
+
+    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation["runs-on"]).toBe("ubuntu-26.04");
+    expect(activation.permissions).toEqual({ contents: "read" });
+    expect(activation.env).toMatchObject({
+      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_DRIVERS: "podman",
+    });
+    expect(JSON.stringify(activation)).not.toContain("secrets.");
+    expect(JSON.stringify(activation)).not.toContain("github.token");
+    expect(step(activation, "Install rootless Podman runtime").run).toContain(
+      '"podman=$PODMAN_APT_VERSION"',
+    );
+    expect(step(activation, "Disable and guard Docker").run).toContain(
+      "Docker CLI use is forbidden in managed Podman activation",
+    );
+    const run =
+      step(activation, "Run real all-agent managed runtime activation on Podman").run ?? "";
+    expect(run).toContain('test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"');
+    expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
+    expect(step(activation, "Verify Docker stayed unavailable").run).toContain(
+      'test ! -s "$E2E_DOCKER_GUARD_LOG"',
+    );
+    expect(steps.map(({ name }) => name)).toContain("Upload managed Podman activation evidence");
   });
 
   it("leaves MCP qualification to the normal E2E workflow (#11828)", () => {

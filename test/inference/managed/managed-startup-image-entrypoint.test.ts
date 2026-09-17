@@ -68,6 +68,8 @@ describe("managed startup image hold", () => {
     expect(source).toContain('[ "$5" = "--bootstrap-identity" ]');
     expect(source).toContain('[ "$7" = "--" ]');
     expect(source).toContain('--bootstrap-identity "$_nemoclaw_bootstrap_identity"');
+    expect(source).toContain("stat -c '%u:%g:%a:%h'");
+    expect(source).toContain('!= "0:0:444:1"');
     expect(source).toContain(
       'exec "${_nemoclaw_scrubbed_env[@]}" /usr/local/bin/nemoclaw-start "$@"',
     );
@@ -104,7 +106,7 @@ describe("managed startup image hold", () => {
             sandboxGid: 1000,
           }),
         );
-        executable(path.join(directory, "stat"), "#!/bin/sh\nprintf '0:0:444\\n'\n");
+        executable(path.join(directory, "stat"), "#!/bin/sh\nprintf '0:0:444:1\\n'\n");
         executable(
           path.join(directory, "node"),
           `#!/bin/sh\nprintf 'node:%s\\n' "$*" >>"$TRACE"\n`,

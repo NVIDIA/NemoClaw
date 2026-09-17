@@ -226,16 +226,9 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(support).not.toBeNull();
     expect(Object.isFrozen(support!.platforms)).toBe(true);
     expectSupportedSurface(registered.lifecycle);
-    expect(Object.isFrozen(registered.lifecycle.start)).toBe(true);
-    expect(Object.isFrozen(registered.lifecycle.verifyStarted)).toBe(true);
     expect(registered).not.toBe(source);
-    expect(registered.lifecycle.start).not.toBe(source.lifecycle.start);
-    expect(registered.lifecycle.verifyStarted).not.toBe(source.lifecycle.verifyStarted);
     expect(() => {
       (registered.workload.profile.hostArchitectures as string[]).push("s390x");
-    }).toThrow(TypeError);
-    expect(() => {
-      (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
   });
 
@@ -343,7 +336,7 @@ describe("RuntimeProviderBundle registry contract", () => {
     [
       "capabilities",
       (bundle: RuntimeProviderBundle) => {
-        const { directLifecycle: _directLifecycle, ...incomplete } = bundle.capabilities;
+        const { hostLocalInference: _hostLocalInference, ...incomplete } = bundle.capabilities;
         return incomplete;
       },
     ],
@@ -379,7 +372,8 @@ describe("RuntimeProviderBundle registry contract", () => {
     [
       "lifecycle",
       (_bundle: RuntimeProviderBundle) => {
-        const { stop: _stop, ...incomplete } = mxcBundle().lifecycle;
+        const { privilegedSandboxControl: _privilegedSandboxControl, ...incomplete } =
+          mxcBundle().lifecycle;
         return incomplete;
       },
     ],
@@ -466,16 +460,16 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(message);
   });
 
-  it("rejects a lifecycle surface without provider-owned post-start verification", () => {
+  it("rejects a lifecycle surface without privileged sandbox control", () => {
     const bundle = mxcBundle();
     expectSupportedSurface(bundle.lifecycle);
-    const { verifyStarted: _verifyStarted, ...incomplete } = bundle.lifecycle;
+    const { privilegedSandboxControl: _privilegedSandboxControl, ...incomplete } = bundle.lifecycle;
 
     expect(() =>
       createRuntimeProviderBundleRegistry([
         ["mxc", replaceSurface(bundle, "lifecycle", incomplete)],
       ]),
-    ).toThrow(/lifecycle\.verifyStarted must be a function/u);
+    ).toThrow(/privilegedSandboxControl/u);
   });
 
   it("rejects an invalid provider-owned container mutation timeout", () => {
@@ -542,17 +536,6 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, "containerEngine", containerEngineWithoutCapture)],
       ]),
     ).toThrow(/containerEngine.*capture/u);
-    expect(() =>
-      createRuntimeProviderBundleRegistry([
-        [
-          "mxc",
-          replaceSurface(bundle, "capabilities", {
-            ...bundle.capabilities,
-            directLifecycle: false,
-          }),
-        ],
-      ]),
-    ).toThrow(/capabilities disagree/u);
     expect(() =>
       createRuntimeProviderBundleRegistry([
         [
@@ -1060,11 +1043,27 @@ describe("socket-free MXC action contract", () => {
         registerSandbox,
         runtimeProviders: providers,
       });
+      const runtimeEntry = {
+        ...entry,
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      };
       state.workloads.add(imageTag);
-      const getSandbox = vi.fn(() => entry);
+      const getSandbox = vi.fn(() => runtimeEntry);
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
+      const openShellLifecycle = {
+        startSandbox: vi.fn(async () => {
+          state.running.add(sandboxName);
+          recordEvent(`start:${sandboxName}`);
+          return { kind: "accepted" as const };
+        }),
+        stopSandbox: vi.fn(async () => {
+          state.running.delete(sandboxName);
+          recordEvent(`stop:${sandboxName}`);
+          return { kind: "accepted" as const };
+        }),
+      };
       let deleteConvergenceMs = 0;
       const runOpenshell = vi.fn((args: string[]) => {
         switch (`${String(args[0])}:${String(args[1])}`) {
@@ -1083,8 +1082,19 @@ describe("socket-free MXC action contract", () => {
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          observer: {
+            listSandboxes: async () => ({
+              ok: true as const,
+              value: {
+                sandboxes: [{ name: sandboxName, phase: "Ready", readiness: "ready" as const }],
+              },
+            }),
+          },
+          openShellLifecycle,
+          probeInferenceInvocation: vi.fn(async () => ({ ok: true as const })),
           updateSandbox,
           runtimeProviders: providers,
+          verifyGateway: vi.fn(async () => undefined),
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
@@ -1092,6 +1102,7 @@ describe("socket-free MXC action contract", () => {
         withCurrentPortableHostFence(() =>
           stopSandbox(sandboxName, {
             getSandbox,
+            openShellLifecycle,
             updateSandbox,
             runtimeProviders: providers,
             stopSandboxChannels,
@@ -1101,13 +1112,13 @@ describe("socket-free MXC action contract", () => {
           }),
         ),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
+      expect(() => requireInferenceSetRuntimeAuthority(runtimeEntry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
           force: false,
           deleteGatewayName: "nemoclaw",
           runOpenshell,
-          sandbox: entry,
+          sandbox: runtimeEntry,
           sandboxConfirmedAbsent: false,
           sandboxName,
           stopInferenceResources: vi.fn(),
@@ -1164,7 +1175,6 @@ describe("socket-free MXC action contract", () => {
       );
       expect(state.events).toEqual([
         `start:${sandboxName}`,
-        `verify-started:${sandboxName}`,
         `stop:${sandboxName}`,
         `prepare-destroy:${sandboxName}`,
         `cleanup:${sandboxName}`,

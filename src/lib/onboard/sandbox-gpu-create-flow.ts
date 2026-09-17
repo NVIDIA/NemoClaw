@@ -513,34 +513,7 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
-  let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
-  if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
-    if (input.verifyCreatedSandboxBeforeEffects) {
-      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
-      if (!revalidate) {
-        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
-      }
-      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
-    }
-    try {
-      portableLifecycleGeneration =
-        (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-          input.sandboxName,
-          input.sandboxStartupCommand,
-          process.env,
-          {
-            ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
-            runtimeAuthority: input.portableRuntimeAuthority ?? null,
-          },
-        ) ?? null;
-    } catch (error) {
-      const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(
-        0,
-        500,
-      );
-      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
-    }
-  }
+  const portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
 
   const common = {
     runtimePatch: gpuCreateOutcome.value.runtimePatch,

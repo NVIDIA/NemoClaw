@@ -498,7 +498,8 @@ export function createSandboxGpuCreateAttemptRunner(
         "  This compatibility container swap may relax container confinement compared with native injection. The retry is running only because NEMOCLAW_DOCKER_GPU_PATCH=fallback explicitly authorized it.",
       );
     }
-    const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
+    const hasRequiredLegacyUlimits =
+      input.managedImage !== true && (input.requiredUlimits?.length ?? 0) > 0;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
     if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
@@ -571,7 +572,7 @@ export function createSandboxGpuCreateAttemptRunner(
       : unboundAttemptArgv;
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
-      (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
+      (route !== "native" || !input.terminalAgent || hasRequiredLegacyUlimits);
     const deferRestartSafeCutover =
       !portableLifecycle &&
       input.managedImage !== true &&
@@ -594,7 +595,7 @@ export function createSandboxGpuCreateAttemptRunner(
           sandboxName: input.sandboxName,
           gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
           openshellSandboxCommand: input.sandboxStartupCommand,
-          requiredUlimits: input.requiredUlimits,
+          requiredUlimits: input.managedImage === true ? null : input.requiredUlimits,
           timeoutSecs: input.sandboxReadyTimeoutSecs,
           backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
           deps,

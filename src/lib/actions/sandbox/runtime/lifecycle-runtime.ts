@@ -5,9 +5,7 @@ import {
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   normalizeRuntimeProviderIdentity,
-  requireRuntimeProviderMutationAuthority,
   resolveRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
 } from "../../../onboard/runtime-provider/access";
 import type {
   RuntimeProviderLifecycleAction,
@@ -23,7 +21,7 @@ export type SandboxLifecycleProviderResolution =
       readonly ok: true;
       readonly sandbox: SandboxEntry;
       readonly bundle: RuntimeProviderBundle;
-      readonly lifecycle: Extract<RuntimeProviderBundle["lifecycle"], { readonly supported: true }>;
+      readonly control: Extract<RuntimeProviderBundle["lifecycle"], { readonly supported: true }>;
     }
   | {
       readonly ok: false;
@@ -64,12 +62,6 @@ export function resolveSandboxLifecycleProvider(
       },
     };
   }
-  try {
-    requireRuntimeProviderMutationAuthority(bundle, action);
-  } catch (error) {
-    if (!(error instanceof RuntimeProviderSelectionError)) throw error;
-    return { ok: false, result: { exitCode: 1, message: `  ${error.message}` } };
-  }
   if (bundle.lifecycle.supported !== true) {
     return {
       ok: false,
@@ -81,5 +73,5 @@ export function resolveSandboxLifecycleProvider(
       },
     };
   }
-  return { ok: true, sandbox, bundle, lifecycle: bundle.lifecycle };
+  return { ok: true, sandbox, bundle, control: bundle.lifecycle };
 }

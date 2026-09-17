@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
-import { createSdkOpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -11,8 +10,6 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
-  type RuntimeProviderLifecycleInput,
-  type RuntimeProviderLifecycleResult,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
@@ -81,13 +78,6 @@ export interface PodmanHostLocalInferenceOptions {
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
-  readonly captureSandboxLifecycle?: (
-    args: string[],
-    environment: NodeJS.ProcessEnv,
-    timeoutMs: number,
-  ) =>
-    | { readonly status: number; readonly output: string; readonly error?: Error }
-    | Promise<{ readonly status: number; readonly output: string; readonly error?: Error }>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly gatewaySocketPath?: string;
   readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
@@ -140,41 +130,6 @@ function requireEngine(
   }
 }
 
-function preflightLifecycle(
-  _input: RuntimeProviderLifecycleInput,
-  _engine: PodmanContainerEngine,
-  _options: PodmanHostPreflightOptions,
-): RuntimeProviderLifecycleResult | null {
-  return null;
-}
-
-async function runOpenShellLifecycle(
-  action: "start" | "stop",
-  input: RuntimeProviderLifecycleInput,
-  capture: NonNullable<PodmanRuntimeProviderOptions["captureSandboxLifecycle"]>,
-): Promise<RuntimeProviderLifecycleResult> {
-  const result = await capture(
-    ["sandbox", action, "-g", input.sandbox.gatewayName ?? "nemoclaw", input.sandboxName],
-    input.environment,
-    PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
-  );
-  if (result.status !== 0 || result.error) {
-    const detail = (result.output || result.error?.message || "unknown failure")
-      .replace(/\s+/gu, " ")
-      .trim();
-    return {
-      exitCode: 1,
-      message:
-        `  OpenShell could not ${action} sandbox '${input.sandboxName}'` +
-        ` (exit ${String(result.status)}): ${detail}.`,
-    };
-  }
-  input.log(
-    `  Sandbox '${input.sandboxName}' ${action === "start" ? "started" : "stopped"} through OpenShell.`,
-  );
-  return { exitCode: 0 };
-}
-
 /** Construct the Podman provider from explicitly scoped operation authorities. */
 export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
@@ -188,27 +143,6 @@ export function createPodmanRuntimeProviderBundle(
     workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
-  const captureSandboxLifecycle =
-    options.captureSandboxLifecycle ??
-    (async (args: string[], environment: NodeJS.ProcessEnv) => {
-      const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle({
-        env: environment,
-      });
-      const request = {
-        sandboxName: String(args[4]),
-        target: { kind: "named" as const, gatewayName: String(args[3]) },
-      };
-      const result =
-        args[1] === "start"
-          ? await sdkLifecycle.startSandbox(request)
-          : await sdkLifecycle.stopSandbox(request);
-      if (result.kind === "accepted") return { status: 0, output: "" };
-      return {
-        status: 1,
-        output: result.error.message,
-        error: new Error(result.error.message),
-      };
-    });
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
   const containerEngineOperations = new Map([
     ["host-doctor", hostDoctor],
@@ -289,7 +223,6 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       hostLocalInference: inferenceEngine !== undefined,
-      directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: workloadCleanup !== undefined,
       readOnlyHostMounts: {
@@ -303,7 +236,7 @@ export function createPodmanRuntimeProviderBundle(
       inspectHost: () => inspectPodmanHost(hostDoctor, preflight),
       validateSandboxGpu: (config, exitProcess) =>
         validatePodmanSandboxGpuPreflight(config, {}, exitProcess),
-      preflightLifecycle: (_action, input) => preflightLifecycle(input, hostDoctor, preflight),
+      preflightLifecycle: () => null,
     },
     gateway: {
       providerId,
@@ -381,19 +314,11 @@ export function createPodmanRuntimeProviderBundle(
         sandboxLifecycle,
         workloadCleanup,
       ),
-      start: (input) => runOpenShellLifecycle("start", input, captureSandboxLifecycle),
-      verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: async (input, hooks) => {
-        hooks.beforeStop();
-        const result = await runOpenShellLifecycle("stop", input, captureSandboxLifecycle);
-        return result.exitCode === 0 ? { ...result, state: "stopped" as const } : result;
-      },
     },
-    mutationAuthority: {
+    mutationAuthority: unsupported(
       providerId,
-      supported: true,
-      operations: ["start", "stop"],
-    },
+      "Standard sandbox lifecycle mutation belongs to the shared OpenShell SDK action boundary.",
+    ),
     bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
     snapshot:
       gatewayInspection === undefined
@@ -573,8 +498,6 @@ export function createCurrentPodmanRuntimeProviderBundle(
       supported: true,
       operations: Object.freeze([
         "registration",
-        "start",
-        "stop",
         "inference-set",
         "rebuild",
         "clone",

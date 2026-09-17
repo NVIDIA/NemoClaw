@@ -3,17 +3,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
-import {
-  createDockerRuntimeProviderBundle,
-  type DockerRuntimeProviderDependencies,
-} from "../../onboard/runtime-provider/docker";
+import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
+import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provider/podman";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
-  return { name: "my-sandbox", ...values };
+  return {
+    name: "my-sandbox",
+    lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sandbox-alpha")!,
+    ...values,
+  };
 }
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
@@ -24,17 +27,19 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     storedSandbox = { ...storedSandbox, ...updates };
     return true;
   });
-  const captureSandboxLifecycle = vi.fn<
-    DockerRuntimeProviderDependencies["captureSandboxLifecycle"]
-  >(() => {
+  const startOpenShellSandbox = vi.fn(async () => {
     order.push("openshell-start");
-    return { status: 0, output: "started" };
+    return { kind: "accepted" as const };
   });
-  const hasPortableLifecycleReceipt = vi.fn<
-    DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
-  >(() => false);
-  const recoverPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverPortableSandbox"]>(
+  const openShellLifecycle = {
+    startSandbox: startOpenShellSandbox,
+    stopSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
+  };
+  const recoverPortableSandbox = vi.fn<NonNullable<SandboxStartDeps["recoverPortableSandbox"]>>(
     async () => ({ kind: "not-installed" }),
+  );
+  const requalifyPortableSandbox = vi.fn<NonNullable<SandboxStartDeps["requalifyPortableSandbox"]>>(
+    async () => ({ kind: "not-hermes" }),
   );
   const observer: OpenShellSandboxObserver = {
     listSandboxes: vi.fn(async () => {
@@ -55,15 +60,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   );
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
-    [
-      "docker",
-      createDockerRuntimeProviderBundle({
-        withLifecycleLock: async (_name, operation) => operation(),
-        captureSandboxLifecycle,
-        hasPortableLifecycleReceipt,
-        recoverPortableSandbox,
-      }),
-    ],
+    ["docker", createDockerRuntimeProviderBundle()],
   ]);
   let elapsedMs = 0;
   const delayGatewayProcessProbe = vi.fn(async (ms: number) => {
@@ -74,6 +71,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     now: () => elapsedMs,
     delayGatewayProcessProbe,
     getSandbox,
+    openShellLifecycle,
+    recoverPortableSandbox,
+    requalifyPortableSandbox,
     updateSandbox,
     runtimeProviders,
     observer,
@@ -84,21 +84,63 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     ...overrides,
   };
   return {
-    captureSandboxLifecycle,
     deps,
     getSandbox,
-    hasPortableLifecycleReceipt,
     log,
     observer,
     order,
     probeGatewayProcess,
     recoverPortableSandbox,
+    startOpenShellSandbox,
     updateSandbox,
     verifyGateway,
   };
 }
 
+function providerRegistry(providerId: "docker" | "podman") {
+  if (providerId === "docker") {
+    return createRuntimeProviderBundleRegistry([[providerId, createDockerRuntimeProviderBundle()]]);
+  }
+  const engine = (operation: "host-doctor" | "sandbox-lifecycle") => ({
+    operation,
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: "podman:test",
+    endpointAuthorityId: "podman:test",
+    capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+  });
+  return createRuntimeProviderBundleRegistry([
+    [
+      providerId,
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          hostDoctor: engine("host-doctor") as never,
+          sandboxLifecycle: engine("sandbox-lifecycle") as never,
+        },
+      }),
+    ],
+  ]);
+}
+
 describe("startSandbox native lifecycle", () => {
+  it.each(["docker", "podman"] as const)(
+    "dispatches standard %s lifecycle through the shared OpenShell adapter",
+    async (providerId) => {
+      const h = harness({ runtimeProviders: providerRegistry(providerId) });
+      h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+      expect(h.startOpenShellSandbox).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sandboxName: "my-sandbox",
+          sandboxIdentityFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        }),
+      );
+    },
+  );
+
   it("waits for OpenShell readiness before observing native gateway health", async () => {
     const h = harness();
 
@@ -133,7 +175,6 @@ describe("startSandbox native lifecycle", () => {
         openshellDriver: "docker",
       }),
     );
-    h.hasPortableLifecycleReceipt.mockReturnValue(true);
     h.recoverPortableSandbox.mockImplementation(async () => {
       h.order.push("portable-start");
       return { kind: "recovered" };
@@ -144,7 +185,7 @@ describe("startSandbox native lifecycle", () => {
     });
 
     expect(h.recoverPortableSandbox).toHaveBeenCalledOnce();
-    expect(h.captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(h.startOpenShellSandbox).not.toHaveBeenCalled();
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
   });
 

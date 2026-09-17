@@ -30,11 +30,10 @@ import {
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 export {
-  applyDockerManagedStartupRootRequest,
-  releaseDockerManagedStartupHold,
-  resolveDockerManagedStartupContainer,
-  type DockerManagedStartupTransaction,
-  finalizeDockerManagedStartupSharedState,
+  applyProviderManagedStartupRootRequest,
+  finalizeProviderManagedStartupSharedState,
+  releaseProviderManagedStartupHold,
+  type ProviderManagedStartupTransaction,
 } from "../runtime-provider/access";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
@@ -631,10 +630,6 @@ export async function prepareSelectedOnboardSandboxWorkloadLaunch(
   prepareOrdinary: () => Promise<PreparedOnboardSandboxWorkloadLaunch>,
 ): Promise<PreparedOnboardSandboxWorkloadLaunch> {
   return hermesPortable ? prepareHermes() : await prepareOrdinary();
-}
-
-export function resolveOnboardManagedBootstrapLaunch() {
-  return null;
 }
 
 export function resolveOnboardSandboxWorkloadReceipt(input: {

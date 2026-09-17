@@ -35,6 +35,12 @@ export {
 } from "../managed-startup/docker-root-apply";
 export { finalizeDockerManagedStartupSharedState } from "../managed-startup/docker-shared-state";
 export {
+  applyProviderManagedStartupRootRequest,
+  finalizeProviderManagedStartupSharedState,
+  releaseProviderManagedStartupHold,
+  type ProviderManagedStartupTransaction,
+} from "../managed-startup/provider-root-apply";
+export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,

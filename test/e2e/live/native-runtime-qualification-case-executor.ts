@@ -1013,9 +1013,25 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       route: "provider-network-dns",
     });
 
-    if (!bundle.lifecycle.supported) throw new Error("Podman lifecycle surface is unavailable");
     progress.phase("exercise sandbox lifecycle and state recovery");
-    const lifecycle = bundle.lifecycle;
+    const lifecycle = {
+      start: async (_input: RuntimeProviderLifecycleInput) => {
+        const result = lifecycleEngine!.capture(["start", agentId]);
+        return result.status === 0
+          ? { exitCode: 0 as const }
+          : { exitCode: 1 as const, message: result.stderr || "Podman start failed" };
+      },
+      stop: async (
+        _input: RuntimeProviderLifecycleInput,
+        hooks: { readonly beforeStop: () => void },
+      ) => {
+        hooks.beforeStop();
+        const result = lifecycleEngine!.capture(["stop", agentId]);
+        return result.status === 0
+          ? { exitCode: 0 as const, state: "stopped" as const }
+          : { exitCode: 1 as const, message: result.stderr || "Podman stop failed" };
+      },
+    };
     const input = lifecycleInput(row.case.agent, sandboxName);
     let beforeStopCalled = false;
     const firstStop = await lifecycle.stop(input, {

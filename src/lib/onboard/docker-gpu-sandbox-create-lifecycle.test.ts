@@ -359,11 +359,11 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
 
     const failure = (await patch.commitAfterReady().catch((error: unknown) => error)) as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
 
     expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", failure, expect.any(Object));
-    expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(failure.runtimeRollbackError).toBe(rollbackError);
     expect(failure.message).toContain(
       "Runtime rollback requires attention: Rollback failed: <REDACTED>",
     );
@@ -529,7 +529,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const rollbackError = new Error(`Rollback failed: ${secret}`);
     rollbackError.stack = `Rollback stack: ${secret}`;
     const patchError = new Error("docker rename failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
@@ -571,7 +571,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     await patch.exitOnPatchError();
 
     expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", patchError, expect.any(Object));
-    expect(patchError.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(patchError.runtimeRollbackError).toBe(rollbackError);
     expect(patchError.message).toContain(
       "Runtime rollback requires attention: Rollback failed: <REDACTED>",
     );
@@ -676,8 +676,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const failure = await patch.verifyGpuOrExit(verifyGpu).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
-    const stored = (failure as Error & { managedBootstrapRollbackError?: unknown })
-      .managedBootstrapRollbackError;
+    const stored = (failure as Error & { runtimeRollbackError?: unknown }).runtimeRollbackError;
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(verifyGpu).not.toHaveBeenCalled();
     expect(output).not.toContain(secret);
@@ -695,7 +694,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     rollbackError.stack = `Rollback stack: ${secret}`;
     Object.freeze(rollbackError);
     const proofError = new Error("nvidia-smi failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
     const patch = createDockerGpuSandboxCreatePatch({
       route: "native",
@@ -734,13 +733,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).not.toContain(secret);
     expect(output).toContain("diagnostic details were redacted");
-    expect(proofError.managedBootstrapRollbackError).toBeInstanceOf(Error);
-    expect(proofError.managedBootstrapRollbackError).not.toBe(rollbackError);
+    expect(proofError.runtimeRollbackError).toBeInstanceOf(Error);
+    expect(proofError.runtimeRollbackError).not.toBe(rollbackError);
     expect(proofError.message).toContain(
       "Runtime rollback requires attention: Onboarding failed; diagnostic details were redacted",
     );
     expect(proofError.message).not.toContain(secret);
-    expect((proofError.managedBootstrapRollbackError as Error).message).not.toContain(secret);
+    expect((proofError.runtimeRollbackError as Error).message).not.toContain(secret);
     expect(rollbackError.message).toContain(secret);
     expect(rollbackError.stack).toContain(secret);
   });

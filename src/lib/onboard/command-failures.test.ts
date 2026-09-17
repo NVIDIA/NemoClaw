@@ -80,7 +80,7 @@ describe("onboarding command failures", () => {
     expect(sanitized.message).toContain("Retry rollback:");
     expect(inspect(sanitized, { depth: null })).not.toContain(secret);
     expect(failure.message).toContain("Primary startup failed");
-    expect(Object.hasOwn(failure, "managedBootstrapRollbackError")).toBe(false);
+    expect(Object.hasOwn(failure, "runtimeRollbackError")).toBe(false);
     expect(failure.message).toMatch(expectedMessage);
     expect(failure.message).not.toContain(secret);
   });
@@ -88,7 +88,7 @@ describe("onboarding command failures", () => {
   it("preserves a locked rollback property without invoking its accessor", () => {
     const failure = new Error("Primary startup failed");
     const access = vi.fn(() => "Untrusted diagnostic");
-    Object.defineProperty(failure, "managedBootstrapRollbackError", { get: access });
+    Object.defineProperty(failure, "runtimeRollbackError", { get: access });
     const rollback = new Error("Retry rollback");
 
     expect(attachRuntimeRollbackError(failure, rollback)).toBe(rollback);
@@ -100,7 +100,7 @@ describe("onboarding command failures", () => {
 
   it("updates a writable rollback property without changing its locked attributes", () => {
     const failure = new Error("Primary startup failed");
-    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+    Object.defineProperty(failure, "runtimeRollbackError", {
       value: new Error("Previous rollback failure"),
       writable: true,
     });
@@ -108,7 +108,7 @@ describe("onboarding command failures", () => {
 
     expect(attachRuntimeRollbackError(failure, rollback)).toBe(rollback);
 
-    expect(Object.getOwnPropertyDescriptor(failure, "managedBootstrapRollbackError")).toEqual({
+    expect(Object.getOwnPropertyDescriptor(failure, "runtimeRollbackError")).toEqual({
       value: rollback,
       writable: true,
       configurable: false,
@@ -123,7 +123,7 @@ describe("onboarding command failures", () => {
     expect(attachRuntimeRollbackError(failure, rollback)).toBe(rollback);
 
     expect(Object.hasOwn(failure, "message")).toBe(false);
-    expect(Object.hasOwn(failure, "managedBootstrapRollbackError")).toBe(false);
+    expect(Object.hasOwn(failure, "runtimeRollbackError")).toBe(false);
   });
 
   it("shadows every inherited error field read by Oclif Command.catch", async () => {
@@ -783,7 +783,7 @@ describe("onboarding command failures", () => {
   it("attaches the returned fallback for an immutable rollback diagnostic", () => {
     const secret = `nvapi-${"n".repeat(60)}`;
     const failure = new Error("Managed bootstrap failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
     const rollback = new Error("Rollback failed");
     Object.defineProperty(rollback, "diagnostic", {
@@ -795,7 +795,7 @@ describe("onboarding command failures", () => {
     const attached = attachRuntimeRollbackError(failure, rollback);
 
     expect(attached).toBeInstanceOf(Error);
-    expect(failure.managedBootstrapRollbackError).toBe(attached);
+    expect(failure.runtimeRollbackError).toBe(attached);
     expect(attached).not.toBe(rollback);
     expect(inspect(failure, { depth: null })).not.toContain(secret);
   });
@@ -811,12 +811,12 @@ describe("onboarding command failures", () => {
     });
     const rollback = new RollbackError();
     const failure = new Error("Managed bootstrap failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
 
     attachRuntimeRollbackError(failure, rollback);
 
-    expect(failure.managedBootstrapRollbackError).toBe(rollback);
+    expect(failure.runtimeRollbackError).toBe(rollback);
     expect(message).not.toHaveBeenCalled();
     expect(toPrimitive).not.toHaveBeenCalled();
     expect(failure.message).not.toContain(secret);
@@ -830,14 +830,14 @@ describe("onboarding command failures", () => {
     const rollback = new Error(`Rollback failed: ${secret}`);
     rollback.stack = `Rollback stack: ${secret}`;
     const failure = new Error("Managed bootstrap failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
-    failure.managedBootstrapRollbackError = rollback;
+    failure.runtimeRollbackError = rollback;
     rollback.cause = failure;
 
     await rethrowOnboardFailure(failure);
 
-    expect(failure.managedBootstrapRollbackError).toBe(rollback);
+    expect(failure.runtimeRollbackError).toBe(rollback);
     expect(rollback.cause).toBe(failure);
     expect(rollback.message).toBe("Rollback failed: <REDACTED>");
     expect(rollback.stack).not.toContain(secret);

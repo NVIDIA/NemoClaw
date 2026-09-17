@@ -39,7 +39,6 @@ const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 
-import { dockerStart } from "../../adapters/docker/container";
 import {
   createCliOpenShellSandboxLookup,
   stripOpenShellCliAnsi,
@@ -1064,15 +1063,9 @@ function startStoppedSandboxPhaseForProbeRecovery(
  * OpenShell still reports the sandbox `Stopped`, and left alone for any other
  * phase.
  *
- * `docker start` remains the fallback for the case #8967 was filed for: an
- * exited container whose OpenShell start did not succeed still gets running
- * again, and the Docker-driver start path repairs the phase on the next
- * `start`. It is not a fallback for an already-running container, which needs
- * no Docker start at all. A nonzero or missing status continues to the
- * readiness wait, which surfaces the existing stopped-container guidance. The
- * function returns true only when it started the sandbox. It leaves an
- * unresolved or paused container unchanged, and a paused container keeps its
- * `docker unpause` guidance.
+ * A failed OpenShell start leaves the exact runtime unchanged. Direct Docker
+ * fallback would create a second standard lifecycle authority while leaving
+ * OpenShell's sandbox phase stale. Portable receipt owners recover separately.
  */
 export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
@@ -1086,21 +1079,9 @@ export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string
     return true;
   }
   console.error(
-    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); starting its container directly.`,
+    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); continuing with readiness checks.`,
   );
-  const result = dockerStart(runtime.containerName, {
-    ignoreError: true,
-    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
-  });
-  if (result.status === 0) {
-    console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
-    return true;
-  } else {
-    console.error(
-      `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
-    );
-    return false;
-  }
+  return false;
 }
 
 export async function ensureLiveSandboxOrExit(

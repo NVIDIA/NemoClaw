@@ -40,6 +40,24 @@ describe("OpenClaw sandbox setup", () => {
     ).resolves.toBe(false);
   });
 
+  it("bounds the gateway probe by the caller's remaining startup deadline", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "000",
+      stderr: "",
+    }));
+
+    await expect(
+      isOpenclawGatewayReady("spark-box", 18_789, { runBuffered } as never, 750),
+    ).resolves.toBe(false);
+
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.arrayContaining(["--max-time", "0.75"]),
+      }),
+    );
+  });
+
   it("waits for config sync before web-search reconciliation", async () => {
     let finishConfigSync!: () => void;
     const configSync = new Promise<void>((resolve) => {

@@ -3,7 +3,6 @@
 
 import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
-import { createSdkOpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import {
   DEFAULT_GATEWAY_BIND_ADDRESS,
   getGatewayConnectHost,
@@ -15,14 +14,6 @@ import {
   parseDockerNetworkIpamEntries,
   resolveDockerDriverNetworkName,
 } from "../experimental/docker-network-authority";
-import {
-  hasPortableAgentSandboxLifecycleReceipt,
-  recoverPortableAgentSandboxLifecycle,
-  requalifyPortableAgentSandboxAuthority,
-  stopPortableAgentSandboxLifecycle,
-} from "../experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -38,10 +29,6 @@ import {
   type RuntimeProviderNvidiaContainerInput,
   type RuntimeProviderOwnedContainerCleanupOptions,
   type RuntimeProviderDoctorCheck,
-  type RuntimeProviderLifecycleInput,
-  type RuntimeProviderLifecycleResult,
-  type RuntimeProviderLifecycleStopHooks,
-  type RuntimeProviderLifecycleStopOutcome,
   type RuntimeProviderWorkloadCleanupPlan,
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
@@ -57,29 +44,13 @@ type DockerRemoveImage = (
 ) => { status: number | null };
 
 export interface DockerRuntimeProviderDependencies {
-  readonly createSandboxLifecycle: (
-    environment: NodeJS.ProcessEnv,
-  ) => ReturnType<typeof createSdkOpenShellSandboxStateLifecycle>;
-  readonly captureSandboxLifecycle: (
-    action: "start" | "stop",
-    sandboxName: string,
-    gatewayName: string,
-    environment: NodeJS.ProcessEnv,
-  ) =>
-    | { readonly status: number; readonly output: string; readonly error?: Error }
-    | Promise<{ readonly status: number; readonly output: string; readonly error?: Error }>;
   readonly captureHostCommand: (
     command: string,
     args: string[],
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
-  readonly hasPortableLifecycleReceipt: typeof hasPortableAgentSandboxLifecycleReceipt;
-  readonly recoverPortableSandbox: typeof recoverPortableAgentSandboxLifecycle;
-  readonly requalifyPortableSandbox: typeof requalifyPortableAgentSandboxAuthority;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
-  readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
-  readonly withLifecycleLock: typeof withMcpLifecycleLock;
 }
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
@@ -214,44 +185,15 @@ function loadDockerRemoveImage(): DockerRemoveImage {
 function resolveDependencies(
   overrides: Partial<DockerRuntimeProviderDependencies> = {},
 ): DockerRuntimeProviderDependencies {
-  const createSandboxLifecycle =
-    overrides.createSandboxLifecycle ??
-    ((environment: NodeJS.ProcessEnv) =>
-      createSdkOpenShellSandboxStateLifecycle({ env: environment }));
   return {
-    createSandboxLifecycle,
-    captureSandboxLifecycle:
-      overrides.captureSandboxLifecycle ??
-      (async (action, sandboxName, gatewayName, environment) => {
-        const sdkLifecycle = createSandboxLifecycle(environment);
-        const request = { sandboxName, target: { kind: "named" as const, gatewayName } };
-        const result =
-          action === "start"
-            ? await sdkLifecycle.startSandbox(request)
-            : await sdkLifecycle.stopSandbox(request);
-        if (result.kind === "accepted") return { status: 0, output: "" };
-        return {
-          status: 1,
-          output: result.error.message,
-          error: new Error(result.error.message),
-        };
-      }),
     captureHostCommand:
       overrides.captureHostCommand ??
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
-    hasPortableLifecycleReceipt:
-      overrides.hasPortableLifecycleReceipt ?? hasPortableAgentSandboxLifecycleReceipt,
-    recoverPortableSandbox:
-      overrides.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle,
-    requalifyPortableSandbox:
-      overrides.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority,
     queryRuntimeSnapshot:
       overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
-    stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
-    withLifecycleLock: overrides.withLifecycleLock ?? withMcpLifecycleLock,
   };
 }
 
@@ -272,185 +214,6 @@ function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProv
       : oneLine(result.stderr || result.error?.message || "docker info failed"),
     hint: reachable ? undefined : "start Docker and verify your user can access the daemon",
   };
-}
-
-function dockerLifecyclePreflight(
-  _action: "start" | "stop",
-  input: RuntimeProviderLifecycleInput,
-  deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleResult | null {
-  try {
-    if (deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment)) return null;
-  } catch (error) {
-    return {
-      exitCode: 1,
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-  return null;
-}
-
-async function startDockerSandbox(
-  input: RuntimeProviderLifecycleInput,
-  deps: DockerRuntimeProviderDependencies,
-): Promise<RuntimeProviderLifecycleResult> {
-  return deps.withLifecycleLock(
-    input.sandboxName,
-    () => startDockerSandboxUnlocked(input, deps),
-    dockerLifecycleLockOptions(input, deps),
-  );
-}
-
-function dockerLifecycleLockOptions(
-  input: RuntimeProviderLifecycleInput,
-  deps: DockerRuntimeProviderDependencies,
-): { readonly stateDir: string } | undefined {
-  if (input.sandbox.agent !== "hermes") return undefined;
-  return resolveHermesPortableLifecycleLockOptions(
-    input.sandboxName,
-    input.environment,
-    deps.hasPortableLifecycleReceipt,
-  );
-}
-
-async function startDockerSandboxUnlocked(
-  input: RuntimeProviderLifecycleInput,
-  deps: DockerRuntimeProviderDependencies,
-): Promise<RuntimeProviderLifecycleResult> {
-  try {
-    if (input.sandbox.agent === "hermes") {
-      await deps.requalifyPortableSandbox(input.sandboxName, {
-        env: input.environment,
-        readRegistry: (name) => input.readRegistry?.(name) ?? null,
-      });
-    }
-    const portable = await deps.recoverPortableSandbox(
-      input.sandboxName,
-      {
-        agent: input.sandbox.agent,
-        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
-        lifecycleGeneration: input.sandbox.lifecycleGeneration,
-        openshellDriver: input.sandbox.openshellDriver,
-        provider: input.sandbox.provider,
-      },
-      {
-        env: input.environment,
-        log: input.log,
-        readRegistry: (name) => input.readRegistry?.(name) ?? null,
-      },
-    );
-    if (portable.kind !== "not-installed") {
-      return input.sandbox.agent === "hermes"
-        ? ({ exitCode: 0, hermesPortableVerified: true } as RuntimeProviderLifecycleResult & {
-            readonly hermesPortableVerified: true;
-          })
-        : { exitCode: 0 };
-    }
-  } catch (error) {
-    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
-  }
-  const result = await deps.captureSandboxLifecycle(
-    "start",
-    input.sandboxName,
-    input.sandbox.gatewayName ?? "nemoclaw",
-    input.environment,
-  );
-  if (result.status !== 0 || result.error) {
-    const detail = oneLine(result.output || result.error?.message || "unknown failure");
-    return {
-      exitCode: 1,
-      message:
-        `  OpenShell could not start sandbox '${input.sandboxName}'` +
-        ` (exit ${String(result.status ?? "unknown")}): ${detail}.`,
-    };
-  }
-  input.log(`  Sandbox '${input.sandboxName}' started through OpenShell.`);
-  return { exitCode: 0 };
-}
-
-async function stopDockerSandbox(
-  input: RuntimeProviderLifecycleInput,
-  hooks: RuntimeProviderLifecycleStopHooks,
-  deps: DockerRuntimeProviderDependencies,
-): Promise<RuntimeProviderLifecycleStopOutcome> {
-  return deps.withLifecycleLock(
-    input.sandboxName,
-    () => stopDockerSandboxUnlocked(input, hooks, deps),
-    dockerLifecycleLockOptions(input, deps),
-  );
-}
-
-async function stopDockerSandboxUnlocked(
-  input: RuntimeProviderLifecycleInput,
-  hooks: RuntimeProviderLifecycleStopHooks,
-  deps: DockerRuntimeProviderDependencies,
-): Promise<RuntimeProviderLifecycleStopOutcome> {
-  try {
-    const portable = await deps.stopPortableSandbox(
-      input.sandboxName,
-      {
-        agent: input.sandbox.agent,
-        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
-        lifecycleGeneration: input.sandbox.lifecycleGeneration,
-        openshellDriver: input.sandbox.openshellDriver,
-        provider: input.sandbox.provider,
-      },
-      hooks.beforeStop,
-      {
-        env: input.environment,
-        log: input.log,
-        readRegistry: (name) => input.readRegistry?.(name) ?? null,
-      },
-    );
-    if (portable.kind === "already-stopped") {
-      const registryHermes = input.sandbox.agent === "hermes";
-      const portableHermes = portable.portableAgent === "hermes";
-      if (registryHermes !== portableHermes) {
-        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
-      }
-      return portableHermes
-        ? ({
-            exitCode: 0,
-            state: "already-stopped",
-            hermesPortableVerified: true,
-          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
-        : { exitCode: 0, state: "already-stopped" };
-    }
-    if (portable.kind === "stopped") {
-      const registryHermes = input.sandbox.agent === "hermes";
-      const portableHermes = portable.portableAgent === "hermes";
-      if (registryHermes !== portableHermes) {
-        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
-      }
-      return portableHermes
-        ? ({
-            exitCode: 0,
-            state: "stopped",
-            hermesPortableVerified: true,
-          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
-        : { exitCode: 0, state: "stopped" };
-    }
-  } catch (error) {
-    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
-  }
-  hooks.beforeStop();
-  const result = await deps.captureSandboxLifecycle(
-    "stop",
-    input.sandboxName,
-    input.sandbox.gatewayName ?? "nemoclaw",
-    input.environment,
-  );
-  if (result.status !== 0 || result.error) {
-    const detail = oneLine(result.output || result.error?.message || "unknown failure");
-    return {
-      exitCode: 1,
-      message:
-        `  OpenShell could not stop sandbox '${input.sandboxName}'` +
-        ` (exit ${String(result.status ?? "unknown")}): ${detail}.`,
-    };
-  }
-  input.log(`  Sandbox '${input.sandboxName}' stopped through OpenShell.`);
-  return { exitCode: 0, state: "stopped" };
 }
 
 function planOwnedDockerWorkloadCleanup(
@@ -599,7 +362,6 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       hostLocalInference: true,
-      directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
       readOnlyHostMounts: { supported: true, hostPlatforms: ["linux"] },
@@ -610,7 +372,7 @@ export function createDockerRuntimeProviderBundle(
       inspectHost: () => inspectDockerHost(deps),
       validateSandboxGpu: (config, exitProcess) =>
         validateSandboxGpuPreflight(config, {}, exitProcess),
-      preflightLifecycle: (action, input) => dockerLifecyclePreflight(action, input, deps),
+      preflightLifecycle: () => null,
     },
     gateway: {
       providerId,
@@ -641,17 +403,12 @@ export function createDockerRuntimeProviderBundle(
       channelStopTransport: "docker-kubectl-first",
       containerMutationTimeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
       privilegedSandboxControl: createDockerPrivilegedSandboxControl(),
-      start: (input) => startDockerSandbox(input, deps),
-      verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),
     },
     mutationAuthority: {
       providerId,
       supported: true,
       operations: [
         "registration",
-        "start",
-        "stop",
         "inference-set",
         "rebuild",
         "clone",
@@ -741,7 +498,6 @@ export function createKubernetesRuntimeProviderBundle(
       providerId,
       supported: true,
       hostLocalInference: false,
-      directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
       readOnlyHostMounts: {

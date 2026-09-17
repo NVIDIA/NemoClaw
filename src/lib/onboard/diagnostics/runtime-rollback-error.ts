@@ -6,19 +6,16 @@ import { redactOnboardErrorText, sanitizeOnboardFailure } from "./redaction";
 /** Attach sanitized rollback evidence to the original runtime failure. */
 export function attachRuntimeRollbackError(failure: Error, rollbackError: unknown): Error {
   const redactedRollbackError = sanitizeOnboardFailure(rollbackError);
-  const rollbackDescriptor = Object.getOwnPropertyDescriptor(
-    failure,
-    "managedBootstrapRollbackError",
-  );
+  const rollbackDescriptor = Object.getOwnPropertyDescriptor(failure, "runtimeRollbackError");
   if (rollbackDescriptor?.configurable || (!rollbackDescriptor && Object.isExtensible(failure))) {
-    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+    Object.defineProperty(failure, "runtimeRollbackError", {
       configurable: true,
       enumerable: true,
       value: redactedRollbackError,
       writable: true,
     });
   } else if (rollbackDescriptor && "value" in rollbackDescriptor && rollbackDescriptor.writable) {
-    Object.defineProperty(failure, "managedBootstrapRollbackError", {
+    Object.defineProperty(failure, "runtimeRollbackError", {
       value: redactedRollbackError,
     });
   }

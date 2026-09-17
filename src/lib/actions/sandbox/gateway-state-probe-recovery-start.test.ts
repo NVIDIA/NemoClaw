@@ -43,33 +43,29 @@ describe("startStoppedSandboxContainerForProbeRecovery", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("falls back to docker start when the OpenShell start fails (#8967)", () => {
+  it("does not fall back to Docker when the OpenShell start fails", () => {
     stubRuntime();
     vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 1,
       output: "gateway unreachable",
     } as never);
-    const dockerStart = vi
-      .spyOn(dockerContainer, "dockerStart")
-      .mockReturnValue({ status: 0 } as never);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(true);
-    expect(dockerStart).toHaveBeenCalledWith(
-      "openshell-default--alpha-1234",
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
-
-  it("reports no start when both the OpenShell start and docker start fail", () => {
-    stubRuntime();
-    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 1 } as never);
-    vi.spyOn(dockerContainer, "dockerStart").mockReturnValue({ status: 1 } as never);
+    const dockerStart = vi.spyOn(dockerContainer, "dockerStart");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("reports no start without attempting Docker mutation", () => {
+    stubRuntime();
+    vi.spyOn(gatewayTarget, "getSandboxTargetGatewayName").mockReturnValue("nemoclaw");
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 1 } as never);
+    const dockerStart = vi.spyOn(dockerContainer, "dockerStart");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(startStoppedSandboxContainerForProbeRecovery("alpha")).toBe(false);
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("leaves a running container whose sandbox is not Stopped untouched", () => {

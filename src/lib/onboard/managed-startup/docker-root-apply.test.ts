@@ -119,7 +119,7 @@ describe("Docker managed-startup root applicator", () => {
     ).toThrow(/Could not inspect/u);
   });
 
-  it("rejects extra or mismatched Docker identity rows", () => {
+  it("rejects a mismatched Docker identity row", () => {
     expect(() =>
       resolveDockerManagedStartupContainer(
         { sandboxName: "alpha", sandboxId: "sandbox-uuid" },
@@ -130,6 +130,34 @@ describe("Docker managed-startup root applicator", () => {
             rows: [
               {
                 id: CONTAINER_ID,
+                managedBy: "openshell",
+                workspace: "default",
+                sandboxId: "different",
+              },
+            ],
+          })),
+        },
+      ),
+    ).toThrow(/did not select one exact/u);
+  });
+
+  it("rejects an extra Docker identity row", () => {
+    expect(() =>
+      resolveDockerManagedStartupContainer(
+        { sandboxName: "alpha", sandboxId: "sandbox-uuid" },
+        {
+          inspect: vi.fn(() => ({
+            status: "observed" as const,
+            malformedRows: 0,
+            rows: [
+              {
+                id: CONTAINER_ID,
+                managedBy: "openshell",
+                workspace: "default",
+                sandboxId: "sandbox-uuid",
+              },
+              {
+                id: "c".repeat(64),
                 managedBy: "openshell",
                 workspace: "default",
                 sandboxId: "different",

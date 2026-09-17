@@ -73,11 +73,12 @@ export function parseManagedImageDirectE2eInputs(
   return { agent: agent as ShippedManagedImageAgent, image, platform };
 }
 
-function docker(args: readonly string[], ignoreError = false): CommandResult {
+function docker(args: readonly string[], ignoreError = false, timeoutMs = 180_000): CommandResult {
   const result = spawnSync("docker", [...args], {
     encoding: "utf8",
+    killSignal: "SIGKILL",
     maxBuffer: 16 * 1024 * 1024,
-    timeout: 180_000,
+    timeout: timeoutMs,
   });
   const normalized = {
     status: Number(result.status ?? 1),
@@ -108,6 +109,7 @@ function waitForNativeStartup(containerId: string): void {
     const probe = docker(
       ["exec", "--user", "sandbox", containerId, "test", "-s", "/tmp/nemoclaw-native-startup-uid"],
       true,
+      2_000,
     );
     if (probe.status === 0) return;
     spawnSync("sleep", ["1"]);
