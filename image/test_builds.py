@@ -53,7 +53,7 @@ class ImageBuilds(unittest.TestCase):
     def test_linux_amd64_selects_every_qualified_harness(self):
         targets = self.plan("agents", platform="linux/amd64")["target"]
         self.assertEqual(set(targets), AMD64_HARNESSES)
-        for name, target in targets.items():
+        for target in targets.values():
             self.assertEqual(target["platforms"], ["linux/amd64"])
             self.assertTrue(target["args"]["LOCKFILE"].endswith("-linux-amd64.lock"))
 
