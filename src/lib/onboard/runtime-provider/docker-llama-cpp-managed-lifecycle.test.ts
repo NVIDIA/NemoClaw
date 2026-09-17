@@ -12,7 +12,6 @@ const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
-import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
@@ -23,6 +22,7 @@ import type {
 } from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
+  plan,
   digest,
   IMAGE,
   invariant,
@@ -95,40 +95,6 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
-
-function plan(): LlamaCppGgufCachePlan {
-  const payload = {
-    schemaVersion: 1 as const,
-    recipeId: "llama-cpp.nemotron.spark.v1",
-    acquisition: {
-      ref: "hugging-face-exact-file/v1" as const,
-      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
-      url: `https://huggingface.co/example/model/resolve/${REVISION}/${MODEL_FILENAME}`,
-      authentication: {
-        mode: "optional" as const,
-        environment: "HF_TOKEN" as const,
-      },
-      source: {
-        repository: "example/model",
-        revision: REVISION,
-        file: {
-          path: MODEL_FILENAME,
-          digest: MODEL_DIGEST,
-          sizeBytes: MODEL_CONTENT.length,
-        },
-      },
-    },
-    cache: {
-      ref: "hugging-face-shared-cache/v1" as const,
-      root: "user-cache" as const,
-      key: "sha256-model",
-      reuse: "verify-exact-file" as const,
-      sharing: "host-user" as const,
-      cleanup: "preserve" as const,
-    },
-  };
-  return { ...payload, planDigest: digest(payload) };
-}
 
 function identity() {
   const status = fs.lstatSync(modelPath, { bigint: true });
