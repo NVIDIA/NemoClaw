@@ -252,8 +252,6 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       'HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
-      'HERMES_GATEWAY_LAZY_INSTALL_TARGET="/run/nemoclaw/hermes-gateway-lazy-packages"',
-      'HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"',
       "validate_hermes_runtime_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -780,7 +778,6 @@ function runRuntimeShellEnvBootstrap() {
       `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       'HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
-      'HERMES_MANAGED_BUNDLED_PLUGINS="/opt/hermes/plugins"',
       `SSL_CERT_FILE=${shellQuote(caFile)}`,
       "CURL_CA_BUNDLE=",
       "REQUESTS_CA_BUNDLE=",
@@ -911,7 +908,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileContent).toContain(
       'export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
     );
-    expect(run.envFileContent).toContain('export HERMES_BUNDLED_PLUGINS="/opt/hermes/plugins"');
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');

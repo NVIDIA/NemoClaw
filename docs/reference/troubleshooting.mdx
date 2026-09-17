@@ -173,10 +173,12 @@ The managed default gateway service accepts `DOCKER_HOST` only as an absolute lo
 
 ### Onboarding Reports an Invalid Docker Host
 
-The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment. NemoClaw does not use the standalone gateway fallback when this validation fails. Onboarding prints the advisory identifier in parentheses after each action title in the `Suggested fix` list. The terminal output names `invalid_docker_host` when this validation fails, so you can match the message to this section. Remove the override to use Docker's default local socket:
+The `invalid_docker_host` advisory means that the selected Docker endpoint is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
+Either `DOCKER_HOST` or `DOCKER_CONTEXT` can select that endpoint, and the advisory title names the variable that did.
+A `DOCKER_CONTEXT` selection reports this instead of falling back to Docker's default socket, because that fallback would report readiness for a daemon you did not select. NemoClaw does not use the standalone gateway fallback when this validation fails. Onboarding prints the advisory identifier in parentheses after each action title in the `Suggested fix` list. The terminal output names `invalid_docker_host` when this validation fails, so you can match the message to this section. Remove the selector to use Docker's default local endpoint. Clear both variables: unsetting only `DOCKER_HOST` leaves a `DOCKER_CONTEXT` selection active, and the next run reports the same advisory.
 
 ```bash
-unset DOCKER_HOST
+unset DOCKER_HOST DOCKER_CONTEXT
 $$nemoclaw onboard
 ```
 
@@ -189,6 +191,21 @@ $$nemoclaw onboard
 
 NemoClaw rejects TCP and SSH endpoints, relative socket paths, values that contain single quotes, and values that contain line breaks. Do not wrap the socket path in single quotes inside the variable value.
 
+### Onboarding Reports a Missing Docker Endpoint Socket
+
+The `docker_endpoint_socket_missing` advisory means that you selected a Docker endpoint with no Unix socket at the path it names.
+Either `DOCKER_HOST` or a `DOCKER_CONTEXT` selection can name that endpoint.
+A missing path and a regular file or directory at that path are both reported here: nothing can listen on either, so NemoClaw withholds the docker-group and start-Docker remedies instead of suggesting a cause it has ruled out.
+The advisory prints the selected endpoint and an `ls -l` command for its exact path. Inspect that path, then either point the selector at a socket that exists or clear it to use Docker's default endpoint:
+
+```bash
+ls -l <socket-path-from-the-advisory>
+unset DOCKER_HOST DOCKER_CONTEXT
+$$nemoclaw onboard
+```
+
+This advisory never applies to Docker's default endpoint. A missing default socket means the daemon is not running, which `start_docker` reports instead.
+
 ### Onboarding Warns About the Docker Desktop Credential Store in a Headless Session
 
 The `docker_desktop_credential_store_headless` advisory means that the Docker client config sets `credsStore` to `desktop` (macOS) or `desktop.exe` (WSL2) and the session looks headless, for example an SSH session without a GUI. The Docker Desktop credential helper needs an interactive GUI session. Without one, the helper can fail and block every image pull, even for public images. A common failure message from Docker in this state is `A specified logon session does not exist`.
@@ -197,7 +214,7 @@ Onboarding preflight prints this warning before the first image pull and then co
 
 On WSL, NemoClaw automatically uses a temporary credential-free Docker configuration for public managed image pulls, generated image builds, GPU probes, and local-inference probe images when all of these conditions apply:
 
-- The current Docker context is `default` and `DOCKER_HOST` is unset.
+- `DOCKER_CONTEXT` selects the `default` context, or, when it is unset, `DOCKER_HOST` is unset.
 - The client configuration selects the Docker Desktop credential helper.
 - The read-only helper probe fails.
 - The operation does not require registry credentials.

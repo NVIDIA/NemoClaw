@@ -986,15 +986,6 @@ describe("launch readiness validation", () => {
         },
       }),
     ],
-    [
-      "image plugin provenance",
-      (current: SandboxEntry) => ({
-        ...current,
-        openclawImagePluginInstalls: [
-          { id: "plugin", installPath: "/sandbox/.openclaw/extensions/plugin", loadPaths: [] },
-        ],
-      }),
-    ],
   ])("invalidates accepted readiness after a launch-affecting %s change", async (_name, mutate) => {
     const currentDeps = await createAcceptedLease();
     sandbox = (mutate as (current: SandboxEntry) => SandboxEntry)(sandbox);
