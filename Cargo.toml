@@ -54,6 +54,10 @@ jsonschema = { version = "=0.56.0", default-features = false }
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 pulldown-cmark-to-cmark = "=22.0.1"
 
+# Keep line-number backtraces without generating full local-variable debug data.
+[profile.dev]
+debug = 1
+
 # Deployment tests verify native bundle digests on every operation.
 [profile.dev.package.sha2]
 opt-level = 3
