@@ -156,7 +156,7 @@ export async function runRebuildBackupPhase(
     }
     sourceBackupWindow = begun.window;
   }
-  let backupManifest: RebuildBackupManifest;
+  let backupManifest: RebuildBackupManifest | undefined;
   try {
     backupManifest =
       preparedRecoveryManifest ??
