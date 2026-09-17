@@ -34,6 +34,7 @@ import {
 } from "../../../tools/e2e/workflow-plan.mts";
 import { runOnboardProcessAsync } from "../../helpers/onboard-child-process-harness";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts";
 
@@ -72,6 +73,18 @@ function expectExplicitCatalogueCoverage(): void {
 }
 
 describe("E2E workflow plan", () => {
+  it("reserves bootstrap cleanup and setup time beyond its live-test deadline", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
+    const row = Object.values(plan.catalogueMatrices)
+      .flat()
+      .find((target) => target.id === "bootstrap-install-smoke");
+    const liveTestMinutes = 30;
+    const setupAndArtifactMinutes = 5;
+    expect(row?.timeout_minutes).toBeGreaterThanOrEqual(
+      liveTestMinutes + DEFAULT_CLEANUP_TIMEOUT_MS / 60_000 + setupAndArtifactMinutes,
+    );
+  });
+
   it("selects every shared test through the aggregate workflow job", () => {
     const plan = buildE2eWorkflowPlan({ jobs: "shared-e2e" });
     expect(plan.testMatrix).toEqual(
@@ -203,13 +216,12 @@ describe("E2E workflow plan", () => {
     expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
-  it("rejects removed declarations before producing a workflow plan", () => {
-    expect(() =>
-      buildE2eWorkflowPlan({
-        targets: "ubuntu-repo-cloud-hermes,ubuntu-repo-cloud-hermes-slack",
-      }),
-    ).toThrow("Unknown target 'ubuntu-repo-cloud-hermes'");
-  });
+  it.each(["ubuntu-repo-cloud-hermes", "ubuntu-repo-cloud-hermes-slack"])(
+    "rejects removed declaration %s before producing a workflow plan",
+    (target) => {
+      expect(() => buildE2eWorkflowPlan({ targets: target })).toThrow(`Unknown target '${target}'`);
+    },
+  );
 
   it("includes staging only when the execution plan selects it (#9167)", () => {
     const stagingPlan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable" });

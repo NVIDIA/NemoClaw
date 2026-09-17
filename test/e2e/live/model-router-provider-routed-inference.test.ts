@@ -28,7 +28,6 @@ test("model-router provider-routed onboard returns an inference.local completion
 }) => {
   progress.phase("confirm routed-provider prerequisites");
 
-  progress.phase("confirm routed-provider prerequisites");
   await runtimeProvider.requireAvailable({
     artifactName: "prereq-runtime-info-model-router-provider-routed",
     scenarioLabel: "provider-routed Model Router onboarding",

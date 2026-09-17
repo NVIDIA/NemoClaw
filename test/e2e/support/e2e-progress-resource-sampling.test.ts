@@ -99,6 +99,28 @@ function progressHarness(
 }
 
 describe("canonical runner comparison progress sampling", () => {
+  it("redacts sampled resource evidence inside parseable progress events", () => {
+    const harness = progressHarness(() => false);
+    delete harness.options.recordResourceSample;
+    harness.options.stallThresholdMs = 10;
+    harness.options.sampleResourceEvidence = () => "resource evidence fixture-secret";
+    harness.options.redact = (value) => value.replaceAll("fixture-secret", "[REDACTED]");
+    const progress = startTestProgress("resource evidence", "wait for command", harness.options);
+    harness.state.fireNext();
+    progress.stop();
+
+    expect(harness.state.lines.join("\n")).not.toContain("fixture-secret");
+    expect(harness.state.lines.map((line) => JSON.parse(line))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "e2e-progress",
+          event: "resource-evidence",
+          evidence: "resource evidence [REDACTED]",
+        }),
+      ]),
+    );
+  });
+
   it("uses one timer, fixed cadence, completed-phase boundaries, and a final phase sample (#7146)", () => {
     const records: Array<{ atMs: number; kind: string; phase: string }> = [];
     let state: ReturnType<typeof progressHarness>["state"];

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
@@ -31,6 +32,29 @@ exit 0
 `;
 
 describe("CLI dispatch", () => {
+  let dashboardPort: number;
+
+  beforeEach(async () => {
+    // These fake sandboxes never start a dashboard forward. Give each case its
+    // own released port so unrelated listeners cannot change cleanup policy.
+    const listener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = listener.address();
+      if (!address || typeof address === "string") {
+        throw new Error("The dashboard fixture did not receive a TCP port.");
+      }
+      dashboardPort = address.port;
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        listener.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it(
     "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
     testTimeoutOptions(30_000),
@@ -51,6 +75,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
             },
           },
           defaultSandbox: "alpha",
@@ -93,7 +118,7 @@ describe("CLI dispatch", () => {
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete -g nemoclaw alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput).not.toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -123,6 +148,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -174,7 +200,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete -g nemoclaw-8081 alpha");
-      expect(openshellOutput).not.toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -207,6 +233,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
             },
           },
           defaultSandbox: "alpha",
@@ -252,7 +279,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).not.toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -298,6 +325,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -368,6 +396,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
             },
           },
           defaultSandbox: "alpha",
@@ -442,6 +471,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            dashboardPort,
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -491,7 +521,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain(
       "sandbox delete -g nemoclaw-8081 alpha",
     );
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain(`forward stop ${dashboardPort}`);
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -516,6 +546,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            dashboardPort,
           },
         },
         defaultSandbox: "alpha",
@@ -556,7 +587,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain(`forward stop ${dashboardPort}`);
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -582,6 +613,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            dashboardPort,
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -675,6 +707,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -739,6 +772,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            dashboardPort,
           },
         },
         defaultSandbox: "alpha",
@@ -805,6 +839,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
+              dashboardPort,
             },
           },
           defaultSandbox: "alpha",
@@ -859,7 +894,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput).not.toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain(`forward stop ${dashboardPort}`);
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -885,6 +920,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
+            dashboardPort,
           },
         },
         defaultSandbox: "alpha",

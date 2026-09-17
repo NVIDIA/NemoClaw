@@ -176,16 +176,6 @@ test(
       id: "bootstrap-install-smoke",
       boundary: "ubuntu-bootstrap-install-flow",
       refs: ["#2599", "#5098"],
-      phases: [
-        "preseed-bootstrap-clone",
-        "prerequisites",
-        "brev-bootstrap-script",
-        "install-artifacts",
-        "onboard",
-        "sandbox-health",
-        "live-inference",
-        "cleanup",
-      ],
     });
 
     const hosted = requireHostedInferenceConfig(secrets);

@@ -770,7 +770,7 @@ jobs:
           chmod 0600 "$ARTIFACT_DIRECTORY/evidence-manifest.json"
 
       - name: Upload typed target artifacts
-        if: ${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-${{ inputs.execution_id }}

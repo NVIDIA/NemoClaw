@@ -313,7 +313,7 @@ export function startTestProgress(
     if (!comparisonSamplingActive) {
       try {
         const evidence = sampleResourceEvidence?.(currentPhase());
-        if (evidence) logLine(evidence);
+        if (evidence) writeLog("resource-evidence", now(), { evidence });
       } catch {
         /* Resource evidence must not change execution. */
       }

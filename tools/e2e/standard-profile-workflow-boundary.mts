@@ -757,7 +757,7 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
   const job = record(record(profile.jobs).run);
   const workflowSteps = steps(job.steps);
   const typed = "inputs.test_file == 'test/e2e/live/registry-targets.test.ts'";
-  const alwaysTyped = `\${{ always() && ${typed} }}`;
+  const alwaysTyped = `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`;
   const configure = requireStep(errors, workflowSteps, "Configure live E2E trace directory");
   const prepare = namedStep(workflowSteps, "Prepare E2E workspace");
   const execute = namedStep(workflowSteps, "Run catalogue E2E target");

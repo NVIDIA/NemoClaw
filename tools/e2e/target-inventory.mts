@@ -472,7 +472,8 @@ const profileTargets: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    timeoutMinutes: 30,
+    // Allow the 30-minute test, 10-minute cleanup, and setup/artifact overhead.
+    timeoutMinutes: 45,
     installMode: "none",
     restoreCli: false,
     exposeCliBin: false,

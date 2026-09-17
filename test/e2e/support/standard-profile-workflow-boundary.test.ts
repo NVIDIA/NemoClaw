@@ -44,6 +44,20 @@ function recordDcodeEvidence(directory: string, candidateSha: string, reference:
 }
 
 describe("standard E2E execution profile", () => {
+  it("uploads typed artifacts only after successful execution planning", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    );
+    const upload = profile.jobs.run.steps.find(
+      (step: { name?: string }) => step.name === "Upload typed target artifacts",
+    );
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    upload.if = "${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}";
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed target artifacts must preserve the reviewed allowlist and execution identity",
+    );
+  });
+
   it.for([
     { candidateSha: "invalid", reference: `registry/base@sha256:${"b".repeat(64)}` },
     { candidateSha: "a".repeat(40), reference: "registry/base:mutable" },

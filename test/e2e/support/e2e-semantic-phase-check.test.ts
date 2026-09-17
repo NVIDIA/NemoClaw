@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
+import YAML from "yaml";
 
 import {
   reconcileLiveTargetDiscovery,
@@ -35,6 +38,41 @@ describe("semantic E2E phase checker", () => {
   const liveFiles = fs
     .globSync("**/*.test.ts", { cwd: path.join(REPO_ROOT, "test/e2e/live") })
     .map((file) => `test/e2e/live/${file.split(path.sep).join("/")}`);
+
+  test.each([
+    { changedPath: "test/e2e/registry/run.ts", runs: true },
+    { changedPath: "test/e2e/registry/expected-states.ts", runs: true },
+    { changedPath: "test/e2e/registry/definitions/baseline.ts", runs: true },
+    { changedPath: "test/e2e/live/registry-targets.test.ts", runs: true },
+    { changedPath: "test/e2e/registry/README.md", runs: false },
+    { changedPath: "test/e2e/registry/run.ts.backup", runs: false },
+  ])("selects the semantic hook for $changedPath: $runs", ({ changedPath, runs }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-semantic-hook-"));
+    onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+    const config = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".pre-commit-config.yaml"), "utf8"),
+    ) as { repos: { hooks: { id: string; entry: string }[] }[] };
+    const hook = config.repos
+      .flatMap((repo) => repo.hooks)
+      .find((candidate) => candidate.id === "e2e-semantic-phase-plans")!;
+    // Exercise the installed hook selector while replacing the semantic workload with a receipt.
+    hook.entry = `${JSON.stringify(process.execPath)} -e "require('node:fs').writeFileSync('selected', 'yes')"`;
+    fs.writeFileSync(
+      path.join(root, ".pre-commit-config.yaml"),
+      YAML.stringify({ repos: [{ repo: "local", hooks: [hook] }] }),
+    );
+    fs.mkdirSync(path.dirname(path.join(root, changedPath)), { recursive: true });
+    fs.writeFileSync(path.join(root, changedPath), "// Hook selection fixture.\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root, timeout: 5_000 });
+    const result = spawnSync(
+      path.join(REPO_ROOT, "node_modules", ".bin", "prek"),
+      ["run", "e2e-semantic-phase-plans", "--files", changedPath],
+      { cwd: root, encoding: "utf8", timeout: 5_000 },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.existsSync(path.join(root, "selected"))).toBe(runs);
+  });
 
   test("accounts for every discovered live module, including manual qualifications", () => {
     expect(reconcileLiveTargetDiscovery(liveFiles)).toEqual([]);
