@@ -6,8 +6,8 @@
 Fresh Hermes named profiles intentionally omit ``config.yaml``. The upstream
 v2026.9.14 defaults would therefore enable smart command approval, browser
 evaluation of sensitive primitives, reasoning/commentary display, update-time
-state mutation, and indefinite gateway sessions outside NemoClaw's generated
-default home.
+state mutation, disk-backed SQLite temporary storage, and indefinite gateway
+sessions outside NemoClaw's generated default home.
 
 This image-level compatibility patch changes only the pinned upstream default
 leaves that NemoClaw already writes explicitly for its default and dashboard
@@ -74,6 +74,8 @@ def _literal(value: object) -> str:
         return "True"
     if value is False:
         return "False"
+    if isinstance(value, int):
+        return str(value)
     if isinstance(value, str):
         return json.dumps(value)
     raise ValueError(f"unsupported managed policy literal type: {type(value).__name__}")
@@ -112,6 +114,12 @@ def patch_config_source(source: str, values: dict[str, object]) -> str:
                 f"{shape!r}: expected one occurrence, found {count}"
             )
     replacements = (
+        (
+            '"journal_size_limit": None,',
+            '"journal_size_limit": None,\n'
+            "        # NemoClaw compatibility override: temporary SQLite state stays in memory.\n"
+            f'        "temp_store": {_literal(values["database.temp_store"])}',
+        ),
         (
             '"restrict_evaluate": False',
             "# NemoClaw compatibility override: generated policy restricts sensitive evaluation.\n"

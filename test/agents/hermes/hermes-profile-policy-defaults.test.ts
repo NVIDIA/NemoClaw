@@ -30,6 +30,11 @@ const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
 
 const configFixture = `\
 DEFAULT_CONFIG = {
+    "database": {
+        "journal_mode": "wal",
+        "wal_autocheckpoint": None,
+        "journal_size_limit": None,
+    },
     "browser": {
         "allow_unsafe_evaluate": False,
         "restrict_evaluate": False,
@@ -210,6 +215,12 @@ describe("Hermes profile policy defaults", () => {
     expect(JSON.parse(probe.stdout)).toEqual({
       approvals: { mode: "manual" },
       browser: { allow_unsafe_evaluate: false, restrict_evaluate: true },
+      database: {
+        journal_mode: "wal",
+        journal_size_limit: null,
+        temp_store: 2,
+        wal_autocheckpoint: null,
+      },
       display: { show_commentary: false, show_reasoning: false },
       updates: { pre_update_backup: false, refresh_cua_driver: false },
     });
