@@ -367,7 +367,6 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-
   const configEdit = securityPostureEnabled()
     ? await repoNemoclaw(
         input.host,
@@ -402,7 +401,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
 
   const nativeNetwork = await inspectNativeNetwork(
     input.sandbox,
-    "phase-4-native-network-after-recovery",
+    "phase-4-native-network-after-launch",
   );
   const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
@@ -421,8 +420,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const afterRecovery = securityPostureEnabled()
-    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-recovery")
+  const afterLaunch = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-launch")
     : null;
   expect(
     !permissions.timedOut &&
@@ -437,8 +436,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       Object.values(network.interfaces)
         .flat()
         .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
-      (!afterRecovery || nativeStateDoctorReportIsValid(afterRecovery)),
-    [permissions, nativeNetwork, afterRecovery]
+      (!afterLaunch || nativeStateDoctorReportIsValid(afterLaunch)),
+    [permissions, nativeNetwork, afterLaunch]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
@@ -717,7 +716,7 @@ test(
         "nemoclaw logs produces output and cleanup removes registry state",
         ...(securityPostureEnabled()
           ? [
-              "non-root host, native private state through doctor/fix/config edit/recovery, editable profiles, protected proxy files, and clean startup log",
+              "non-root host, native private state through doctor/fix/config edit, editable profiles, protected proxy files, and clean startup log",
             ]
           : []),
       ],

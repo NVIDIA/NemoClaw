@@ -9,7 +9,6 @@ import {
   formatGatewayRouteImpactWarning,
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
-  isAdvisoryProviderModelRouteConflict,
   preflightGatewayRouteDiscovery,
 } from "./gateway-route-compatibility";
 
@@ -274,13 +273,16 @@ describe("shared gateway inference route compatibility", () => {
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
       true,
     );
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(true);
     const warning = formatGatewayRouteImpactWarning(result as Exclude<typeof result, { ok: true }>);
     expect(warning).toContain("will re-point the one shared inference route");
     expect(warning).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
     expect(warning).toContain("not per sandbox");
+    expect(
+      formatGatewayRouteImpactWarning(
+        result as Exclude<typeof result, { ok: true }>,
+        "inference-set",
+      ),
+    ).toContain("Changing inference for 'target'");
   });
 
   it("allows different routes on different gateways (#6315)", () => {
@@ -416,9 +418,6 @@ describe("shared gateway inference route compatibility", () => {
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
       false,
     );
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(false);
   });
 
   it("does not let a model difference hide a custom endpoint conflict (#6315)", () => {
@@ -441,9 +440,6 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "custom-peer", reason: "custom-endpoint" }],
     });
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(false);
   });
 
   it.each([
