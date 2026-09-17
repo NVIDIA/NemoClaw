@@ -14,9 +14,48 @@ const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 // OpenShell's /proc reset wrapper can move the immutable launcher out of argv[0].
 const OPENCLAW_LAUNCHER = "/usr/local/bin/openclaw";
 const GATEWAY_ARGV_FILE = "windows-port-pids-jYst3qTE.js";
+const GATEWAY_PROCESSES_FILE = "gateway-processes-ZnwhPcAT.js";
 const ORIGINAL_GATEWAY_ARGV =
   "if (normalized.some((arg) => entryCandidates.some((entry) => arg.endsWith(entry)))) return true;";
 const PATCHED_GATEWAY_ARGV = `if (normalized.some((arg) => entryCandidates.some((entry) => arg.endsWith(entry))) || normalized.includes(${JSON.stringify(OPENCLAW_LAUNCHER)})) return true;`;
+const ORIGINAL_GATEWAY_DISCOVERY = `function findVerifiedGatewayListenerPidsOnPortSync(port) {
+\treturn uniqueValues(process.platform === "win32" ? readWindowsListeningPidsOnPortSync(port) : findGatewayPidsOnPortSync(port)).filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== process.pid).filter((pid) => {
+\t\tconst args = readGatewayProcessArgsSync(pid);
+\t\treturn args != null && isGatewayArgv(args, { allowGatewayBinary: true });
+\t});
+}`;
+const PATCHED_GATEWAY_DISCOVERY = `function readNemoClawGatewayPidSync(port) {
+\tif (process.platform !== "linux" || process.env.OPENSHELL_SANDBOX !== "1") return null;
+\ttry {
+\t\tconst record = fs.readFileSync("/tmp/nemoclaw-gateway.pid", "utf8").trim().split(/\\s+/);
+\t\tif (record.length !== 2 || !/^[1-9][0-9]*$/.test(record[0]) || !/^[1-9][0-9]*$/.test(record[1])) return null;
+\t\tconst pid = Number(record[0]);
+\t\tif (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return null;
+\t\tconst stat = fs.readFileSync(\`/proc/\${pid}/stat\`, "utf8");
+\t\tconst close = stat.lastIndexOf(") ");
+\t\tif (close < 0) return null;
+\t\tconst fields = stat.slice(close + 2).trim().split(/\\s+/);
+\t\tif (fields.length < 20 || fields[0] === "Z" || fields[0] === "X" || fields[19] !== record[1]) return null;
+\t\tconst args = readGatewayProcessArgsSync(pid);
+\t\tif (args == null || !isGatewayArgv(args, { allowGatewayBinary: true })) return null;
+\t\tconst normalized = args.map((arg) => arg.replaceAll("\\\\", "/").toLowerCase());
+\t\tconst expectedPort = String(port);
+\t\tconst matchesPort = normalized.some((arg, index) => arg === \`--port=\${expectedPort}\` || arg === expectedPort && normalized[index - 1] === "--port");
+\t\tconst gatewayTitle = normalized.length === 1 && (normalized[0] === "openclaw-gateway" || normalized[0].endsWith("/openclaw-gateway"));
+\t\treturn matchesPort || gatewayTitle ? pid : null;
+\t} catch {
+\t\treturn null;
+\t}
+}
+function findVerifiedGatewayListenerPidsOnPortSync(port) {
+\tconst discovered = uniqueValues(process.platform === "win32" ? readWindowsListeningPidsOnPortSync(port) : findGatewayPidsOnPortSync(port)).filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== process.pid).filter((pid) => {
+\t\tconst args = readGatewayProcessArgsSync(pid);
+\t\treturn args != null && isGatewayArgv(args, { allowGatewayBinary: true });
+\t});
+\tif (discovered.length > 0) return discovered;
+\tconst recorded = readNemoClawGatewayPidSync(port);
+\treturn recorded == null ? [] : [recorded];
+}`;
 const ORIGINAL = `\tif (isContainerEnvironment()) return {
 \t\tmode: "disabled",
 \t\tdetail: "container: use in-process restart to keep PID 1 alive"
@@ -68,6 +107,19 @@ export function patchOpenShellGatewayArgv(source: string): string {
   return source.replace(ORIGINAL_GATEWAY_ARGV, PATCHED_GATEWAY_ARGV);
 }
 
+export function patchOpenShellGatewayDiscovery(source: string): string {
+  if (source.includes(PATCHED_GATEWAY_DISCOVERY)) {
+    if (source.includes(ORIGINAL_GATEWAY_DISCOVERY)) {
+      throw new Error("Incomplete OpenClaw OpenShell gateway discovery patch");
+    }
+    return source;
+  }
+  if (source.split(ORIGINAL_GATEWAY_DISCOVERY).length !== 2) {
+    throw new Error("Unrecognized OpenClaw gateway discovery boundary");
+  }
+  return source.replace(ORIGINAL_GATEWAY_DISCOVERY, PATCHED_GATEWAY_DISCOVERY);
+}
+
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   // The Dockerfile separately restricts these reviewed pins to legacy E2E fixtures.
@@ -76,17 +128,21 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   const target = path.join(distDir, "cli", "gateway-lifecycle.runtime.js");
   const argvTarget = path.join(distDir, GATEWAY_ARGV_FILE);
+  const discoveryTarget = path.join(distDir, GATEWAY_PROCESSES_FILE);
   const source = fs.readFileSync(target, "utf8");
   const argvSource = fs.readFileSync(argvTarget, "utf8");
+  const discoverySource = fs.readFileSync(discoveryTarget, "utf8");
   const patched = patchContainerRestart(source);
   const argvPatched = patchOpenShellGatewayArgv(argvSource);
+  const discoveryPatched = patchOpenShellGatewayDiscovery(discoverySource);
   if (audit) {
-    if (patched !== source || argvPatched !== argvSource) {
+    if (patched !== source || argvPatched !== argvSource || discoveryPatched !== discoverySource) {
       throw new Error("OpenClaw container restart patch is missing");
     }
   } else {
     if (patched !== source) fs.writeFileSync(target, patched);
     if (argvPatched !== argvSource) fs.writeFileSync(argvTarget, argvPatched);
+    if (discoveryPatched !== discoverySource) fs.writeFileSync(discoveryTarget, discoveryPatched);
   }
 }
 
