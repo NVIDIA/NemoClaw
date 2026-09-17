@@ -534,7 +534,7 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
   };
 }
 
-/** Compose provider recovery with the legacy-compatible base-gateway CLI observer. */
+/** Keep provider recovery scoped to the named base gateway; unsupported scope is terminal. */
 export function createCliProviderRecoveryHelpers(
   deps: CliProviderRecoveryDeps,
 ): ProviderRecoveryHelpers {

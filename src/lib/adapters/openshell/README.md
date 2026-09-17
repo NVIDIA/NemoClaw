@@ -21,9 +21,9 @@ explicit loopback gateway, and bounded local mTLS file reads. No second credenti
 
 `inference-route.ts` defines configured and unconfigured observations plus redacted error categories.
 The CLI adapter owns argument construction, ANSI and control-sequence removal, parsing, timeouts,
-and command-error mapping. Named non-default gateways never fall back to an unscoped read. Existing
-base-gateway consumers that require compatibility can request the legacy selected-gateway fallback.
-Route mutation and rollback remain outside this observer.
+and command-error mapping. Named gateway reads stay scoped. The observer returns an error when
+OpenShell rejects that scope; it does not retry an unscoped read. Route mutation and rollback remain
+outside this observer.
 
 `sdk-import.mts` keeps the SDK's public entry points behind native ESM imports when
 the CLI compiles to CommonJS. Both connection and policy serialization use this
