@@ -38,6 +38,7 @@ export interface AgentSetupStateOptions<Agent> {
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
+    isOpenclawGatewayReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -130,7 +131,7 @@ export async function handleAgentSetupState<Agent>({
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
     let ready = false;
     for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
-      ready = await deps.isOpenclawReady(sandboxName);
+      ready = await deps.isOpenclawGatewayReady(sandboxName);
       if (!ready && attempt < 59) await agentSetupRuntime.sleepMs(1_000);
     }
     if (!ready) {

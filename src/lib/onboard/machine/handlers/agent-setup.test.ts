@@ -26,6 +26,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       return session;
     }),
     openclawReady: vi.fn(async () => false),
+    openclawGatewayReady: vi.fn(async () => false),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -46,6 +47,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
+      isOpenclawGatewayReady: calls.openclawGatewayReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -322,7 +324,7 @@ describe("handleAgentSetupState", () => {
 
   it("waits for managed OpenClaw before syncing selection metadata without legacy setup", async () => {
     const { deps, calls } = createDeps();
-    calls.openclawReady.mockResolvedValue(true);
+    calls.openclawGatewayReady.mockResolvedValue(true);
     const sleep = vi.spyOn(agentSetupRuntime, "sleepMs").mockResolvedValue();
     const revalidateSandboxIdentity = vi.fn();
 
@@ -332,7 +334,7 @@ describe("handleAgentSetupState", () => {
       revalidateSandboxIdentity,
     });
 
-    expect(calls.openclawReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.openclawGatewayReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
     expect(sleep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
@@ -360,7 +362,7 @@ describe("handleAgentSetupState", () => {
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();
-    expect(calls.openclawReady).toHaveBeenCalledTimes(60);
+    expect(calls.openclawGatewayReady).toHaveBeenCalledTimes(60);
     expect(sleep).toHaveBeenCalledTimes(59);
   });
 

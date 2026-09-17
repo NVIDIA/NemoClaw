@@ -1114,8 +1114,6 @@ const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
 
-// ── Step 1: Preflight ────────────────────────────────────────────
-
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
 const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
   gatewayName: () => GATEWAY_NAME,
@@ -1303,8 +1301,6 @@ async function preflight(
   if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
   return gpu; // #3953 — fail-fast before next step
 }
-
-// ── Step 2: Gateway ──────────────────────────────────────────────
 
 const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
   assessHost: preflightUtils.assessHost,
@@ -1568,8 +1564,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-// ── Step 3: Inference selection ──────────────────────────────────
-
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
@@ -3207,6 +3201,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
           isOpenclawReady,
+          isOpenclawGatewayReady: (name) =>
+            openclawSetup.isOpenclawGatewayReady(
+              name,
+              registry.getSandbox(name)?.dashboardPort ?? CONTROL_UI_PORT,
+              sandboxExec,
+            ),
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,

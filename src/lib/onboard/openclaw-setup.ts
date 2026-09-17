@@ -9,6 +9,37 @@ import {
 } from "../sandbox/config";
 
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
+const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
+
+export async function isOpenclawGatewayReady(
+  sandboxName: string,
+  port: number,
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<boolean> {
+  try {
+    const result = await sandboxCommandExecutor.runBuffered({
+      sandboxName,
+      target: { kind: "selected" },
+      command: [
+        "curl",
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "3",
+        `http://127.0.0.1:${String(port)}/health`,
+      ],
+      tty: false,
+    });
+    return (
+      result.outcome.kind === "completed" &&
+      OPENCLAW_ALIVE_HTTP_CODES.has(Number.parseInt(result.stdout.trim(), 10))
+    );
+  } catch {
+    return false;
+  }
+}
 
 interface OpenClawWebSearchReuseDeps {
   readEnabled(sandboxName: string): unknown;
