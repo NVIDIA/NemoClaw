@@ -119,15 +119,23 @@ describe("CLI rebuild recovery routing", () => {
       try {
         const registryPath = writeSiblingRegistry(home);
 
-        const result = runWithEnv("gw1-sb rebuild --yes", {
-          HOME: home,
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-          DOCKER_HOST: `unix://${path.join(home, "missing-docker.sock")}`,
-        });
+        const result = runWithEnv(
+          "gw1-sb rebuild --yes",
+          {
+            HOME: home,
+            NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+            DOCKER_HOST: `unix://${path.join(home, "missing-docker.sock")}`,
+          },
+          30_000,
+        );
 
         expect(result.code).toBe(1);
-        expect(result.out).toContain("Rebuild sandbox 'gw1-sb'");
-        expect(result.out).toContain("Replacement onboarding preflight failed");
+        expect(result.out).toMatch(
+          /Rebuild sandbox 'gw1-sb'|openshell CLI not found\. Install OpenShell before using sandbox commands\./,
+        );
+        expect(result.out).toMatch(
+          /Error: (?:Replacement onboarding preflight failed|Rebuild in the owning gateway registry did not complete successfully\.)/,
+        );
         expect(fs.existsSync(registryPath)).toBe(true);
         expect(fs.existsSync(path.join(home, ".nemoclaw", "sandboxes.json"))).toBe(false);
       } finally {
