@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
-import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -22,8 +21,12 @@ import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
+import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
 import { listTargets } from "../registry/registry.ts";
+import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../registry/types.ts";
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
@@ -32,6 +35,7 @@ const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
 const jobHeadroomMs = 20 * MINUTE_MS;
+const workflowFinalizationHeadroomMs = 10 * MINUTE_MS;
 const dcodeRoutePollOperationCeilingMs = 8 * 25_000 + 7 * 2_000;
 const dcodeLifecycleOperationCeilingMs =
   8 * 30_000 + 2 * 15_000 + 3 * dcodeRoutePollOperationCeilingMs + 3 * MINUTE_MS;
@@ -39,6 +43,8 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
   "dcode-rebuild-invalid-credential",
   "expected-refusal",
 );
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
@@ -69,6 +75,7 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTimeout.testTimeoutMs! + jobHeadroomMs,
     );
   });
+
   it("encloses the reviewed onboard-resume command budget", () => {
     expect(ONBOARD_RESUME_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
@@ -130,21 +137,56 @@ describe("onboard final-handoff timeout contract", () => {
     ).toEqual([...affectedTargetIds].sort());
   });
 
-  it("applies lifecycle and config-export budgets to typed registry targets", () => {
-    expect(
-      liveTargetTimeoutContract("dcode-rebuild-invalid-credential", "expected-refusal"),
-    ).toEqual({
-      testTimeoutMs: 52 * MINUTE_MS,
-      targetTimeoutMinutes: 72,
-    });
-    expect(liveTargetTimeoutContract(undefined, "required")).toEqual({
-      testTimeoutMs: 33 * MINUTE_MS,
-      targetTimeoutMinutes: 53,
-    });
-    expect(liveTargetTimeoutContract(undefined, "no-usable-sandbox")).toEqual({
-      targetTimeoutMinutes: 45,
-    });
+  it("selects retained typed targets when the export timeout contract changes", () => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [timeoutContractPath] });
+
+    expect(plan.matrix.map((row) => row.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+      "ubuntu-repo-cloud-openclaw",
+    ]);
   });
+
+  it.each(CONFIG_EXPORT_EXPECTATIONS)("assigns an explicit timeout to %s", (expectation) => {
+    const expected = {
+      required: { testTimeoutMs: 33 * MINUTE_MS, targetTimeoutMinutes: 53 },
+      "expected-refusal": { testTimeoutMs: 32 * MINUTE_MS, targetTimeoutMinutes: 52 },
+      "no-usable-sandbox": { targetTimeoutMinutes: 45 },
+    };
+
+    expect(liveTargetTimeoutContract(undefined, expectation)).toEqual(expected[expectation]);
+  });
+
+  it("rejects an unknown export classification instead of assigning no export budget", () => {
+    expect(() =>
+      liveTargetTimeoutContract(undefined, "unrecognized" as ConfigExportExpectation),
+    ).toThrow("Unknown config export expectation");
+  });
+
+  it.each([
+    { lifecycle: undefined, expectation: "required", minimumMinutes: 33 },
+    { lifecycle: undefined, expectation: "expected-refusal", minimumMinutes: 32 },
+    {
+      lifecycle: "dcode-rebuild-invalid-credential",
+      expectation: "expected-refusal",
+      minimumMinutes: 52,
+    },
+  ] as const)(
+    "preserves timeout overrides and job headroom for $lifecycle/$expectation",
+    ({ lifecycle, expectation, minimumMinutes }) => {
+      const overrideMs = 80 * MINUTE_MS + 1;
+      vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", String(overrideMs));
+
+      const extended = liveTargetTimeoutContract(lifecycle, expectation);
+      expect(extended.testTimeoutMs).toBe(overrideMs);
+      expect(extended.targetTimeoutMinutes).toBe(101);
+
+      vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", "1");
+      const bounded = liveTargetTimeoutContract(lifecycle, expectation);
+      expect(bounded.testTimeoutMs).toBe(minimumMinutes * MINUTE_MS);
+      expect(bounded.targetTimeoutMinutes).toBe(minimumMinutes + 20);
+    },
+  );
 
   it.each(
     listTargets().filter((target) => target.configExport.expectation !== "no-usable-sandbox"),
@@ -163,6 +205,13 @@ describe("onboard final-handoff timeout contract", () => {
     expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
       contract.testTimeoutMs! + jobHeadroomMs,
     );
+  });
+
+  it("derives the registry job timeout from its test and post-test headroom", () => {
+    const contract = liveTargetTimeoutContract(undefined, "required");
+
+    expect(jobHeadroomMs).toBe(DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs);
+    expect(contract.targetTimeoutMinutes * MINUTE_MS).toBe(contract.testTimeoutMs! + jobHeadroomMs);
   });
 
   it("rejects a live workflow that ignores its typed job timeout", () => {
