@@ -52,6 +52,13 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         let settings = document.sandbox_runtime_settings(sandbox)?;
         let agent_name = if harness.kind == "openclaw" {
             &sandbox.name
+        } else if harness.kind == "deepagents" {
+            &sandbox
+                .agents
+                .iter()
+                .min_by_key(|agent| &agent.name)
+                .expect("validated roster")
+                .name
         } else {
             &sandbox.sole_agent()?.name
         };

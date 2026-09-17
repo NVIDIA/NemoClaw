@@ -147,3 +147,36 @@ fn native_read_only_policies_reach_deep_agents_and_pi_without_disclosure_modes()
         }
     }
 }
+
+#[test]
+fn deep_agents_share_a_sandbox_with_stable_names_and_independent_models() {
+    let mut value = input(2);
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("deepagents");
+    value["spec"]["sandboxes"][0]["agents"][1]["inference"]["routes"][0]["overrides"]["model"] =
+        json!("other-model");
+    let doc = parse(&value).expect("multiple native Deep Agents instances");
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let rows = targets(&doc, &generations).unwrap();
+    let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
+    assert_eq!(sandbox.values["agent_name"], "agent-0");
+    let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+    assert_eq!(
+        settings["agents"][1]["inference"]["models"]["primary"]["connection"]["model"],
+        "other-model"
+    );
+    value["spec"]["sandboxes"][0]["agents"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    assert_eq!(
+        targets(&parse(&value).unwrap(), &generations).unwrap(),
+        rows
+    );
+}

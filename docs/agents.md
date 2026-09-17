@@ -39,7 +39,7 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 |---|---|
 | OpenClaw | Optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
 | Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) selects another adapter without those interfaces |
-| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the deployment's route |
+| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-request); starts a separate runtime using the named agent's route |
 | Pi | Native model metadata and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
@@ -48,12 +48,25 @@ NemoClaw has no `launch`, `connect`, or invocation command.
 Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
 Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
 
+### Multiple Deep Agents in One Sandbox
+
+Declare each instance under the sandbox’s `agents`, with its own inference, tools, and integration references.
+Each instance selects one model and has a separate Fabric runtime; all use the sandbox-selected Deep Agents harness.
+With multiple agents, workspaces are `/sandbox/workspaces/<agent-name>` and artifacts are `/sandbox/artifacts/<agent-name>`.
+Single-agent deployments retain `/sandbox/workspace` and `/sandbox/artifacts`.
+These directories separate native state, not permissions or network access within the sandbox.
+
+Apply checks every hosted configuration and reports each agent’s Fabric health separately.
+A failed startup stops runtimes already started by that launch.
+Changing the roster changes the immutable sandbox launch configuration; use a fresh deployment and an image built from this revision.
+To invoke a specific agent through the SDK procedure below, pass its declared name to `configuration()`.
+
 ### Run One Deep Agents Request
 
 Use an already applied `harness: {kind: deepagents}` deployment with an external gateway and inference endpoint, a compatible current image, and an API/model you can invoke.
 Follow its [harness matrix entry](reference/fabric-harnesses.md) and the shared [deployment procedure](usage.md) to create it first.
 This call starts a separate Fabric runtime inside the sandbox and sends a real model request, which can incur charges.
-It shares `/sandbox/workspace` with the hosted runtime and can use the agent's tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
+It shares the selected agent’s workspace with its hosted runtime and can use that agent’s tools; it writes invocation artifacts to `/sandbox/sdk-smoke`.
 Use an idle sandbox you own and preserve any files you need before running it.
 It does not attach to or resume the hosted runtime's conversation.
 
@@ -107,9 +120,9 @@ Readiness rejects conflicts in those checked fields; it does not continuously re
 
 A sandbox accepts one or more uniquely named OpenClaw agents.
 Agents share one harness runtime and can select different [named model choices](inference.md#give-an-agent-multiple-model-choices).
-Other harnesses still require one agent.
-Plain-text Fabric invocations require exactly one declared agent.
-With multiple agents, use an input object containing `agent` and `message`; there is no implicit default agent.
+Deep Agents also supports multiple agents, each with its own Fabric runtime. Other harnesses require one agent.
+Plain-text OpenClaw Fabric invocations require exactly one declared agent.
+With multiple OpenClaw agents, use an input object containing `agent` and `message`; there is no implicit default agent.
 Native OpenClaw commands can select any declared agent by name.
 The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
 
@@ -128,7 +141,7 @@ Omitting `tools` preserves the harness defaults.
 OpenClaw also defaults to progressive discovery.
 This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
 Each OpenClaw agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
-Deep Agents and Pi use `/sandbox/workspace`.
+Single-agent Deep Agents and Pi use `/sandbox/workspace`.
 Those directories are not separate security boundaries.
 
 An unrestricted OpenClaw agent can select tool disclosure instead of an allowlist:

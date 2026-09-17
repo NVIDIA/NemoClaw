@@ -7,7 +7,9 @@ Build a [verified native bundle](build.md) and put its `bin` directory on `PATH`
 Choose a checked-in [example](../examples/), set a fresh deployment UUID and available endpoints, and retain the same state directory for every operation.
 Each document contains one to 32 named sandboxes, each with exactly one harness configuration.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses in one state directory.
-[OpenClaw and Pi agents](agents.md) can select models from multiple providers; other harnesses require one agent and one model choice.
+[OpenClaw and Pi agents](agents.md) can select multiple model choices.
+OpenClaw and Deep Agents support multiple agents in one sandbox; each Deep Agents instance selects one model.
+Other harnesses currently require one agent.
 At most one selected provider may have [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.

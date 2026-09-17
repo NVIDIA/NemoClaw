@@ -323,20 +323,23 @@ impl OpenShell {
 
     /// Query the existing hosted Fabric runtime; never invoke an agent or model.
     pub async fn health(&self, binding: &Row) -> Result<crate::RuntimeHealth, Error> {
-        let (exit, output) = self
-            .exec_bound(
-                binding,
-                [
-                    "/opt/fabric/bin/python",
-                    "/opt/nemoclaw/fabric.py",
-                    "health",
-                ]
-                .map(String::from)
-                .to_vec(),
-                Row::new(),
-                10,
-            )
-            .await?;
+        self.health_for(binding, None).await
+    }
+
+    pub(crate) async fn health_for(
+        &self,
+        binding: &Row,
+        agent: Option<&str>,
+    ) -> Result<crate::RuntimeHealth, Error> {
+        let mut command = [
+            "/opt/fabric/bin/python",
+            "/opt/nemoclaw/fabric.py",
+            "health",
+        ]
+        .map(String::from)
+        .to_vec();
+        command.extend(agent.map(String::from));
+        let (exit, output) = self.exec_bound(binding, command, Row::new(), 10).await?;
         if exit != 0 {
             return Err(Error::Conflict(
                 "Fabric health bridge unavailable; rebuild the agent image; resources retained",

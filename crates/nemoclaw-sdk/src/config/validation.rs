@@ -215,8 +215,9 @@ impl Document {
             let harness = self.sandbox_harness(sandbox)?;
             sandbox.network.validate_runtime_access(&harness.kind)?;
             require(
-                sandbox.agents.len() == 1 || harness.kind == "openclaw",
-                "multiple agents require OpenClaw",
+                sandbox.agents.len() == 1
+                    || matches!(harness.kind.as_str(), "openclaw" | "deepagents"),
+                "multiple agents require OpenClaw or Deep Agents",
             )?;
             let web_search = self.web_search(sandbox)?;
             sandbox.policy_proto(web_search.is_some(), harness.observability.as_ref())?;

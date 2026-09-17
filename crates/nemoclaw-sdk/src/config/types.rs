@@ -64,7 +64,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw agents sharing a runtime, or one agent of another harness. Declaration order does not select a default sandbox or agent.
+    /// One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
 }
 
@@ -264,7 +264,7 @@ pub struct Sandbox {
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
     #[serde(rename = "agents")]
-    /// Instances of the sandbox-selected harness. OpenClaw supports multiple named agents sharing one runtime process; other harnesses require one agent.
+    /// Instances of the sandbox-selected harness. OpenClaw supports multiple named agents in one runtime; Deep Agents supports separate Fabric runtimes in one sandbox. Other harnesses require one agent.
     pub agents: Vec<Agent>,
 }
 
@@ -615,7 +615,7 @@ pub struct ServicePublication {
 #[serde(default, deny_unknown_fields)]
 /// One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.
 pub struct Harness {
-    /// Fabric harness implementation. Multiple agents require OpenClaw.
+    /// Fabric harness implementation. Multiple agents require OpenClaw or Deep Agents.
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]

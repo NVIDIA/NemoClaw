@@ -287,7 +287,7 @@ impl SandboxRuntimeSettings {
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
             && (!matches!(harness, "openclaw" | "pi" | "deepagents")
-                || (harness != "openclaw" && self.agents.len() != 1)
+                || (!matches!(harness, "openclaw" | "deepagents") && self.agents.len() != 1)
                 || self
                     .agents
                     .iter()
@@ -302,7 +302,8 @@ impl SandboxRuntimeSettings {
                     .inference
                     .as_ref()
                     .ok_or(ConfigError::new("every agent requires model choices"))?;
-                if selection.models.is_empty()
+                if (harness == "deepagents" && selection.models.len() != 1)
+                    || selection.models.is_empty()
                     || selection.models.len() > 32
                     || !selection.models.contains_key(&selection.default)
                 {
@@ -421,6 +422,7 @@ impl Document {
             .ok_or(ConfigError::new("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
+            || resolved.len() > 1
             || (harness.kind == "pi" && resolved.iter().any(|agent| agent.agent.tools.is_some()))
             || resolved
                 .iter()

@@ -180,6 +180,7 @@ class NativeToolConfiguration(unittest.TestCase):
                 "connection": {
                     "provider": "openai",
                     "base_url": "http://127.0.0.1:8000/v1",
+                    "model": "custom",
                     "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
                 },
                 "pi": {"model": "custom"},
