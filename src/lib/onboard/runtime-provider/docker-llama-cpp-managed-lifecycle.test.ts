@@ -12,6 +12,7 @@ const subprocess = vi.hoisted(() => ({ spawnSync: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawnSync: subprocess.spawnSync }));
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
