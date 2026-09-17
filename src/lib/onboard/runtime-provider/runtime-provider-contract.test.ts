@@ -694,6 +694,38 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
   });
 
+  it("requires an explicit final sandbox-liveness source", () => {
+    const bundle = mxcBundle();
+    const { finalSandboxLiveness: _finalSandboxLiveness, ...gatewayWithoutLivenessSource } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutLivenessSource)],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            finalSandboxLiveness: "host-readiness",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.finalSandboxLiveness).toBe(
+      "openshell-only",
+    );
+  });
+
   it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
     const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
     const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
@@ -1122,7 +1154,20 @@ describe("socket-free MXC action contract", () => {
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      let deleteConvergenceMs = 0;
+      const runOpenshell = vi.fn((args: string[]) => {
+        switch (`${String(args[0])}:${String(args[1])}`) {
+          case "sandbox:get":
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
 
       await expect(
         startSandbox(sandboxName, {
@@ -1158,6 +1203,12 @@ describe("socket-free MXC action contract", () => {
           runtimeProviders: providers,
           deps: {
             wipeSandboxState: vi.fn(),
+            deleteConvergence: {
+              now: () => deleteConvergenceMs,
+              sleep: (milliseconds) => {
+                deleteConvergenceMs += milliseconds;
+              },
+            },
           },
         }),
       ).resolves.toMatchObject({ ok: true });

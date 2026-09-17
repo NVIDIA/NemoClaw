@@ -31,6 +31,7 @@ export type DockerManagedBootstrapJournalPhase =
   | "rollback-authorized"
   | "owner-cleanup-required"
   | "bootstrap-complete"
+  | "openshell-handoff-complete"
   | "shared-state-committed";
 
 export interface DockerManagedBootstrapJournal {
@@ -110,7 +111,7 @@ export interface DockerManagedBootstrapLegacyJournalContext {
   readonly schemaVersion: 1 | 2;
   readonly phase: Exclude<
     DockerManagedBootstrapJournalPhase,
-    "owner-cleanup-required" | "bootstrap-complete"
+    "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
   >;
   readonly bootstrapIdentity: string;
   readonly providerId: string;
@@ -192,7 +193,9 @@ const ALLOWED_TRANSITIONS = new Set([
   "cutover->rollback-authorized",
   "cutover->bootstrap-complete",
   "bootstrap-complete->rollback-authorized",
-  "bootstrap-complete->shared-state-committed",
+  "bootstrap-complete->openshell-handoff-complete",
+  "openshell-handoff-complete->rollback-authorized",
+  "openshell-handoff-complete->shared-state-committed",
   "rollback-authorized->owner-cleanup-required",
 ]);
 
@@ -237,6 +240,7 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
       "rollback-authorized",
       "owner-cleanup-required",
       "bootstrap-complete",
+      "openshell-handoff-complete",
       "shared-state-committed",
     ].includes(String(value))
   ) {
@@ -247,7 +251,10 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
 
 function exactLegacyPhase(
   value: unknown,
-): Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required" | "bootstrap-complete"> {
+): Exclude<
+  DockerManagedBootstrapJournalPhase,
+  "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
+> {
   if (
     !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
   ) {
@@ -255,7 +262,7 @@ function exactLegacyPhase(
   }
   return value as Exclude<
     DockerManagedBootstrapJournalPhase,
-    "owner-cleanup-required" | "bootstrap-complete"
+    "owner-cleanup-required" | "bootstrap-complete" | "openshell-handoff-complete"
   >;
 }
 
@@ -1238,6 +1245,7 @@ export function createFileDockerManagedBootstrapJournalStore(
     const decisionMatchesJournal =
       journal.phase === "cutover" ||
       journal.phase === "bootstrap-complete" ||
+      journal.phase === "openshell-handoff-complete" ||
       journal.phase === phase ||
       (phase === "rollback-authorized" && journal.phase === "owner-cleanup-required");
     if (
@@ -1247,7 +1255,11 @@ export function createFileDockerManagedBootstrapJournalStore(
       fail("decision does not match its cutover journal");
     }
     const decided = normalizeDockerManagedBootstrapJournal({ ...journal, phase });
-    if (journal.phase === "cutover" || journal.phase === "bootstrap-complete") {
+    if (
+      journal.phase === "cutover" ||
+      journal.phase === "bootstrap-complete" ||
+      journal.phase === "openshell-handoff-complete"
+    ) {
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(decided), false);
       return decided;
     }
@@ -1328,7 +1340,9 @@ export function createFileDockerManagedBootstrapJournalStore(
       }
       const updated = normalizeDockerManagedBootstrapJournal({ ...current, phase: next });
       if (
-        (expected === "cutover" || expected === "bootstrap-complete") &&
+        (expected === "cutover" ||
+          expected === "bootstrap-complete" ||
+          expected === "openshell-handoff-complete") &&
         DECISION_PHASES.has(next)
       ) {
         const decision = decisionPath(target);
