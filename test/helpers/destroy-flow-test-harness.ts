@@ -86,6 +86,7 @@ type DestroyHarnessOptions = {
   callThroughGatewaySelection?: boolean;
   agent?: "openclaw" | "hermes";
   deleteError?: Error;
+  deleteConvergenceAttempts?: number;
   deleteOutput?: string;
   deleteStatus?: number | null;
   dockerNameLabeledIds?: string[];
@@ -181,13 +182,19 @@ export function traceDestroyBoundaryCalls(
   harness: Pick<DestroyHarness, "runOpenshellSpy" | "setSandboxPresent">,
   trace: string[],
 ): void {
+  let sandboxPresent = true;
   harness.runOpenshellSpy.mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
       case "sandbox:delete":
         trace.push("delete");
+        sandboxPresent = false;
         harness.setSandboxPresent(false);
         return { status: 0, stdout: "", stderr: "" };
+      case "sandbox:get":
+        return sandboxPresent
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
       case "sandbox:list":
         return { status: 0, stdout: sandboxListJson(["alpha"]), stderr: "" };
       default:
@@ -223,6 +230,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   const resolve = requireSource("../../adapters/openshell/resolve.js");
   const runtime = requireSource("../../adapters/openshell/runtime.js");
+  if (options.deleteConvergenceAttempts !== undefined) {
+    const wait = requireSource("../../core/wait.js") as typeof import("../../src/lib/core/wait");
+    vi.spyOn(wait, "waitUntilAsync").mockImplementation(async (condition) => {
+      for (let attempt = 0; attempt < options.deleteConvergenceAttempts!; attempt += 1) {
+        if (await condition()) return true;
+      }
+      return false;
+    });
+  }
   const destroyGateway = requireSource(
     "./destroy-gateway.js",
   ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway");
@@ -388,6 +404,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     destroyPreflight,
     "stopModelRouterForDestroyedSandbox",
   );
+  vi.spyOn(destroyPreflight, "teardownSandboxDashboardForward").mockReturnValue(true);
   const retirePortableLifecycleReceiptSpy = vi
     .spyOn(destroyExecution, "retirePortableLifecycleAuthority")
     .mockImplementation(() => undefined);
@@ -483,11 +500,18 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
             stderr: "",
           }
         );
+      case "sandbox:get":
+        return sandboxPresent
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
       case "sandbox:delete":
         events.push("delete");
-        sandboxPresent = false;
+        const deleteStatus = options.deleteStatus === undefined ? 0 : options.deleteStatus;
+        if (deleteStatus === 0 || /\bnot found\b/iu.test(options.deleteOutput ?? "")) {
+          sandboxPresent = false;
+        }
         return {
-          status: options.deleteStatus === undefined ? 0 : options.deleteStatus,
+          status: deleteStatus,
           stdout: options.deleteOutput ?? "",
           stderr: "",
           ...(options.deleteError ? { error: options.deleteError } : {}),
