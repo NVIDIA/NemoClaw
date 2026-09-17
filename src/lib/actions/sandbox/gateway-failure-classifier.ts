@@ -10,7 +10,10 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
-import type { RuntimeProviderSnapshotLifecycleState } from "../../onboard/runtime-provider/contract";
+import {
+  normalizeRuntimeProviderIdentity,
+  type RuntimeProviderSnapshotLifecycleState,
+} from "../../onboard/runtime-provider/contract";
 import {
   inspectPortableRuntimeReceiptReadiness,
   type PortableRuntimeReceiptReadinessDeps,
@@ -62,6 +65,24 @@ export type SandboxContainerFailureRunners = {
   listSandboxNames: () => string[];
   portProbe: (port: number) => Promise<boolean>;
 };
+
+export type SandboxPhaseRecoveryAction = "rebuild_missing_docker_container" | "start" | "rebuild";
+
+export function classifySandboxPhaseRecoveryAction({
+  phase,
+  openshellDriver,
+  dockerContainerName,
+}: {
+  phase: string;
+  openshellDriver: string | null | undefined;
+  dockerContainerName: string | null | undefined;
+}): SandboxPhaseRecoveryAction {
+  if (phase !== "Error") return "rebuild";
+  if (normalizeRuntimeProviderIdentity(openshellDriver) === "docker" && !dockerContainerName) {
+    return "rebuild_missing_docker_container";
+  }
+  return "start";
+}
 
 function defaultDockerInfo(): boolean {
   return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;

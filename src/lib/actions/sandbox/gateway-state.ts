@@ -101,7 +101,11 @@ import {
 } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import {
+  classifySandboxPhaseRecoveryAction,
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
   state: string;
@@ -1166,22 +1170,22 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      if (phase === "Error") {
-        if (
-          getKnownSandboxTarget(sandboxName)?.openshellDriver === "docker" &&
-          !dockerRuntime.containerName
-        ) {
-          console.error(
-            `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the missing Docker-driver container (--yes skips the confirmation prompt; workspace state will be preserved).`,
-          );
-        } else {
-          console.error(
-            `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
-          );
-          console.error(
-            `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
-          );
-        }
+      const recoveryAction = classifySandboxPhaseRecoveryAction({
+        phase,
+        openshellDriver: getKnownSandboxTarget(sandboxName)?.openshellDriver,
+        dockerContainerName: dockerRuntime.containerName,
+      });
+      if (recoveryAction === "rebuild_missing_docker_container") {
+        console.error(
+          `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the missing Docker-driver container (--yes skips the confirmation prompt; workspace state will be preserved).`,
+        );
+      } else if (recoveryAction === "start") {
+        console.error(
+          `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
+        );
+        console.error(
+          `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
+        );
       } else {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,

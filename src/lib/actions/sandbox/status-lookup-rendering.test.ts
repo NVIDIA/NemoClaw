@@ -19,7 +19,7 @@ async function printGuidance({
   openshellDriver = "docker",
 }: {
   phase: string;
-  openshellDriver?: string;
+  openshellDriver?: string | null;
   dockerRuntime: {
     health: "none";
     paused: boolean;
@@ -220,6 +220,20 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
   it("steers a Docker-driver sandbox without its container to rebuild", async () => {
     const cap = captureConsoleLog();
     await printGuidance({ phase: "Error", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta rebuild --yes");
+    expect(text).toContain("missing Docker-driver container");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it.each([
+    ["legacy vm alias", "vm"],
+    ["missing legacy metadata", null],
+  ])("steers a Docker sandbox with %s and no container to rebuild", async (_case, driver) => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: driver, dockerRuntime: null });
     const text = cap.lines();
     cap.restore();
 
