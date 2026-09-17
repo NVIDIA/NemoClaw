@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
+import { assertGatewayStatePathSafe, listGatewayStateRoots } from "../../../state/gateway-registry";
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
 import { findSandboxAcrossGatewayRoots } from "../../../state/registry/cross-port";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
+import { readRebuildRecoveryRoute } from "../rebuild-recreate-journal";
 
 export interface RebuildOwningRegistryInput {
   readonly sandboxName: string;
@@ -17,13 +21,43 @@ export interface RebuildOwningRegistryInput {
   readonly executionOptions: RebuildSandboxExecutionOptions;
 }
 
+export interface RetireRecoveryOwningRegistryInput {
+  readonly sandboxName: string;
+  readonly transactionId: string;
+  readonly confirmDataRecovered: boolean;
+}
+
+export type OwningRegistryWorkerInput =
+  | ({ readonly operation: "rebuild" } & RebuildOwningRegistryInput)
+  | ({ readonly operation: "retire-recovery" } & RetireRecoveryOwningRegistryInput);
+
+export interface RebuildRecoveryStorageRoot {
+  readonly backupPath: string;
+  readonly gatewayPort: number;
+  readonly registryFile: string;
+}
+
+export interface RebuildWorkerInvocation {
+  readonly gatewayPort: string;
+  readonly sandboxName: string;
+  readonly options: RebuildSandboxOptions;
+  readonly executionOptions: RebuildSandboxExecutionOptions & { readonly throwOnError: true };
+}
+
 type RebuildOwningRegistryDependencies = {
   findSandbox: typeof findSandboxAcrossGatewayRoots;
+  findRecoveryRoot: typeof findRebuildRecoveryStorageRoot;
   isHostFenceHeld: typeof isCurrentPortableHostFenceHeld;
-  runWorker(input: RebuildOwningRegistryInput, gatewayPort: number): Promise<void>;
+  runWorker(
+    input: OwningRegistryWorkerInput,
+    gatewayPort: number,
+    options?: Readonly<{ observeInvocation?: boolean }>,
+  ): Promise<RebuildWorkerInvocation | void>;
 };
 
 const WORKER_PATH = path.join(__dirname, "owning-registry-worker.js");
+const MAX_RECOVERY_BACKUP_ENTRIES = 1024;
+const MAX_WORKER_OBSERVATION_BYTES = 64 * 1024;
 const REBUILD_ENV_NAMES = [
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
   "NEMOCLAW_NON_INTERACTIVE",
@@ -46,10 +80,41 @@ function rebuildWorkerEnv(gatewayPort: number): Record<string, string> {
   return buildSubprocessEnv(extra);
 }
 
-async function runWorker(input: RebuildOwningRegistryInput, gatewayPort: number): Promise<void> {
+async function readWorkerObservation(stream: Readable): Promise<RebuildWorkerInvocation> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    bytes += buffer.length;
+    if (bytes > MAX_WORKER_OBSERVATION_BYTES) {
+      throw new Error("Rebuild worker observation is too large.");
+    }
+    chunks.push(buffer);
+  }
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    typeof (parsed as Record<string, unknown>).gatewayPort !== "string" ||
+    typeof (parsed as Record<string, unknown>).sandboxName !== "string"
+  ) {
+    throw new Error("Rebuild worker observation is invalid.");
+  }
+  return parsed as RebuildWorkerInvocation;
+}
+
+async function runWorker(
+  input: OwningRegistryWorkerInput,
+  gatewayPort: number,
+  options: Readonly<{ observeInvocation?: boolean }> = {},
+): Promise<RebuildWorkerInvocation | void> {
+  const observeInvocation = options.observeInvocation === true;
   const child = spawn(process.execPath, [WORKER_PATH], {
     env: rebuildWorkerEnv(gatewayPort),
-    stdio: ["inherit", "inherit", "inherit", "pipe"],
+    stdio: observeInvocation
+      ? ["inherit", "inherit", "inherit", "pipe", "pipe"]
+      : ["inherit", "inherit", "inherit", "pipe"],
   });
   const inputStream = child.stdio[3];
   if (!inputStream || !("end" in inputStream)) {
@@ -60,7 +125,13 @@ async function runWorker(input: RebuildOwningRegistryInput, gatewayPort: number)
     inputStream.once("error", reject);
     inputStream.end(JSON.stringify(input), resolve);
   });
-  await new Promise<void>((resolve, reject) => {
+  const observationStream = observeInvocation ? (child.stdio[4] as Readable | null) : null;
+  if (observeInvocation && !observationStream) {
+    child.kill();
+    throw new Error("Cannot observe the rebuild worker pipeline invocation.");
+  }
+  const observation = observationStream ? readWorkerObservation(observationStream) : null;
+  const exited = new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0 && signal === null) {
@@ -70,14 +141,60 @@ async function runWorker(input: RebuildOwningRegistryInput, gatewayPort: number)
       reject(new Error("Rebuild in the owning gateway registry did not complete successfully."));
     });
   });
-  await inputWritten;
+  const [, , observed] = await Promise.all([
+    inputWritten,
+    exited,
+    observation ?? Promise.resolve(undefined),
+  ]);
+  return observed;
 }
 
 export const rebuildOwningRegistryDependencies: RebuildOwningRegistryDependencies = {
   findSandbox: findSandboxAcrossGatewayRoots,
+  findRecoveryRoot: findRebuildRecoveryStorageRoot,
   isHostFenceHeld: isCurrentPortableHostFenceHeld,
   runWorker,
 };
+
+/** Find one exact recovery marker across bounded, non-symlink gateway roots. */
+export function findRebuildRecoveryStorageRoot(
+  input: RetireRecoveryOwningRegistryInput,
+  homeDir: string,
+): RebuildRecoveryStorageRoot | null {
+  const matches: RebuildRecoveryStorageRoot[] = [];
+  for (const state of listGatewayStateRoots(homeDir)) {
+    const sandboxBackupRoot = path.join(state.root, "rebuild-backups", input.sandboxName);
+    assertGatewayStatePathSafe(homeDir, sandboxBackupRoot);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(sandboxBackupRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (entries.length > MAX_RECOVERY_BACKUP_ENTRIES) {
+      throw new Error(
+        `Cannot safely inspect rebuild recovery: more than ${String(MAX_RECOVERY_BACKUP_ENTRIES)} backup entries exist for sandbox '${input.sandboxName}'.`,
+      );
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const backupPath = path.join(sandboxBackupRoot, entry.name);
+      if (!readRebuildRecoveryRoute(input, backupPath)) continue;
+      matches.push({
+        backupPath,
+        gatewayPort: state.gatewayPort,
+        registryFile: path.join(state.root, "sandboxes.json"),
+      });
+    }
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `More than one exact rebuild recovery record exists for sandbox '${input.sandboxName}' and transaction '${input.transactionId}'.`,
+    );
+  }
+  return matches[0] ?? null;
+}
 
 /**
  * Re-enter rebuild in a fresh process whose static state paths are bound to
@@ -99,6 +216,29 @@ export async function delegateRebuildToOwningRegistry(
       `Cannot transfer rebuild for '${input.sandboxName}' while another lifecycle command owns the host fence. Run 'nemoclaw ${input.sandboxName} rebuild' directly.`,
     );
   }
-  await rebuildOwningRegistryDependencies.runWorker(input, hit.registryGatewayPort);
+  await rebuildOwningRegistryDependencies.runWorker(
+    { operation: "rebuild", ...input },
+    hit.registryGatewayPort,
+  );
+  return true;
+}
+
+/** Route exact recovery retirement to the state root that retains its marker. */
+export async function delegateRecoveryRetirementToOwningRegistry(
+  input: RetireRecoveryOwningRegistryInput,
+  homeDir: string,
+  currentRegistryFile: string,
+): Promise<boolean> {
+  const hit = rebuildOwningRegistryDependencies.findRecoveryRoot(input, homeDir);
+  if (!hit || path.resolve(hit.registryFile) === path.resolve(currentRegistryFile)) return false;
+  if (rebuildOwningRegistryDependencies.isHostFenceHeld(homeDir)) {
+    throw new Error(
+      `Cannot transfer recovery retirement for '${input.sandboxName}' while another lifecycle command owns the host fence. Run the retirement command directly.`,
+    );
+  }
+  await rebuildOwningRegistryDependencies.runWorker(
+    { operation: "retire-recovery", ...input },
+    hit.gatewayPort,
+  );
   return true;
 }

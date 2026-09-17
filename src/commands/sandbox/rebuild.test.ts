@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   delegateRebuildToOwningRegistry: vi.fn(async () => false),
+  delegateRecoveryRetirementToOwningRegistry: vi.fn(async () => false),
   rebuildSandbox: vi.fn(async () => undefined),
   retireRebuildRecoveryBackup: vi.fn(() => ({
     backupPath: "/backups/alpha/2026-09-01",
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../lib/actions/sandbox/rebuild", () => mocks);
 vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", () => ({
   delegateRebuildToOwningRegistry: mocks.delegateRebuildToOwningRegistry,
+  delegateRecoveryRetirementToOwningRegistry: mocks.delegateRecoveryRetirementToOwningRegistry,
 }));
 
 import RebuildCliCommand from "./rebuild";
@@ -40,10 +42,31 @@ describe("sandbox:rebuild command", () => {
       transactionId: "11111111-1111-4111-8111-111111111111",
       confirmDataRecovered: true,
     });
+    expect(mocks.delegateRecoveryRetirementToOwningRegistry).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        transactionId: "11111111-1111-4111-8111-111111111111",
+        confirmDataRecovered: true,
+      },
+      expect.any(String),
+      expect.any(String),
+    );
     expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
       "Retired rebuild recovery '11111111-1111-4111-8111-111111111111' for sandbox 'alpha' from /backups/alpha/2026-09-01.",
     );
+  });
+
+  it("delegates sibling-root recovery retirement before the command lifecycle fence", async () => {
+    mocks.delegateRecoveryRetirementToOwningRegistry.mockResolvedValueOnce(true);
+
+    await RebuildCliCommand.run(
+      ["alpha", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+      rootDir,
+    );
+
+    expect(mocks.retireRebuildRecoveryBackup).not.toHaveBeenCalled();
+    expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
   });
 
   it("does not infer data-recovery confirmation when --yes is absent", async () => {

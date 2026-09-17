@@ -5,7 +5,10 @@ import { Args, Flags } from "@oclif/core";
 import os from "node:os";
 
 import { rebuildSandbox, retireRebuildRecoveryBackup } from "../../lib/actions/sandbox/rebuild";
-import { delegateRebuildToOwningRegistry } from "../../lib/actions/sandbox/rebuild/owning-registry";
+import {
+  delegateRebuildToOwningRegistry,
+  delegateRecoveryRetirementToOwningRegistry,
+} from "../../lib/actions/sandbox/rebuild/owning-registry";
 import { forceFlag, yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import type { RebuildSandboxOptions } from "../../lib/domain/lifecycle/options";
@@ -81,7 +84,18 @@ export default class RebuildCliCommand extends NemoClawCommand {
     const parsed = await this.parse(RebuildCliCommand);
     this.retainLifecycleParserOutput(parsed);
     const { args, flags } = parsed;
-    if (flags["retire-recovery"]) return false;
+    const recoveryTransactionId = flags["retire-recovery"];
+    if (recoveryTransactionId) {
+      return await delegateRecoveryRetirementToOwningRegistry(
+        {
+          sandboxName: args.sandboxName,
+          transactionId: recoveryTransactionId,
+          confirmDataRecovered: flags.yes === true,
+        },
+        process.env.HOME || os.homedir(),
+        REGISTRY_FILE,
+      );
+    }
     return await delegateRebuildToOwningRegistry(
       {
         sandboxName: args.sandboxName,

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
@@ -19,6 +23,7 @@ import {
 } from "./rebuild-preflight-guards";
 import {
   delegateRebuildToOwningRegistry,
+  findRebuildRecoveryStorageRoot,
   rebuildOwningRegistryDependencies,
 } from "./rebuild/owning-registry";
 import { rebuildSandbox } from "./rebuild";
@@ -396,7 +401,7 @@ describe("rebuild owning registry routing", () => {
       rebuildSandbox(input.sandboxName, input.options, input.executionOptions),
     ).resolves.toBeUndefined();
 
-    expect(runWorker).toHaveBeenCalledWith(input, 9000);
+    expect(runWorker).toHaveBeenCalledWith({ operation: "rebuild", ...input }, 9000);
     expect(readBaseRegistry).not.toHaveBeenCalled();
   });
 
@@ -462,5 +467,68 @@ describe("rebuild owning registry routing", () => {
     ).rejects.toThrow("Run 'nemoclaw alpha rebuild' directly");
 
     expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate exact recovery records across gateway roots", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-roots-"));
+    const transactionId = "11111111-1111-4111-8111-111111111111";
+    const timestamp = "2026-09-17T00-00-00-000Z";
+    try {
+      const firstBackup = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
+      );
+      const secondBackup = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9001",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
+      );
+      fs.mkdirSync(firstBackup, { recursive: true });
+      fs.mkdirSync(secondBackup, { recursive: true });
+      fs.writeFileSync(
+        path.join(firstBackup, ".nemoclaw-rebuild-recovery.json"),
+        `${JSON.stringify({
+          schemaVersion: 3,
+          transactionId,
+          sandboxName: "alpha",
+          backupTimestamp: timestamp,
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          phase: "restore",
+        })}\n`,
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(secondBackup, ".nemoclaw-rebuild-recovery.json"),
+        `${JSON.stringify({
+          schemaVersion: 3,
+          transactionId,
+          sandboxName: "alpha",
+          backupTimestamp: timestamp,
+          gatewayName: "nemoclaw-9001",
+          gatewayPort: 9001,
+          phase: "restore",
+        })}\n`,
+        { mode: 0o600 },
+      );
+
+      expect(() =>
+        findRebuildRecoveryStorageRoot(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          home,
+        ),
+      ).toThrow("More than one exact rebuild recovery record");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -6,6 +6,8 @@ import fs from "node:fs";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { rebuildSandbox } from "../rebuild-pipeline";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
+import { retireRebuildRecoveryBackup } from "../rebuild-recreate-journal";
+import type { OwningRegistryWorkerInput } from "./owning-registry";
 
 const MAX_REBUILD_INPUT_BYTES = 4 * 1024 * 1024;
 
@@ -13,11 +15,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readInput(): {
-  sandboxName: string;
-  options: RebuildSandboxOptions;
-  executionOptions: RebuildSandboxExecutionOptions;
-} {
+function readInput(): OwningRegistryWorkerInput {
   const descriptor = 3;
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -30,27 +28,65 @@ function readInput(): {
     chunks.push(Buffer.from(buffer.subarray(0, count)));
   }
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (
-    !isRecord(parsed) ||
-    typeof parsed.sandboxName !== "string" ||
-    !isRecord(parsed.options) ||
-    !isRecord(parsed.executionOptions)
-  ) {
+  if (!isRecord(parsed) || typeof parsed.sandboxName !== "string") {
     throw new Error("Rebuild worker input is invalid.");
   }
-  return {
-    sandboxName: parsed.sandboxName,
-    options: parsed.options as RebuildSandboxOptions,
-    executionOptions: parsed.executionOptions as RebuildSandboxExecutionOptions,
-  };
+  if (
+    parsed.operation === "rebuild" &&
+    isRecord(parsed.options) &&
+    isRecord(parsed.executionOptions)
+  ) {
+    return {
+      operation: "rebuild",
+      sandboxName: parsed.sandboxName,
+      options: parsed.options as RebuildSandboxOptions,
+      executionOptions: parsed.executionOptions as RebuildSandboxExecutionOptions,
+    };
+  }
+  if (
+    parsed.operation === "retire-recovery" &&
+    typeof parsed.transactionId === "string" &&
+    typeof parsed.confirmDataRecovered === "boolean"
+  ) {
+    return {
+      operation: "retire-recovery",
+      sandboxName: parsed.sandboxName,
+      transactionId: parsed.transactionId,
+      confirmDataRecovered: parsed.confirmDataRecovered,
+    };
+  }
+  throw new Error("Rebuild worker input is invalid.");
 }
 
 async function main(): Promise<void> {
   const input = readInput();
-  await rebuildSandbox(input.sandboxName, input.options, {
+  if (input.operation === "retire-recovery") {
+    const retired = retireRebuildRecoveryBackup(input);
+    console.log(
+      `Retired rebuild recovery '${retired.transactionId}' for sandbox '${input.sandboxName}' from ${retired.backupPath}.`,
+    );
+    return;
+  }
+  const executionOptions = {
     ...input.executionOptions,
     throwOnError: true,
-  });
+  } as const;
+  try {
+    fs.fstatSync(4);
+    fs.writeFileSync(
+      4,
+      JSON.stringify({
+        gatewayPort: process.env.NEMOCLAW_GATEWAY_PORT ?? "",
+        sandboxName: input.sandboxName,
+        options: input.options,
+        executionOptions,
+      }),
+    );
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
+  }
+  await rebuildSandbox(input.sandboxName, input.options, executionOptions);
 }
 
 void main().catch(() => {
