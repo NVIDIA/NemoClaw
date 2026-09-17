@@ -55,12 +55,20 @@ function agentSettings(source: VerifiedExportSource) {
 function exportAgent(
   source: VerifiedExportSource,
   providerName: string,
+  agent: Readonly<{
+    name: string;
+    primary: boolean;
+    tools?: Readonly<{ allow: readonly "read"[] }>;
+  }>,
 ): V1Alpha1Export["spec"]["sandboxes"][number]["agents"][number] {
+  const tools = agent.primary ? source.tools : agent.tools;
   return {
-    name: "primary",
-    ...(source.tools === undefined ? {} : { tools: source.tools }),
-    ...(source.webSearch === undefined ? {} : { integrationRefs: ["brave-search" as const] }),
-    ...(source.auth === undefined ? {} : { auth: { method: source.auth.method } }),
+    name: agent.name,
+    ...(tools === undefined ? {} : { tools }),
+    ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
+      ? { integrationRefs: ["brave-search" as const] }
+      : {}),
+    ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
       routes: [
         {
@@ -80,14 +88,16 @@ function exportAgents(
   source: VerifiedExportSource,
   providerName: string,
 ): V1Alpha1Export["spec"]["sandboxes"][number]["agents"] {
-  const primary = exportAgent(source, providerName);
+  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
   return [
     primary,
-    ...(source.additionalAgents ?? []).map((agent) => ({
-      name: agent.name,
-      tools: agent.tools,
-      inference: primary.inference,
-    })),
+    ...(source.additionalAgents ?? []).map((agent) =>
+      exportAgent(source, providerName, {
+        name: agent.name,
+        primary: false,
+        tools: agent.tools,
+      }),
+    ),
   ];
 }
 

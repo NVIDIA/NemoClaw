@@ -4,7 +4,7 @@
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateV1Alpha1Export as validateNemoClawConfig } from "../../config/v1alpha1-export";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import {
   getHermesDashboardRegistryFields,
   resolveHermesDashboardOnboardState,
@@ -59,7 +59,7 @@ describe("Hermes retained interface export", () => {
     const source = hermesInterfacesSnapshot();
     const exported = await exportSnapshots([source]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       kind: "hermes",
       interfaces: {
@@ -75,7 +75,7 @@ describe("Hermes retained interface export", () => {
   it("omits managed default leaves while preserving dashboard enablement (#11433)", async () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
       dashboard: { enabled: true },
     });
@@ -94,7 +94,7 @@ describe("Hermes retained interface export", () => {
   it("exports a published nondefault API allocation with the dashboard disabled (#11433)", async () => {
     const exported = await exportSnapshots([hermesSnapshot({ hermesApiPort: 8643 })]);
     expect(exported.outcome.ok).toBe(true);
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       interfaces: { api: { port: 8643 } },
     });

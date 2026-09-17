@@ -15,7 +15,7 @@ import {
   namedOpenShellGateway,
   cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
-import { validateV1Alpha1Export } from "../../../src/lib/config/v1alpha1-export.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
@@ -225,8 +225,8 @@ export async function verifyHermesConfigExportLive(
     return { checked: true, passed: false };
   }
 
-  const nemoclawDocument = validateV1Alpha1Export(YAML.parse(nemoclawRaw));
-  const nemohermesDocument = validateV1Alpha1Export(YAML.parse(nemohermesRaw));
+  const nemoclawDocument = asExportedConfig(YAML.parse(nemoclawRaw));
+  const nemohermesDocument = asExportedConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;

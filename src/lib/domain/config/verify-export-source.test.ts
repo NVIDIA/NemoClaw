@@ -28,10 +28,8 @@ import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import {
-  validateV1Alpha1Export as validateNemoClawConfig,
-  type V1Alpha1Export,
-} from "../../config/v1alpha1-export";
+import type { V1Alpha1Export } from "../../config/v1alpha1-export";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -222,7 +220,7 @@ describe("config export source verification (#10938)", () => {
       expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       expect(result.read).toHaveBeenCalledTimes(2);
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      const config = validateNemoClawConfig(YAML.parse(yaml));
+      const config = asExportedConfig(YAML.parse(yaml));
       const agent = primaryOpenClawAgent(config);
       expect(agent.inference.routes[0]!.overrides).toEqual({
         model: "gpt-5",
@@ -267,7 +265,7 @@ describe("config export source verification (#10938)", () => {
     ]);
     expect(explicit.outcome.ok).toBe(true);
     expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
-    const config = validateNemoClawConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
     expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
       model: "gpt-5",
     });
@@ -277,7 +275,7 @@ describe("config export source verification (#10938)", () => {
   it("retains an explicit zero heartbeat duration", async () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
-    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
     expect(primaryOpenClawAgent(config).execution).toEqual({ heartbeatEvery: "0m" });
   });
 
@@ -301,7 +299,7 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot(), changed, changed, changed]);
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
-    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
     expect(primaryOpenClawAgent(config).execution?.timeoutSeconds).toBe(900);
   });
 
@@ -315,7 +313,7 @@ describe("config export source verification (#10938)", () => {
     );
     const result = await exportSnapshots([observed]);
     expect(result.outcome.ok).toBe(true);
-    const route = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
+    const route = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
       .sandboxes[0]!.agents[0]!.inference.routes[0]!;
     expect(route.overrides).toEqual(
       reasoning === "true"
@@ -437,7 +435,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const config = asExportedConfig(YAML.parse(yaml));
     expect(config.spec.sandboxes[0]!.network).toMatchObject({
       proxy: { host: "proxy.internal", port: 3129 },
       policy: {
@@ -451,7 +449,7 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot()]);
     expect(result.outcome.ok).toBe(true);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toMatchObject({
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toMatchObject({
       policy: {
         explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
       },
@@ -473,7 +471,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
       host: "proxy.internal",
       port: 3129,
     });
@@ -622,7 +620,7 @@ describe("config export source verification (#10938)", () => {
       expect(result.read).toHaveBeenCalledTimes(2);
       expect(result.publish).not.toHaveBeenCalled();
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      const config = validateNemoClawConfig(YAML.parse(yaml));
+      const config = asExportedConfig(YAML.parse(yaml));
       expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
       const sandbox = config.spec.sandboxes[0]!;
       expect(sandbox.harness.kind).toBe("hermes");
@@ -692,7 +690,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const document = validateNemoClawConfig(YAML.parse(yaml));
+    const document = asExportedConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
       method: "api-key",
     });
@@ -1070,6 +1068,7 @@ describe("config export source verification (#10938)", () => {
 
   it.each([
     ["invalid name", 8080],
+    ["nemoclaw", 80],
     ["nemoclaw", 70_000],
     ["nemoclaw", 8080.5],
   ] as const)("rejects an invalid gateway binding", async (name, port) => {
@@ -1171,6 +1170,26 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
+  it("rejects a credential over mixed-case plaintext HTTP", () => {
+    const value = snapshot();
+    const plaintextEndpoint = "HTTP://api.example.com/v1";
+    const raw = snapshot({
+      registry: entry({ endpointUrl: plaintextEndpoint }),
+      inference: {
+        ...value.inference,
+        endpoint: plaintextEndpoint,
+        endpointEvidence: {
+          ...value.inference.endpointEvidence!,
+          endpoint: plaintextEndpoint,
+        },
+      },
+    });
+
+    expect(findings(verify(raw))).toContainEqual(
+      expect.objectContaining({ field: "spec.inferenceProviders[].credential" }),
+    );
+  });
+
   it("rejects credential-bearing policy without exposing its value", async () => {
     const canary = "credential-canary-value";
     const raw = snapshot({
@@ -1222,7 +1241,7 @@ describe("dashboard settings export", () => {
   it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
     expect(document.spec.sandboxes[0]!.agents[0]).toEqual({
       name: "primary",
@@ -1266,7 +1285,7 @@ describe("dashboard settings export", () => {
       const outcome = await exportSnapshots([observed]);
       expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       const raw = outcome.writeStdout.mock.calls[0]![0];
-      const document = validateNemoClawConfig(YAML.parse(raw));
+      const document = asExportedConfig(YAML.parse(raw));
       expect(document.spec.sandboxes[0]!.harness).toMatchObject({
         kind: "openclaw",
         interfaces: { dashboard },
@@ -1285,7 +1304,7 @@ describe("dashboard settings export", () => {
     });
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
@@ -1313,7 +1332,7 @@ describe("dashboard settings export", () => {
     });
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
       execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },

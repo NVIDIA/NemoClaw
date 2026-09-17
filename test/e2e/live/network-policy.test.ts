@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { validateV1Alpha1Export } from "../../../src/lib/config/v1alpha1-export.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -365,7 +365,7 @@ test(
     expect(exported.exitCode, text(exported)).toBe(0);
     const raw = fs.readFileSync(outputPath, "utf8");
     expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
-    const document = validateV1Alpha1Export(YAML.parse(raw));
+    const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
     const [primary] = exportedSandbox.agents;
     const primaryInference = JSON.stringify(primary?.inference);

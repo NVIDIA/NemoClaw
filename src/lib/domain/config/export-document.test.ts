@@ -138,6 +138,30 @@ describe("export config builder", () => {
     ).not.toHaveProperty("integrations");
   });
 
+  it("grants Brave only to the declared primary agent", () => {
+    const document = buildExportConfig(
+      {
+        ...source,
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+        },
+        additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
+      } as unknown as VerifiedExportSource,
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+
+    expect(document.spec.sandboxes[0]!.agents).toMatchObject([
+      { name: "primary", integrationRefs: ["brave-search"] },
+      { name: "researcher" },
+    ]);
+    expect(document.spec.sandboxes[0]!.agents[1]).not.toHaveProperty("integrationRefs");
+  });
+
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {
       documentName: alphaDocumentName,

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
-import { validateV1Alpha1Export } from "../../../src/lib/config/v1alpha1-export.ts";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -187,7 +187,7 @@ export function assertBraveExport(raw: string, credentialValues: readonly string
   for (const value of credentialValues) {
     expect(raw.includes(value), "Export must omit credential values").toBe(false);
   }
-  const document = validateV1Alpha1Export(YAML.parse(raw));
+  const document = asExportedConfig(YAML.parse(raw));
   const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
   expect(webSearch?.provider).toBe("brave");
   expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");

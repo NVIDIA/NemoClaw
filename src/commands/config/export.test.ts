@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   observeStableExportSource: vi.fn(),
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
-  validateV1Alpha1Export: vi.fn(),
   publishExportFile: vi.fn(),
 }));
 
@@ -20,7 +19,6 @@ vi.mock("../../lib/domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
 vi.mock("../../lib/config/v1alpha1-export", () => ({
-  validateV1Alpha1Export: mocks.validateV1Alpha1Export,
   isV1Alpha1ExportName: (value: unknown) =>
     typeof value === "string" && /^[a-z][a-z0-9-]{0,39}$/u.test(value),
 }));
@@ -53,7 +51,6 @@ describe("config export command", () => {
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
-    mocks.validateV1Alpha1Export.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest,

@@ -16,7 +16,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { validateV1Alpha1Export as validateNemoClawConfig } from "../../config/v1alpha1-export";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
@@ -96,7 +96,7 @@ describe("live export snapshot reader", () => {
     const { result, writeStdout, publish } = await exportLiveSource();
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
     const yaml = writeStdout.mock.calls[0]![0];
-    const document = validateNemoClawConfig(YAML.parse(yaml));
+    const document = asExportedConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]!.integrations?.["brave-search"]).toEqual({
       kind: "webSearch",
       provider: "brave",
@@ -476,7 +476,7 @@ describe("live export snapshot reader", () => {
     );
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
     const yaml = writeStdout.mock.calls[0]![0];
-    const document = validateNemoClawConfig(YAML.parse(yaml));
+    const document = asExportedConfig(YAML.parse(yaml));
     expect(document.spec.inferenceProviders).toEqual([
       {
         name: "hosted-nvidia-prod",
@@ -624,7 +624,7 @@ describe("live export snapshot reader", () => {
 
       expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
-      const document = validateNemoClawConfig(YAML.parse(yaml));
+      const document = asExportedConfig(YAML.parse(yaml));
       expect(document.spec.sandboxes[0]?.harness).toMatchObject({
         kind: "openclaw",
         observability: {
@@ -771,7 +771,7 @@ describe("live export snapshot reader", () => {
     const { result, writeStdout } = await exportLiveSource();
     expect(result.ok).toBe(true);
     const yaml = writeStdout.mock.calls[0]![0];
-    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const config = asExportedConfig(YAML.parse(yaml));
     const [primary, ...additional] = config.spec.sandboxes[0]!.agents;
     expect(primary!.name).toBe("primary");
     expect(additional).toEqual([
@@ -916,7 +916,7 @@ describe("dashboard export observation", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
-    const document = validateNemoClawConfig(YAML.parse(yaml));
+    const document = asExportedConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]?.harness).toMatchObject({
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },

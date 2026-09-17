@@ -933,7 +933,11 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
     );
   if (entry.gatewayName !== gateway.name || entry.gatewayPort !== gateway.port)
     findings.push(finding("spec.gateway", "drifted", "Registry and live gateway bindings differ."));
-  if (!isValidNemoClawLocalResourceName(gateway.name) || !isValidNemoClawPort(gateway.port)) {
+  if (
+    !isValidNemoClawLocalResourceName(gateway.name) ||
+    !isValidNemoClawPort(gateway.port) ||
+    gateway.port < 1024
+  ) {
     findings.push(
       finding(
         "spec.gateway",
@@ -1126,7 +1130,7 @@ function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportF
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
-  if (inference.credentialEnv !== null && inference.endpoint?.startsWith("http:"))
+  if (inference.credentialEnv !== null && inference.endpoint?.toLowerCase().startsWith("http:"))
     findings.push(
       finding(
         "spec.inferenceProviders[].credential",
