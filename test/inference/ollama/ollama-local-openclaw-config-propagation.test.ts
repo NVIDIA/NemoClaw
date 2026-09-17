@@ -13,6 +13,8 @@ import {
   buildManagedInferenceSafeguardCompaction,
 } from "../../../scripts/generate-openclaw-config.mts";
 import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch";
+import { mapManagedStartupProfileToAgentEnvironment } from "../../../src/lib/onboard/managed-startup/agent-environment";
+import { buildManagedStartupOnboardProfile } from "../../../src/lib/onboard/managed-startup/onboard-profile";
 
 const tmpRoots: string[] = [];
 
@@ -181,6 +183,7 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
       NEMOCLAW_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4",
       NEMOCLAW_PROVIDER_KEY: "inference",
       NEMOCLAW_UPSTREAM_PROVIDER: "vllm-local",
+      NEMOCLAW_SERVING_PRESET: "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
       NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/Qwen3.6-35B-A3B-NVFP4",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_API: "openai-completions",
@@ -202,13 +205,58 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     });
   });
 
+  it("carries the N1x preset through managed startup into generated config (#11805)", () => {
+    const built = buildManagedStartupOnboardProfile({
+      agentName: "openclaw",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: "inference/nvidia/Qwen3.6-35B-A3B-NVFP4",
+        compatibility: {},
+      },
+      chatUiUrl: "http://127.0.0.1:18789",
+      effectiveDashboardPort: 18_789,
+      manageDashboard: true,
+      dashboardBindAddress: undefined,
+      wslExposure: false,
+      hermesDashboardState: { config: null, enabled: false },
+      webSearch: null,
+      toolDisclosure: "progressive",
+      hermesToolGateways: [],
+      messagingPlan: null,
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+      environment: {
+        NEMOCLAW_CONTEXT_WINDOW: "32768",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_SERVING_PRESET: "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+      },
+      corporateCa: null,
+    });
+    const mapped = mapManagedStartupProfileToAgentEnvironment(built.profile);
+    const config = buildConfig(mapped.configurationEnvironment);
+
+    expect(mapped.configurationEnvironment.NEMOCLAW_SERVING_PRESET).toBe(
+      "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+    );
+    expect(config.agents.defaults.compaction).toMatchObject({
+      timeoutSeconds: 300,
+      reserveTokens: 4096,
+      reserveTokensFloor: 4096,
+    });
+  });
+
   it("keeps the standard safeguard for the same vLLM model with a larger window (#11805)", () => {
     expect(
       buildManagedInferenceSafeguardCompaction(
         "inference",
         "vllm-local",
         "https://inference.local/v1",
-        "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        undefined,
         262144,
         4096,
       ),

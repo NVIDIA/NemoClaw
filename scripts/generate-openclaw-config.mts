@@ -95,9 +95,7 @@ const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
 const SMALL_OLLAMA_CONTEXT_THRESHOLD =
   OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
-const LOCAL_VLLM_UPSTREAM_PROVIDER = "vllm-local";
-const N1X_MANAGED_VLLM_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4";
-const N1X_MANAGED_VLLM_CONTEXT_WINDOW = 32_768;
+const N1X_MANAGED_VLLM_SERVING_PRESET = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
 const N1X_COMPACTION_TIMEOUT_SECONDS = 300;
 const MANAGED_INFERENCE_PROVIDER_KEY = "inference";
 const MANAGED_INFERENCE_HOSTNAME = "inference.local";
@@ -791,7 +789,7 @@ export function buildManagedInferenceSafeguardCompaction(
   providerKey: string | undefined,
   upstreamProvider: string | undefined,
   inferenceBaseUrl: string,
-  model: string | undefined,
+  servingPreset: string | undefined,
   contextWindow: number,
   maxTokens: number,
 ): JsonObject | undefined {
@@ -801,10 +799,7 @@ export function buildManagedInferenceSafeguardCompaction(
   if ((upstreamProvider || "").trim() === LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
     return undefined;
   }
-  const isN1xManagedVllm =
-    (upstreamProvider || "").trim() === LOCAL_VLLM_UPSTREAM_PROVIDER &&
-    (model || "").trim() === N1X_MANAGED_VLLM_MODEL &&
-    contextWindow === N1X_MANAGED_VLLM_CONTEXT_WINDOW;
+  const isN1xManagedVllm = (servingPreset || "").trim() === N1X_MANAGED_VLLM_SERVING_PRESET;
   return {
     ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION,
     ...(isN1xManagedVllm
@@ -1102,7 +1097,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     providerKey,
     env.NEMOCLAW_UPSTREAM_PROVIDER,
     inferenceBaseUrl,
-    model,
+    env.NEMOCLAW_SERVING_PRESET,
     contextWindow,
     maxTokens,
   );
