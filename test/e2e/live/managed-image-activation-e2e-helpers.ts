@@ -563,6 +563,29 @@ async function collectOnboardFailureDockerDiagnostics(
           `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
           summarizeOnboardFailureStartupSignals(output),
         );
+        const copyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-log-"));
+        const copiedLog = path.join(copyRoot, "nemoclaw-start.log");
+        try {
+          const copy = await host.command(
+            "docker",
+            ["cp", `${containerId}:/tmp/nemoclaw-start.log`, copiedLog],
+            {
+              artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-log-copy`,
+              env,
+              redactionValues: [API_KEY],
+              timeoutMs: 30_000,
+            },
+          );
+          if (copy.exitCode !== 0) return;
+          const stat = fs.lstatSync(copiedLog);
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
+          await artifacts.writeText(
+            `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
+            fs.readFileSync(copiedLog, "utf8"),
+          );
+        } finally {
+          fs.rmSync(copyRoot, { recursive: true, force: true });
+        }
       }),
     );
   } catch {
