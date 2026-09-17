@@ -1056,6 +1056,7 @@ usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
@@ -1069,6 +1070,7 @@ usage() {
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
+  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
@@ -2434,6 +2436,11 @@ preflight_nemoclaw_acp_shim() {
   fi
   is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
   is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
+  if truthy_env "${FORCE_FRESH_INSTALL:-}" && [[ "$cli_path" != "$shim_path" ]]; then
+    _NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM=true
+    warn "Leaving unrelated $shim_path unchanged; the force-fresh install will not publish a nemoclaw-acp shim there."
+    return 0
+  fi
   error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
 }
 
@@ -2523,6 +2530,11 @@ ensure_cli_shim() {
   local replace_identity=""
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+
+  if [[ "$cli_bin" == "nemoclaw-acp" ]] \
+    && [[ "${_NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM:-false}" == true ]]; then
+    return 0
+  fi
 
   if [[ -z "$npm_bin" || ! -x "$npm_bin/$cli_bin" ]]; then
     return 1
@@ -3461,6 +3473,109 @@ run_preupgrade_backup() {
   fi
 
   NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
+}
+
+force_fresh_install_has_existing_state() {
+  if [[ -e "$(nemoclaw_state_root)" ]] \
+    || [[ -e "${HOME}/.config/nemoclaw" ]] \
+    || [[ -e "${HOME}/.config/openshell" ]] \
+    || [[ -e "${HOME}/.local/state/nemoclaw" ]] \
+    || [[ -e "${HOME}/.local/bin/nemoclaw" ]] \
+    || [[ -e "${HOME}/.local/bin/openshell" ]] \
+    || command_exists nemoclaw \
+    || command_exists openshell; then
+    return 0
+  fi
+  command_exists brew \
+    && brew list --formula nvidia/openshell/openshell >/dev/null 2>&1
+}
+
+force_fresh_install_source_root() {
+  local source_root state_root state_parent
+  source_root="$(cd "${NEMOCLAW_SOURCE_ROOT}" && pwd -P)" \
+    || error "Could not resolve the staged source for the force-fresh install."
+  state_root="$(nemoclaw_state_root)" \
+    || error "Could not resolve the NemoClaw state root for the force-fresh install."
+  if [[ -d "$state_root" ]]; then
+    state_root="$(cd "$state_root" && pwd -P)" \
+      || error "Could not resolve the existing NemoClaw state root."
+  else
+    state_parent="$(dirname "$state_root")"
+    state_root="$(cd "$state_parent" && pwd -P)/$(basename "$state_root")" \
+      || error "Could not resolve the NemoClaw state parent directory."
+  fi
+  case "$source_root" in
+    "$state_root" | "$state_root"/*)
+      error "The force-fresh installer must run from the versioned bootstrap checkout outside ${state_root}. Use the public curl installer with --force-fresh-install."
+      ;;
+  esac
+  [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] \
+    || error "The force-fresh installer requires a staged NemoClaw Git checkout."
+  printf '%s' "$source_root"
+}
+
+prepare_force_fresh_uninstaller() {
+  local source_root="$1"
+  if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+    spin "Preparing OpenClaw package for force-fresh cleanup" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$source_root" \
+      || warn "Pre-extraction failed — npm install may fail if the OpenClaw tarball is broken"
+  fi
+  spin "Preparing the force-fresh uninstaller" bash -c \
+    "cd \"$source_root\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check && npm run --if-present build:cli"
+  [[ -s "${source_root}/dist/lib/actions/uninstall/run-plan.js" ]] \
+    || error "The staged force-fresh uninstaller did not build."
+}
+
+run_force_fresh_uninstaller() {
+  local source_root="$1" node_bin
+  node_bin="$(command -v node 2>/dev/null || true)"
+  [[ -n "$node_bin" && -x "$node_bin" ]] \
+    || error "Node.js is required for the force-fresh uninstaller."
+  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
+    "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
+    --yes --destroy-user-data --all-gateway-ports \
+    || error "Force-fresh cleanup did not complete. Rerun the same force-fresh installer command."
+}
+
+remove_macos_openshell_for_force_fresh_install() {
+  local formula="nvidia/openshell/openshell" openshell_path=""
+  openshell_path="$(command -v openshell 2>/dev/null || true)"
+  if command_exists brew && brew list --formula "$formula" >/dev/null 2>&1; then
+    brew services stop "$formula" >/dev/null 2>&1 || true
+    brew uninstall --force "$formula" \
+      || error "Homebrew could not remove OpenShell during the force-fresh install. Rerun the same command after Homebrew is healthy."
+  elif [[ "$openshell_path" == /opt/homebrew/* || "$openshell_path" == /usr/local/* ]]; then
+    error "The force-fresh installer found a system OpenShell binary that Homebrew did not identify as ${formula}. Remove that installation explicitly, then rerun."
+  fi
+  local binary
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    rm -f -- "${HOME}/.local/bin/${binary}" \
+      || error "Could not remove ${HOME}/.local/bin/${binary} during the force-fresh install."
+  done
+  hash -r 2>/dev/null || true
+}
+
+run_force_fresh_install_reset() {
+  local source_root
+  warn "Force-fresh install selected. NemoClaw will destroy all NemoClaw/OpenShell sandboxes, gateways, credentials, configuration, and recovery state on this host. Model caches are kept."
+  if force_fresh_install_has_existing_state; then
+    source_root="$(force_fresh_install_source_root)"
+    prepare_force_fresh_uninstaller "$source_root"
+    run_force_fresh_uninstaller "$source_root"
+    remove_macos_openshell_for_force_fresh_install
+  else
+    info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install."
+  fi
+  FRESH=1
+  export NEMOCLAW_FRESH=1
+  export NEMOCLAW_REINSTALL_CLI=1
+  _PREEXISTING_SANDBOX_COUNT=0
+}
+
+validate_force_fresh_install_platform() {
+  truthy_env "${FORCE_FRESH_INSTALL:-}" || return 0
+  [[ "$(uname -s)" == "Darwin" ]] \
+    || error "--force-fresh-install currently supports macOS only."
 }
 
 # Return nonzero when OpenShell is absent or its version command fails.
@@ -7032,6 +7147,9 @@ install_nemoclaw_before_onboarding() {
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   prepare_installer_node_runtime
+  if truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    run_force_fresh_install_reset
+  fi
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"
@@ -7040,7 +7158,9 @@ install_nemoclaw_before_onboarding() {
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
   preflight_nemoclaw_acp_shim
-  preinstall_backup_and_retire_legacy_gateway
+  if ! truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    preinstall_backup_and_retire_legacy_gateway
+  fi
   install_nemoclaw
   verify_nemoclaw
   require_reportable_openshell_version
@@ -7066,6 +7186,7 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   DEFER_ONBOARDING=""
   FRESH=""
+  FORCE_FRESH_INSTALL=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
   LOCAL_MODEL_RUNTIME=""
@@ -7085,6 +7206,7 @@ main() {
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --defer-onboarding) DEFER_ONBOARDING=1 ;;
       --fresh) FRESH=1 ;;
+      --force-fresh-install) FORCE_FRESH_INSTALL=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --local-model-runtime=*)
@@ -7129,6 +7251,12 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   DEFER_ONBOARDING="${DEFER_ONBOARDING:-${NEMOCLAW_DEFER_ONBOARDING:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+  FORCE_FRESH_INSTALL="${FORCE_FRESH_INSTALL:-${NEMOCLAW_FORCE_FRESH_INSTALL:-}}"
+  if truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    validate_force_fresh_install_platform
+    FRESH=1
+    export FORCE_FRESH_INSTALL NEMOCLAW_FORCE_FRESH_INSTALL=1
+  fi
   if [ -n "${LOCAL_MODEL_RUNTIME:-}" ]; then
     export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
     export NEMOCLAW_LOCAL_MODEL_RUNTIME="$LOCAL_MODEL_RUNTIME"
