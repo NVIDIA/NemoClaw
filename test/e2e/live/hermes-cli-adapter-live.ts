@@ -227,9 +227,20 @@ export async function assertHermesCliAdapterLiveContract({
   ).toEqual([...sessionsBeforeGuardedUsage].sort());
   const guardedUsageFile = await sandbox.execShell(
     sandboxName,
-    trustedSandboxShellScript(`test ! -e ${shellQuote(usageFilePath)}`),
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        `usage_file=${shellQuote(usageFilePath)}`,
+        `expected=${shellQuote(`session not found: ${seedSessionId}`)}`,
+        'test -f "$usage_file"',
+        `jq -e --arg expected "$expected" ${shellQuote(
+          ".failed == true and .failure == $expected and .estimated_cost_usd == null and .input_tokens == null and .output_tokens == null",
+        )} "$usage_file" >/dev/null`,
+        'rm -f -- "$usage_file"',
+      ].join("; "),
+    ),
     {
-      artifactName: "phase-4-cli-adapter-guarded-usage-file-absence",
+      artifactName: "phase-4-cli-adapter-guarded-usage-file-failure-report",
       env,
       timeoutMs: 30_000,
     },
