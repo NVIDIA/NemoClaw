@@ -22,10 +22,10 @@ const HERMES_MANIFEST = path.join(
   "hermes",
   "manifest.yaml",
 );
-const TARGET_TAG = "v2026.8.27";
-const CURRENT_TARBALL_SHA256 = "e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7";
+const TARGET_TAG = "v2026.9.14";
+const CURRENT_TARBALL_SHA256 = "47df72ebd3f9c96d806a94541163f7fe7d7ce5b84f85c1d3787e6dfeea1d7834";
 const CURRENT_NPM_INTEGRITY =
-  "sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==";
+  "sha512-LvPt2/1z6hm4pTRJu34F6uAkBVSlSt94QeZp8fMBLFqASU9/wv7iMODSGMzF1WmrpNENXYGMnWN8s9hi/EUM5Q==";
 
 const CURRENT_INSTALLED_BASE = [
   "# Calver tag v2026.6.5 = Hermes Agent v0.16.0.",
@@ -98,7 +98,7 @@ printf 'fake archive' > "$output"
     );
     writeExecutable(
       path.join(fakeBin, "tar"),
-      "#!/usr/bin/env bash\nprintf 'version = \"0.20.6\"\\n'\n",
+      "#!/usr/bin/env bash\nprintf 'version = \"0.21.3\"\\n'\n",
     );
     writeExecutable(
       path.join(fakeBin, "sha256sum"),
@@ -124,7 +124,7 @@ esac
 set -euo pipefail
 printf '%s|%s\\n' "\${NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF:-}" "$*" >> "$FAKE_NEMOHERMES_LOG"
 if [[ "$*" == "hermes exec -- hermes --version" ]]; then
-  printf '0.20.6\\n'
+  printf '0.21.3\\n'
 fi
 `,
     );
@@ -148,7 +148,7 @@ fi
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
       expect(fs.readFileSync(dockerLog, "utf8")).toContain(`tag ${baseRef} ${pinnedRef}`);
       expect(fs.readFileSync(nemohermesLog, "utf8")).toContain(`${pinnedRef}|hermes rebuild`);
-      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.20.6");
+      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.21.3");
       // #9979: the curl fetch must fail closed on a protocol-downgrade redirect.
       const curlArgv = fs.readFileSync(curlLog, "utf8").trim();
       const curlCallCount = curlArgv.split("\n").length;
