@@ -3125,7 +3125,7 @@ done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"enable_thinking":false'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"reasoning_effort":"none"'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
