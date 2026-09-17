@@ -2971,10 +2971,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                       );
                     }
                     console.log("  ✓ Committed managed startup shared state");
-                    managedWorkloadOnboard.releaseDockerManagedStartupHold({
-                      transaction: managedStartupTransaction,
-                      profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
-                    });
+                    try {
+                      managedWorkloadOnboard.releaseDockerManagedStartupHold({
+                        transaction: managedStartupTransaction,
+                        profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+                      });
+                    } catch (error) {
+                      console.error(
+                        `  Managed startup hold release failed after commit: ${
+                          error instanceof Error ? error.message : "unknown release failure"
+                        }`,
+                      );
+                      throw error;
+                    }
                     console.log("  ✓ Released the managed startup hold");
                   }
                   managedBootstrapCreateFinished = true;
