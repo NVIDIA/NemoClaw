@@ -1030,9 +1030,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (
     requireConfigExportEvidence.if !== "${{ success() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
-    !String(requireConfigExportEvidence.run ?? "").includes(
-      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
-    ) ||
+    String(requireConfigExportEvidence.run ?? "").trim() !==
+      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+    (requireConfigExportEvidence["continue-on-error"] !== undefined &&
+      requireConfigExportEvidence["continue-on-error"] !== false) ||
     liveSteps.indexOf(requireConfigExportEvidence) <=
       liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
     liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)

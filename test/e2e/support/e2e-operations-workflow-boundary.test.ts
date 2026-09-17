@@ -70,17 +70,38 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload automatic config export evidence",
     );
   });
-  it("fails a successful live run when automatic config export evidence is missing (#11485)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const requirement = workflow.jobs.live.steps!.find(
-      (step) => step.name === "Require automatic config export evidence",
-    )!;
-    requirement.run = "true";
+  it.each([
+    { mode: "removed check", run: "true", continueOnError: false },
+    {
+      mode: "ignored shell failure",
+      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,
+      continueOnError: false,
+    },
+    {
+      mode: "printed check",
+      run: `echo 'test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"'`,
+      continueOnError: false,
+    },
+    {
+      mode: "ignored step failure",
+      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+      continueOnError: true,
+    },
+  ])(
+    "rejects $mode in the automatic config export evidence requirement (#11485)",
+    ({ run, continueOnError }) => {
+      const workflow = readE2eOperationsWorkflow();
+      const requirement = workflow.jobs.live.steps!.find(
+        (step) => step.name === "Require automatic config export evidence",
+      )!;
+      requirement.run = run;
+      requirement["continue-on-error"] = continueOnError;
 
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "live E2E must require automatic config export evidence before upload",
-    );
-  });
+      expect(validateE2eOperationsWorkflow(workflow)).toContain(
+        "live E2E must require automatic config export evidence before upload",
+      );
+    },
+  );
   it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];

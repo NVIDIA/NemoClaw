@@ -61,6 +61,8 @@ Live execution happens through shared fixtures:
 
   The missing-custom-presets target fails after creating its sandbox. It must
   validate that retained sandbox and export its configuration with `required`.
+  The onboarding fixture still requires the missing-presets failure. Export
+  validation checks the retained runtime configuration, not onboarding completion.
 
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
