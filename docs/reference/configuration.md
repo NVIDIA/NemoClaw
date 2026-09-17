@@ -83,7 +83,7 @@ Paths:
 
 ## AgentExecution
 
-OpenClaw execution defaults shared by the sandbox through its harness configuration.
+Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -96,7 +96,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `heartbeatEvery` | string | No | — | Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session. Constraints: pattern `^[0-9]+[smh]$(?![\s\S])`; maximum characters 256. |
-| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
+| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
 
 ## AgentInterfaces
 
@@ -954,7 +954,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `contextWindow` | integer | No | — | Model context capacity in tokens. Does not resize the inference server. Constraints: minimum 1; maximum 4194304. |
-| `maxTokens` | integer | No | — | Maximum output tokens advertised to OpenClaw. Constraints: minimum 1; maximum 1000000000. |
+| `maxTokens` | integer | No | — | Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent. Constraints: minimum 1; maximum 1000000000. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
 | `reasoning` | boolean | No | — | Whether the model supports reasoning. |

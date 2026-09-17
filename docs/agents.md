@@ -163,7 +163,7 @@ execution:
   heartbeatEvery: 30m
 ```
 
-`timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
+For OpenClaw, `timeoutSeconds` sets the native agent-turn and provider-request budgets and defaults to 600 seconds when omitted.
 Fabric's outer deadline includes time for the gateway response and cleanup.
 Startup, readiness, and explicit inference probes retain [separate budgets](inference.md#understand-timeout-budgets).
 
@@ -174,7 +174,8 @@ See the [execution field reference](reference/configuration.md#agentexecution) f
 
 Execution settings apply to the shared OpenClaw gateway defaults.
 Select these settings once on the sandbox; use `harnessRef` to reuse a named configuration.
-Other harnesses and empty `execution` objects are rejected.
+Other harnesses accept `execution.timeoutSeconds` as the Fabric invocation timeout, defaulting to 300 seconds; they reject `heartbeatEvery`.
+Empty `execution` objects are rejected.
 Export preserves explicit settings and leaves omitted fields absent.
 
 Build the updated image using the [runtime build procedure](#runtime-lifecycle) and use its immutable digest in a fresh deployment.

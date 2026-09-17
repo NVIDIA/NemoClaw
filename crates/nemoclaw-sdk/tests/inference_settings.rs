@@ -150,3 +150,20 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
         );
     }
 }
+
+#[test]
+fn completion_adapters_accept_output_limits_without_openclaw_only_tuning() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for harness in ["deepagents", "mini-swe-agent", "remote-agent"] {
+        let mut v = input(harness);
+        v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["maxTokens"] =
+            json!(128);
+        let doc = parse(&v).unwrap();
+        assert!(schema.is_valid(&v), "{harness}");
+        assert_eq!(parse(&serde_json::to_value(&doc).unwrap()).unwrap(), doc);
+        v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["reasoningEffort"] =
+            json!("high");
+        assert!(parse(&v).is_err());
+        assert!(!schema.is_valid(&v));
+    }
+}

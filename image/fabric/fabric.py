@@ -15,15 +15,15 @@ REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
-def openclaw_execution(inference=None):
+def execution_settings(inference=None, harness="openclaw"):
     execution = (inference or {}).get("execution", {})
     if (
         not isinstance(execution, dict)
         or set(execution) - {"timeoutSeconds", "heartbeatEvery"}
         or (inference is not None and "execution" in inference and not execution)
     ):
-        raise ValueError("invalid OpenClaw execution settings")
-    seconds = execution.get("timeoutSeconds", 600)
+        raise ValueError("invalid harness execution settings")
+    seconds = execution.get("timeoutSeconds", 600 if harness == "openclaw" else 300)
     heartbeat = execution.get("heartbeatEvery")
     if (
         type(seconds) is not int
@@ -31,17 +31,22 @@ def openclaw_execution(inference=None):
         or (
             "heartbeatEvery" in execution
             and (
-                not isinstance(heartbeat, str)
+                harness != "openclaw"
+                or not isinstance(heartbeat, str)
                 or len(heartbeat) > 256
                 or not re.fullmatch(r"[0-9]+[smh]", heartbeat)
             )
         )
     ):
-        raise ValueError("invalid OpenClaw execution settings")
+        raise ValueError("invalid harness execution settings")
     return {
         "timeoutSeconds": seconds,
         **({"heartbeatEvery": heartbeat} if heartbeat is not None else {}),
     }
+
+
+def openclaw_execution(inference=None):
+    return execution_settings(inference)
 
 
 def hermes_relay_enabled(inference=None):
@@ -234,9 +239,8 @@ def configuration(name, harness="deepagents", model=None, inference=None):
                 if harness in ("deepagents", "claude", "mini-swe-agent") or relay
                 else {}
             ),
-            "timeout_seconds": openclaw_execution(inference)["timeoutSeconds"] + 60
-            if harness == "openclaw"
-            else 300,
+            "timeout_seconds": execution_settings(inference, harness)["timeoutSeconds"]
+            + (60 if harness == "openclaw" else 0),
             "artifacts": "/sandbox/artifacts",
         },
         **(relay_configuration(name) if relay else {}),
@@ -244,6 +248,10 @@ def configuration(name, harness="deepagents", model=None, inference=None):
 
     if inference is not None:
         api = inference["api"]
+        if harness in ("deepagents", "mini-swe-agent", "remote-agent"):
+            limit = inference.get("tuning", {}).get("maxTokens")
+            if limit is not None:
+                config["models"]["default"]["max_tokens"] = limit
         if harness == "openclaw":
             config["harness"]["settings"]["inference"] = inference
         elif harness == "hermes":

@@ -6,6 +6,15 @@ from fabric import configuration
 
 
 class InferenceConfiguration(unittest.TestCase):
+    def test_completion_adapters_receive_output_limit(self):
+        for harness in ("deepagents", "mini-swe-agent", "remote-agent"):
+            config = configuration(
+                "main",
+                harness,
+                inference={"api": "openai-completions", "tuning": {"maxTokens": 128}},
+            )
+            self.assertEqual(config["models"]["default"]["max_tokens"], 128)
+
     def test_remote_agent_endpoint_is_not_an_unsupported_model_setting(self):
         connection = {
             "provider": "openai",

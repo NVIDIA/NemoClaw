@@ -3,11 +3,11 @@
 use super::ConfigError;
 use serde::{Deserialize, Serialize};
 
-/// OpenClaw execution defaults shared by the sandbox through its harness configuration.
+/// Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentExecution {
-    /// Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets.
+    /// Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 1000000000))]
     pub timeout_seconds: Option<u32>,
@@ -23,7 +23,7 @@ pub struct AgentExecution {
 }
 impl AgentExecution {
     pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
-        if harness != "openclaw"
+        if (harness != "openclaw" && self.heartbeat_every.is_some())
             || (self.timeout_seconds.is_none() && self.heartbeat_every.is_none())
             || self
                 .timeout_seconds
@@ -38,7 +38,7 @@ impl AgentExecution {
             })
         {
             return Err(ConfigError::new(
-                "execution requires OpenClaw, a positive timeout or a heartbeat duration ending in s, m, or h",
+                "execution requires a positive timeout; heartbeat requires OpenClaw and a duration ending in s, m, or h",
             ));
         }
         Ok(())

@@ -25,6 +25,15 @@ class ExecutionConfiguration(unittest.TestCase):
         self.assertEqual(configuration("main", "openclaw")["runtime"]["timeout_seconds"], 660)
         self.assertEqual(configuration("main", "deepagents")["runtime"]["timeout_seconds"], 300)
 
+    def test_other_harnesses_receive_fabric_timeout_without_heartbeat(self):
+        for harness in ("deepagents", "hermes", "pi", "claude", "codex"):
+            options = {"api": "openai-completions", "execution": {"timeoutSeconds": 45}}
+            config = configuration("main", harness, {"model": "custom"}, inference=options)
+            self.assertEqual(config["runtime"]["timeout_seconds"], 45)
+            options["execution"]["heartbeatEvery"] = "1m"
+            with self.assertRaises(ValueError):
+                configuration("main", harness, {"model": "custom"}, inference=options)
+
     def test_execution_and_default_drift_never_overwrite_native_state(self):
         for execution in [
             None,

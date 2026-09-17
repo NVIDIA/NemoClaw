@@ -90,7 +90,7 @@
     },
     "AgentExecution": {
       "additionalProperties": false,
-      "description": "OpenClaw execution defaults shared by the sandbox through its harness configuration.",
+      "description": "Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.",
       "minProperties": 1,
       "properties": {
         "heartbeatEvery": {
@@ -100,7 +100,7 @@
           "type": "string"
         },
         "timeoutSeconds": {
-          "description": "Agent-turn timeout in seconds. Omission selects 600; readiness and health checks use separate budgets.",
+          "description": "Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets.",
           "format": "uint32",
           "maximum": 1000000000,
           "minimum": 1,
@@ -698,6 +698,13 @@
         },
         {
           "if": {
+            "properties": {
+              "execution": {
+                "required": [
+                  "heartbeatEvery"
+                ]
+              }
+            },
             "required": [
               "execution"
             ]
@@ -1784,7 +1791,7 @@
           "type": "integer"
         },
         "maxTokens": {
-          "description": "Maximum output tokens advertised to OpenClaw.",
+          "description": "Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent.",
           "format": "uint32",
           "maximum": 1000000000,
           "minimum": 1,
@@ -4089,17 +4096,95 @@
                                                 },
                                                 {
                                                   "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
                                                     "reasoning"
                                                   ]
                                                 },
                                                 {
                                                   "required": [
                                                     "reasoningEffort"
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "properties": {
+                              "kind": {
+                                "not": {
+                                  "enum": [
+                                    "openclaw",
+                                    "deepagents",
+                                    "mini-swe-agent",
+                                    "remote-agent"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sandboxes"
+                  ]
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "agents": {
+                            "items": {
+                              "properties": {
+                                "inference": {
+                                  "properties": {
+                                    "routes": {
+                                      "items": {
+                                        "properties": {
+                                          "overrides": {
+                                            "not": {
+                                              "anyOf": [
+                                                {
+                                                  "required": [
+                                                    "maxTokens"
                                                   ]
                                                 }
                                               ]
@@ -5144,17 +5229,95 @@
                                                 },
                                                 {
                                                   "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
                                                     "reasoning"
                                                   ]
                                                 },
                                                 {
                                                   "required": [
                                                     "reasoningEffort"
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "properties": {
+                              "kind": {
+                                "not": {
+                                  "enum": [
+                                    "openclaw",
+                                    "deepagents",
+                                    "mini-swe-agent",
+                                    "remote-agent"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sandboxes"
+                  ]
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "agents": {
+                            "items": {
+                              "properties": {
+                                "inference": {
+                                  "properties": {
+                                    "routes": {
+                                      "items": {
+                                        "properties": {
+                                          "overrides": {
+                                            "not": {
+                                              "anyOf": [
+                                                {
+                                                  "required": [
+                                                    "maxTokens"
                                                   ]
                                                 }
                                               ]
@@ -6351,17 +6514,95 @@
                                                 },
                                                 {
                                                   "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
                                                     "reasoning"
                                                   ]
                                                 },
                                                 {
                                                   "required": [
                                                     "reasoningEffort"
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "harness": {
+                            "properties": {
+                              "kind": {
+                                "not": {
+                                  "enum": [
+                                    "openclaw",
+                                    "deepagents",
+                                    "mini-swe-agent",
+                                    "remote-agent"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "harness"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sandboxes"
+                  ]
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "sandboxes": {
+                      "items": {
+                        "properties": {
+                          "agents": {
+                            "items": {
+                              "properties": {
+                                "inference": {
+                                  "properties": {
+                                    "routes": {
+                                      "items": {
+                                        "properties": {
+                                          "overrides": {
+                                            "not": {
+                                              "anyOf": [
+                                                {
+                                                  "required": [
+                                                    "maxTokens"
                                                   ]
                                                 }
                                               ]
