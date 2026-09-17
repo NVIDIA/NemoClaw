@@ -41,10 +41,7 @@ type ProviderManagedStartupRuntime = Readonly<{
 
 function requireRuntimeProvider(bundle: RuntimeProviderBundle): {
   readonly control: RuntimeProviderPrivilegedSandboxControl;
-  readonly capture: (
-    args: readonly string[],
-    timeoutMs?: number,
-  ) => RuntimeProviderCommandCapture;
+  readonly capture: (args: readonly string[], timeoutMs?: number) => RuntimeProviderCommandCapture;
 } {
   if (
     (bundle.identity.id !== "docker" && bundle.identity.id !== "podman") ||
@@ -90,7 +87,10 @@ function inspectExactCreatedRuntime(input: {
     sandbox,
     sandboxName: input.sandboxName,
   });
-  const inspected = runtime.capture(["inspect", "--type", "container", target.resourceHandle], 30_000);
+  const inspected = runtime.capture(
+    ["inspect", "--type", "container", target.resourceHandle],
+    30_000,
+  );
   if (inspected.status !== 0 || inspected.error) {
     throw new Error("Could not inspect the exact managed-startup container.");
   }
@@ -109,7 +109,9 @@ function inspectExactCreatedRuntime(input: {
     Config?: { Labels?: Record<string, string> };
     State?: { Running?: boolean; Paused?: boolean; Restarting?: boolean; Dead?: boolean };
   };
-  const containerId = String(row.Id ?? "").toLowerCase().replace(/^sha256:/u, "");
+  const containerId = String(row.Id ?? "")
+    .toLowerCase()
+    .replace(/^sha256:/u, "");
   const image = String(row.Image ?? "").toLowerCase();
   const providerId = input.bundle.identity.id as "docker" | "podman";
   const labels = row.Config?.Labels ?? {};
@@ -130,7 +132,9 @@ function inspectExactCreatedRuntime(input: {
     row.State.Restarting === true ||
     row.State.Dead === true
   ) {
-    throw new Error("OpenShell sandbox identity did not select one exact managed-startup container.");
+    throw new Error(
+      "OpenShell sandbox identity did not select one exact managed-startup container.",
+    );
   }
   return {
     bundle: input.bundle,
@@ -236,8 +240,9 @@ export function applyProviderManagedStartupRootRequest(input: {
       lastFailure ? `: ${lastFailure}` : ""
     }`,
   );
-  (error as Error & { managedStartupTransaction?: ProviderManagedStartupTransaction }).managedStartupTransaction =
-    runtime.transaction;
+  (
+    error as Error & { managedStartupTransaction?: ProviderManagedStartupTransaction }
+  ).managedStartupTransaction = runtime.transaction;
   throw error;
 }
 
