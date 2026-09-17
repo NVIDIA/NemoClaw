@@ -16,7 +16,7 @@ license: Apache-2.0
 homepage: "https://openclaw.ai"
 
 # ── Binary & process ────────────────────────────────────────────
-install_method: npm # npm install -g openclaw@<version>
+install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
 expected_version: "2026.9.1"
@@ -116,7 +116,7 @@ web_auth_method: device_pairing
 # ── Inference ───────────────────────────────────────────────────
 inference:
   provider_type: gateway_managed
-  proxy_support: explicit # configured in openclaw.json providers block
+  proxy_support: explicit  # configured in openclaw.json providers block
 
 # ── MCP server support ───────────────────────────────────────────
 mcp:

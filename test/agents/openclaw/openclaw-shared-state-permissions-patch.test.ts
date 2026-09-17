@@ -917,16 +917,16 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     const ambiguous = makeFixture(2, 1, 1);
     try {
       expect(() => patchOpenClawSharedStatePermissions(ambiguous.dist)).toThrow("found 2");
-      for (const file of [
-        ...ambiguous.stateFiles,
-        ...ambiguous.agentFiles,
-        ...ambiguous.secretFiles,
-        ...ambiguous.migrationFiles,
-        ...ambiguous.fileStoreFiles,
-        ...ambiguous.modelsFiles,
-      ]) {
-        expect(fs.readFileSync(file, "utf8")).not.toContain("nemoclaw: group-shared");
-      }
+      expect(
+        [
+          ...ambiguous.stateFiles,
+          ...ambiguous.agentFiles,
+          ...ambiguous.secretFiles,
+          ...ambiguous.migrationFiles,
+          ...ambiguous.fileStoreFiles,
+          ...ambiguous.modelsFiles,
+        ].every((file) => !fs.readFileSync(file, "utf8").includes("nemoclaw: group-shared")),
+      ).toBe(true);
     } finally {
       fs.rmSync(ambiguous.root, { recursive: true, force: true });
     }
@@ -936,15 +936,15 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(() => patchOpenClawSharedStatePermissions(missingMigration.dist)).toThrow(
         "Expected exactly one OpenClaw state-migration target",
       );
-      for (const file of [
-        ...missingMigration.stateFiles,
-        ...missingMigration.agentFiles,
-        ...missingMigration.secretFiles,
-        ...missingMigration.fileStoreFiles,
-        ...missingMigration.modelsFiles,
-      ]) {
-        expect(fs.readFileSync(file, "utf8")).not.toContain("nemoclaw: group-shared");
-      }
+      expect(
+        [
+          ...missingMigration.stateFiles,
+          ...missingMigration.agentFiles,
+          ...missingMigration.secretFiles,
+          ...missingMigration.fileStoreFiles,
+          ...missingMigration.modelsFiles,
+        ].every((file) => !fs.readFileSync(file, "utf8").includes("nemoclaw: group-shared")),
+      ).toBe(true);
     } finally {
       fs.rmSync(missingMigration.root, { recursive: true, force: true });
     }
@@ -954,16 +954,16 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(() => patchOpenClawSharedStatePermissions(ambiguousMigration.dist)).toThrow(
         "Expected exactly one OpenClaw state-migration target",
       );
-      for (const file of [
-        ...ambiguousMigration.stateFiles,
-        ...ambiguousMigration.agentFiles,
-        ...ambiguousMigration.secretFiles,
-        ...ambiguousMigration.migrationFiles,
-        ...ambiguousMigration.fileStoreFiles,
-        ...ambiguousMigration.modelsFiles,
-      ]) {
-        expect(fs.readFileSync(file, "utf8")).not.toContain("nemoclaw:");
-      }
+      expect(
+        [
+          ...ambiguousMigration.stateFiles,
+          ...ambiguousMigration.agentFiles,
+          ...ambiguousMigration.secretFiles,
+          ...ambiguousMigration.migrationFiles,
+          ...ambiguousMigration.fileStoreFiles,
+          ...ambiguousMigration.modelsFiles,
+        ].every((file) => !fs.readFileSync(file, "utf8").includes("nemoclaw:")),
+      ).toBe(true);
     } finally {
       fs.rmSync(ambiguousMigration.root, { recursive: true, force: true });
     }
@@ -982,16 +982,16 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(() => patchOpenClawSharedStatePermissions(ambiguousModels.dist)).toThrow(
         "Expected exactly one OpenClaw models-config target",
       );
-      for (const file of [
-        ...ambiguousModels.stateFiles,
-        ...ambiguousModels.agentFiles,
-        ...ambiguousModels.secretFiles,
-        ...ambiguousModels.migrationFiles,
-        ...ambiguousModels.fileStoreFiles,
-        ...ambiguousModels.modelsFiles,
-      ]) {
-        expect(fs.readFileSync(file, "utf8")).not.toContain("nemoclaw:");
-      }
+      expect(
+        [
+          ...ambiguousModels.stateFiles,
+          ...ambiguousModels.agentFiles,
+          ...ambiguousModels.secretFiles,
+          ...ambiguousModels.migrationFiles,
+          ...ambiguousModels.fileStoreFiles,
+          ...ambiguousModels.modelsFiles,
+        ].every((file) => !fs.readFileSync(file, "utf8").includes("nemoclaw:")),
+      ).toBe(true);
     } finally {
       fs.rmSync(ambiguousModels.root, { recursive: true, force: true });
     }

@@ -13,7 +13,7 @@ license: MIT
 homepage: "https://github.com/NousResearch/hermes-agent"
 
 # ── Binary & process ────────────────────────────────────────────
-install_method: curl # curl install.sh | bash
+install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
 expected_version: "0.20.6"
@@ -56,8 +56,8 @@ forward_ports:
 config:
   dir: /sandbox/.hermes
   config_file: config.yaml
-  env_file: .env # relative to dir — API keys
-  auth_file: auth.json # OAuth tokens (Nous Portal, Codex, etc.)
+  env_file: .env                  # relative to dir — API keys
+  auth_file: auth.json            # OAuth tokens (Nous Portal, Codex, etc.)
   format: yaml
 
 # Static integration metadata only. Hermes remains the authority on which
@@ -159,7 +159,7 @@ inference:
   provider_type: custom
   base_url_config_key: "model.base_url"
   model_config_key: "model.default"
-  proxy_support: implicit # via httpx (OpenAI SDK dep)
+  proxy_support: implicit  # via httpx (OpenAI SDK dep)
   provider_options:
     - hermesProvider
 
