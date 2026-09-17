@@ -113,25 +113,32 @@ describe("restartSandboxGateway native lifecycle", () => {
     },
   );
 
-  it("waits for the acknowledged cooldown before checking gateway health", async () => {
-    silenceConsole();
-    const deps = baseDeps({
-      executeSandboxExecCommand: vi.fn(async () => ({
-        status: 0,
-        stderr: "",
-        stdout: JSON.stringify({
-          ok: true,
-          result: "coalesced",
-          restart: { ok: true, delayMs: 30_000 },
-        }),
-      })),
-    });
-    expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({ ok: true });
-    expect(deps.sleep).toHaveBeenCalledWith(30);
-    expect(deps.sleep.mock.invocationCallOrder[0]).toBeLessThan(
-      deps.waitForRecoveredSandboxGateway.mock.invocationCallOrder[0]!,
-    );
-  });
+  it.each([false, true])(
+    "waits for the acknowledged cooldown before checking gateway health (async: %s)",
+    async (asynchronous) => {
+      silenceConsole();
+      const sleep = vi.fn(() => (asynchronous ? Promise.resolve() : undefined));
+      const deps = baseDeps({
+        sleep,
+        executeSandboxExecCommand: vi.fn(async () => ({
+          status: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            ok: true,
+            result: "coalesced",
+            restart: { ok: true, delayMs: 30_000 },
+          }),
+        })),
+      });
+      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
+        ok: true,
+      });
+      expect(deps.sleep).toHaveBeenCalledWith(30);
+      expect(deps.sleep.mock.invocationCallOrder[0]).toBeLessThan(
+        deps.waitForRecoveredSandboxGateway.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
 
   it("asks Hermes to restart its gateway", async () => {
     silenceConsole();

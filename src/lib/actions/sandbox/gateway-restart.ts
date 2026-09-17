@@ -85,7 +85,7 @@ type SandboxExec = (
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
-  sleep: (seconds: number) => Promise<void>;
+  sleep: (seconds: number) => void | Promise<void>;
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;

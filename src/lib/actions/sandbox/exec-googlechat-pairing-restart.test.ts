@@ -207,6 +207,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
             restartSandboxGatewayWithDeps(sandboxName, {
               quiet: true,
               deps: {
+                sleep: () => undefined,
                 getSessionAgent: () => null,
                 getSandbox: () => ({ name: sandboxName, agent: "openclaw" }),
                 resolveSandboxDashboardPort: () => 18789,
@@ -220,7 +221,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                         'const config = JSON.parse(fs.readFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_CONFIG, "utf8"));',
                         "fs.writeFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_RUNTIME, JSON.stringify({ ownerAllowFrom: config.commands.ownerAllowFrom }));",
                         'fs.appendFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG, process.argv[1] + "\\n");',
-                        'process.stdout.write("GATEWAY_PID=4242\\n");',
+                        'process.stdout.write(JSON.stringify({ ok: true, result: "scheduled", restart: { ok: true, delayMs: 0 } }));',
                       ].join("\n"),
                       command,
                     ],
@@ -269,7 +270,9 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(fs.readFileSync(restartLog, "utf8")).toBe("openclaw gateway restart\n");
+      expect(fs.readFileSync(restartLog, "utf8")).toBe(
+        "openclaw gateway restart --safe --skip-deferral --json\n",
+      );
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
