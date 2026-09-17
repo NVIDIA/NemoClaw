@@ -579,6 +579,8 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("gateway was just recovered via gateway reattach");
     expect(output).toContain("No local registry entry was removed by this status check");
     expect(output).toContain("nemoclaw alpha status");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
+    expect(output).toContain("nemoclaw onboard");
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();

@@ -54,7 +54,8 @@ NemoClaw cannot back up the live workspace for rebuild. Destroy the stale entry,
 replacement, and restore a separately created snapshot afterward if one is available.
 If the sandbox is absent from the live OpenShell gateway, NemoClaw preserves its registry entry.
 Retry status after the gateway finishes reconnecting. If the sandbox is stuck mid-provision, retry
-rebuild after it reappears. Remove the stale entry only when the sandbox was intentionally deleted.
+rebuild after it reappears. If the sandbox was intentionally deleted, run
+`$$nemoclaw <sandbox-name> destroy --yes` to remove the stale entry before onboarding a replacement.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.

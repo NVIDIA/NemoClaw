@@ -138,7 +138,7 @@ function printMissingLiveSandboxStatusGuidance({
     `  Retry \`${CLI_NAME} ${sandboxName} status\` after the gateway finishes reconnecting.`,
   );
   console.log(
-    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} list\` to inspect the remaining sandboxes or \`${CLI_NAME} onboard\` to create a new one.`,
+    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} ${sandboxName} destroy --yes\` to remove the stale local entry, then \`${CLI_NAME} onboard\` to create a replacement.`,
   );
 }
 
