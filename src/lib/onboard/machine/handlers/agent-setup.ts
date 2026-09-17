@@ -16,6 +16,7 @@ export interface AgentSetupStateOptions<Agent> {
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
+  managedOpenclawStartup?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
@@ -32,6 +33,7 @@ export interface AgentSetupStateOptions<Agent> {
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
+    waitForOpenclawReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -47,6 +49,7 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
+      managedProfileApplied?: boolean,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -75,6 +78,7 @@ export async function handleAgentSetupState<Agent>({
   session,
   hermesAuthMethod,
   hermesToolGateways,
+  managedOpenclawStartup = false,
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
@@ -114,6 +118,27 @@ export async function handleAgentSetupState<Agent>({
     );
     revalidateSandboxIdentity?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
+    await deps.recordStepComplete(
+      "openclaw",
+      deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
+    );
+  } else if (managedOpenclawStartup) {
+    await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
+    if (!(await deps.waitForOpenclawReady(sandboxName))) {
+      throw new Error(
+        `Managed OpenClaw startup did not publish gateway readiness for sandbox '${sandboxName}' within 60 seconds.`,
+      );
+    }
+    revalidateSandboxIdentity?.(`synchronize managed OpenClaw in sandbox '${sandboxName}'`);
+    await deps.configureOpenclawSandbox(
+      sandboxName,
+      model,
+      provider,
+      webSearchConfig,
+      revalidateSandboxIdentity,
+      true,
+    );
+    revalidateSandboxIdentity?.(`complete managed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),

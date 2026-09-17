@@ -874,15 +874,20 @@ const {
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
 } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
-const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
-  sandboxLifecycle.createSandboxLifecycleHelpers({
-    runCaptureOpenshell,
-    getGatewayName: () => GATEWAY_NAME,
-    fetchGatewayAuthTokenFromSandbox: (name: string) => fetchGatewayAuthTokenFromSandbox(name),
-    agentProductName,
-    prompt,
-    isAffirmativeAnswer,
-  });
+const {
+  inspectSandboxForCreate,
+  confirmRecreateForSelectionDrift,
+  isOpenclawReady,
+  waitForOpenclawReady,
+} = sandboxLifecycle.createSandboxLifecycleHelpers({
+  runCaptureOpenshell,
+  getGatewayName: () => GATEWAY_NAME,
+  fetchGatewayAuthTokenFromSandbox: (name: string) => fetchGatewayAuthTokenFromSandbox(name),
+  sleepSeconds,
+  agentProductName,
+  prompt,
+  isAffirmativeAnswer,
+});
 
 const webSearchDeps = { prompt, note, isNonInteractive, cliName, commandExecutor: sandboxExec };
 const {
@@ -3183,6 +3188,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
+        managedOpenclawStartup: !agent && preparedSandboxWorkload.source.kind === "managed-image",
         portableRuntimeContext:
           agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
@@ -3208,6 +3214,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
           isOpenclawReady,
+          waitForOpenclawReady,
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,

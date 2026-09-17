@@ -20,6 +20,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       return session;
     }),
     openclawReady: vi.fn(async () => false),
+    waitForOpenclawReady: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -40,6 +41,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
+      waitForOpenclawReady: calls.waitForOpenclawReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -311,6 +313,46 @@ describe("handleAgentSetupState", () => {
       hermesToolGateways: ["github"],
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
     });
+  });
+
+  it("waits for managed OpenClaw before syncing selection metadata without legacy setup", async () => {
+    const { deps, calls } = createDeps();
+    const revalidateSandboxIdentity = vi.fn();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      managedOpenclawStartup: true,
+      revalidateSandboxIdentity,
+    });
+
+    expect(calls.waitForOpenclawReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      revalidateSandboxIdentity,
+      true,
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "openclaw",
+      expect.objectContaining({ sandboxName: "my-assistant" }),
+    );
+  });
+
+  it("does not sync managed OpenClaw metadata before native readiness", async () => {
+    const { deps, calls } = createDeps({
+      waitForOpenclawReady: vi.fn(async () => false),
+    });
+
+    await expect(
+      handleAgentSetupState({ ...baseOptions(deps), managedOpenclawStartup: true }),
+    ).rejects.toThrow(/did not publish gateway readiness/u);
+
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("returns a session when the input session is null", async () => {

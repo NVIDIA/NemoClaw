@@ -63,6 +63,7 @@ export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   getGatewayName(): string;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): Promise<string | null>;
+  sleepSeconds(seconds: number): Promise<void>;
   agentProductName(): string;
   prompt(question: string): Promise<string>;
   isAffirmativeAnswer(value: string | null | undefined): boolean;
@@ -81,6 +82,7 @@ export interface SandboxLifecycleHelpers {
     requestedModel: string | null,
   ): Promise<boolean>;
   isOpenclawReady(sandboxName: string): Promise<boolean>;
+  waitForOpenclawReady(sandboxName: string): Promise<boolean>;
 }
 
 export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): SandboxLifecycleHelpers {
@@ -128,10 +130,19 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     return Boolean(await deps.fetchGatewayAuthTokenFromSandbox(sandboxName));
   }
 
+  async function waitForOpenclawReady(sandboxName: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      if (await isOpenclawReady(sandboxName)) return true;
+      if (attempt < 59) await deps.sleepSeconds(1);
+    }
+    return false;
+  }
+
   return {
     inspectSandboxForCreate,
     shouldRestoreLatestBackupOnRecreate,
     confirmRecreateForSelectionDrift,
     isOpenclawReady,
+    waitForOpenclawReady,
   };
 }

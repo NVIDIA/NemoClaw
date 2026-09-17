@@ -8,6 +8,7 @@ import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
   runConnectScript: (sandboxName: string, scriptContent: string) => Promise<void>;
+  managedProfileApplied?: boolean;
 }
 
 export interface NemoClawConfigSyncDeps {
@@ -23,9 +24,11 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
     provider: string,
     model: string,
     revalidateSandboxIdentity: (operation: string) => void = skipSandboxIdentityRevalidation,
+    managedProfileApplied = false,
   ): Promise<void> {
     await runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
+      managedProfileApplied,
       runConnectScript: async (name, scriptContent) => {
         revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
         const result = await deps.sandboxCommandExecutor.runBuffered({
@@ -55,12 +58,13 @@ export async function runSandboxConfigSync(
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
-  const script = buildSandboxConfigSyncScript(sandboxConfig);
+  const script = buildSandboxConfigSyncScript(sandboxConfig, deps.managedProfileApplied === true);
   await deps.runConnectScript(sandboxName, script);
 }
 
 export function buildSandboxConfigSyncScript(
   selectionConfig: ProviderSelectionConfig & { agent?: string },
+  managedProfileApplied = false,
 ): string {
   const writeSelection = `
 set -euo pipefail
@@ -80,7 +84,7 @@ EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
 `.trim();
   // Retained Hermes sandboxes can contain an unrelated .openclaw directory.
-  if (selectionConfig.agent === "hermes") return writeSelection;
+  if (selectionConfig.agent === "hermes" || managedProfileApplied) return writeSelection;
   // Native baseline setup preserves valid routing and creates its own state.
   return `${writeSelection}
 config_dir=/sandbox/.openclaw

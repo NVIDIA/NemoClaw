@@ -35,6 +35,7 @@ describe("OpenClaw sandbox setup", () => {
       "provider",
       "model",
       revalidateSandboxIdentity,
+      false,
     );
     expect(reconcileWebSearch).not.toHaveBeenCalled();
 
