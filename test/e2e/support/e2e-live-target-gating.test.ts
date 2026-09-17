@@ -325,7 +325,15 @@ describe("live E2E target gating", () => {
       const file = "registry-targets.test.ts";
       const result = await listLiveTests({ enabled: true, files: [file] });
       context.expect(result.status, result.stderr || result.stdout).toBe(0);
-      context.expect(linesForFile(result.lines, file)).toHaveLength(listTargets().length);
+      const targetIds = linesForFile(result.lines, file).map(
+        (line) => line.split(" > ")[1]!.split(":")[0]!,
+      );
+      context.expect(new Set(targetIds).size).toBe(targetIds.length);
+      context.expect(targetIds.sort()).toEqual(
+        listTargets()
+          .map((target) => target.id)
+          .sort(),
+      );
       const removed = await listLiveTests({
         enabled: true,
         env: { TARGET_ID: "ubuntu-repo-cloud-hermes" },

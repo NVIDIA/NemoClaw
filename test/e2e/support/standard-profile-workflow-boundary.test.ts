@@ -21,7 +21,63 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
+function recordDcodeEvidence(directory: string, candidateSha: string, reference: string) {
+  const profile = YAML.parse(
+    fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+  ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+  const script = profile.jobs.run.steps.find(
+    (step) => step.name === "Record immutable Deep Agents Code base evidence",
+  )!.run!;
+  return spawnSync("bash", ["-c", script], {
+    cwd: directory,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BASE_CONTRACT: JSON.stringify({ reference }),
+      CANDIDATE_SHA: candidateSha,
+      E2E_ARTIFACT_DIR: directory,
+      RUNNER_TEMP: directory,
+      TARGET_ID: "dcode-target",
+      TARGET_LABEL: "DCode: installed agent",
+    },
+  });
+}
+
 describe("standard E2E execution profile", () => {
+  it.for([
+    { candidateSha: "invalid", reference: `registry/base@sha256:${"b".repeat(64)}` },
+    { candidateSha: "a".repeat(40), reference: "registry/base:mutable" },
+  ])("does not publish rejected DCode base evidence: %j", (input, { onTestFinished }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const result = recordDcodeEvidence(directory, input.candidateSha, input.reference);
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(path.join(directory, "dcode-target", "dcode-base-image.json"))).toBe(
+      false,
+    );
+    expect(
+      fs.existsSync(path.join(directory, "dcode-installed-agent", "dcode-base-image.json")),
+    ).toBe(false);
+  });
+
+  it("publishes validated DCode base evidence with private permissions", ({ onTestFinished }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const candidateSha = "a".repeat(40);
+    const reference = `registry/base@sha256:${"b".repeat(64)}`;
+    const result = recordDcodeEvidence(directory, candidateSha, reference);
+    expect(result.status, result.stderr).toBe(0);
+    for (const name of ["dcode-target", "dcode-installed-agent"]) {
+      const filename = path.join(directory, name, "dcode-base-image.json");
+      expect(JSON.parse(fs.readFileSync(filename, "utf8"))).toEqual({
+        contractVersion: 1,
+        candidateSha,
+        base: { reference },
+      });
+      expect(fs.statSync(filename).mode & 0o777).toBe(0o600);
+    }
+  });
+
   it("requires the resolved candidate SHA for typed and catalogue execution evidence", () => {
     const workflow = readWorkflow();
     const profile = YAML.parse(

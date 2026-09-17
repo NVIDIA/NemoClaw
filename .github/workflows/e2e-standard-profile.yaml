@@ -483,6 +483,8 @@ jobs:
           set -euo pipefail
           evidence_dir="${E2E_ARTIFACT_DIR}/${TARGET_ID}"
           install -d -m 0700 "${evidence_dir}"
+          evidence_file="$(mktemp "${RUNNER_TEMP}/dcode-base-image.XXXXXX")"
+          trap 'rm -f -- "${evidence_file}"' EXIT
           jq -e -n \
             --arg candidateSha "${CANDIDATE_SHA}" \
             --argjson baseContract "${BASE_CONTRACT}" \
@@ -490,7 +492,8 @@ jobs:
               | select(
                 (.candidateSha | test("^[0-9a-f]{40}$"))
                 and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
-              )' >"${evidence_dir}/dcode-base-image.json"
+              )' >"${evidence_file}"
+          install -m 0600 "${evidence_file}" "${evidence_dir}/dcode-base-image.json"
           test_artifact_name="$(node -e '
             const slug = process.argv[1]
               .trim()

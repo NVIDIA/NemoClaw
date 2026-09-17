@@ -151,9 +151,11 @@ function readChangedFiles(
       movedSources.add(previous);
     }
   }
-  return files.flatMap((file) =>
-    movedSources.has(file.filename) ? [] : [moves.get(file.filename) ?? file],
-  );
+  return files.flatMap((file) => {
+    if (movedSources.has(file.filename)) return [];
+    const move = moves.get(file.filename);
+    return move ? [file, move] : [file];
+  });
 }
 
 function loadLocalDiff(): GrowthGuardrailDiff {

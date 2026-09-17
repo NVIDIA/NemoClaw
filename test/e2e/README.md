@@ -1454,12 +1454,13 @@ p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Push and ordinary manual runs include the same table for that
 run in the GitHub Actions scorecard summary. Their push trend uses only the
 bounded timing and outcome summary rather than downloading historical raw test
-artifacts. Keep phase labels specific to test behavior, call
-`progress.phase("literal phase label")` at the declared boundaries in order,
-and transition through the final test-declared phase on every passing path.
-Both fixtures reject a passing test that never reaches that phase; only the
-stateful live fixture enters its resource-release phase automatically.
-Validate phase coverage without executing test bodies with:
+artifacts. Keep phase labels specific to test behavior and call
+`progress.phase("literal phase label")` when that activity starts. Phase labels
+are diagnostic: neither fixture requires a declared order or final phase, and
+an empty or early-returning test body can pass. Product assertions must establish
+that the intended work occurred. The stateful live fixture enters its
+resource-release phase automatically.
+Validate registered execution routes without executing test bodies with:
 
 ```bash
 npm run test:e2e-phases:check

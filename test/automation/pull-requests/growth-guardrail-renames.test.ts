@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 
 import { testOnly } from "../../helpers/growth-guardrail-diff.ts";
 
-it("compares a moved test body with its original file when it replaces a forwarder", ({
+it("retains source and destination comparisons when a moved test replaces a forwarder", ({
   onTestFinished,
 }) => {
   const directory = mkdtempSync(path.join(tmpdir(), "growth-rename-"));
@@ -49,6 +49,7 @@ it("compares a moved test body with its original file when it replaces a forward
   rmSync(path.join(directory, "legacy.test.ts"));
   writeFileSync(path.join(directory, "current.test.ts"), source);
   const expected = [
+    { filename: "current.test.ts", status: "modified" },
     {
       filename: "current.test.ts",
       previous_filename: "legacy.test.ts",
