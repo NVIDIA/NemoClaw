@@ -270,9 +270,11 @@ class AdapterPathControls(unittest.TestCase):
 
     def test_only_declared_volume_mount_reparse_is_allowed(self):
         mount = self.root.parent
+        observed = []
 
         def attributes(value):
             current = Path(value)
+            observed.append(current)
             if current == mount:
                 return 0x410  # DIRECTORY | REPARSE_POINT
             return 0x20 if current == self.bash else 0x10
@@ -281,6 +283,8 @@ class AdapterPathControls(unittest.TestCase):
             self.assertEqual(
                 adapter._regular_file(self.bash, self.root, mount), self.bash
             )
+            self.assertEqual(observed[0], mount)
+            self.assertNotIn(mount.parent, observed)
             with self.assertRaises(adapter.NativeStartupRefusal):
                 adapter._regular_file(self.bash, self.root, self.root)
 

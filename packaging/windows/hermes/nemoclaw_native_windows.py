@@ -152,11 +152,25 @@ def _regular_file(
         allowed_mount = _runtime_volume_mount(root)
     try:
         path.relative_to(root)
+        walk = [*reversed(path.parents), path]
+        if allowed_mount is not None:
+            allowed_mount = _absolute_path(allowed_mount)
+            if not _same_path(root.parent, allowed_mount):
+                _refuse(
+                    "an installer-owned runtime path has an invalid filesystem identity."
+                )
+            path.relative_to(allowed_mount)
+            start = next(
+                index
+                for index, current in enumerate(walk)
+                if _same_path(current, allowed_mount)
+            )
+            walk = walk[start:]
         # Check from the volume root downward so intermediate junctions and
         # symlinks are rejected before querying anything beneath them.
         # The installer-owned read-only tree prevents guest replacement races;
         # these checks do not replace that host ownership/lease boundary.
-        for current in (*reversed(path.parents), path):
+        for current in walk:
             expected = "file" if current == path else "directory"
             if _path_kind(current, allowed_mount) != expected:
                 _refuse(
