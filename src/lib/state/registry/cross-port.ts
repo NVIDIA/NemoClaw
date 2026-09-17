@@ -92,16 +92,28 @@ export function findSandboxAcrossGatewayRoots(
   return matches[0];
 }
 
+function listEntriesAcrossGatewayRoots(published: boolean, home: string): SandboxEntry[] {
+  return listSandboxHitsAcrossGatewayRoots(home)
+    .map(({ entry }) => entry)
+    .filter((entry) => (entry.pendingRouteReservation === true) === !published);
+}
+
 function listNamesAcrossGatewayRoots(published: boolean, home: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const { entry } of listSandboxHitsAcrossGatewayRoots(home)) {
-    if ((entry.pendingRouteReservation === true) !== !published) continue;
+  for (const entry of listEntriesAcrossGatewayRoots(published, home)) {
     if (seen.has(entry.name)) continue;
     seen.add(entry.name);
     names.push(entry.name);
   }
   return names;
+}
+
+/** Published sandbox entries across every registry root, base root first, then ports ascending. */
+export function listPublishedSandboxesAcrossGatewayRoots(
+  home: string = resolveHome(),
+): SandboxEntry[] {
+  return listEntriesAcrossGatewayRoots(true, home);
 }
 
 /** Published sandbox names across every registry root, base root first, then ports ascending. */

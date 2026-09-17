@@ -32,19 +32,19 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
   findSandboxAcrossGatewayRoots,
   listPublishedSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
 } from "../../state/registry/cross-port";
+import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
-  canSandboxStatusRouteRealign,
   isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
@@ -72,6 +72,7 @@ type ProbeSandboxInferenceGatewayHealth = (
   ...args: Parameters<typeof probeSandboxInferenceGatewayHealth>
 ) => ReturnType<typeof probeSandboxInferenceGatewayHealth>;
 type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
+type GetGatewayPresets = (typeof import("../../policy"))["getGatewayPresets"];
 
 const INFERENCE_PROBE_ATTEMPTS = 3;
 const INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
@@ -299,9 +300,9 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 interface CollectSandboxStatusSnapshotDeps {
   findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
   listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
+  listPublishedSandboxesAcrossGatewayRoots?: typeof listPublishedSandboxesAcrossGatewayRoots;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
-  listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
@@ -313,7 +314,7 @@ interface CollectSandboxStatusSnapshotDeps {
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
-  getGatewayPresets?: typeof getGatewayPresets;
+  getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
@@ -601,11 +602,14 @@ export async function collectSandboxStatusSnapshot(
           canConnect: Boolean(
             sb &&
             gatewayName &&
-            canSandboxStatusRouteRealign(
+            canSandboxGatewayRouteRealign(
               sandboxName,
               sb,
               gatewayName,
-              () => (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+              (
+                opts.deps?.listPublishedSandboxesAcrossGatewayRoots ??
+                listPublishedSandboxesAcrossGatewayRoots
+              )(),
             ),
           ),
         }
@@ -836,7 +840,11 @@ async function buildSandboxStatusReport(
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
-  const livePolicies = sb ? await (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
+  // The outer status action owns the live policy reader. Direct snapshot callers
+  // without that boundary report policy availability honestly instead of
+  // reaching into policy state through a second orchestration path.
+  const livePolicies =
+    sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
@@ -871,7 +879,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies: livePolicies ?? [],
-    policiesAvailable: livePolicies !== null,
+    policiesAvailable: !sb || Boolean(deps.getGatewayPresets) ? livePolicies !== null : false,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,

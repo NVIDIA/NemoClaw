@@ -137,7 +137,7 @@ export async function getSandboxStatusReport(
         deps.getGatewayPresets ?? getGatewayPresets,
       );
     }
-    return getLegacySandboxStatusReport(sandboxName, deps);
+    return getLegacySandboxStatusReport(sandboxName, { getGatewayPresets, ...deps });
   });
 }
 

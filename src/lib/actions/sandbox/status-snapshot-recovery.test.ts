@@ -72,7 +72,7 @@ function snapshotDeps(recoveryResult: unknown) {
   const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthyRoute);
   return {
     getSandbox: () => sandbox,
-    listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
+    listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
     listPublishedSandboxNamesAcrossGatewayRoots: () => [sandbox.name],
     reconcile: recoveredLookup,
     captureOpenshellForStatusImpl: async () => {

@@ -122,20 +122,33 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
     });
     const {
       listPublishedSandboxNamesAcrossGatewayRoots,
+      listPublishedSandboxesAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual(["owner-b", "owner-a"]);
+    expect(
+      listPublishedSandboxesAcrossGatewayRoots().map(({ name, gatewayPort }) => ({
+        name,
+        gatewayPort,
+      })),
+    ).toEqual([
+      { name: "owner-b", gatewayPort: 8080 },
+      { name: "owner-a", gatewayPort: 8245 },
+      { name: "owner-b", gatewayPort: 8245 },
+    ]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual(["reserved", "pending"]);
   });
 
   it("returns empty lists when no registry roots exist", async () => {
     const {
       listPublishedSandboxNamesAcrossGatewayRoots,
+      listPublishedSandboxesAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual([]);
+    expect(listPublishedSandboxesAcrossGatewayRoots()).toEqual([]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual([]);
   });
 });

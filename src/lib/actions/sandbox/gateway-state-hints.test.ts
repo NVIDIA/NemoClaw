@@ -32,6 +32,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
   let findSandboxAcrossGatewayRootsSpy: MockInstance;
+  let listPublishedSandboxNamesAcrossGatewayRootsSpy: MockInstance;
+  let listPublishedSandboxNamesForDockerRuntime: () => string[];
   let recoverNamedGatewayRuntimeSpy: MockInstance;
   let dockerInfoSpy: MockInstance;
 
@@ -56,6 +58,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const registry = requireDist("../../state/registry.js");
     const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
     const dockerHealth = requireDist("./docker-health.js");
+    listPublishedSandboxNamesForDockerRuntime =
+      dockerHealth.listPublishedSandboxNamesForDockerRuntime;
     const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockResolvedValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockResolvedValue(null);
@@ -81,6 +85,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
           ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
           : null;
       });
+    listPublishedSandboxNamesAcrossGatewayRootsSpy = vi
+      .spyOn(crossPortRegistry, "listPublishedSandboxNamesAcrossGatewayRoots")
+      .mockReturnValue(["instance-a"]);
     getSandboxDockerRuntimeSpy = vi.spyOn(dockerHealth, "getSandboxDockerRuntime").mockReturnValue({
       health: "none",
       paused: false,
@@ -283,8 +290,55 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(output).toContain("use it only if start does not recover the sandbox");
     expect(output).not.toContain("stopped container");
     expect(output).not.toContain("docker unpause");
-    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
+    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a", {
+      getSandbox: expect.any(Function),
+      listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
+    });
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps start guidance for a cross-root Docker Error sandbox with an owned container", async () => {
+    mockSandboxPhase("Error");
+    const crossRootEntry = {
+      name: "instance-a",
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+      openshellDriver: "docker",
+    };
+    getSandboxSpy.mockReturnValue(null);
+    findSandboxAcrossGatewayRootsSpy.mockReturnValue({
+      entry: crossRootEntry,
+      gatewayPort: 8081,
+      registryFile: "/test/.nemoclaw/gateways/8081/sandboxes.json",
+    });
+    listPublishedSandboxNamesAcrossGatewayRootsSpy.mockReturnValue(["instance-a", "peer"]);
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      running: true,
+      containerName: "openshell-instance-a-cross-root",
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("nemoclaw instance-a start");
+    expect(output).not.toContain("nemoclaw instance-a destroy --yes");
+    const [, runtimeDeps] = getSandboxDockerRuntimeSpy.mock.calls.at(-1) as [
+      string,
+      { getSandbox: (name: string) => unknown; listSandboxNames: () => string[] },
+    ];
+    expect(runtimeDeps.getSandbox("instance-a")).toEqual(crossRootEntry);
+    expect(runtimeDeps.listSandboxNames()).toEqual(["instance-a", "peer"]);
   });
 
   it("steers a Docker-driver Error sandbox without its container to clean replacement", async () => {
@@ -482,7 +536,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(output).toContain("nemoclaw instance-a rebuild --yes");
     expect(output).not.toContain("nemoclaw instance-a start");
     expect(output).not.toContain("docker unpause");
-    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
+    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a", {
+      getSandbox: expect.any(Function),
+      listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
+    });
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

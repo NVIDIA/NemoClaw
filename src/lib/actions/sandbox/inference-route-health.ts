@@ -8,8 +8,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
-import type { SandboxEntry } from "../../state/registry";
-import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import {
   buildSandboxInferenceRouteProbeRequest,
   classifyInferenceRouteFailureLabel,
@@ -34,15 +32,6 @@ export type SandboxInferenceRouteHealth = {
   httpStatus: number;
   detail: string;
 };
-
-export function canSandboxStatusRouteRealign(
-  sandboxName: string,
-  sandbox: SandboxEntry,
-  gatewayName: string,
-  listSandboxes: () => readonly SandboxEntry[],
-): boolean {
-  return canSandboxGatewayRouteRealign(sandboxName, sandbox, gatewayName, listSandboxes());
-}
 
 /**
  * Probe the authoritative `https://inference.local/v1/models` route from

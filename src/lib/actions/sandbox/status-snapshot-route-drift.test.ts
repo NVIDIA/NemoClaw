@@ -40,10 +40,7 @@ function snapshotDeps(entry: Partial<SandboxEntry> | null) {
     suppressInferenceProbe: true,
     deps: {
       getSandbox: () => sandbox,
-      listSandboxes: () => ({
-        sandboxes: sandbox ? [sandbox] : [],
-        defaultSandbox: sandbox ? sandbox.name : null,
-      }),
+      listPublishedSandboxesAcrossGatewayRoots: () => (sandbox ? [sandbox] : []),
       reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
     },
   };
@@ -205,14 +202,53 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       preferredInferenceApi: "openai-completions",
     };
     const options = snapshotDeps(target);
-    options.deps.listSandboxes = () => ({
-      sandboxes: [options.deps.getSandbox() as SandboxEntry, peer],
-      defaultSandbox: "alpha",
-    });
+    options.deps.listPublishedSandboxesAcrossGatewayRoots = () => [
+      options.deps.getSandbox() as SandboxEntry,
+      peer,
+    ];
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", options);
 
     expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
+  });
+
+  it("does not advertise connect when a cross-root gateway peer has a conflicting route", async () => {
+    liveGatewayInference("openai", "live/model", "nemoclaw-9090");
+    const target: SandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+      endpointUrl: "https://target.example/v1",
+      credentialEnv: "TARGET_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const peer: SandboxEntry = {
+      name: "peer",
+      agent: "openclaw",
+      gatewayPort: 9090,
+      provider: "compatible-endpoint",
+      model: "peer/model",
+      endpointUrl: "https://peer.example/v1",
+      credentialEnv: "PEER_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const options = snapshotDeps(target);
+    const { getSandbox: _getSandbox, ...deps } = options.deps;
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...deps,
+      findSandboxAcrossGatewayRoots: () => ({
+        entry: target,
+        gatewayPort: 9090,
+        registryFile: "/test/.nemoclaw/gateways/9090/sandboxes.json",
+      }),
+      listPublishedSandboxesAcrossGatewayRoots: () => [target, peer],
+      getGatewayPresets: async () => [],
+    });
+
+    expect(report.routeDrift).toMatchObject({ canConnect: false });
   });
 });
 
@@ -336,7 +372,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       deps: {
         getSandbox: () => sandbox,
-        listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
         reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
         probeProviderHealthImpl: () => null,
         probeSandboxInferenceGatewayHealthImpl: async () => ({

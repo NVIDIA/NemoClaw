@@ -100,7 +100,10 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
-import { getSandboxDockerRuntime } from "./docker-health";
+import {
+  getSandboxDockerRuntime,
+  listPublishedSandboxNamesForDockerRuntime,
+} from "./docker-health";
 import {
   classifySandboxPhaseRecoveryAction,
   isDockerRuntimeDown,
@@ -1126,6 +1129,7 @@ export async function ensureLiveSandboxOrExit(
     selectOwningGateway,
   });
   if (lookup.state === "present") {
+    const sandboxEntry = getKnownSandboxTarget(sandboxName);
     const phase = lookup.phase ?? null;
     // A policy read can fail because the Docker-backed gateway is unavailable.
     // Preserve the more specific host-runtime diagnosis even for probe-only
@@ -1135,7 +1139,7 @@ export async function ensureLiveSandboxOrExit(
       phase !== "Ready" &&
       phase !== "Running" &&
       !isTerminalSandboxPhase(phase) &&
-      isDockerRuntimeDown(sandboxName)
+      isDockerRuntimeDown(sandboxName, { getSandbox: () => sandboxEntry })
     ) {
       printDockerRuntimeDownGuidance(sandboxName);
       exit(1);
@@ -1145,7 +1149,10 @@ export async function ensureLiveSandboxOrExit(
       exit(1);
     }
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
-      const dockerRuntime = getSandboxDockerRuntime(sandboxName);
+      const dockerRuntime = getSandboxDockerRuntime(sandboxName, {
+        getSandbox: () => sandboxEntry,
+        listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
+      });
       if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
         console.error("  Workspace state is preserved.");
@@ -1170,7 +1177,7 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      const openshellDriver = getKnownSandboxTarget(sandboxName)?.openshellDriver;
+      const openshellDriver = sandboxEntry?.openshellDriver;
       const recoveryAction = classifySandboxPhaseRecoveryAction({
         phase,
         openshellDriver,
