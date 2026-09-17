@@ -17,6 +17,7 @@ import {
   validateHermesEdgeReceipt,
   createHermesPtyState,
   finalHermesAssistant,
+  hermesTurnIndex,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -319,6 +320,11 @@ test("settled conversation still needs a final saved assistant and a real execut
   assert.equal(finalHermesAssistant(messages, prompt), false);
   messages.push({ role: "assistant", content: "Both operations completed." });
   assert.equal(finalHermesAssistant(messages, prompt), true);
+  const normalizedPaste = structuredClone(messages);
+  normalizedPaste[0].content = "normalized paste wrapper\n" + code + "\nend wrapper";
+  assert.equal(hermesTurnIndex(normalizedPaste, prompt, [code]), 0);
+  assert.equal(finalHermesAssistant(normalizedPaste, prompt, [code]), true);
+  assert.equal(finalHermesAssistant(normalizedPaste, prompt, ["different exact code"]), false);
   const failed = structuredClone(messages);
   failed[2].content = JSON.stringify({
     status: "success",
