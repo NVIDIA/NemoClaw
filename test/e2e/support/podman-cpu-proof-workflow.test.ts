@@ -350,6 +350,12 @@ function withProofFixture(run: (fixture: ProofFixture) => void): void {
   }
 }
 describe("native Podman CPU proof workflow", () => {
+  it("selects the proof when an OpenShell lifecycle adapter changes", () => {
+    expect(workflow().on.pull_request.paths).toContain(
+      "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts",
+    );
+  });
+
   it("selects the rootless proof when the Portable gateway authority changes (#9587)", () => {
     const authorityPath = "src/lib/onboard/experimental/portable-profile.ts";
     const selectedPath = workflow().on.pull_request.paths.find(

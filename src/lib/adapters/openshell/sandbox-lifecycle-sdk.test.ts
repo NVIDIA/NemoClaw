@@ -64,23 +64,34 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     });
   });
 
-  it("falls back only when the reviewed SDK package is unavailable", async () => {
-    const fallback = {
-      startSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
-      stopSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
-    };
+  it("fails closed when the reviewed SDK package is unavailable", async () => {
     const missing = Object.assign(new Error("missing reviewed SDK"), {
       code: "ERR_MODULE_NOT_FOUND",
     });
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => Promise.reject(missing),
-      fallback,
     });
 
     await expect(lifecycle.stopSandbox({ sandboxName: "alpha", target })).resolves.toEqual({
-      kind: "accepted",
+      kind: "failed",
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell is unavailable (Error, code ERR_MODULE_NOT_FOUND).",
+      },
     });
-    expect(fallback.stopSandbox).toHaveBeenCalledWith({ sandboxName: "alpha", target });
-    expect(fallback.startSandbox).not.toHaveBeenCalled();
+  });
+
+  it("bounds a connection that never settles", async () => {
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: () => new Promise(() => undefined),
+    });
+
+    await expect(
+      lifecycle.startSandbox({ sandboxName: "alpha", target, timeoutMs: 5 }),
+    ).resolves.toEqual({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
   });
 });

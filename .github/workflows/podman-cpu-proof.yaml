@@ -11,6 +11,7 @@ on:
     paths:
       - ".github/workflows/podman-cpu-proof.yaml"
       - "src/lib/adapters/container-engine.ts"
+      - "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"

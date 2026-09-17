@@ -36,7 +36,6 @@ type SdkClient = Readonly<{
 export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   connect?: (target: OpenShellGatewayTarget) => Promise<SdkClient>;
   env?: NodeJS.ProcessEnv;
-  fallback?: OpenShellSandboxStateLifecycle;
   homeDir?: string;
   loadSdk?: () => Promise<unknown>;
 }>;
@@ -86,7 +85,6 @@ async function mutate(
   action: "start" | "stop",
   request: MutateOpenShellSandboxRequest,
   connect: (target: OpenShellGatewayTarget) => Promise<SdkClient>,
-  fallback?: OpenShellSandboxStateLifecycle,
 ): Promise<OpenShellSandboxMutationSubmission> {
   if (
     !isValidName(request.sandboxName) ||
@@ -104,8 +102,15 @@ async function mutate(
     () => controller.abort(),
     request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS,
   );
+  const aborted = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(Object.assign(new Error("OpenShell SDK connection timed out."), { code: "4" })),
+      { once: true },
+    );
+  });
   try {
-    const client = await connect(request.target);
+    const client = await Promise.race([connect(request.target), aborted]);
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     await operation(
       { name: request.sandboxName, workspace: "default" },
@@ -113,13 +118,6 @@ async function mutate(
     );
     return { kind: "accepted" };
   } catch (error) {
-    if (
-      !controller.signal.aborted &&
-      (error as NodeJS.ErrnoException | undefined)?.code === "ERR_MODULE_NOT_FOUND" &&
-      fallback
-    ) {
-      return action === "start" ? fallback.startSandbox(request) : fallback.stopSandbox(request);
-    }
     return { kind: "failed", error: lifecycleError(error, controller.signal.aborted) };
   } finally {
     clearTimeout(timeout);
@@ -145,7 +143,7 @@ export function createSdkOpenShellSandboxStateLifecycle(
       })) as SdkClient;
     });
   return {
-    startSandbox: (request) => mutate("start", request, connect, deps.fallback),
-    stopSandbox: (request) => mutate("stop", request, connect, deps.fallback),
+    startSandbox: (request) => mutate("start", request, connect),
+    stopSandbox: (request) => mutate("stop", request, connect),
   };
 }

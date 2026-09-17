@@ -57,6 +57,9 @@ type DockerRemoveImage = (
 ) => { status: number | null };
 
 export interface DockerRuntimeProviderDependencies {
+  readonly createSandboxLifecycle: (
+    environment: NodeJS.ProcessEnv,
+  ) => ReturnType<typeof createSdkOpenShellSandboxStateLifecycle>;
   readonly captureSandboxLifecycle: (
     action: "start" | "stop",
     sandboxName: string,
@@ -239,11 +242,16 @@ function loadDockerRemoveImage(): DockerRemoveImage {
 function resolveDependencies(
   overrides: Partial<DockerRuntimeProviderDependencies> = {},
 ): DockerRuntimeProviderDependencies {
-  const sdkLifecycle = createSdkOpenShellSandboxStateLifecycle();
+  const createSandboxLifecycle =
+    overrides.createSandboxLifecycle ??
+    ((environment: NodeJS.ProcessEnv) =>
+      createSdkOpenShellSandboxStateLifecycle({ env: environment }));
   return {
+    createSandboxLifecycle,
     captureSandboxLifecycle:
       overrides.captureSandboxLifecycle ??
-      (async (action, sandboxName, gatewayName) => {
+      (async (action, sandboxName, gatewayName, environment) => {
+        const sdkLifecycle = createSandboxLifecycle(environment);
         const request = { sandboxName, target: { kind: "named" as const, gatewayName } };
         const result =
           action === "start"

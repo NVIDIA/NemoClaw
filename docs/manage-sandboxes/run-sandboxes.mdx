@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Run Sandboxes"
 sidebar-title: "Run Sandboxes"
-description: "Run multiple sandboxes and stop or start containers, with dashboard and tunnel guidance where supported."
+description: "Run multiple sandboxes and stop or start them through OpenShell, with dashboard and tunnel guidance where supported."
 description-agent: "Explains multiple-sandbox naming and stop or start operations, plus dashboard and Cloudflare tunnel controls where the selected agent supports them. Use when operating one or more existing sandboxes."
 keywords: ["nemoclaw multiple sandboxes", "nemoclaw stop", "nemoclaw start", "sandbox operation"]
 content:
@@ -123,16 +123,16 @@ nemo-deepagents onboard --name <sandbox-name>
 
 ## Stop and Start a Sandbox
 
-Stop a sandbox's container to free CPU, memory, and GPU resources without losing anything:
+Stop a sandbox through OpenShell to free CPU, memory, and GPU resources without losing anything:
 
 ```bash
 $$nemoclaw <sandbox-name> stop
 ```
 
 Workspace files, credentials, network policies, and the registry entry are preserved.
-The container stops running.
+OpenShell stops the sandbox's provider workload.
 <AgentOnly variant="openclaw,hermes">
-After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
+After the sandbox stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
 The shared host gateway and tunnel services keep serving other sandboxes.
 </AgentOnly>
 
@@ -143,11 +143,11 @@ $$nemoclaw <sandbox-name> start
 ```
 
 <AgentOnly variant="openclaw,hermes">
-After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
+After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state.
 NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.
+After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.
 </AgentOnly>
 Refer to [`$$nemoclaw <name> stop`](../../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../../reference/commands#$$nemoclaw-name-start) for details.
 Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.

@@ -32,8 +32,10 @@ import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
 import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch.ts";
 import {
+  type CreatedSandboxIdentity,
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
+  type SandboxGpuCreateFlowInput,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
@@ -936,6 +938,44 @@ export function assertFailedSandboxOwnerCleanupRetention(
   }
 }
 
+export function createBootstrapCompletionFailureInjection(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly managedImage: Inputs;
+  readonly onboard: OnboardModule;
+  readonly onQualified: () => void;
+  readonly write?: (message: string) => void;
+}): {
+  readonly expectedError: Error;
+  readonly flowInput: Pick<
+    SandboxGpuCreateFlowInput,
+    | "persistRetainedSandboxRecovery"
+    | "revalidateVerifiedSandboxBeforeEffect"
+    | "verifyCreatedSandboxBeforeEffects"
+  >;
+} {
+  const expectedError = new Error("injected managed bootstrap completion failure");
+  return {
+    expectedError,
+    flowInput: {
+      persistRetainedSandboxRecovery: () => true,
+      revalidateVerifiedSandboxBeforeEffect: () => undefined,
+      verifyCreatedSandboxBeforeEffects: (identity: CreatedSandboxIdentity) => {
+        assertFailedSandboxOwnerCleanupRetention(
+          input.onboard,
+          input.managedImage,
+          identity.sandboxId,
+          input.env,
+        );
+        input.onQualified();
+        (input.write ?? ((message) => process.stdout.write(message)))(
+          `Managed-bootstrap completion failure retained one exact quiescent ${input.managedImage.agent} sandbox for owner cleanup.\n`,
+        );
+        throw expectedError;
+      },
+    },
+  };
+}
+
 function parseImmutableManifestReference(image: string): {
   repository: string;
   manifestDigest: `sha256:${string}`;
@@ -1123,6 +1163,16 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     const commandExecutor = createCliOpenShellSandboxCommandExecutor({
       hostCwd: REPOSITORY_ROOT,
     });
+    const failureInjection = input.failureInjection
+      ? createBootstrapCompletionFailureInjection({
+          env: launch.sandboxEnv,
+          managedImage: input,
+          onboard,
+          onQualified: () => {
+            failureInjectionQualified = true;
+          },
+        })
+      : null;
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
@@ -1147,6 +1197,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           terminalAgent: input.agent === "langchain-deepagents-code",
           managedImage: true,
           ...startupPlan,
+          ...(failureInjection?.flowInput ?? {}),
         },
         {
           commandExecutor,
@@ -1159,7 +1210,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         },
       );
     } catch (error) {
-      throw error;
+      if (error !== failureInjection?.expectedError || !failureInjectionQualified) throw error;
     }
 
     if (!failureInjectionQualified) {

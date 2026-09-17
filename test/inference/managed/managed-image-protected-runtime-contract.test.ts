@@ -20,6 +20,7 @@ import {
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   assertOpenClawHeartbeatStart,
+  createBootstrapCompletionFailureInjection,
   managedOpenClawHeartbeatLogProbe,
   assertFailedSandboxOwnerCleanupRetention,
   type ManagedImageCommandRunner,
@@ -693,5 +694,46 @@ describe("protected managed-image runtime contract", () => {
         "--inject-bootstrap-completion-failure",
       ]),
     ).toMatchObject({ failureInjection: "bootstrap-completion" });
+  });
+
+  it("injects bootstrap completion failure only after exact owner retention is proven", () => {
+    const expectedSandboxId = "sandbox-id-rollback";
+    const managedImage = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+      "--inject-bootstrap-completion-failure",
+    ]);
+    const runOpenshell = vi.fn((argv: readonly string[]) =>
+      argv[1] === "get"
+        ? { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }
+        : { status: 0, stdout: `NAME STATUS\n${VALID_SANDBOX} Ready\n`, stderr: "" },
+    );
+    const onQualified = vi.fn();
+    const write = vi.fn();
+    const injection = createBootstrapCompletionFailureInjection({
+      env: {},
+      managedImage,
+      onboard: { runOpenshell } as never,
+      onQualified,
+      write,
+    });
+
+    expect(() =>
+      injection.flowInput.verifyCreatedSandboxBeforeEffects!({
+        sandboxId: expectedSandboxId,
+        liveIdentityFingerprint: "fingerprint",
+        createAttemptNonce: "nonce",
+        route: "none",
+      }),
+    ).toThrow(injection.expectedError);
+    expect(onQualified).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("retained one exact quiescent openclaw sandbox for owner cleanup"),
+    );
+    expect(injection.flowInput.persistRetainedSandboxRecovery!("retained")).toBe(true);
   });
 });

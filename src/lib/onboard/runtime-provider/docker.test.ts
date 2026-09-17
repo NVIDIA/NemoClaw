@@ -348,6 +348,31 @@ describe("Docker provider portable lifecycle dispatch", () => {
 });
 
 describe("Docker provider OpenShell lifecycle dispatch", () => {
+  it("uses the caller environment to connect the lifecycle SDK", async () => {
+    const startSandbox = vi.fn(async () => ({ kind: "accepted" as const }));
+    const createSandboxLifecycle = vi.fn(() => ({
+      startSandbox,
+      stopSandbox: vi.fn(async () => ({ kind: "accepted" as const })),
+    }));
+    const provider = createDockerRuntimeProviderBundle({
+      createSandboxLifecycle,
+      recoverPortableSandbox: async () => ({ kind: "not-installed" }),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
+    });
+    const environment = {
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/non-ambient-openshell-state",
+    };
+
+    await expect(
+      supportedLifecycle(provider).start(openClawLifecycleInput(environment)),
+    ).resolves.toEqual({ exitCode: 0 });
+    expect(createSandboxLifecycle).toHaveBeenCalledWith(environment);
+    expect(startSandbox).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
+  });
+
   it("starts a stopped OpenShell sandbox through the gateway instead of Docker (#11251)", async () => {
     const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
     const provider = createDockerRuntimeProviderBundle({
