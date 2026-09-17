@@ -1527,7 +1527,10 @@ async function waitForHermesReadiness(
     );
     if (accepted) credentialFileUnavailable = false;
     lastWaiterCommandFailed = !accepted && (Boolean(result.error) || result.status !== 64);
-    if (accepted && receipt.result === "ready") return qualified;
+    if (accepted && receipt.result === "ready") {
+      timing.increment("authenticatedHealth");
+      return qualified;
+    }
     if (now() >= deadline) break;
     timing.measure("healthPollSleep", () =>
       sleep(
@@ -1955,20 +1958,11 @@ export async function recoverHermesPortableSandboxLifecycle(
       fail("managed startup did not pass authenticated health");
     }
     if (readyQualification) qualified = readyQualification;
+    // waitForHermesReadiness accepts the same authenticated credential and HTTP status as the
+    // observer, then re-proves retained transaction authority and the exact running container.
+    // Reuse that fresh evidence instead of immediately issuing the identical health request.
     const recovered = startedByRecovery
-      ? (() => {
-          const currentContainerDeps = measuredHealthContainerDeps(
-            qualified,
-            timing,
-            createAuthenticatedHealthCapture(qualified.receipt, capture),
-          );
-          timing.increment("authenticatedHealth");
-          return (
-            timing.measure("authenticatedHealth", () =>
-              observeHermesPortableAuthenticatedHealth(qualified.receipt, currentContainerDeps),
-            ) === "ready"
-          );
-        })()
+      ? true
       : await waitFor(
           commandBudget(STARTUP_TIMEOUT_MS),
           deps,
