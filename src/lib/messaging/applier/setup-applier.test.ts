@@ -1240,7 +1240,7 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.entries.acpx.enabled).toBe(false);
     expect(openclawConfig.plugins.entries["openclaw-weixin"].enabled).toBe(true);
     expect(openclawConfig.channels["openclaw-weixin"].enabled).toBe(true);
-    expect(openclawConfig.plugins.allow).toEqual(["openclaw-weixin"]);
+    expect(openclawConfig.plugins.allow).toBeUndefined();
     expect(openclawConfig.plugins.installs).toBeUndefined();
     expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",

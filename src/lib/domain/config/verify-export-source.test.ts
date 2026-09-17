@@ -743,7 +743,6 @@ describe("config export source verification (#10938)", () => {
         observabilityEnabled: true,
         webSearchEnabled: true,
         messaging: { configured: {} } as never,
-        openclawImagePluginInstalls: [{ id: "secondary" }] as never,
         hostLocalInferenceReceipt: "receipt",
       }),
     );
@@ -758,7 +757,6 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].observability",
         "spec.sandboxes[].integrations.webSearch",
         "spec.sandboxes[].integrations.messaging",
-        "spec.sandboxes[].agents.secondary",
         "spec.sandboxes[].agents[0].type",
         "spec.inferenceProviders",
       ]),

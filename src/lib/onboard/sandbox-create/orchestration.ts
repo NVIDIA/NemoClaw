@@ -1950,7 +1950,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const recreateProtection = createSandboxRecreateProtection({
       sandboxName,
       sandboxEntry: existingEntry,
-      customOpenClawImage,
       note,
     });
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>

@@ -28,7 +28,6 @@ import {
   readEnvLineKey,
   staleCredentialEnvKeys,
 } from "../credential-env-cleanup.ts";
-import { allowRenderedOpenClawPlugins } from "../openclaw-plugin-allow.ts";
 import {
   selectActiveMessagingChannelIds,
   selectEnabledMessagingAgentRender,
@@ -293,7 +292,6 @@ export function applyMessagingAgentRenderToObject(
     );
     setJsonPath(config, render.path, value);
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 export function applyMessagingAgentRenderToEnvLines(
@@ -999,7 +997,6 @@ function applyMessagingRenderEntriesToObject(
     );
     setJsonPath(config, render.path, value);
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {

@@ -979,12 +979,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
   const plugins: JsonObject = {
-    allow: unique([
-      "nemoclaw",
-      ...openclawPlugins.map((plugin) => plugin.id),
-      ...(openclawOtel ? ["diagnostics-otel"] : []),
-      ...(webSearchProvider ? [webSearchProvider] : []),
-    ]),
     entries: pluginEntries,
   };
   const pluginLoadPaths: string[] = [];
@@ -1162,6 +1156,14 @@ function preserveExistingOpenClawState(config: JsonObject, configPath: string): 
       ),
     ]);
   }
+  const existingInstalls = existingPlugins.installs;
+  if (!isObject(existingInstalls) || Object.keys(existingInstalls).length === 0) {
+    return;
+  }
+  if (!isObject(currentPlugins.installs)) {
+    currentPlugins.installs = {};
+  }
+  Object.assign(currentPlugins.installs, existingInstalls);
 }
 
 export function writeOpenClawConfig(): void {

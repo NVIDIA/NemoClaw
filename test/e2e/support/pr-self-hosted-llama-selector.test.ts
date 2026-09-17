@@ -213,7 +213,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
   }) => {
     assert.match(
       readFileSync(LLAMA_LIVE_TEST_PATH, "utf8"),
-      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\(\);[\s\S]*expect\(agent\.exitCode/u,
+      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
       "llama.cpp runtime logs must be captured after the agent request and before its exit assertion",
     );
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");

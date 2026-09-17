@@ -12,6 +12,7 @@ skill:
   priority: 10
 agent-variants: ["openclaw"]
 ---
+
 Create a sandboxed OpenClaw agent, then send it a first prompt.
 
 ## Set Up with the Starter Prompt on Your Coding Agent
@@ -29,9 +30,7 @@ If you prefer to control setup directly, use [Set Up with the Interactive Instal
 If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
 The prompt directs your coding agent to this quickstart, so it has the full setup context.
 
-<Note>
-Review the [Prerequisites](prerequisites) before you begin.
-</Note>
+<Note>Review the [Prerequisites](prerequisites) before you begin.</Note>
 
 <Steps>
   <Step title="Install NemoClaw">
@@ -42,6 +41,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     ```
 
     Accept the third-party software notice when prompted.
+
   </Step>
 
   <Step title="Complete Onboarding">
@@ -65,6 +65,7 @@ Review the [Prerequisites](prerequisites) before you begin.
       N1x remains Deferred, and the provider that you select must meet its existing requirements.
       Local NVIDIA NIM remains unavailable on N1x.
     </Note>
+
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -81,6 +82,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     ```bash
     nemoclaw my-assistant status
     ```
+
   </Step>
 
   <Step title="Send Your First Prompt">
@@ -106,6 +108,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemoclaw my-assistant connect
     openclaw tui
     ```
+
   </Step>
 </Steps>
 
@@ -158,6 +161,7 @@ Use these details when your first-run path needs more control.
     Keep both install variables on the `bash` side of the pipeline so the installer can read them.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
+
   </Accordion>
 
   <Accordion title="Choose inference and integrations">
@@ -168,6 +172,7 @@ Use these details when your first-run path needs more control.
     Web search and messaging are optional onboarding choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
+
   </Accordion>
 
   <Accordion title="Use a container runtime and supported platforms">
@@ -217,6 +222,7 @@ Use these details when your first-run path needs more control.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Hugging Face token setup, and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
+
   </Accordion>
 
   <Accordion title="Recover an incomplete or existing installation">
@@ -237,6 +243,7 @@ Use these details when your first-run path needs more control.
 
     The installer handles existing registered sandboxes as an upgrade and recovery workflow instead of creating an additional sandbox.
     Refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed) before changing a failed or existing installation.
+
   </Accordion>
 
   <Accordion title="Open the dashboard from a remote host">
@@ -251,6 +258,7 @@ Use these details when your first-run path needs more control.
     The complete dashboard URL contains a gateway token fragment that authenticates the browser session.
     Treat an authenticated dashboard URL as a password.
     For remote access through SSH port forwarding and recovery guidance, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
+
   </Accordion>
 
   <Accordion title="Onboarding and Inference Details">
@@ -291,7 +299,7 @@ Use these details when your first-run path needs more control.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
     In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
-    A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance.
+    A custom OpenClaw sandbox uses the same validated state backup boundary; OpenClaw's native plugin and package state is restored with the rest of its declared state.
     If a backup is skipped or fails, or automatic rebuild fails or is blocked, the installer exits nonzero before generic onboarding begins.
 
     The inference prompt presents these choices.
@@ -366,6 +374,7 @@ Use these details when your first-run path needs more control.
     It uses the prior name as the default and preserves the inference selection.
     Option 4 exits with a nonzero status without registering a new gateway credential.
     Non-interactive runs print the summary and skip the action menu.
+
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">
@@ -445,6 +454,7 @@ Use these details when your first-run path needs more control.
     ```
 
     A different provider displays its selected model and label, such as `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-3.6-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+
   </Accordion>
 
   <Accordion title="Dashboard and Terminal Details">
@@ -480,6 +490,7 @@ Use these details when your first-run path needs more control.
 
     Run the SSH command in a second terminal on your workstation and substitute the port printed by NemoClaw.
     For remote access through SSH port forwarding and recovery guidance, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
+
   </Accordion>
 </AccordionGroup>
 

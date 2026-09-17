@@ -346,7 +346,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(initialToken)}`,
         `export OPENCLAW_GATEWAY_PORT=${JSON.stringify(port)}`,
         `export OPENCLAW_GATEWAY_URL=${JSON.stringify(`ws://127.0.0.1:${port}`)}`,
-        'export OPENCLAW_HOME="/sandbox"; export OPENCLAW_SUPERVISOR_MODE="external"',
+        'export OPENCLAW_HOME="/sandbox"',
         'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
         'export OPENCLAW_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"',
         'export OPENCLAW_OAUTH_DIR="/sandbox/.openclaw/credentials"',
@@ -434,7 +434,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(envFile).toMatch(/OPENCLAW_HOME='\/sandbox'[\s\S]*OPENCLAW_SUPERVISOR_MODE='external'/);
+    expect(envFile).toContain("export OPENCLAW_HOME='/sandbox'");
     expect(envFile).toContain("export OPENCLAW_STATE_DIR='/sandbox/.openclaw'");
     expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
     expect(envFile).toContain("export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'");
@@ -2971,7 +2971,6 @@ describe("Telegram diagnostics (#2766)", () => {
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const autoPairLog = path.join(tmpDir, "auto-pair.log");
-    const pluginRefreshLog = path.join(tmpDir, "nemoclaw-plugin-refresh.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(configPath, '{"channels":{"telegram":{}}}\n');
     fs.writeFileSync(
@@ -3009,8 +3008,6 @@ describe("Telegram diagnostics (#2766)", () => {
         "harden_auth_profiles() { :; }",
         "run_step_down_as_sandbox() { :; }",
         "setup_auth_profile_as_sandbox() { :; }",
-        `PLUGIN_REFRESH_LOG=${JSON.stringify(pluginRefreshLog)}`,
-        extractShellFunctionFromSource(src, "prepare_plugin_refresh_log"),
         "chown() { :; }",
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
@@ -3043,18 +3040,12 @@ describe("Telegram diagnostics (#2766)", () => {
     });
     const preloadExists = fs.existsSync(preloadPath);
     const preloadMode = preloadExists ? (fs.statSync(preloadPath).mode & 0o777).toString(8) : "";
-    const pluginRefreshLogExists = fs.existsSync(pluginRefreshLog);
-    const pluginRefreshLogMode = pluginRefreshLogExists
-      ? (fs.statSync(pluginRefreshLog).mode & 0o777).toString(8)
-      : "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
     return {
       result,
       preloadExists,
       preloadMode,
       preloadPath,
-      pluginRefreshLogExists,
-      pluginRefreshLogMode,
     };
   }
 
@@ -3232,8 +3223,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("ORDER:configure");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
-      expect(setup.pluginRefreshLogExists).toBe(true);
-      expect(setup.pluginRefreshLogMode).toBe("600");
     },
   );
 
