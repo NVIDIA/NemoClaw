@@ -32,7 +32,11 @@ import type {
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
-import { precleanSandbox, sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
+import {
+  onboardSandboxOrSkipOnRateLimit,
+  precleanSandbox,
+  sandboxShWithArgs,
+} from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
   command: string;
@@ -178,6 +182,43 @@ describe("E2E fixture clients", () => {
           env: expect.objectContaining({
             PATH: expect.any(String),
           }),
+        },
+      },
+    ]);
+  });
+
+  it("skips onboarding when NVIDIA endpoint validation is rate-limited", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({
+      exitCode: 1,
+      stderr: "NVIDIA Endpoints endpoint validation failed: HTTP 429 too many requests",
+    });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const skip = vi.fn((_note?: string): never => {
+      throw new Error("skipped");
+    });
+
+    await expect(
+      onboardSandboxOrSkipOnRateLimit(
+        host,
+        { NEMOCLAW_SANDBOX_NAME: "e2e-survivor" },
+        ["secret"],
+        "survivor-onboard",
+        123_000,
+        skip,
+        "rate limited",
+      ),
+    ).rejects.toThrow("skipped");
+    expect(skip).toHaveBeenCalledWith("rate limited");
+    expect(runner.calls).toEqual([
+      {
+        command: "nemoclaw",
+        args: ["onboard", "--non-interactive"],
+        options: {
+          artifactName: "survivor-onboard",
+          env: { NEMOCLAW_SANDBOX_NAME: "e2e-survivor" },
+          redactionValues: ["secret"],
+          timeoutMs: 123_000,
         },
       },
     ]);
