@@ -39,8 +39,6 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/generate-config.ts",
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
-  "agents/hermes/hindsight-client-probe-requirements.txt",
-  "agents/hermes/hindsight-lazy-integrity.patch",
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
   // Dockerfile copies the policy into build-time and runtime locations.
@@ -61,7 +59,6 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
-  "agents/hermes/runtime-boundaries.patch",
   "agents/hermes/secure-dir-skip-chmod.patch",
   "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",

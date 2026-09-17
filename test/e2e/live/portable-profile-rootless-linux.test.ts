@@ -124,6 +124,10 @@ const HERMES_PORTABLE_E2E_TRANSACTION_ID = "11111111-1111-4111-8111-111111111111
 const HERMES_PORTABLE_E2E_CREATE_INTENT = "b".repeat(64);
 const HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256 =
   "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
+const HERMES_PORTABLE_E2E_HISTORICAL_STARTUP_DESCRIPTOR_SHA256 =
+  "a7a472ebaae5f8d1bbe3e96e105b8224b8a1dcce16504d1302247c7d94212caa";
+const HERMES_PORTABLE_E2E_HISTORICAL_STATE_IDENTITY_SHA256 =
+  "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
 const HERMES_PORTABLE_E2E_GATEWAY_NAME = "nemoclaw";
 const HERMES_PORTABLE_E2E_GENERATION = "portable-e2e-generation";
 const HERMES_PORTABLE_E2E_POLICY = path.join(
@@ -168,6 +172,17 @@ function run(command: string, args: readonly string[]): string {
   return String(result.stdout).trim();
 }
 
+function readPodmanLogs(containerName: string): string {
+  const result = spawnSync("podman", ["logs", containerName], {
+    encoding: "utf-8",
+    env: process.env,
+    killSignal: "SIGKILL",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15_000,
+  });
+  return `${String(result.stdout)}${String(result.stderr)}`.trim();
+}
+
 function probeHermesDashboardHttp(containerName: string, host: string) {
   return spawnSync(
     "podman",
@@ -200,7 +215,7 @@ function probeHermesDashboardHttp(containerName: string, host: string) {
 }
 
 async function waitForHermesDashboard(containerName: string, attempt = 0): Promise<void> {
-  const timeoutDetail = attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
+  const timeoutDetail = attempt < 60 ? "" : `\n${readPodmanLogs(containerName)}`;
   assert.ok(attempt < 60, `Hermes dashboard did not become ready:${timeoutDetail}`);
   const response = probeHermesDashboardHttp(containerName, "nemoclaw0-abc123.brevlab.com");
   const ready = response.status === 0 && response.stdout.trim() === "200";
@@ -217,7 +232,7 @@ async function waitForHermesDashboard(containerName: string, attempt = 0): Promi
         },
       );
   const runningOrReady = ready || (running?.status === 0 && running.stdout.trim() === "true");
-  const exitDetail = runningOrReady ? "" : `\n${run("podman", ["logs", containerName])}`;
+  const exitDetail = runningOrReady ? "" : `\n${readPodmanLogs(containerName)}`;
   assert.equal(
     runningOrReady,
     true,
@@ -696,6 +711,8 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     const historicalStartup = {
       ...currentStartup,
       manifestSha256: HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256,
+      startupDescriptorSha256: HERMES_PORTABLE_E2E_HISTORICAL_STARTUP_DESCRIPTOR_SHA256,
+      stateIdentitySha256: HERMES_PORTABLE_E2E_HISTORICAL_STATE_IDENTITY_SHA256,
     };
     const active = await withMcpLifecycleLock(
       sandboxName,

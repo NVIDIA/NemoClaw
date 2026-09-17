@@ -15,7 +15,6 @@ import {
 } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
-import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
@@ -70,7 +69,6 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   deferredN1xManagedVllmPreviewIntent?: true;
-  openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -251,14 +249,6 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
-    ...(input.openclawImagePluginInstalls !== undefined
-      ? {
-          openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          })),
-        }
-      : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined

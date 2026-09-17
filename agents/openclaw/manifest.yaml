@@ -54,7 +54,11 @@ skills:
 # ── State directories ──────────────────────────────────────────
 state_dirs:
   - agents
-  - extensions
+  # OpenClaw owns native plugin lifecycle. Restore a captured extensions tree,
+  # but do not erase target-only native installs when an older snapshot had no
+  # extensions directory.
+  - path: extensions
+    clear_when_absent: false
   # Legacy layouts can still contain this pre-extensions directory. Keep it
   # outside portable state.
   - path: plugins
