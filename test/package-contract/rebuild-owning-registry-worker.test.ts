@@ -48,4 +48,21 @@ describe("compiled rebuild owning-registry worker", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it("terminates an unresponsive worker with an unknown-outcome recovery diagnostic", async () => {
+    await expect(
+      rebuildOwningRegistryDependencies.runWorker(
+        {
+          operation: "retire-recovery",
+          sandboxName: "alpha",
+          transactionId: "11111111-1111-4111-8111-111111111111",
+          confirmDataRecovered: true,
+        },
+        9000,
+        { timeoutMs: 1 },
+      ),
+    ).rejects.toThrow(
+      "Delegated recovery retirement for sandbox 'alpha' on owning gateway port 9000 exceeded its 1 ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.",
+    );
+  });
 });

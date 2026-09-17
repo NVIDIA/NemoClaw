@@ -49,12 +49,18 @@ type RebuildOwningRegistryDependencies = {
   findSandbox: typeof findSandboxAcrossGatewayRoots;
   findRecoveryRoot: typeof findRebuildRecoveryStorageRoot;
   isHostFenceHeld: typeof isCurrentPortableHostFenceHeld;
-  runWorker(input: OwningRegistryWorkerInput, gatewayPort: number): Promise<void>;
+  runWorker(
+    input: OwningRegistryWorkerInput,
+    gatewayPort: number,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ): Promise<void>;
 };
 
 const WORKER_PATH = path.join(__dirname, "owning-registry-worker.js");
 const MAX_RECOVERY_BACKUP_ENTRIES = 1024;
 const MAX_WORKER_RESULT_BYTES = 64 * 1024;
+const REBUILD_WORKER_TIMEOUT_MS = 45 * 60_000;
+const REBUILD_WORKER_TERMINATION_GRACE_MS = 5_000;
 const REBUILD_ENV_NAMES = [
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
   "NEMOCLAW_NON_INTERACTIVE",
@@ -112,7 +118,15 @@ async function readWorkerResult(stream: Readable): Promise<OwningRegistryWorkerR
   return parsed as OwningRegistryWorkerResult;
 }
 
-async function runWorker(input: OwningRegistryWorkerInput, gatewayPort: number): Promise<void> {
+async function runWorker(
+  input: OwningRegistryWorkerInput,
+  gatewayPort: number,
+  options: Readonly<{ timeoutMs?: number }> = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? REBUILD_WORKER_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("Rebuild worker timeout must be a positive integer.");
+  }
   const child = spawn(process.execPath, [WORKER_PATH], {
     env: rebuildWorkerEnv(gatewayPort),
     stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
@@ -140,7 +154,48 @@ async function runWorker(input: OwningRegistryWorkerInput, gatewayPort: number):
       });
     },
   );
-  const [, exit, workerResult] = await Promise.all([inputWritten, exited, result]);
+  const completion = Promise.all([inputWritten, exited, result] as const);
+  let deadline: NodeJS.Timeout | undefined;
+  const timeout = new Promise<Readonly<{ kind: "timeout" }>>((resolve) => {
+    deadline = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+  });
+  let outcome:
+    | Readonly<{
+        kind: "completed";
+        value: Awaited<typeof completion>;
+      }>
+    | Readonly<{ kind: "timeout" }>;
+  try {
+    outcome = await Promise.race([
+      completion.then((value) => ({ kind: "completed" as const, value })),
+      timeout,
+    ]);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+  if (outcome.kind === "timeout") {
+    child.kill("SIGTERM");
+    let graceDeadline: NodeJS.Timeout | undefined;
+    const graceExpired = new Promise<boolean>((resolve) => {
+      graceDeadline = setTimeout(() => resolve(true), REBUILD_WORKER_TERMINATION_GRACE_MS);
+    });
+    const exitedDuringGrace = exited.then(
+      () => false,
+      () => false,
+    );
+    const forceKill = await Promise.race([graceExpired, exitedDuringGrace]);
+    if (graceDeadline) clearTimeout(graceDeadline);
+    if (forceKill) {
+      child.kill("SIGKILL");
+      await exited.catch(() => undefined);
+    }
+    await Promise.allSettled([inputWritten, result]);
+    const operation = input.operation === "rebuild" ? "rebuild" : "recovery retirement";
+    throw new Error(
+      `Delegated ${operation} for sandbox '${input.sandboxName}' on owning gateway port ${String(gatewayPort)} exceeded its ${String(timeoutMs)} ms deadline. The worker was terminated, but the operation outcome is unknown. NemoClaw did not remove retained recovery state; inspect the sandbox and recovery state before retrying.`,
+    );
+  }
+  const [, exit, workerResult] = outcome.value;
   const resultMatchesRequest =
     workerResult?.operation === input.operation &&
     workerResult.sandboxName === input.sandboxName &&
