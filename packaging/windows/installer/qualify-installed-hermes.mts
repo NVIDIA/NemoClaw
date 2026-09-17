@@ -293,7 +293,7 @@ export function createHermesPtyState() {
     },
     eventsClosed(value: string) {
       openEventFeeds.set(value, Math.max(0, (openEventFeeds.get(value) ?? 0) - 1));
-      if (observing && value === channel && !eventFeedOpen())
+      if (observing && sessionId !== null && value === channel && !eventFeedOpen())
         failure = "The actual PTY event feed closed";
     },
     ptyData() {
@@ -301,7 +301,7 @@ export function createHermesPtyState() {
     },
     ptyClosed(value: string) {
       openPtyFeeds.set(value, Math.max(0, (openPtyFeeds.get(value) ?? 0) - 1));
-      if (observing && value === channel && !ptyFeedOpen())
+      if (observing && sessionId !== null && value === channel && !ptyFeedOpen())
         failure = "The actual PTY socket closed";
     },
     assertHealthy() {

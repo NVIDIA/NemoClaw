@@ -283,10 +283,54 @@ test("closing one same-channel PTY connection preserves the remaining live conne
   state.bindPty("actual-pty");
   state.bindPty("actual-pty");
   state.ptyData();
+  state.receive("actual-pty", {
+    method: "event",
+    params: {
+      type: "session.info",
+      session_id: "real-runtime",
+      seq: 1,
+      payload: {
+        version: "0.21.1",
+        lazy: false,
+        running: false,
+        stored_session_id: "saved-real",
+        profile_name: "profile-real",
+      },
+    },
+  });
   state.ptyClosed("actual-pty");
   state.assertHealthy();
   state.ptyClosed("actual-pty");
   assert.throws(() => state.assertHealthy(), /PTY socket closed/u);
+});
+
+test("pre-session PTY reconnect still requires replacement live feeds", () => {
+  const state = createHermesPtyState();
+  state.bindEvents("actual-pty");
+  state.bindPty("actual-pty");
+  state.eventsClosed("actual-pty");
+  state.ptyClosed("actual-pty");
+  assert.throws(() => state.assertHealthy(), /not live/u);
+  state.bindEvents("actual-pty");
+  state.bindPty("actual-pty");
+  state.ptyData();
+  state.receive("actual-pty", {
+    method: "event",
+    params: {
+      type: "session.info",
+      session_id: "real-runtime",
+      seq: 1,
+      payload: {
+        version: "0.21.1",
+        lazy: false,
+        running: false,
+        stored_session_id: "saved-real",
+        profile_name: "profile-real",
+      },
+    },
+  });
+  state.assertHealthy();
+  assert.equal(state.usable(), true);
 });
 
 test("settled conversation still needs a final saved assistant and a real execute_code kernel bootstrap", () => {
