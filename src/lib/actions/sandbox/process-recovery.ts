@@ -270,6 +270,7 @@ export async function executeSandboxExecCommand(
 
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor";
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v2";
+const OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT = "nemoclaw-openclaw-backup-quiesce-v1";
 const OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT =
   "nemoclaw-openclaw-post-upgrade-doctor-release-v1";
 const OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-abort-v1";
@@ -292,7 +293,14 @@ export type OpenClawPostRestoreDoctorAbortResult =
 
 export interface OpenClawPostRestoreDoctorWindow {
   readonly sandboxName: string;
+  readonly kind?: "backup";
   readonly runtimeSelection?: OpenShellRuntimeSelection;
+}
+
+function openClawMaintenanceMarkerContent(window: OpenClawPostRestoreDoctorWindow): string {
+  return window.kind === "backup"
+    ? OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT
+    : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
 }
 
 interface OpenClawPostRestoreDoctorDeps {
@@ -358,9 +366,11 @@ function captureOpenClawDoctorLifecycle(
   }
 }
 
-export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
+export function buildOpenClawPostUpgradeDoctorMarkerCommand(
+  markerValue = OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT,
+): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
-  const content = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const content = shellQuote(markerValue);
   return [
     "set -e",
     'dir="/sandbox/.openclaw"',
@@ -374,9 +384,12 @@ export function buildOpenClawPostUpgradeDoctorMarkerCommand(): string {
   ].join("; ");
 }
 
-function buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName: string): string {
+function buildOpenClawPostUpgradeDoctorWindowProbe(
+  sandboxName: string,
+  markerValue = OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT,
+): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
-  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const markerContent = shellQuote(markerValue);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
   const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
   const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
@@ -384,7 +397,7 @@ function buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName: string): string 
     "set -e",
     `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 20`,
     `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
-    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)}' ] || exit 21`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(markerValue.length + 1)}' ] || exit 21`,
     `[ "$(cat ${marker})" = ${markerContent} ] || exit 22`,
     `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 23`,
     `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 24`,
@@ -395,9 +408,11 @@ function buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName: string): string 
   ].join("; ");
 }
 
-export function buildOpenClawPostUpgradeDoctorReleaseCommand(): string {
+export function buildOpenClawPostUpgradeDoctorReleaseCommand(
+  markerValue = OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT,
+): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
-  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const markerContent = shellQuote(markerValue);
   const releaseContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
   const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
@@ -405,7 +420,7 @@ export function buildOpenClawPostUpgradeDoctorReleaseCommand(): string {
     "set -e",
     `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 30`,
     `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
-    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)}' ] || exit 31`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(markerValue.length + 1)}' ] || exit 31`,
     `[ "$(cat ${marker})" = ${markerContent} ] || exit 32`,
     `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 33`,
     `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 34`,
@@ -424,6 +439,7 @@ export function buildOpenClawPostUpgradeDoctorReleaseCommand(): string {
 export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const backupContent = shellQuote(OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT);
   const releaseContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT);
   const abortContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
@@ -435,7 +451,7 @@ export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
     `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
     `[ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] || exit 51`,
     `marker_value="$(cat ${marker})"`,
-    `case "$marker_value" in ${markerContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)} ;; ${releaseContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT.length + 1)} ;; ${abortContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT.length + 1)} ;; *) exit 52 ;; esac`,
+    `case "$marker_value" in ${markerContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)} ;; ${backupContent}) marker_size=${String(OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT.length + 1)} ;; ${releaseContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_RELEASE_CONTENT.length + 1)} ;; ${abortContent}) marker_size=${String(OPENCLAW_POST_UPGRADE_DOCTOR_ABORT_CONTENT.length + 1)} ;; *) exit 52 ;; esac`,
     `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = "600 1 $marker_size" ] || exit 51`,
     `if [ -e ${ready} ] || [ -L ${ready} ]; then [ -f ${ready} ] && [ ! -L ${ready} ] || exit 53; [ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 54; [ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 54; [ "$(cat ${ready})" = ${readyContent} ] || exit 55; fi`,
     'dir="/sandbox/.openclaw"',
@@ -448,9 +464,11 @@ export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
   ].join("; ");
 }
 
-export function buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(): string {
+export function buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(
+  markerValue = OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT,
+): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
-  const markerContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT);
+  const markerContent = shellQuote(markerValue);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
   const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
   return [
@@ -458,7 +476,7 @@ export function buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(): string 
     `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 60`,
     `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
     `[ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] || exit 61`,
-    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT.length + 1)}' ] || exit 61`,
+    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(markerValue.length + 1)}' ] || exit 61`,
     `[ "$(cat ${marker})" = ${markerContent} ] || exit 62`,
     `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 63`,
     `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 64`,
@@ -643,7 +661,7 @@ export async function retireOpenClawPostRestoreDoctorForDelete(
   const retired = await executeOpenClawDoctorGateCommand(
     deps,
     sandboxName,
-    buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(),
+    buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(openClawMaintenanceMarkerContent(window)),
     30_000,
     runtimeSelection,
   );
@@ -692,10 +710,15 @@ export async function beginOpenClawPostRestoreDoctor(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+  maintenanceKind: "doctor" | "backup" = "doctor",
 ): Promise<OpenClawPostRestoreDoctorResult> {
+  const markerContent =
+    maintenanceKind === "backup"
+      ? OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT
+      : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
   const markerResult = await deps.executeSandboxExecCommand(
     sandboxName,
-    buildOpenClawPostUpgradeDoctorMarkerCommand(),
+    buildOpenClawPostUpgradeDoctorMarkerCommand(markerContent),
     30_000,
     {
       localDockerFallbackPolicy: "never",
@@ -747,7 +770,7 @@ export async function beginOpenClawPostRestoreDoctor(
         const result = await executeOpenClawDoctorGateCommand(
           deps,
           sandboxName,
-          buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName),
+          buildOpenClawPostUpgradeDoctorWindowProbe(sandboxName, markerContent),
           Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
           runtimeSelection,
         );
@@ -770,6 +793,7 @@ export async function beginOpenClawPostRestoreDoctor(
       ok: true,
       window: {
         sandboxName,
+        ...(maintenanceKind === "backup" ? { kind: "backup" as const } : {}),
         ...(runtimeSelection ? { runtimeSelection } : {}),
       },
     };
@@ -777,22 +801,35 @@ export async function beginOpenClawPostRestoreDoctor(
   const abort = await abortOpenClawPostRestoreDoctor(
     {
       sandboxName,
+      ...(maintenanceKind === "backup" ? { kind: "backup" as const } : {}),
       ...(runtimeSelection ? { runtimeSelection } : {}),
     },
     deps,
   );
   const stage = stop.status !== 0 ? "stop" : start.status !== 0 ? "restart" : "doctor";
+  const maintenanceLabel = maintenanceKind === "backup" ? "backup quiesce" : "doctor";
   const detail =
     stage === "stop"
-      ? "OpenShell did not converge the recreated sandbox stop into a verified doctor window"
+      ? `OpenShell did not converge the recreated sandbox stop into a verified ${maintenanceLabel} window`
       : stage === "restart"
-        ? "OpenShell did not converge the recreated sandbox start into a verified doctor window"
-        : "startup did not prove doctor completion with the gateway held down";
+        ? `OpenShell did not converge the recreated sandbox start into a verified ${maintenanceLabel} window`
+        : maintenanceKind === "backup"
+          ? "startup did not prove backup quiescence with the gateway held down"
+          : "startup did not prove doctor completion with the gateway held down";
   return {
     ok: false,
     stage: abort.ok ? stage : "abort",
     detail: abort.ok ? detail : abort.detail,
   };
+}
+
+/** Enter an early startup gate that quiesces the gateway without repairing source state. */
+export function beginOpenClawBackupQuiesce(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return beginOpenClawPostRestoreDoctor(sandboxName, runtimeSelection, deps, "backup");
 }
 
 /**
@@ -810,7 +847,7 @@ export async function releaseOpenClawPostRestoreDoctorForDelete(
   const release = await executeOpenClawDoctorGateCommand(
     deps,
     sandboxName,
-    buildOpenClawPostUpgradeDoctorReleaseCommand(),
+    buildOpenClawPostUpgradeDoctorReleaseCommand(openClawMaintenanceMarkerContent(window)),
     30_000,
     runtimeSelection,
   );

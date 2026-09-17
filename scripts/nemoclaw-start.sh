@@ -5105,6 +5105,104 @@ PY_SQLITE_TMPDIR
   export SQLITE_TMPDIR="$sqlite_tmpdir"
 }
 
+run_requested_openclaw_backup_quiesce() {
+  local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
+  local expected="nemoclaw-openclaw-backup-quiesce-v1"
+  local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
+  local abort_expected="nemoclaw-openclaw-post-upgrade-doctor-abort-v1"
+  local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
+  local ready_expected="nemoclaw-openclaw-post-upgrade-doctor-ready-v1"
+  local marker_metadata marker_owner marker_mode marker_links marker_value extra=""
+  local ready_owner=""
+  local gate_attempt
+
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    return 0
+  fi
+  # Leave every non-backup marker for the post-setup doctor gate below. Read
+  # only a trusted regular file so this early branch never follows an attacker
+  # controlled link before the ordinary startup guards run.
+  if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+    return 0
+  fi
+  marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 0
+  read -r marker_owner marker_mode marker_links <<EOF
+$marker_metadata
+EOF
+  if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+    || [ "$marker_mode" != "600" ] \
+    || [ "$marker_links" != "1" ]; then
+    return 0
+  fi
+  {
+    IFS= read -r marker_value || return 0
+    if IFS= read -r extra || [ -n "$extra" ]; then
+      return 0
+    fi
+  } <"$marker" || return 0
+  [ "$marker_value" = "$expected" ] || return 0
+
+  # Quiesce before config recovery, migrations, doctor, messaging setup, or
+  # any other startup mutation. The source PVC must remain a read-only backup
+  # input until the host either releases this gate or retires the sandbox.
+  rm -f -- "$ready" || return 1
+  if [ "$(id -u)" -eq 0 ]; then
+    ready_owner="$marker_owner"
+  fi
+  printf '%s\n' "$ready_expected" \
+    | _nemoclaw_safe_replace_tmp_file "$ready" 600 "$ready_owner" required || return 1
+  echo "[setup] OpenClaw gateway held before source backup without state repair" >&2
+
+  gate_attempt=0
+  while [ "$gate_attempt" -lt 600 ]; do
+    gate_attempt=$((gate_attempt + 1))
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+      echo "[SECURITY] Backup quiesce marker disappeared while the gateway was held" >&2
+      return 1
+    fi
+    if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+      echo "[SECURITY] Backup quiesce marker changed while the gateway was held" >&2
+      return 1
+    fi
+    marker_metadata="$(stat -c '%u %a %h' "$marker" 2>/dev/null)" || return 1
+    read -r marker_owner marker_mode marker_links <<EOF
+$marker_metadata
+EOF
+    if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
+      || [ "$marker_mode" != "600" ] \
+      || [ "$marker_links" != "1" ]; then
+      echo "[SECURITY] Backup quiesce marker became untrusted" >&2
+      return 1
+    fi
+    marker_value=""
+    extra=""
+    {
+      IFS= read -r marker_value || return 1
+      if IFS= read -r extra || [ -n "$extra" ]; then
+        return 1
+      fi
+    } <"$marker" || return 1
+    if [ "$marker_value" = "$release_expected" ]; then
+      rm -f -- "$marker" "$ready" || return 1
+      echo "[setup] OpenClaw source backup quiesce released gateway launch" >&2
+      return 0
+    fi
+    if [ "$marker_value" = "$abort_expected" ]; then
+      rm -f -- "$marker" "$ready" || return 1
+      echo "[setup] OpenClaw source backup quiesce aborted; sandbox remains stopped" >&2
+      return 1
+    fi
+    if [ "$marker_value" != "$expected" ]; then
+      echo "[SECURITY] Backup quiesce marker changed while the gateway was held" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  echo "[SECURITY] Timed out waiting for source backup quiesce release" >&2
+  rm -f -- "$marker" "$ready" || return 1
+  return 1
+}
+
 run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
@@ -5231,6 +5329,7 @@ EOF
 # as the sandbox identity, so keep the retired shared-state marker unset and
 # prepare one sandbox-owned SQLite temporary directory before any child runs.
 unset NEMOCLAW_OPENCLAW_SHARED_STATE
+run_requested_openclaw_backup_quiesce || exit 1
 prepare_openshell_sqlite_tmpdir || exit 1
 
 # Begin the root PID 1 readiness lease before any startup path reads or mutates

@@ -6,6 +6,7 @@
 export {
   abortOpenClawPostRestoreDoctor,
   abortUnregisteredOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor,

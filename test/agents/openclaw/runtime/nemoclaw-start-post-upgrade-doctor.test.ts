@@ -29,6 +29,15 @@ function doctorFunction(
   ].join("\n");
 }
 
+function backupQuiesceFunction(source: string, configDir: string, readyPath: string): string {
+  return [
+    extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "run_requested_openclaw_backup_quiesce")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath),
+  ].join("\n");
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-doctor-"));
   const configDir = path.join(root, "openclaw");
@@ -96,6 +105,33 @@ function releaseAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it("holds backup state before startup mutation without invoking doctor", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${backupQuiesceFunction(source, f.configDir, f.ready)}\n${releaseAfterReady(f)}\nrun_requested_openclaw_backup_quiesce`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+      expect(fs.existsSync(f.normalizeCalls)).toBe(false);
+      expect(source.indexOf("run_requested_openclaw_backup_quiesce || exit 1")).toBeLessThan(
+        source.indexOf("prepare_openshell_sqlite_tmpdir || exit 1"),
+      );
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { doctorExitCode: "0", expectedStatus: 0, markerRetained: false },
     { doctorExitCode: "7", expectedStatus: 1, markerRetained: true },
@@ -125,7 +161,8 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         expect(fs.existsSync(f.marker)).toBe(markerRetained);
         const stepDown = fs.readFileSync(f.stepDownCalls, "utf8");
         expect(stepDown).toContain("HOME=/sandbox\n");
-        expect(stepDown).toContain(`PATH=${f.fakeBin}:`);
+        expect(stepDown).toContain(`ARG=PATH=`);
+        expect(stepDown).toContain(f.fakeBin);
         expect(stepDown).toContain("/sandbox/.local/bin\n");
         expect(stepDown).toContain(`ARG=${f.openclaw}\n`);
         expect(stepDown).toContain("ARG=doctor\nARG=--fix\nARG=--yes\nARG=--non-interactive\n");

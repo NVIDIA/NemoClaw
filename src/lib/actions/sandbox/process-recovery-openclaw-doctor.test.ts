@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
   beginOpenClawPostRestoreDoctor,
   buildOpenClawPostUpgradeDoctorAbortCommand,
   buildOpenClawPostUpgradeDoctorDeleteRetirementCommand,
@@ -293,6 +294,36 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(sleep).toHaveBeenCalledOnce();
   });
 
+  it("enters a distinct backup gate without requesting doctor", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+    const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
+      status: 0,
+      output: "",
+    }));
+    const deps = {
+      captureOpenshell: capture as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+
+    await expect(beginOpenClawBackupQuiesce("alpha", undefined, deps)).resolves.toEqual({
+      ok: true,
+      window: { sandboxName: "alpha", kind: "backup" },
+    });
+
+    expect(execute.mock.calls[0]?.[1]).toContain("nemoclaw-openclaw-backup-quiesce-v1");
+    expect(execute.mock.calls[0]?.[1]).not.toContain("post-upgrade-doctor-v2");
+    expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-backup-quiesce-v1");
+    expect(capture.mock.calls.map((call) => call[0])).toEqual([
+      ["sandbox", "stop", "alpha"],
+      ["sandbox", "start", "alpha"],
+    ]);
+  });
+
   it("proves delete-edge release consumption without waiting for gateway health", async () => {
     const execute = vi
       .fn()
@@ -335,12 +366,12 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     };
 
     await expect(
-      retireOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha" }, deps),
+      retireOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha", kind: "backup" }, deps),
     ).resolves.toEqual({ ok: true });
 
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
-      buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(),
+      buildOpenClawPostUpgradeDoctorDeleteRetirementCommand("nemoclaw-openclaw-backup-quiesce-v1"),
       30_000,
       { localDockerFallbackPolicy: "never" },
     );

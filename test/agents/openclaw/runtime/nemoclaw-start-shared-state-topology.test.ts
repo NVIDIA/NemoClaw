@@ -85,6 +85,7 @@ describe("nemoclaw-start native SQLite topology (#7280)", () => {
     );
     const result = runBash([
       `id() { if [ "\${1:-}" = "-u" ]; then printf ${JSON.stringify(String(uid))}; else command id "$@"; fi; }`,
+      "run_requested_openclaw_backup_quiesce() { :; }",
       "prepare_openshell_sqlite_tmpdir() { :; }",
       `export NEMOCLAW_OPENCLAW_SHARED_STATE=${JSON.stringify(initial)}`,
       block,

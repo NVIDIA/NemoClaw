@@ -951,6 +951,22 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         },
       };
     });
+  vi.spyOn(processRecovery, "beginOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName, runtimeSelection) => {
+      const result = await (
+        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
+      )();
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          kind: "backup" as const,
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    },
+  );
   vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
   vi.spyOn(processRecovery, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
     ok: true,

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   abortOpenClawPostRestoreDoctor: vi.fn(),
-  beginOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
   finishOpenClawPostRestoreDoctor: vi.fn(),
   retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
 }));
 vi.mock("./runtime/openclaw-lifecycle", () => ({
   abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
-  beginOpenClawPostRestoreDoctor: mocks.beginOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
   retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
 }));
@@ -46,9 +46,9 @@ const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
   mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
-  mocks.beginOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({
+  mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
     ok: true,
-    window: { sandboxName: "alpha" },
+    window: { sandboxName: "alpha", kind: "backup" },
   });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
@@ -121,11 +121,11 @@ describe("rebuild policy handoff", () => {
       "capture the live policy before sandbox replacement",
       undefined,
     );
-    expect(mocks.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      undefined,
-    );
-    expect(result?.sourceOpenClawDoctorWindow).toEqual({ sandboxName: "alpha" });
+    expect(mocks.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
     expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalledWith({
       sandboxName: "alpha",
     });

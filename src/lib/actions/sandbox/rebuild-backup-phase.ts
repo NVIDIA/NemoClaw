@@ -24,7 +24,7 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 import {
   abortOpenClawPostRestoreDoctor,
-  beginOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
   retireOpenClawPostRestoreDoctorForDelete,
   type OpenClawPostRestoreDoctorWindow,
@@ -161,8 +161,8 @@ export async function runRebuildBackupPhase(
     !input.staleRecovery &&
     (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
-    input.log("Entering verified OpenClaw maintenance window before state backup");
-    const begun = await beginOpenClawPostRestoreDoctor(input.sandboxName, input.runtimeSelection);
+    input.log("Entering verified OpenClaw gateway-quiesce window before state backup");
+    const begun = await beginOpenClawBackupQuiesce(input.sandboxName, input.runtimeSelection);
     if (!begun.ok) {
       return input.bail(
         `OpenClaw state backup could not enter its gateway-down maintenance window (${begun.stage}: ${begun.detail}).`,
