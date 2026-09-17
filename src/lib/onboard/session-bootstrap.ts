@@ -8,8 +8,12 @@ import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 export {
+  isTrustedOnboardError,
+  redactOnboardError,
+  redactOnboardErrorText,
   redactOnboardDiagnosticText,
   redactOnboardCommandDiagnosticText,
+  sanitizeOnboardFailure,
 } from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {

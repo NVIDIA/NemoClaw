@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getVersion, resolveSourceBuildIdentity } from "../../../src/lib/core/version";
@@ -73,6 +74,21 @@ describe("managed image release identity", () => {
       const bind = step(activation, "Bind CLI to publication release");
       const bound = run(bind.run ?? "", { RELEASE: release });
       expect(bound.status, bound.stderr).toBe(0);
+      const generated = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(import.meta.resolve("tsx/cli")),
+          path.join(root, "src", "lib", "core", "generate-build-identity.ts"),
+        ],
+        { cwd: root, encoding: "utf8", env },
+      );
+      expect(generated.status, generated.stderr).toBe(0);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(root, "dist", "build-identity.json"), "utf8")),
+      ).toEqual({
+        nemoclawVersion: release.slice(1),
+        sourceRevision: revision,
+      });
       expect(resolveSourceBuildIdentity({ rootDir: root })).toEqual({
         nemoclawVersion: release.slice(1),
         sourceRevision: revision,

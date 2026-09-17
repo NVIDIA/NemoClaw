@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -11,6 +12,36 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
 const DASHBOARD_PORT = 18_792;
+
+function nativePluginInstallScript(): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/e2e-rebuild-plugin",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "e2e-rebuild-plugin",
+    name: "E2E Rebuild Plugin",
+    version: "1.0.0",
+    description: "Native plugin rebuild persistence fixture",
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint = `export default { id: "e2e-rebuild-plugin", name: "E2E Rebuild Plugin", version: "1.0.0", register() {} };\n`;
+  return [
+    "source_dir=/sandbox/e2e-rebuild-plugin-source",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+    "HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --json >/dev/null",
+  ].join("\n");
+}
 
 test(
   "rebuild-openclaw restores durable state and native readiness",
@@ -46,7 +77,7 @@ test(
       boundary: "exact managed OpenClaw rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image instead of constructing a stale base",
-        "workspace state survives the rebuild",
+        "workspace state and a native user-installed plugin survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
       ],
     });
@@ -88,7 +119,10 @@ test(
     const write = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
+        [
+          `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
+          nativePluginInstallScript(),
+        ].join("\n"),
       ),
       {
         artifactName: "rebuild-openclaw-write-marker",
@@ -112,7 +146,9 @@ test(
     await waitForNativeOpenClaw(sandbox, redactions);
     const read = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript("cat /sandbox/.openclaw/workspace/.rebuild-state-marker"),
+      trustedSandboxShellScript(
+        'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n" "$marker"',
+      ),
       {
         artifactName: "rebuild-openclaw-read-marker",
         env,
