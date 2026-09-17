@@ -1369,7 +1369,7 @@ installer_docker_host_has_supported_shape() {
 # Admit a usable socket and the default context before Docker or recovery effects.
 # Persisted JSON inspection can wait only for its missing Node.js prerequisite.
 validate_installer_docker_target_before_host_changes() {
-  local raw="${DOCKER_HOST-}" candidate active_context=""
+  local raw="${DOCKER_HOST-}" candidate active_context="" context_host=""
   installer_docker_host_has_supported_shape \
     || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer."
   candidate="${raw#"${raw%%[![:space:]]*}"}"
@@ -1386,8 +1386,21 @@ validate_installer_docker_target_before_host_changes() {
     fi
     active_context="$(docker_active_context)"
   fi
-  [[ "$active_context" == default ]] \
-    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer."
+  if [[ "$active_context" != default ]]; then
+    context_host="$(docker context inspect "$active_context" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    [[ -n "$context_host" ]] \
+      || error "The Docker context does not select a supported local Unix socket. Select a local Docker or Colima context, then rerun the installer."
+    DOCKER_HOST="$context_host"
+    installer_docker_host_has_supported_shape \
+      || error "The Docker context does not select a supported local Unix socket. Select a local Docker or Colima context, then rerun the installer."
+    export DOCKER_HOST
+    unset DOCKER_CONTEXT
+  elif [[ -n "$candidate" ]]; then
+    unset DOCKER_CONTEXT
+  fi
+  # DOCKER_CONTEXT takes precedence over DOCKER_HOST in Docker clients. Once
+  # admission resolves a local socket, keep that socket authoritative through
+  # host preflight and automatic onboarding.
 }
 
 # Re-read persisted context after Node installation instead of trusting the temporary default.
