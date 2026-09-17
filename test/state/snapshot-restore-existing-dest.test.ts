@@ -311,6 +311,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     const lines = fs.readFileSync(osLog, "utf-8").trim().split("\n");
     expect(lines.filter((line) => line === "sandbox delete -g nemoclaw dst")).toHaveLength(1);
     expect(lines.filter((line) => line === "sandbox get -g nemoclaw dst")).toHaveLength(2);
+    expect(lines.some((line) => line.startsWith("sandbox create "))).toBe(true);
   });
 
   it("deletes a registered cross-gateway destination on its own gateway before recreating", () => {
