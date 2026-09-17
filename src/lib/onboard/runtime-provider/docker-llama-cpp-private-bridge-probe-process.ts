@@ -3,6 +3,8 @@
 
 import http from "node:http";
 
+import { DOCKER_LLAMA_CPP_READINESS_TIMEOUT_MAX_SECONDS } from "./docker-llama-cpp-readiness-timeout";
+
 const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const RETRY_DELAY_MS = 1_000;
 export const PRIVATE_BRIDGE_PROBE_CONNECT_EXIT = 7;
@@ -39,7 +41,11 @@ export function parseLlamaCppPrivateBridgeProbeArguments(
     throw new Error("private bridge probe timeout is invalid");
   }
   const timeoutSeconds = Number(timeoutValue);
-  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3_600) {
+  if (
+    !Number.isSafeInteger(timeoutSeconds) ||
+    timeoutSeconds < 1 ||
+    timeoutSeconds > DOCKER_LLAMA_CPP_READINESS_TIMEOUT_MAX_SECONDS
+  ) {
     throw new Error("private bridge probe timeout is invalid");
   }
   let url: URL;
