@@ -136,16 +136,17 @@ describe("OpenShell Homebrew service boundary", () => {
   });
 
   it.each([
-    [66, "Run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"],
-    [67, "could not grant temporary trust"],
-    [68, "could not remove temporary trust"],
-    [69, "Run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"],
-  ])("fails closed on Homebrew boundary status %i (#7707)", (status, expected) => {
+    [66],
+    [67],
+    [68],
+    [69],
+  ])("uses standalone fallback on Homebrew boundary status %i (#7707)", (status) => {
     const preparePortForServiceStart = vi.fn();
     const prepareServiceEnv = vi.fn();
     const validatePortOwnerForServiceStart = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    expect(() =>
+    expect(
       startOpenShellGatewayUserService({
         commandExists: () => true,
         homebrewFormulaOperation: () => spawnResult(status, "opaque Homebrew diagnostic"),
@@ -154,7 +155,10 @@ describe("OpenShell Homebrew service boundary", () => {
         prepareServiceEnv,
         validatePortOwnerForServiceStart,
       }),
-    ).toThrow(expected);
+    ).toEqual({ attempted: false, started: false, reason: "service not installed" });
+    expect(warn).toHaveBeenCalledWith(
+      "  OpenShell Homebrew service inspection failed; continuing with standalone gateway fallback.",
+    );
     expect(preparePortForServiceStart).not.toHaveBeenCalled();
     expect(prepareServiceEnv).not.toHaveBeenCalled();
     expect(validatePortOwnerForServiceStart).not.toHaveBeenCalled();

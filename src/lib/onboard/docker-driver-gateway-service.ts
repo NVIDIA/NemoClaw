@@ -463,10 +463,6 @@ function runSystemctlUser(
 }
 
 const OPENSHELL_HOMEBREW_FORMULA_ABSENT = 65;
-const OPENSHELL_HOMEBREW_FORMULA_REPAIR = 66;
-const OPENSHELL_HOMEBREW_TRUST_FAILED = 67;
-const OPENSHELL_HOMEBREW_UNTRUST_FAILED = 68;
-const OPENSHELL_HOMEBREW_OPERATION_FAILED = 69;
 
 function homebrewFormulaOperationScript(): string {
   return path.resolve(__dirname, "../../../scripts/install-openshell.sh");
@@ -523,27 +519,6 @@ function runTrustedHomebrewFormulaOperation(
 const HOMEBREW_FORMULA_REPAIR_GUIDANCE =
   "OpenShell's Homebrew formula is installed but cannot satisfy NemoClaw's pinned checksum and temporary trust contract. " +
   "Run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash, then rerun onboarding.";
-
-function throwHomebrewFormulaOperationFailure(operation: string, result: CommandResult): never {
-  if (result.status === OPENSHELL_HOMEBREW_FORMULA_REPAIR) {
-    throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
-  }
-  if (result.status === OPENSHELL_HOMEBREW_TRUST_FAILED) {
-    throw new OpenShellGatewayServiceTrustError(
-      `Homebrew could not grant temporary trust for the checksum-verified OpenShell formula during ${operation}. ` +
-        "No service operation was performed.",
-    );
-  }
-  if (result.status === OPENSHELL_HOMEBREW_UNTRUST_FAILED) {
-    throw new OpenShellGatewayServiceTrustError(
-      `Homebrew could not remove temporary trust for the OpenShell formula after ${operation}. ` +
-        "Stop and repair Homebrew trust before continuing.",
-    );
-  }
-  throw new OpenShellGatewayServiceTrustError(
-    `OpenShell Homebrew ${operation} failed inside the checksum-verified temporary trust boundary.`,
-  );
-}
 
 function runStopService(
   service: OpenShellGatewayUserServiceTarget,
@@ -625,10 +600,10 @@ function resolveOfficialHomebrewFormulaPaths(
   );
   if (!info.ok) {
     if (info.status === OPENSHELL_HOMEBREW_FORMULA_ABSENT) return null;
-    if (info.status === OPENSHELL_HOMEBREW_OPERATION_FAILED) {
-      throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
-    }
-    throwHomebrewFormulaOperationFailure("formula identity inspection", info);
+    console.warn(
+      "  OpenShell Homebrew service inspection failed; continuing with standalone gateway fallback.",
+    );
+    return null;
   }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
