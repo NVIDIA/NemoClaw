@@ -142,7 +142,9 @@ async function preclean(
     env,
     timeoutMs: 3 * 60_000,
   });
-  await sandbox.bestEffortCleanupSandbox(SANDBOX_NAME, {
+  // A fresh runner may not have registered the isolated gateway yet. Verify that
+  // absence before skipping sandbox deletion; all other cleanup failures remain errors.
+  await sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
     env,
     timeoutMs: 60_000,

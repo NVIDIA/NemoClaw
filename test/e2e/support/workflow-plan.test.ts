@@ -87,7 +87,7 @@ describe("E2E workflow plan", () => {
       }, {}),
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
-      "typed-registry": 4,
+      "typed-registry": 3,
       "shared-e2e": 2,
       "retained-workflow": 14,
       staging: 1,
@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(80);
+    expect(plan.coverageMatrix).toHaveLength(78);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -141,7 +141,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(49);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
     );

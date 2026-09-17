@@ -5,7 +5,7 @@
  * Preserve the script's real user-visible boundary: install.sh onboards an
  * OpenClaw sandbox, `nemoclaw inference set` switches the running route, then
  * OpenShell route state, OpenClaw config/hash state, registry/session state,
- * inference.local, and a real OpenClaw agent turn are checked from the live
+ * inference.local, and a real OpenClaw gateway model run are checked from the live
  * host/sandbox boundary. Target-specific helpers stay local; shared shell
  * primitives come from the fixture layer's production-backed helper.
  */
@@ -46,15 +46,16 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
+  anthropicToolCount,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
+  parseOpenClawGatewayModelRun,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_MODEL,
@@ -139,7 +140,16 @@ interface OnboardSession {
 
 interface MockAnthropicProvider {
   endpointUrl: string;
+  requests(): readonly MockAnthropicRequest[];
   close(): Promise<void>;
+}
+
+interface MockAnthropicRequest {
+  method: string;
+  model: string | null;
+  path: string;
+  stream: boolean;
+  toolCount: number | null;
 }
 
 function proveMockBaselineAuthentication(
@@ -334,6 +344,7 @@ function closeServer(server: Server): Promise<void> {
 }
 
 async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
+  const requests: MockAnthropicRequest[] = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://mock.local");
     if (req.method === "GET" && url.pathname === "/health") {
@@ -358,13 +369,24 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
       raw += chunk;
     });
     req.on("end", () => {
-      let payload: { model?: unknown; stream?: unknown } = {};
+      let payload: { model?: unknown; stream?: unknown; tools?: unknown } = {};
       try {
-        payload = JSON.parse(raw || "{}") as { model?: unknown; stream?: unknown };
+        payload = JSON.parse(raw || "{}") as {
+          model?: unknown;
+          stream?: unknown;
+          tools?: unknown;
+        };
       } catch {
         payload = {};
       }
       const model = typeof payload.model === "string" ? payload.model : "mock-anthropic-model";
+      requests.push({
+        method: req.method ?? "",
+        model: typeof payload.model === "string" ? payload.model : null,
+        path: url.pathname,
+        stream: payload.stream === true,
+        toolCount: anthropicToolCount(payload.tools),
+      });
       if (payload.stream === true) {
         const message = {
           id: "msg_mock",
@@ -430,6 +452,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
   const port = (address as AddressInfo).port;
   return {
     endpointUrl: compatibleAnthropicMockEndpointUrl(port),
+    requests: () => requests,
     close: () => closeServer(server),
   };
 }
@@ -731,11 +754,13 @@ async function checkSandboxInference(
   throw new Error(`Sandbox inference.local did not work after switch: ${lastFailure}`);
 }
 
-async function checkOpenClawAgentTurn(
+async function checkOpenClawGatewayInference(
   host: HostCliClient,
   home: string,
+  artifacts: ArtifactSink,
+  mockProvider: MockAnthropicProvider | undefined,
 ): Promise<"ok" | { skipped: string }> {
-  const sessionId = `e2e-inference-switch-openclaw-${Date.now()}-${process.pid}`;
+  const requestOffset = mockProvider?.requests().length ?? 0;
   const script = String.raw`
 set -u
 ssh_config="$(mktemp)"
@@ -760,7 +785,7 @@ run_with_timeout 120s ssh -F "$ssh_config" \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}.default" \
-  "openclaw agent --agent main --json --session-id '$SESSION_ID' -m 'Reply with exactly one word: PONG'" \
+  "openclaw infer model run --gateway --json --prompt 'Reply with exactly one word: PONG'" \
   2>"$stderr_file"
 rc=$?
 set -e
@@ -769,33 +794,59 @@ cat "$stderr_file" 2>/dev/null || true
 exit "$rc"
 `;
   const result = await host.command("bash", ["-lc", script], {
-    artifactName: "openclaw-agent-turn-after-inference-switch",
-    env: commandEnv(home, {
-      SANDBOX_NAME,
-      SESSION_ID: sessionId,
-    }),
+    artifactName: "openclaw-gateway-inference-after-switch",
+    env: commandEnv(home, { SANDBOX_NAME }),
     timeoutMs: AGENT_TIMEOUT_MS,
   });
+  const mockRequests = mockProvider?.requests().slice(requestOffset) ?? [];
+  const requestArtifact = "mock-anthropic-openclaw-gateway-requests.json";
+  await (mockProvider
+    ? artifacts.writeJson(requestArtifact, {
+        phase: "prove inference.local and OpenClaw gateway inference",
+        requestCount: mockRequests.length,
+        requests: mockRequests.slice(0, 20),
+        truncated: mockRequests.length > 20,
+      })
+    : Promise.resolve());
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
-  const reply = parseOpenClawAgentText(raw);
+  const modelRun = parseOpenClawGatewayModelRun(raw);
+  const reply = modelRun?.text ?? "";
   const fallbackOrPairing =
     /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i.test(
       [raw, warnings, result.stderr].filter(Boolean).join("\n"),
     );
-  if (result.exitCode === 0 && agentReplyContainsToken(reply, "PONG") && !fallbackOrPairing) {
+  const mockRequestMatched =
+    !mockProvider ||
+    (mockRequests.length > 0 &&
+      mockRequests.every(
+        (request) =>
+          request.method === "POST" &&
+          request.path === "/v1/messages" &&
+          request.model === SWITCH_MODEL &&
+          request.stream &&
+          request.toolCount === 0,
+      ));
+  const expectedOpenClawProvider =
+    SWITCH_INFERENCE_API === "anthropic-messages" ? "anthropic" : "inference";
+  if (
+    result.exitCode === 0 &&
+    modelRun?.provider === expectedOpenClawProvider &&
+    modelRun.model === SWITCH_MODEL &&
+    agentReplyContainsToken(reply, "PONG") &&
+    !fallbackOrPairing &&
+    mockRequestMatched
+  ) {
     return "ok";
-  }
-  if (result.exitCode === 124) {
-    return {
-      skipped: "OpenClaw agent turn timed out after switch; route/config checks already passed",
-    };
   }
   throw new Error(
     [
-      `OpenClaw agent turn failed after switch (exit ${result.exitCode})`,
+      `OpenClaw gateway inference failed after switch (exit ${result.exitCode})`,
       `reply=${reply.slice(0, 200)}`,
       `raw=${raw.slice(0, 200)}`,
       `stderr=${[warnings, result.stderr].filter(Boolean).join("\n").slice(0, 200)}`,
+      mockProvider && !mockRequestMatched
+        ? `request evidence mismatch; see ${requestArtifact}`
+        : "",
     ].join("; "),
   );
 }
@@ -877,7 +928,7 @@ test(
         "prepare the switched provider and endpoint",
         "switch the route and verify restart semantics",
         "inspect route configuration and recorded state",
-        "prove inference.local and OpenClaw agent turns",
+        "prove inference.local and OpenClaw gateway inference",
         "apply sandbox retention and record the result",
       ],
     },
@@ -885,7 +936,7 @@ test(
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "openclaw-inference-switch",
-      boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
+      boundary: "install-sh-openclaw-inference-set-and-live-gateway-model-run",
       sandboxName: SANDBOX_NAME,
       switchProvider: SWITCH_PROVIDER,
       switchModel: SWITCH_MODEL,
@@ -900,7 +951,7 @@ test(
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
         "sandbox inference.local returns PONG from the switched model",
-        "openclaw agent answers through the switched inference route",
+        "OpenClaw gateway model inference answers through the switched route without agent tools",
       ],
     });
 
@@ -1062,7 +1113,7 @@ test(
     await assertOpenClawConfig(sandbox, home);
     await assertRegistryAndSession(home, { mockProvider });
 
-    progress.phase("prove inference.local and OpenClaw agent turns");
+    progress.phase("prove inference.local and OpenClaw gateway inference");
     const inference = await checkSandboxInference(sandbox, artifacts, home);
     if (inference !== "ok") {
       await artifacts.target.complete({
@@ -1074,15 +1125,20 @@ test(
       skip(inference.skipped);
     }
 
-    const agentTurn = await checkOpenClawAgentTurn(host, home);
-    if (agentTurn !== "ok") {
+    const gatewayInference = await checkOpenClawGatewayInference(
+      host,
+      home,
+      artifacts,
+      mockProvider,
+    );
+    if (gatewayInference !== "ok") {
       await artifacts.target.complete({
         id: "openclaw-inference-switch",
         status: "skipped",
-        reason: agentTurn.skipped,
+        reason: gatewayInference.skipped,
         routeConfigAndInferenceChecksPassed: true,
       });
-      skip(agentTurn.skipped);
+      skip(gatewayInference.skipped);
     }
 
     progress.phase("apply sandbox retention and record the result");
@@ -1107,7 +1163,7 @@ test(
         registryAndSessionChecked: true,
         inferenceLocalPong: true,
         inferenceLocalModelMatched: true,
-        openClawAgentPong: true,
+        openClawGatewayInferencePong: true,
       },
     });
   },
