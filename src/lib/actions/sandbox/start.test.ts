@@ -77,6 +77,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     [
       "docker",
       createDockerRuntimeProviderBundle({
+        withLifecycleLock: async (_name, operation) => operation(),
         captureSandboxLifecycle,
         findLabeledSandboxContainers,
         hasPortableLifecycleReceipt,
@@ -88,7 +89,14 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       }),
     ],
   ]);
+  let elapsedMs = 0;
+  const delayGatewayProcessProbe = vi.fn(async (ms: number) => {
+    elapsedMs += ms;
+  });
   const deps: SandboxStartDeps = {
+    environment: {},
+    now: () => elapsedMs,
+    delayGatewayProcessProbe,
     getSandbox,
     updateSandbox,
     runtimeProviders,
@@ -247,7 +255,9 @@ describe("startSandbox native lifecycle", () => {
 
       await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
       expect(probeGatewayProcess).toHaveBeenCalledTimes(4);
-      expect(probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw-19080");
+      expect(probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw-19080", {
+        startup: { timeoutMs: 15_000 },
+      });
       expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000], [2_000]]);
       expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
         probeGatewayProcess.mock.invocationCallOrder[3],
@@ -255,14 +265,69 @@ describe("startSandbox native lifecycle", () => {
     },
   );
 
-  it("fails within the OpenClaw startup budget without repairing forwards when the listener stays stopped", async () => {
+  it.each([
+    [undefined, 30_000],
+    ["", 30_000],
+    ["-1", 30_000],
+    ["Infinity", 30_000],
+    ["invalid", 30_000],
+    ["0", 0],
+    ["0.25", 250],
+    ["4", 4_000],
+  ] as const)("bounds stopped OpenClaw startup with recovery timeout %s", async (value, budget) => {
+    let elapsed = 0;
     const probeGatewayProcess = vi.fn(async () => false);
-    const delayGatewayProcessProbe = vi.fn(async () => {});
-    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
-
+    const delayGatewayProcessProbe = vi.fn(async (ms: number) => {
+      elapsed += ms;
+    });
+    const h = harness({
+      probeGatewayProcess,
+      delayGatewayProcessProbe,
+      now: () => elapsed,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: value },
+    });
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
-    expect(probeGatewayProcess).toHaveBeenCalledTimes(61);
-    expect(delayGatewayProcessProbe).toHaveBeenCalledTimes(60);
+    expect(elapsed).toBe(budget);
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(Math.ceil(budget / 2_000));
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("charges slow probes and sleep to one deadline and passes only the remaining time", async () => {
+    let elapsed = 0;
+    const budgets: number[] = [];
+    const probeGatewayProcess = vi.fn<NonNullable<SandboxStartDeps["probeGatewayProcess"]>>(
+      async (_name, _gateway, options) => {
+        const remaining = options?.startup?.timeoutMs ?? 0;
+        budgets.push(remaining);
+        elapsed += Math.min(700, remaining);
+        return false;
+      },
+    );
+    const h = harness({
+      probeGatewayProcess,
+      now: () => elapsed,
+      delayGatewayProcessProbe: async (ms) => {
+        elapsed += ms;
+      },
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+    });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(elapsed).toBe(3_000);
+    expect(budgets).toEqual([3_000, 300]);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("rejects a positive observation that arrives after the startup deadline", async () => {
+    let elapsed = 0;
+    const h = harness({
+      probeGatewayProcess: async () => {
+        elapsed = 1_001;
+        return true;
+      },
+      now: () => elapsed,
+      environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "1" },
+    });
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 

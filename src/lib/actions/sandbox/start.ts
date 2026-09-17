@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
+import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -60,15 +61,23 @@ export interface SandboxStartDeps {
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
+  now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 3;
-// OpenClaw's cold HTTP startup uses the existing 120-second recovery budget.
-const OPENCLAW_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS = 61;
+const OPENCLAW_GATEWAY_STARTUP_DEFAULT_MS = 30_000;
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+
+function openClawStartupTimeoutMs(environment: NodeJS.ProcessEnv): number {
+  const raw = environment.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS?.trim();
+  const seconds = raw ? Number(raw) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0
+    ? Math.min(seconds * 1000, Number.MAX_SAFE_INTEGER)
+    : OPENCLAW_GATEWAY_STARTUP_DEFAULT_MS;
+}
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
@@ -81,27 +90,36 @@ async function waitForStartedNativeGatewayProcess(
   if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
     return undefined;
   }
-  const attempts =
-    nativeAgent === "hermes"
-      ? HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS
-      : OPENCLAW_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  return await retryUntilAsync(
-    () => (deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus)(sandboxName, gatewayName),
-    {
+  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
+  const delay = async (delayMs: number) => {
+    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
+    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
+  };
+  if (nativeAgent === "hermes") {
+    return retryUntilAsync(() => probe(sandboxName, gatewayName), {
       accept: (running) => running !== false,
       retryDelaysMs: Array.from(
-        { length: attempts - 1 },
+        { length: HERMES_GATEWAY_PROCESS_SETTLEMENT_ATTEMPTS - 1 },
         () => GATEWAY_PROCESS_SETTLEMENT_DELAY_MS,
       ),
-      onRetry: (_running, delayMs) => {
-        log(
-          `  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`,
-        );
-      },
-      sleep: deps.delayGatewayProcessProbe ?? sleep,
-    },
-  );
+      sleep: delay,
+    });
+  }
+
+  const now = deps.now ?? (() => performance.now());
+  const deadline = now() + openClawStartupTimeoutMs(deps.environment ?? process.env);
+  while (now() < deadline) {
+    const remaining = Math.floor(deadline - now());
+    if (remaining < 1) break;
+    const running = await probe(sandboxName, gatewayName, {
+      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
+    });
+    if (now() >= deadline) break;
+    if (running !== false) return running;
+    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
+  }
+  return false;
 }
 
 /**

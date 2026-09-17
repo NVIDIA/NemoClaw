@@ -343,13 +343,14 @@ async function executeSandboxExecCommandForStatus(
   commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
     { hostCwd: ROOT },
   ),
+  timeoutMilliseconds = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): Promise<SandboxCommandResult | null> {
   const markedCommand = buildSandboxExecMarkedCommand(command);
   const result = await commandExecutor.runBuffered({
     sandboxName,
     target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
     command: ["sh", "-c", markedCommand],
-    timeoutMilliseconds: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+    timeoutMilliseconds,
   });
   if (result.outcome.kind !== "completed") return null;
   const commandStdout = extractSandboxExecCommandStdout(result.stdout);
@@ -377,8 +378,8 @@ function sandboxGatewayHealthProbeCommand(probeUrl: string): string {
   return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; *) echo UNAVAILABLE ;; esac`;
 }
 
-function sandboxGatewayRecoveryProbeCommand(probeUrl: string): string {
-  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; 0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
+function sandboxGatewayRecoveryProbeCommand(probeUrl: string, starting = false): string {
+  return `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null); CURL_STATUS=$?; case "$CURL_STATUS:$HTTP_CODE" in 0:200|0:401) echo RUNNING ;; ${starting ? "7:000|" : ""}0:*) echo STOPPED ;; *) echo UNAVAILABLE ;; esac`;
 }
 
 /**
@@ -679,6 +680,7 @@ export async function isSandboxGatewayRunningForStatus(
   gatewayName?: string,
   options: {
     getSessionAgent?: typeof agentRuntime.getSessionAgent;
+    startup?: { timeoutMs: number };
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
     requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
@@ -703,20 +705,27 @@ export async function isSandboxGatewayHttpReachableForStatus(
   sandboxName: string,
   gatewayName?: string,
   options: {
+    startup?: { timeoutMs: number };
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
   } = {},
 ): Promise<boolean | null> {
   const probeUrl = (options.getHealthProbeUrl ?? getSandboxHealthProbeUrl)(sandboxName);
-  const command = sandboxGatewayHealthProbeCommand(probeUrl);
-  return parseSandboxGatewayProbe(
-    await executeSandboxExecCommandForStatus(
-      sandboxName,
-      command,
-      gatewayName,
-      options.commandExecutor,
-    ),
+  // A refused loopback connection is expected while the native agent starts.
+  // Ordinary status observations keep treating this as unavailable evidence.
+  const command = options.startup
+    ? sandboxGatewayRecoveryProbeCommand(probeUrl, true)
+    : sandboxGatewayHealthProbeCommand(probeUrl);
+  const result = await executeSandboxExecCommandForStatus(
+    sandboxName,
+    command,
+    gatewayName,
+    options.commandExecutor,
+    options.startup?.timeoutMs,
   );
+  return options.startup
+    ? parseSandboxGatewayRecoveryProbe(result)
+    : parseSandboxGatewayProbe(result);
 }
 
 /**
