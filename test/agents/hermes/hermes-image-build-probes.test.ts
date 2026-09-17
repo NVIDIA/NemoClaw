@@ -246,15 +246,22 @@ describe("Hermes image build probes", () => {
     );
   });
 
-  it.each(reviewedHermesReleaseIdentities)(
-    "accepts the exact $label Hermes release identity tuple",
-    ({ environment }) => {
-      const result = runHermesReleaseIdentityGuard(environment);
+  it("accepts the exact current 0.20.6 Hermes release identity tuple", () => {
+    const result = runHermesReleaseIdentityGuard(reviewedHermesReleaseIdentities[0].environment);
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stderr).toBe("");
-    },
-  );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("recognizes but does not build 0.21.3 before its base-image migration is complete", () => {
+    const result = runHermesReleaseIdentityGuard(reviewedHermesReleaseIdentities[1].environment);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "ERROR: reviewed Hermes 0.21.3 identity requires completed base-image migration",
+    );
+    expect(result.stderr).not.toContain("unreviewed Hermes release identity tuple");
+  });
 
   it.each(rejectedHermesReleaseIdentities)(
     "rejects altered $field from the $label Hermes release identity tuple",

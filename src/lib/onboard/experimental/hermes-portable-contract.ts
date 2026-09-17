@@ -47,12 +47,6 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
-// One-way compatibility bridge for the exact additive skills metadata change in #11248.
-const REVIEWED_MANIFEST_TRANSITION = Object.freeze({
-  installed: "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
-  current: "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
-});
-
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
   readonly startupArgv: readonly string[];
@@ -325,12 +319,9 @@ function startupAuthorityMatches(
   installed: HermesPortableStartupContract,
 ): boolean {
   if (isDeepStrictEqual(current, installed)) return true;
-  if (
-    installed.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.installed ||
-    current.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.current
-  ) {
-    return false;
-  }
+  // The exact manifest is revalidated above, including its reviewed Hermes
+  // version. Permit recovery across reviewed manifest revisions only when all
+  // durable startup and state authority represented by the receipt is equal.
   const { manifestSha256: _currentManifest, ...currentAuthority } = current;
   const { manifestSha256: _installedManifest, ...installedAuthority } = installed;
   return isDeepStrictEqual(currentAuthority, installedAuthority);
