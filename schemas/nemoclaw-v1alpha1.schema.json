@@ -3167,7 +3167,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": "The configuration requires one sandbox and at least one selected inference provider. At most one selected provider may have managed inference dependencies.",
+      "description": "The configuration requires one to 32 named sandboxes and at least one selected inference provider. At most one selected provider may have managed inference dependencies.",
       "properties": {
         "gateway": {
           "$ref": "#/$defs/Gateway",
@@ -3211,11 +3211,11 @@
           "type": "object"
         },
         "sandboxes": {
-          "description": "Exactly one sandbox with one or more OpenClaw agents sharing one harness runtime, or one agent of another harness.",
+          "description": "One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw agents sharing a runtime, or one agent of another harness. Declaration order does not select a default sandbox or agent.",
           "items": {
             "$ref": "#/$defs/Sandbox"
           },
-          "maxItems": 1,
+          "maxItems": 32,
           "minItems": 1,
           "type": "array"
         }

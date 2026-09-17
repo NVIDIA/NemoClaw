@@ -42,10 +42,7 @@ fn one_or_many_agents_preserve_restrictions_in_launch_and_yaml() {
         if count > 1 {
             let settings: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
             assert_eq!(settings["agents"].as_array().unwrap().len(), count);
-            assert_eq!(
-                settings["agents"][1],
-                json!({"name":"agent-1","tools":{"allow":["read"]}})
-            );
+            assert_eq!(settings["agents"][1]["tools"], json!({"allow":["read"]}));
         }
     }
     let mut v = input(1);

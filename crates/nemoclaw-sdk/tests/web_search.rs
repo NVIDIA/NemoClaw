@@ -39,15 +39,15 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
-    assert!(graph["resource"]["nemoclaw_provider"]["inference"].is_object());
+    assert!(graph["resource"]["nemoclaw_provider"]["inference_local"].is_object());
     assert_eq!(
         graph["resource"]["nemoclaw_provider"]["web_search"]["depends_on"],
         json!(["nemoclaw_provider_profile.web_search"])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["agent"]["depends_on"],
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
         json!([
-            "nemoclaw_provider.inference",
+            "nemoclaw_provider.inference_local",
             "nemoclaw_provider.web_search"
         ])
     );
@@ -250,4 +250,32 @@ fn schema_and_parser_reject_unsupported_integration_shapes() {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         assert!(!validator.is_valid(&value));
     }
+}
+
+#[test]
+fn sandboxes_share_search_registration_but_reject_conflicting_credentials() {
+    let mut value = input();
+    let mut other = value["spec"]["sandboxes"][0].clone();
+    other["name"] = json!("other");
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(other);
+    let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let resources = targets(&doc, &generations).unwrap();
+    assert_eq!(
+        resources
+            .iter()
+            .filter(|row| row.address == "nemoclaw_provider.web_search")
+            .count(),
+        1
+    );
+    assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
+    value["spec"]["sandboxes"][1]["integrations"]["search"]["credential"]["env"] =
+        json!("OTHER_KEY");
+    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
+    assert!(error.to_string().contains("same provider credential"));
 }

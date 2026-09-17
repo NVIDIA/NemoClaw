@@ -141,7 +141,7 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let graph = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["nemoclaw_sandbox"]["agent"]["policy_json"]
+    let encoded = graph["resource"]["nemoclaw_sandbox"]["assistant"]["policy_json"]
         .as_str()
         .unwrap();
     assert!(encoded.contains("/docs/$${file}/%%{literal}"));

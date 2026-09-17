@@ -283,7 +283,7 @@ impl Deployment {
                 loop {
                     match tokio::time::timeout(
                         Duration::from_secs(2),
-                        client.verify_gateway(&document.spec.sandboxes[0].runtime.provider),
+                        async { for sandbox in &document.spec.sandboxes { client.verify_gateway(&sandbox.runtime.provider).await?; } Ok(()) },
                     )
                     .await
                     {

@@ -254,20 +254,28 @@ impl Deployment {
             .await?;
         let mut changes = runtime_changes;
         changes.extend(check_plan(&plan, &allowed, &bindings)?);
-        let agent = &document.spec.sandboxes[0].agents[0];
-        if !fresh
-            && document.sandbox_harness()?.kind == "pi"
-            && document.agent_inference(agent)?.default_route()?.overrides
-                != record
-                    .document
-                    .agent_inference(&record.document.spec.sandboxes[0].agents[0])?
-                    .default_route()?
-                    .overrides
-        {
-            changes.push(Change {
-                resource: format!("fabric_runtime.{}", agent.name),
-                actions: vec!["update".into()],
-            });
+        if !fresh {
+            for sandbox in &document.spec.sandboxes {
+                if document.sandbox_harness(sandbox)?.kind != "pi" {
+                    continue;
+                }
+                if let Ok(previous) = record.document.sandbox(&sandbox.name)
+                    && document
+                        .agent_inference(sandbox.sole_agent()?)?
+                        .default_route()?
+                        .overrides
+                        != record
+                            .document
+                            .agent_inference(previous.sole_agent()?)?
+                            .default_route()?
+                            .overrides
+                {
+                    changes.push(Change {
+                        resource: format!("fabric_runtime.{}", sandbox.name),
+                        actions: vec!["update".into()],
+                    });
+                }
+            }
         }
         let mut result = OperationResult::planned(changes);
         if !apply {
@@ -285,17 +293,25 @@ impl Deployment {
         record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
         store.save(&record)?;
         (self.progress)(Progress::Applying);
-        if document.sandbox_harness()?.kind == "pi"
-            && let Some(binding) = bindings.get(&targets[3].address)
-        {
-            let mut sandbox = targets[3].values.clone();
-            sandbox.insert("id".into(), binding.id.clone());
-            sandbox.insert(
-                "pi_model_config".into(),
-                serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
+        for target in targets.iter().filter(|target| target.kind == "sandbox") {
+            let definition = document.sandbox(&target.values["name"])?;
+            if document.sandbox_harness(definition)?.kind == "pi"
+                && let Some(binding) = bindings.get(&target.address)
+            {
+                let mut sandbox = target.values.clone();
+                sandbox.insert("id".into(), binding.id.clone());
+                sandbox.insert(
+                    "pi_model_config".into(),
+                    serde_json::to_string(
+                        &document
+                            .agent_inference(definition.sole_agent()?)?
+                            .default_route()?
+                            .overrides,
+                    )
                     .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-            );
-            tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
+                );
+                tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, true)=>result?}
+            }
         }
         self.tofu(
             &bundle,
@@ -314,52 +330,46 @@ impl Deployment {
         record.pending = false;
         store.save(&record)?;
         let bindings = store.bindings()?;
-        let mut sandbox = targets[3].values.clone();
-        sandbox.insert(
-            "id".into(),
-            bindings
-                .get(&targets[3].address)
-                .ok_or(Error::State("sandbox has no established identity"))?
-                .id
-                .clone(),
-        );
-        (self.progress)(Progress::Readiness);
-        self.timed("sandbox.ready", async {
-            let agent = &document.spec.sandboxes[0].agents[0];
-            if document.sandbox_harness()?.kind == "pi" {
-                sandbox.insert(
-                    "pi_model_config".into(),
-                    serde_json::to_string(&document.agent_inference(agent)?.default_route()?.overrides)
-                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?,
-                );
-                tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
-            }
-            client.ready(&sandbox, cancel).await?;
-            Ok(())
-        }).await?;
-        let health = self
-            .timed("fabric.health", async {
-                tokio::select! {
-                    () = cancel.cancelled() => Err(Error::Cancelled),
-                    result = client.health(&sandbox) => result,
+        for target in targets.iter().filter(|target| target.kind == "sandbox") {
+            let definition = document.sandbox(&target.values["name"])?;
+            let mut sandbox = target.values.clone();
+            sandbox.insert(
+                "id".into(),
+                bindings
+                    .get(&target.address)
+                    .ok_or(Error::State("sandbox has no established identity"))?
+                    .id
+                    .clone(),
+            );
+            (self.progress)(Progress::Readiness);
+            self.timed("sandbox.ready", async {
+                if document.sandbox_harness(definition)?.kind == "pi" {
+                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(definition.sole_agent()?)?.default_route()?.overrides)
+                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
+                    tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
                 }
-            })
-            .await?;
-        let health = crate::SandboxHealth {
-            sandbox: document.spec.sandboxes[0].name.clone(),
-            agents: document.spec.sandboxes[0]
-                .agents
-                .iter()
-                .map(|agent| agent.name.clone())
-                .collect(),
-            health,
-        };
-        if !health.health.allows_apply_completion() {
-            return Err(Error::Health {
-                health: Box::new(health),
-            });
+                client.ready(&sandbox, cancel).await?;
+                Ok(())
+            }).await?;
+            let health = self.timed("fabric.health", async {
+                tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health(&sandbox) => result }
+            }).await?;
+            let health = crate::SandboxHealth {
+                sandbox: definition.name.clone(),
+                agents: definition
+                    .agents
+                    .iter()
+                    .map(|agent| agent.name.clone())
+                    .collect(),
+                health,
+            };
+            if !health.health.allows_apply_completion() {
+                return Err(Error::Health {
+                    health: Box::new(health),
+                });
+            }
+            result.health.push(health);
         }
-        result.health.push(health);
         record.succeeded = true;
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
@@ -372,9 +382,15 @@ impl Deployment {
         targets: &[Target],
         bindings: &BTreeMap<String, StateBinding>,
     ) -> Result<(), Error> {
-        client
-            .verify_gateway(&document.spec.sandboxes[0].runtime.provider)
-            .await?;
+        for driver in document
+            .spec
+            .sandboxes
+            .iter()
+            .map(|sandbox| &sandbox.runtime.provider)
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            client.verify_gateway(driver).await?;
+        }
         for target in targets {
             let mut expected = target.values.clone();
             if let Some(binding) = bindings.get(&target.address) {

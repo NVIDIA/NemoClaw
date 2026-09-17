@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# Replace the deployment UID, image pins, endpoint, and model for your host.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: multiple-sandboxes
+  uid: d21c8698-2b96-49fd-bb17-570c523960d0
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+  - name: local
+    provider: openai
+    endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+  - name: writers
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: openclaw
+    agents:
+    - name: alice
+      inferenceRef: chat
+    - name: bob
+      inferenceRef: chat
+  - name: research
+    image:
+      ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: deepagents
+    agents:
+    - name: researcher
+      inferenceRef: chat
+  inferences:
+    chat:
+      routes:
+      - name: primary
+        providerRef: local
+        overrides:
+          model: qwen3:4b

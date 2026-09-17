@@ -101,7 +101,7 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
     let provider = document
         .selected_inference_providers()?
         .into_iter()
-        .find(|provider| provider.name == expected["name"])
+        .find(|provider| document.provider_key(provider) == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
     let managed = provider.service.is_some();
     if managed
@@ -141,12 +141,13 @@ async fn export_sandbox(
             "sandbox configuration drift requires inspection",
         ));
     }
-    if document.sandbox_harness()?.kind == "pi" {
+    let definition = document.sandbox(&expected["name"])?;
+    if document.sandbox_harness(definition)?.kind == "pi" {
         expected.insert(
             "pi_model_config".into(),
             serde_json::to_string(
                 &document
-                    .agent_inference(&document.spec.sandboxes[0].agents[0])?
+                    .agent_inference(definition.sole_agent()?)?
                     .default_route()?
                     .overrides,
             )
@@ -245,7 +246,7 @@ mod tests {
         inference["default"] = serde_json::json!("primary");
         inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();
-        let original = document.inference_provider().unwrap().clone();
+        let original = document.spec.inference_providers[0].clone();
         let record = Record::new(document.clone()).unwrap();
         let expected = compile::targets(&document, &record.generations)
             .unwrap()
@@ -256,7 +257,7 @@ mod tests {
         let mut observed = expected.clone();
         observed.insert("credential_env".into(), "NEW_KEY".into());
         export_provider(&mut document, &expected, &observed).unwrap();
-        assert_eq!(document.inference_provider().unwrap(), &original);
+        assert_eq!(&document.spec.inference_providers[0], &original);
         assert_eq!(
             document.spec.inference_providers[1]
                 .credential

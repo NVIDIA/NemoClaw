@@ -107,9 +107,12 @@ impl Sandbox {
 }
 
 impl Document {
-    pub(crate) fn web_search(&self) -> Result<Option<RuntimeWebSearch>, ConfigError> {
+    pub(crate) fn web_search(
+        &self,
+        sandbox: &super::Sandbox,
+    ) -> Result<Option<RuntimeWebSearch>, ConfigError> {
         let mut selected = None;
-        for binding in self.spec.sandboxes[0].integration_bindings(&self.spec.integrations)? {
+        for binding in sandbox.integration_bindings(&self.spec.integrations)? {
             match binding.definition {
                 Integration::WebSearch(search) => {
                     if selected.is_some() {
@@ -124,6 +127,9 @@ impl Document {
                     });
                 }
             }
+        }
+        if let Some(search) = &mut selected {
+            search.agent_refs.sort();
         }
         Ok(selected)
     }

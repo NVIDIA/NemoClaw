@@ -38,7 +38,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one sandbox and at least one selected inference provider. At most one selected provider may have managed inference dependencies.
+/// The configuration requires one to 32 named sandboxes and at least one selected inference provider. At most one selected provider may have managed inference dependencies.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -64,7 +64,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// Exactly one sandbox with one or more OpenClaw agents sharing one harness runtime, or one agent of another harness.
+    /// One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw agents sharing a runtime, or one agent of another harness. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
 }
 

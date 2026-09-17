@@ -6,10 +6,10 @@
   },
   "resource": {
     "nemoclaw_provider": {
-      "inference": {
+      "inference_qwen": {
         "credential_env": "",
         "depends_on": [
-          "nemoclaw_provider_profile.inference"
+          "nemoclaw_provider_profile.inference_qwen"
         ],
         "endpoint": "http://172.30.110.1:18888/v1",
         "generation": "provider-generation",
@@ -23,7 +23,7 @@
       }
     },
     "nemoclaw_provider_profile": {
-      "inference": {
+      "inference_qwen": {
         "authenticated": "false",
         "endpoint": "http://172.30.110.1:18888/v1",
         "generation": "provider-generation",
@@ -37,15 +37,15 @@
       }
     },
     "nemoclaw_sandbox": {
-      "agent": {
+      "assistant": {
         "agent_name": "assistant",
         "agent_runtime": "fabric-openclaw",
         "depends_on": [
-          "nemoclaw_provider.inference"
+          "nemoclaw_provider.inference_qwen"
         ],
         "generation": "sandbox-generation",
         "image": "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
-        "inference_json": "{\"provider\":\"qwen\",\"connection\":{\"provider\":\"openai\",\"model\":\"fixture-model\",\"base_url\":\"http://172.30.110.1:18888/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}",
+        "inference_json": "{\"provider\":\"qwen\",\"connection\":{\"provider\":\"openai\",\"model\":\"fixture-model\",\"base_url\":\"http://172.30.110.1:18888/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"agents\":[{\"name\":\"assistant\",\"inference\":{\"default\":\"primary\",\"models\":{\"primary\":{\"provider\":\"qwen\",\"connection\":{\"provider\":\"openai\",\"model\":\"fixture-model\",\"base_url\":\"http://172.30.110.1:18888/v1\",\"api_key_env\":\"NEMOCLAW_ANONYMOUS_API_KEY\"},\"api\":\"openai-completions\",\"tuning\":{}}}}}],\"api\":\"openai-completions\",\"tuning\":{}}",
         "lifecycle": {
           "prevent_destroy": true
         },

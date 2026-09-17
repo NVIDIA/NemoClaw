@@ -289,7 +289,14 @@ impl SandboxRuntimeSettings {
                     model.tuning.validate(harness)?;
                 }
             }
-            let selection = self.agents[0].inference.as_ref().unwrap();
+            let selection = self
+                .agents
+                .iter()
+                .min_by_key(|agent| &agent.name)
+                .unwrap()
+                .inference
+                .as_ref()
+                .unwrap();
             let primary = &selection.models[&selection.default];
             if primary.provider != self.provider
                 || primary.connection != self.connection
@@ -297,7 +304,7 @@ impl SandboxRuntimeSettings {
                 || primary.tuning != self.tuning
             {
                 return Err(ConfigError(
-                    "default inference differs from the first agent's selection",
+                    "runtime inference envelope differs from the canonical agent selection",
                 ));
             }
         }
@@ -321,14 +328,14 @@ impl Document {
     ) -> Result<RuntimeModel, ConfigError> {
         let connection = self.provider_connection(provider)?;
         let profile = crate::openshell::inference_profile(
-            &provider.name,
+            &self.provider_key(provider),
             &connection.endpoint,
             &provider.provider,
             provider.authenticated(),
         )
         .map_err(|_| ConfigError("invalid native inference profile"))?;
         Ok(RuntimeModel {
-            provider: provider.name.clone(),
+            provider: self.provider_key(provider),
             connection: RuntimeConnection {
                 provider: provider.provider.clone(),
                 model: (harness != "pi").then(|| route.overrides.model.clone()),
@@ -344,9 +351,12 @@ impl Document {
         })
     }
 
-    pub(crate) fn sandbox_runtime_settings(&self) -> Result<SandboxRuntimeSettings, ConfigError> {
-        let harness = self.sandbox_harness()?;
-        let resolved = self.spec.sandboxes[0]
+    pub(crate) fn sandbox_runtime_settings(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<SandboxRuntimeSettings, ConfigError> {
+        let harness = self.sandbox_harness(sandbox)?;
+        let mut resolved = sandbox
             .agents
             .iter()
             .map(|agent| {
@@ -369,12 +379,16 @@ impl Document {
                 })
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
-        let first = &resolved[0];
+        resolved.sort_by_key(|resolved| &resolved.agent.name);
+        let first = resolved
+            .first()
+            .ok_or(ConfigError("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
-        let choices = resolved
-            .iter()
-            .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);
-        let web_search = self.web_search()?;
+        let choices = harness.kind == "openclaw"
+            || resolved
+                .iter()
+                .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);
+        let web_search = self.web_search(sandbox)?;
         let roster = choices
             || web_search.is_some()
             || resolved.len() > 1

@@ -152,8 +152,31 @@ impl Document {
         serde_saphyr::to_string(self).map_err(|_| ConfigError("cannot serialize configuration"))
     }
     pub fn digest(&self) -> String {
-        // Field order, omissions, and HTML escaping are part of the document digest contract.
-        let json = serde_json::to_string(self)
+        // Named declaration order is not deployment intent; retain authored order on export.
+        let mut canonical = self.clone();
+        canonical.spec.sandboxes.sort_by(|a, b| a.name.cmp(&b.name));
+        canonical
+            .spec
+            .inference_providers
+            .sort_by(|a, b| a.name.cmp(&b.name));
+        for inference in canonical.spec.inferences.values_mut() {
+            inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        for sandbox in &mut canonical.spec.sandboxes {
+            sandbox.agents.sort_by(|a, b| a.name.cmp(&b.name));
+            sandbox
+                .inference_providers
+                .sort_by(|a, b| a.name.cmp(&b.name));
+            for inference in sandbox.inferences.values_mut().chain(
+                sandbox
+                    .agents
+                    .iter_mut()
+                    .filter_map(|agent| agent.inference.as_mut()),
+            ) {
+                inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+        }
+        let json = serde_json::to_string(&canonical)
             .expect("configuration contains only serializable values")
             .replace('&', "\\u0026")
             .replace('<', "\\u003c")
@@ -195,14 +218,18 @@ impl Document {
                 }
             }
         }
-        for binding in self.spec.sandboxes[0]
-            .integration_bindings(&self.spec.integrations)
-            .expect("validated integration references")
-        {
-            match binding.definition {
-                Integration::WebSearch(search) => names.push(&search.credential.env),
+        for sandbox in &self.spec.sandboxes {
+            for binding in sandbox
+                .integration_bindings(&self.spec.integrations)
+                .expect("validated integration references")
+            {
+                match binding.definition {
+                    Integration::WebSearch(search) => names.push(&search.credential.env),
+                }
             }
         }
+        names.sort_unstable();
+        names.dedup();
         names
     }
     pub fn defaults(&mut self) {

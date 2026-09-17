@@ -37,7 +37,7 @@ fn telemetry_preserves_intent_and_adds_only_collector_egress() {
     assert_eq!(runtime["observability"], telemetry());
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
     assert!(
-        graph["resource"]["nemoclaw_sandbox"]["agent"]["inference_json"]
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["inference_json"]
             .as_str()
             .unwrap()
             .contains("agent $${fixture} %%{literal}"),

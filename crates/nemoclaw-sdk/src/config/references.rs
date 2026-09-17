@@ -1,28 +1,42 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{Agent, ConfigError, Document, Harness, Inference, Route};
+use super::{Agent, ConfigError, Document, Harness, Inference, Route, Sandbox};
 
 impl Document {
+    pub fn sandbox(&self, name: &str) -> Result<&Sandbox, ConfigError> {
+        self.spec
+            .sandboxes
+            .iter()
+            .find(|sandbox| sandbox.name == name)
+            .ok_or(ConfigError("sandbox name has no definition"))
+    }
+
     /// Resolve an agent's inference without replacing its authored reference.
     pub fn agent_inference<'a>(&'a self, agent: &'a Agent) -> Result<&'a Inference, ConfigError> {
         Ok(self.scoped_inference(agent)?.0)
     }
 
-    // The boolean indicates whether sandbox definitions are visible from the declaration.
+    // An enclosing sandbox supplies local definitions; deployment definitions have no sandbox scope.
     pub(super) fn scoped_inference<'a>(
         &'a self,
         agent: &'a Agent,
-    ) -> Result<(&'a Inference, bool), ConfigError> {
+    ) -> Result<(&'a Inference, Option<&'a Sandbox>), ConfigError> {
+        let sandbox = self
+            .spec
+            .sandboxes
+            .iter()
+            .find(|sandbox| sandbox.agents.iter().any(|item| std::ptr::eq(item, agent)))
+            .ok_or(ConfigError("agent does not belong to this document"))?;
         match (&agent.inference, &agent.inference_ref) {
-            (Some(inference), None) => Ok((inference, true)),
+            (Some(inference), None) => Ok((inference, Some(sandbox))),
             (None, Some(name)) => {
                 if let Some(inference) = self.spec.inferences.get(name) {
-                    return Ok((inference, false));
+                    return Ok((inference, None));
                 }
-                self.spec.sandboxes[0]
+                sandbox
                     .inferences
                     .get(name)
-                    .map(|inference| (inference, true))
+                    .map(move |inference| (inference, Some(sandbox)))
                     .ok_or(ConfigError("inference reference has no visible definition"))
             }
             _ => Err(ConfigError(
@@ -31,11 +45,13 @@ impl Document {
         }
     }
 
-    pub(super) fn inference_definitions(&self) -> impl Iterator<Item = (&Inference, bool)> {
+    pub(super) fn inference_definitions(
+        &self,
+    ) -> impl Iterator<Item = (&Inference, Option<&Sandbox>)> {
         self.spec
             .inferences
             .values()
-            .map(|inference| (inference, false))
+            .map(|inference| (inference, None))
             .chain(self.spec.sandboxes.iter().flat_map(|sandbox| {
                 sandbox
                     .inferences
@@ -46,25 +62,29 @@ impl Document {
                             .iter()
                             .filter_map(|agent| agent.inference.as_ref()),
                     )
-                    .map(|inference| (inference, true))
+                    .map(move |inference| (inference, Some(sandbox)))
             }))
     }
 
     pub(super) fn validate_inference_references(&self) -> Result<(), ConfigError> {
-        let sandbox = &self.spec.sandboxes[0];
-        for name in self.spec.inferences.keys().chain(sandbox.inferences.keys()) {
-            if !super::validation::SLUG.is_match(name) {
-                return Err(ConfigError("inference definitions require lowercase names"));
+        for sandbox in &self.spec.sandboxes {
+            for name in self.spec.inferences.keys().chain(sandbox.inferences.keys()) {
+                if !super::validation::SLUG.is_match(name) {
+                    return Err(ConfigError("inference definitions require lowercase names"));
+                }
             }
-        }
-        if sandbox
-            .inferences
-            .keys()
-            .any(|name| self.spec.inferences.contains_key(name))
-        {
-            return Err(ConfigError(
-                "inference names must not shadow enclosing definitions",
-            ));
+            if sandbox
+                .inferences
+                .keys()
+                .any(|name| self.spec.inferences.contains_key(name))
+            {
+                return Err(ConfigError(
+                    "inference names must not shadow enclosing definitions",
+                ));
+            }
+            for agent in &sandbox.agents {
+                self.agent_inference(agent)?;
+            }
         }
         for (inference, sandbox_visible) in self.inference_definitions() {
             inference.validate_choices()?;
@@ -72,24 +92,20 @@ impl Document {
                 self.route_provider(route, sandbox_visible)?;
             }
         }
-        for agent in &sandbox.agents {
-            self.agent_inference(agent)?;
-        }
         Ok(())
     }
 }
 
 impl Document {
     /// Resolve the sandbox's harness without replacing its authored selection.
-    pub fn sandbox_harness(&self) -> Result<&Harness, ConfigError> {
-        let sandbox = &self.spec.sandboxes[0];
+    pub fn sandbox_harness<'a>(&'a self, sandbox: &'a Sandbox) -> Result<&'a Harness, ConfigError> {
         match (&sandbox.harness, &sandbox.harness_ref) {
             (Some(harness), None) => Ok(harness),
             (None, Some(name)) => self
                 .spec
                 .harnesses
                 .get(name)
-                .or_else(|| self.spec.sandboxes[0].harnesses.get(name))
+                .or_else(|| sandbox.harnesses.get(name))
                 .ok_or(ConfigError("harness reference has no visible definition")),
             _ => Err(ConfigError(
                 "sandbox requires exactly one of harness or harnessRef",
@@ -98,31 +114,32 @@ impl Document {
     }
 
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
-        let sandbox = &self.spec.sandboxes[0];
-        for name in self.spec.harnesses.keys().chain(sandbox.harnesses.keys()) {
-            if !super::validation::SLUG.is_match(name) {
-                return Err(ConfigError("harness definitions require lowercase names"));
+        for sandbox in &self.spec.sandboxes {
+            for name in self.spec.harnesses.keys().chain(sandbox.harnesses.keys()) {
+                if !super::validation::SLUG.is_match(name) {
+                    return Err(ConfigError("harness definitions require lowercase names"));
+                }
             }
+            if sandbox
+                .harnesses
+                .keys()
+                .any(|name| self.spec.harnesses.contains_key(name))
+            {
+                return Err(ConfigError(
+                    "harness names must not shadow enclosing definitions",
+                ));
+            }
+            for harness in self
+                .spec
+                .harnesses
+                .values()
+                .chain(sandbox.harnesses.values())
+                .chain(sandbox.harness.iter())
+            {
+                harness.validate()?;
+            }
+            self.sandbox_harness(sandbox)?;
         }
-        if sandbox
-            .harnesses
-            .keys()
-            .any(|name| self.spec.harnesses.contains_key(name))
-        {
-            return Err(ConfigError(
-                "harness names must not shadow enclosing definitions",
-            ));
-        }
-        for harness in self
-            .spec
-            .harnesses
-            .values()
-            .chain(sandbox.harnesses.values())
-            .chain(sandbox.harness.iter())
-        {
-            harness.validate()?;
-        }
-        self.sandbox_harness()?;
         Ok(())
     }
 }
@@ -201,5 +218,14 @@ impl Inference {
             }
         }
         Ok(())
+    }
+}
+
+impl Sandbox {
+    pub(crate) fn sole_agent(&self) -> Result<&Agent, ConfigError> {
+        match self.agents.as_slice() {
+            [agent] => Ok(agent),
+            _ => Err(ConfigError("harness requires exactly one agent")),
+        }
     }
 }

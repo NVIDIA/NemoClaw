@@ -30,7 +30,7 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     let targets = compile::targets(&doc, &generations).unwrap();
     let provider = targets
         .iter()
-        .find(|t| t.address == "nemoclaw_provider.inference")
+        .find(|t| t.address == "nemoclaw_provider.inference_qwen")
         .unwrap();
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
     assert_eq!(source["kind"], "managedService");
@@ -71,7 +71,7 @@ fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() 
     let graph = compile::compile(&doc, &generations, "0.1.0").unwrap();
     let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
     for value in [
-        &graph["resource"]["nemoclaw_provider"]["inference"]["credential_source"],
+        &graph["resource"]["nemoclaw_provider"]["inference_qwen"]["credential_source"],
         &runtime["resource"]["nemoclaw_inference_service"]["runtime"]["spec"],
     ] {
         assert!(

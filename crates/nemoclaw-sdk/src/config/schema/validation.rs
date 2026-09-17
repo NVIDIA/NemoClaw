@@ -111,7 +111,7 @@ pub(super) fn constrain(root: &mut Value) {
     property(
         &mut defs["Spec"],
         "sandboxes",
-        json!({"minItems":1,"maxItems":1}),
+        json!({"minItems":1,"maxItems":32}),
     );
     property(
         &mut defs["Sandbox"],
