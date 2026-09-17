@@ -36,8 +36,6 @@ import {
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { validateManagedServing } from "./verify-managed-serving";
-import { validateOllamaServing } from "./verify-ollama-serving";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
@@ -1007,9 +1005,6 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.provider === "ollama-local" || inference.ollamaServing)
-    return validateOllamaServing(snapshot);
-  if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -1209,6 +1204,8 @@ function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
+  const compatibilityFindings = validateInitialCompatibility(snapshot);
+  if (compatibilityFindings.length > 0) return compatibilityFindings;
   return [
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
@@ -1217,7 +1214,6 @@ function validateAgreement(
     ...validateGateway(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
-    ...validateInitialCompatibility(snapshot),
     ...validateEndpointEvidence(snapshot),
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),

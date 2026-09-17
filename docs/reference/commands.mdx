@@ -284,7 +284,7 @@ Hermes export fails when Hermes tool gateways are enabled.
 It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
 A disabled dashboard and default API port are omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
-The exported agent binds its API-key authentication to that provider reference.
+The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`

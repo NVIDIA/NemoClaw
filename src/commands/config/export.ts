@@ -27,7 +27,10 @@ export default class ConfigExportCommand extends NemoClawCommand {
       description: "Write YAML to this path on Linux. Use - on any supported host.",
       required: true,
     }),
-    name: Flags.string({ description: "Set metadata.name in the exported document" }),
+    name: Flags.string({
+      description:
+        "Set metadata.name (lowercase, starts with a letter, up to 40 letters, digits, or hyphens)",
+    }),
     force: Flags.boolean({
       description: "Replace an existing regular file; refuse symlinks and other file types",
       default: false,

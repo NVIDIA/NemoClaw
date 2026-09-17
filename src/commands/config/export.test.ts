@@ -158,6 +158,9 @@ describe("config export command", () => {
   });
 
   it("provides short and long command help without reading source state (#10938)", async () => {
+    expect(ConfigExportCommand.flags.name.description).toContain(
+      "lowercase, starts with a letter, up to 40 letters, digits, or hyphens",
+    );
     await expect(ConfigExportCommand.run(["alpha", "--help"], process.cwd())).rejects.toMatchObject(
       {
         code: "EEXIT",

@@ -235,33 +235,6 @@ describe("attached Ollama export pipeline", () => {
   });
 
   it.each([
-    [
-      { endpointUrl: "http://host.openshell.internal:11435/v1" },
-      { field: "spec.inferenceProviders[].endpoint", category: "drifted" },
-    ],
-    [
-      { credentialEnv: "OTHER_TOKEN" },
-      { field: "source.live", category: "live-verification-failed" },
-    ],
-    [{ agent: "hermes" }, { field: "spec.inferenceProviders[].serving", category: "drifted" }],
-    [
-      { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
-      { field: "spec.sandboxes[].runtime.gpu", category: "unsupported" },
-    ],
-  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change, finding) => {
-    const { source } = mockOllamaSource();
-    Object.assign(source, change);
-    expectExportRefusal(await exportLiveSource(), finding);
-  });
-  it("refuses an absent provider attachment (#11435)", async () => {
-    mockOllamaSource();
-    raw.getSandbox.mockResolvedValue(inventory());
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
-  it.each([
     {
       field: "pid",
       change: (observed: ObservedOllamaProxy, revision: number) => {

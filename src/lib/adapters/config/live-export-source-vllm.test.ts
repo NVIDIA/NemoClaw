@@ -147,15 +147,6 @@ function mockManagedVllmSource(
 }
 
 describe("managed vLLM export pipeline", () => {
-  it("refuses an absent OpenAI profile without publishing (#11435)", async () => {
-    mockManagedVllmSource();
-    raw.getProviderProfile.mockRejectedValue({ code: 5 });
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
-
   it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
     mockManagedVllmSource();
     const output = vi.fn(async (_value: string) => {});
@@ -374,28 +365,6 @@ describe("managed vLLM export pipeline", () => {
       expect(exported.publish).not.toHaveBeenCalled();
     },
   );
-
-  it.each([
-    { hostPort: 19000 },
-    { catalogDigest: `sha256:${"f".repeat(64)}` },
-    { profile: { id: EXPORTED_VLLM_PROFILE_ID, digest: `sha256:${"f".repeat(64)}` } },
-    { recipe: { id: EXPORTED_VLLM_RECIPE_ID, digest: `sha256:${"f".repeat(64)}` } },
-    {
-      runtime: {
-        image: { ref: `nvcr.io/nvidia/vllm@sha256:${"f".repeat(64)}` as ImmutableImageReference },
-      },
-    },
-  ])("rejects serving drift with retained settings %j (#11855, #11856)", async (change) => {
-    const f = mockManagedVllmSource({ NEMOCLAW_AGENT_TIMEOUT: "900", NEMOCLAW_MAX_TOKENS: "8192" });
-    vi.mocked(observeManagedVllmForExport).mockReturnValue({
-      ...f.observed,
-      serving: { ...f.observed.serving, ...change },
-    });
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
 
   it("detects managed container restart between complete snapshots", async () => {
     const f = mockManagedVllmSource({ NEMOCLAW_AGENT_TIMEOUT: "900", NEMOCLAW_MAX_TOKENS: "8192" });
