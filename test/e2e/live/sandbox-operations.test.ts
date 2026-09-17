@@ -9,6 +9,7 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
+  onboardSandboxOrSkipOnRateLimit,
   phase6Env,
   precleanSandbox,
   redactionValues,
@@ -163,11 +164,12 @@ test(
     expect(read.stdout.trim(), resultText(read)).toBe(marker);
 
     progress.phase("preserve the gateway for an unregistered live sandbox");
-    await installSandboxOrSkipOnRateLimit(
+    await onboardSandboxOrSkipOnRateLimit(
       host,
       survivorEnv,
       redactions,
-      "sandbox-operations-survivor-install",
+      "sandbox-operations-survivor-onboard",
+      FINAL_DESTROY_TIMEOUT_MS * 10,
       skip,
       "NVIDIA endpoint validation was rate-limited before final cleanup assertions ran",
     );
