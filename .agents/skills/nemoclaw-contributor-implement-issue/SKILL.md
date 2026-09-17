@@ -46,10 +46,11 @@ Implement the smallest complete requested outcome in its existing owner. Split a
 into useful increments without treating the first increment as completion of the whole request.
 Add mechanisms only for a current requirement. Preserve meaningful regression coverage.
 
-For each changed live E2E assertion, record the complete disposition required by
-[E2E selection and authoring](../../references/e2e-authoring.md#move-or-remove-evidence). Do not
-replace one live assertion with equivalent evidence in another helper, snapshot, receipt, or shell
-condition.
+For each added, expanded, or repaired live E2E assertion, apply
+[Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract). For each
+pruned or relocated live assertion, apply
+[Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence). Do not replace
+one live assertion with equivalent evidence in another helper, snapshot, receipt, or shell condition.
 
 Run the narrowest checks that prove the changed behavior, including relevant denial, failure,
 recovery, and cleanup cases. Fix failures caused by the change and rerun affected checks. Broaden

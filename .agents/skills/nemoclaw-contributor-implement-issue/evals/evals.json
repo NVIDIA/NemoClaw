@@ -179,5 +179,18 @@
       "For each moved or removed assertion, records its semantic outcome and distinct regression or lack of a product contract, and explains why semantic coverage remains complete.",
       "Does not hide duplicate evidence in helpers or artifacts."
     ]
+  },
+  {
+    "id": "repair-live-e2e-contract",
+    "question": "Implement an accepted issue that repairs a live E2E assertion which currently checks brittle progress text instead of the sandbox recovery outcome.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Repairing live evidence defines the distinct live contract that the stable assertion protects; it does not use a pruning disposition for the replacement assertion.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Classifies the brittle text assertion before changing it.",
+      "Records the repaired assertion's real boundary, semantic outcome, distinct regression, lower-layer evidence owner, canonical live test, and smallest live assertion.",
+      "Replaces progress-text matching with the smallest stable sandbox recovery outcome.",
+      "Does not label the repaired replacement assertion as stayed, moved, or removed."
+    ]
   }
 ]
