@@ -8,6 +8,10 @@ import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-
 import { getGatewayPresets } from "../../policy";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
   qualifyPortableAgentLifecycleAuthority,
@@ -70,7 +74,7 @@ function inspectHermesPortableStatus(
 }
 
 function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null {
-  const entry = registry.findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+  const entry = findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 
@@ -201,7 +205,13 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
-  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const dockerRuntime =
+    lookup.state === "present"
+      ? getSandboxDockerRuntime(sandboxName, {
+          getSandbox: () => sandboxEntry,
+          listSandboxNames: listPublishedSandboxNamesAcrossGatewayRoots,
+        })
+      : null;
   const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const observedPreflight = snapshot.postRecoveryPreflight ?? preflight;
   const phase = resolveSandboxStatusPhase(observedPhase, observedPreflight);

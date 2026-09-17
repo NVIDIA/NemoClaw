@@ -73,6 +73,7 @@ function snapshotDeps(recoveryResult: unknown) {
   return {
     getSandbox: () => sandbox,
     listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
+    listPublishedSandboxNamesAcrossGatewayRoots: () => [sandbox.name],
     reconcile: recoveredLookup,
     captureOpenshellForStatusImpl: async () => {
       throw new Error("live route lookup not needed");

@@ -122,7 +122,7 @@ describe("showSandboxStatus flow", () => {
       "alpha",
       expect.anything(),
     );
-    expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
   });
 
@@ -192,6 +192,38 @@ describe("showSandboxStatus flow", () => {
       );
     },
   );
+
+  it("uses the cross-root Docker entry before recommending Error recovery", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: { openshellDriver: "docker" },
+      registryEntry: "missing",
+      publishedAcrossGatewayRoots: true,
+      lookup: {
+        state: "present",
+        output: "Name: alpha\nPhase: Error\nEndpoint: http://127.0.0.1:18789\n",
+        phase: "Error",
+        recoveredGateway: true,
+        recoveryVia: "gateway reattach",
+      },
+    });
+    harness.getSandboxDockerRuntimeSpy.mockReturnValue({
+      containerName: "openshell-alpha",
+      health: "healthy",
+      paused: false,
+      running: true,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("nemoclaw alpha start");
+    expect(output).not.toContain("nemoclaw alpha destroy --yes");
+    const [, dockerRuntimeDeps] = harness.getSandboxDockerRuntimeSpy.mock.calls[0] ?? [];
+    expect(dockerRuntimeDeps.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      openshellDriver: "docker",
+    });
+  });
 
   it("preserves Docker-outage safety guidance for a terminal Error phase", async () => {
     const harness = createStatusFlowHarness({
@@ -369,7 +401,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("unhealthy");
     expect(output).toContain("NIM:      running (alpha-nim)");
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
-    expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
