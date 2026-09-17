@@ -33,7 +33,8 @@ if ((Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant(
 $controlFiles = @(
     'packaging/windows/installer/control-installed-openclaw-input.test.mts',
     'packaging/windows/installer/run-installed-acceptance.test.mts',
-    'packaging/windows/installer/qualify-finished-package.test.mts')
+    'packaging/windows/installer/qualify-finished-package.test.mts',
+    'packaging/windows/runtime/native-ui-tunnel.test.mts')
 if ($Mode -ceq 'current-build') {
     $controlReceiptPath = Join-Path $WorkDirectory 'application\controls\installed-acceptance-controller.json'
     $controlReceipt = Get-Content -LiteralPath $controlReceiptPath -Raw | ConvertFrom-Json

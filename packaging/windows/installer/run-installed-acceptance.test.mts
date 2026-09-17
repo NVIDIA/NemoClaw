@@ -237,6 +237,81 @@ test(
 );
 
 test(
+  "acceptance consumes the four-file same-run controller proof",
+  { skip: process.platform !== "win32" },
+  () => {
+    const source = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "run-installed-acceptance.ps1",
+    );
+    const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$work = Join-Path ([IO.Path]::GetTempPath()) ('installed-controller-proof-' + [guid]::NewGuid().ToString('N'))
+try {
+  $controls = Join-Path $work 'application\controls'
+  $fakeNode = Join-Path $work 'application\node\node.exe'
+  [IO.Directory]::CreateDirectory($controls) | Out-Null
+  [IO.Directory]::CreateDirectory((Split-Path -Parent $fakeNode)) | Out-Null
+  [IO.File]::WriteAllBytes($fakeNode, [byte[]]@(0))
+  $revision = (& git -C $env:NEMOCLAW_SOURCE_ROOT rev-parse HEAD | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $revision -cnotmatch '^[a-f0-9]{40}$') { throw 'Fixture source identity failed.' }
+  $files = @(
+    'packaging/windows/installer/control-installed-openclaw-input.test.mts',
+    'packaging/windows/installer/run-installed-acceptance.test.mts',
+    'packaging/windows/installer/qualify-finished-package.test.mts',
+    'packaging/windows/runtime/native-ui-tunnel.test.mts'
+  )
+  $rows = @($files | ForEach-Object {
+    $file = Join-Path $env:NEMOCLAW_SOURCE_ROOT $_
+    @{ file = $_; bytes = (Get-Item -LiteralPath $file).Length; sha256 = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() }
+  })
+  [IO.File]::WriteAllText((Join-Path $controls 'installed-acceptance-controller.json'), (@{
+    schemaVersion = 1
+    classification = 'same-run-installed-acceptance-controller-controls'
+    sourceRevision = $revision
+    nodeSha256 = '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878'
+    passed = $true
+    files = $rows
+  } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+  function Get-FileHash {
+    param([string]$LiteralPath, [string]$Algorithm = 'SHA256')
+    if ($LiteralPath -ceq $fakeNode) {
+      return [pscustomobject]@{ Hash = '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878' }
+    }
+    Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+  }
+  $env:GITHUB_ACTIONS = 'true'; $env:GITHUB_SHA = $revision; $env:OS = 'Windows_NT'
+  try {
+    & $env:NEMOCLAW_ACCEPTANCE_SOURCE -SourceRoot $env:NEMOCLAW_SOURCE_ROOT -WorkDirectory $work -ProductVersion 0.1.10 -ArtifactSourceRevision $revision -Agent openclaw -Mode current-build
+    throw 'Unexpected acceptance success.'
+  } catch {
+    if ($_.Exception.Message -notlike '*immutable-package-build.json*' -and
+        $_.Exception.Message -cne 'Fresh preview acceptance requires no preexisting NemoClaw installation.') {
+      throw
+    }
+  }
+  Write-Output 'SAME_RUN_CONTROLLER_PROOF_PASS'
+} finally {
+  if (Test-Path -LiteralPath $work) { [IO.Directory]::Delete($work, $true) }
+}
+`;
+    const result = spawnSync("pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: powershellEnvironment({
+        NEMOCLAW_ACCEPTANCE_SOURCE: source,
+        NEMOCLAW_SOURCE_ROOT: sourceRoot,
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /SAME_RUN_CONTROLLER_PROOF_PASS/u);
+  },
+);
+
+test(
   "startup acceptance checks the smoke process and receipt without running live acceptance",
   { skip: process.platform !== "win32" },
   () => {
