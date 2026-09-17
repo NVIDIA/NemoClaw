@@ -228,6 +228,42 @@ fn stdin_configuration_requires_environment_credentials_without_prompting() {
 }
 
 #[test]
+fn generated_yaml_reaches_standalone_plan_and_apply_unchanged() {
+    qualify_generated_lifecycle_boundary();
+}
+
+fn qualify_generated_lifecycle_boundary() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = generate_credential_document(directory.path());
+    let generated = fs::read(&document).unwrap();
+    let bundle = directory.path().join("missing-bundle");
+    let sentinel = "generated-lifecycle-qualification-sentinel";
+
+    for operation in ["plan", "apply"] {
+        let state = directory.path().join(format!("{operation}-state"));
+        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+            .arg(operation)
+            .arg(&document)
+            .arg("--non-interactive")
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--state-dir")
+            .arg(&state)
+            .env("STORY_CREDENTIAL_KEY", sentinel)
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(1), "{operation}");
+        assert!(output.stdout.is_empty(), "{operation}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(stderr, "bundle directory is unavailable\n", "{operation}");
+        assert!(!stderr.contains(sentinel), "{operation}");
+        assert!(!state.exists(), "{operation}");
+        assert_eq!(fs::read(&document).unwrap(), generated, "{operation}");
+    }
+}
+
+#[test]
 fn non_interactive_onboarding_publishes_without_lifecycle_dependencies() {
     let directory = tempfile::tempdir().unwrap();
     let output_path = directory.path().join("deployment.yaml");
