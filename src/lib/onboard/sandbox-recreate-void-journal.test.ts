@@ -455,6 +455,51 @@ describe("sandbox recreate recovery from a void journal", () => {
         ),
       ).toMatchObject({ action: "reject" });
 
+      const owningSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      owningSession.sessionId = "session-n1x-rebuild";
+      owningSession.checkpoint = {
+        ...owningSession.checkpoint!,
+        sandboxRecreate: legacyTransaction,
+      };
+      const owned = ownSandboxRecreateTransaction({
+        sessionStore: deleteStoreFor(owningSession),
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => reservedEntry,
+        observe: () => ABSENT_SOURCE,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      });
+      expect(owned.recovery).toEqual({ action: "continue_create" });
+      expect(owned.replacedTransactionId).toBeNull();
+      expect(owned.transaction).toEqual(legacyTransaction);
+      expect(owningSession.checkpoint.sandboxRecreate).toEqual(legacyTransaction);
+
+      const rejectedOwner = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      rejectedOwner.sessionId = "session-n1x-rebuild";
+      rejectedOwner.checkpoint = {
+        ...rejectedOwner.checkpoint!,
+        sandboxRecreate: structuredClone(legacyTransaction),
+      };
+      const rejectedJournal = structuredClone(rejectedOwner.checkpoint.sandboxRecreate!);
+      expect(() =>
+        ownSandboxRecreateTransaction({
+          sessionStore: deleteStoreFor(rejectedOwner),
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => ({
+            ...reservedEntry,
+            reservationSessionId: "session-foreign",
+          }),
+          observe: () => ABSENT_SOURCE,
+          decorateCheckpoint: (_current, checkpoint) => checkpoint,
+        }),
+      ).toThrow(/preserved source registry row changed/);
+      expect(rejectedOwner.checkpoint.sandboxRecreate).toEqual(rejectedJournal);
+
       const deletingSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
       deletingSession.sessionId = "session-n1x-rebuild";
       deletingSession.checkpoint = {
