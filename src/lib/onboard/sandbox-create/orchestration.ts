@@ -2948,20 +2948,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   if (!managedBootstrapIdentity) {
                     throw new Error("Managed startup launch has no exact bootstrap identity.");
                   }
+                  console.log("  Applying managed startup profile to the verified sandbox...");
                   const containerId = managedWorkloadOnboard.resolveDockerManagedStartupContainer({
                     sandboxName,
                     sandboxId: identity.sandboxId,
                   });
+                  console.log("  ✓ Selected the exact managed startup runtime");
                   managedStartupTransaction =
                     managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
                       bootstrapIdentity: managedBootstrapIdentity,
                       containerId,
                       request: managedStartupRootApplyRequest,
                     });
+                  console.log("  ✓ Applied the managed startup profile");
                   managedBootstrapCreateFinished = true;
                   context.revalidateSandboxIdentity(
                     `confirming managed startup profile for sandbox '${sandboxName}'`,
                   );
+                  console.log("  ✓ Revalidated the managed startup sandbox identity");
                 }
                 if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
               }
@@ -3030,6 +3034,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
           );
           if (managedStartupTransaction) {
+            console.log("  Committing managed startup shared state...");
             const sharedState = managedWorkloadOnboard.finalizeDockerManagedStartupSharedState({
               transaction: managedStartupTransaction,
               supervisorReady: true,
@@ -3037,6 +3042,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             if (!sharedState.supervisorReady || sharedState.failure) {
               throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
             }
+            console.log("  ✓ Committed managed startup shared state");
             managedStartupTransaction = null;
           }
           persistFinalHandoffAcknowledgement(created.runtimePatch);
