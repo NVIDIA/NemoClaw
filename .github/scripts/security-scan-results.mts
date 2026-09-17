@@ -6,56 +6,28 @@ import { fileURLToPath } from "node:url";
 
 type JsonRecord = Record<string, unknown>;
 
-const SAFE_RESULT_FIELDS = [
-  "DetectorType",
-  "DetectorName",
-  "DecoderName",
-  "Verified",
-  "VerificationFromCache",
-  "Redacted",
-] as const;
-
-function copyScalar(source: JsonRecord | undefined, key: string, destination: JsonRecord): void {
-  const value = source?.[key];
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    destination[key] = value;
-  }
-}
-
 function asRecord(value: unknown): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonRecord)
     : undefined;
 }
 
-function safeSourceMetadata(record: JsonRecord): JsonRecord | undefined {
-  const data = asRecord(asRecord(record.SourceMetadata)?.Data);
-  if (!data) return undefined;
-
-  const safeData: JsonRecord = {};
-  const safeSourceFields: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ["Filesystem", ["file", "line"]],
-    ["Docker", ["file", "image", "tag", "layer", "line"]],
-    ["Git", ["file", "line", "commit"]],
-  ];
-  for (const [sourceType, fields] of safeSourceFields) {
-    const source = asRecord(data[sourceType]);
-    if (!source) continue;
-    const safeSource: JsonRecord = {};
-    for (const field of fields) copyScalar(source, field, safeSource);
-    if (Object.keys(safeSource).length > 0) safeData[sourceType] = safeSource;
-  }
-  return Object.keys(safeData).length > 0 ? { Data: safeData } : undefined;
-}
-
 export function redactSecretResult(value: unknown): JsonRecord {
   const record = asRecord(value);
   if (!record) throw new Error("secret scan report contains a non-object result");
 
+  // Scanner text, including paths and purportedly redacted values, can contain credentials.
   const safe: JsonRecord = {};
-  for (const field of SAFE_RESULT_FIELDS) copyScalar(record, field, safe);
-  const sourceMetadata = safeSourceMetadata(record);
-  if (sourceMetadata) safe.SourceMetadata = sourceMetadata;
+  if (
+    typeof record.DetectorType === "number" &&
+    Number.isSafeInteger(record.DetectorType) &&
+    record.DetectorType >= 0
+  ) {
+    safe.DetectorType = record.DetectorType;
+  }
+  for (const field of ["Verified", "VerificationFromCache"] as const) {
+    if (typeof record[field] === "boolean") safe[field] = record[field];
+  }
   return safe;
 }
 

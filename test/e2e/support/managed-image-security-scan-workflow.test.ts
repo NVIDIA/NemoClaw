@@ -79,6 +79,7 @@ describe("optional managed image security scans", () => {
     const bin = join(root, "bin");
     const rawSecret = "workflow-fixture-raw-secret";
     const finding = {
+      DetectorType: 42,
       DetectorName: "Fixture",
       Verified: scannerExit === 183,
       Redacted: "[REDACTED]",
@@ -141,7 +142,7 @@ exec "$NODE_BINARY" "$@"
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line)),
-    ).toEqual([finding]);
+    ).toEqual([{ DetectorType: 42, Verified: finding.Verified }]);
     expect(report + result.stdout + result.stderr).not.toContain(rawSecret);
     expect(existsSync(join(root, "pulse-secret-results.jsonl"))).toBe(false);
     expect(existsSync(join(root, "pulse-secret.stderr"))).toBe(false);

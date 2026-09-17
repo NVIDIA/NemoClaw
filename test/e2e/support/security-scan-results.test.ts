@@ -50,7 +50,6 @@ describe("security scan report handling", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("");
     expect(JSON.parse(readFileSync(reportPath, "utf8"))).toEqual({
-      DetectorName: "Example",
       Verified: true,
     });
     expect(() => readFileSync(rawPath)).toThrow();
@@ -95,16 +94,7 @@ describe("security scan report handling", () => {
     );
 
     expect(result).toEqual({
-      DecoderName: "PLAIN",
-      DetectorName: "ExampleDetector",
       DetectorType: 42,
-      Redacted: "sec********ret",
-      SourceMetadata: {
-        Data: {
-          Filesystem: { file: "/opt/app/config.ts", line: 7 },
-          Git: { file: "src/config.ts" },
-        },
-      },
       VerificationFromCache: false,
       Verified: true,
     });
@@ -115,6 +105,15 @@ describe("security scan report handling", () => {
     expect(JSON.stringify(result)).not.toContain("secret-source");
     expect(JSON.stringify(result)).not.toContain("secret-password");
   });
+
+  it.each(["secret-detector-id", -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "omits invalid detector identifier %s",
+    (DetectorType) => {
+      expect(parseSecretReport(JSON.stringify({ DetectorType, Verified: true }))).toEqual([
+        { Verified: true },
+      ]);
+    },
+  );
 
   it.each([
     [0, "accepted"],
@@ -133,7 +132,27 @@ describe("security scan report handling", () => {
     const reportPath = join(root, "report.jsonl");
     writeFileSync(
       rawPath,
-      `${JSON.stringify({ DetectorName: "ExampleDetector", RawV2: "secret", Verified: false })}\n`,
+      `${JSON.stringify({
+        DetectorType: 42,
+        DetectorName: "secret-detector",
+        DecoderName: "secret-decoder",
+        RawV2: "secret-raw",
+        Redacted: "secret-unmasked",
+        Verified: false,
+        VerificationFromCache: "secret-invalid-boolean",
+        SourceMetadata: {
+          Data: {
+            Filesystem: { file: "/secret-path", line: "secret-line" },
+            Docker: {
+              file: "/secret-file",
+              image: "secret-image",
+              tag: "secret-tag",
+              layer: "secret-layer",
+            },
+            Git: { file: "/secret-git-path", commit: "secret-commit" },
+          },
+        },
+      })}\n`,
       "utf8",
     );
     writeFileSync(stderrPath, "scanner diagnostic", "utf8");
@@ -141,7 +160,7 @@ describe("security scan report handling", () => {
     redactSecretReport(rawPath, stderrPath, reportPath);
 
     expect(readFileSync(reportPath, "utf8")).toBe(
-      `${JSON.stringify({ DetectorName: "ExampleDetector", Verified: false })}\n`,
+      `${JSON.stringify({ DetectorType: 42, Verified: false })}\n`,
     );
     expect(() => readFileSync(rawPath)).toThrow();
     expect(() => readFileSync(stderrPath)).toThrow();
