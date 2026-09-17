@@ -44,8 +44,8 @@ describe("sandbox status inference.local route health (#6192)", () => {
     return {
       getSandbox: () => sandbox,
       listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
-      updateSandbox: vi.fn((_name: string, updates: { stopped?: boolean }) => {
-        sandbox = { ...sandbox, ...updates };
+      recordSandboxStopIntent: vi.fn((_name: string, stopped: boolean) => {
+        sandbox = { ...sandbox, stopped };
         return true;
       }),
       reconcile: vi.fn(async () =>
@@ -200,7 +200,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const running = await getSandboxStatusReport("alpha", deps);
 
     expect(running.phase).toBe("Running");
-    expect(deps.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(deps.recordSandboxStopIntent).toHaveBeenCalledWith("alpha", false);
     expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalled();
 
     deps.getSandboxStatusPreflightImpl.mockResolvedValue({
@@ -224,7 +224,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       stopped: true,
       routeHealth: null,
     });
-    deps.updateSandbox.mockReturnValue(false);
+    deps.recordSandboxStopIntent.mockReturnValue(false);
 
     const report = await getSandboxStatusReport("alpha", deps);
 

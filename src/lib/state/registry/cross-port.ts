@@ -10,7 +10,9 @@ import {
   registryEntryGatewayPort,
   resolveHome,
   type GatewayRegistryEntry,
+  withRegistryLockAt,
 } from "../gateway-registry";
+import { writeConfigFile } from "../config-io";
 import type { SandboxEntry } from "./types";
 
 export interface CrossPortSandboxHit {
@@ -90,6 +92,40 @@ export function findSandboxAcrossGatewayRoots(
     );
   }
   return matches[0];
+}
+
+/** Persist intentional-stop state in the registry root that owns the sandbox. */
+export function recordSandboxStopIntentAcrossGatewayRoots(
+  sandboxName: string,
+  stopped: boolean,
+  home: string = resolveHome(),
+): boolean {
+  try {
+    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+    if (!hit) return false;
+    return withRegistryLockAt(hit.registryFile, () => {
+      const registry = readGatewayRegistryFile(home, hit.registryFile);
+      const current = registry?.sandboxes[sandboxName];
+      if (
+        !registry ||
+        !current ||
+        current.pendingRouteReservation === true ||
+        current.pendingCreateIdentity !== undefined
+      ) {
+        return false;
+      }
+      writeConfigFile(hit.registryFile, {
+        ...registry,
+        sandboxes: {
+          ...registry.sandboxes,
+          [sandboxName]: { ...current, stopped },
+        },
+      });
+      return true;
+    });
+  } catch {
+    return false;
+  }
 }
 
 function listEntriesAcrossGatewayRoots(published: boolean, home: string): SandboxEntry[] {

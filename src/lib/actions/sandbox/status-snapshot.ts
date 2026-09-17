@@ -38,6 +38,7 @@ import {
   findSandboxAcrossGatewayRoots,
   listPublishedSandboxNamesAcrossGatewayRoots,
   listPublishedSandboxesAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
 } from "../../state/registry/cross-port";
 import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -302,7 +303,7 @@ interface CollectSandboxStatusSnapshotDeps {
   listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
   listPublishedSandboxesAcrossGatewayRoots?: typeof listPublishedSandboxesAcrossGatewayRoots;
   getSandbox?: typeof registry.getSandbox;
-  updateSandbox?: typeof registry.updateSandbox;
+  recordSandboxStopIntent?: typeof recordSandboxStopIntentAcrossGatewayRoots;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
@@ -475,10 +476,9 @@ export async function collectSandboxStatusSnapshot(
     (lookup.phase === "Ready" || lookup.phase === "Running") &&
     !initialPreflight?.failure &&
     !initialPreflight?.intentionalStopConfirmed &&
-    !registry.recordSandboxStopIntent(
+    !(opts.deps?.recordSandboxStopIntent ?? recordSandboxStopIntentAcrossGatewayRoots)(
       sandboxName,
       false,
-      opts.deps?.updateSandbox ?? registry.updateSandbox,
     )
   ) {
     lookup = {

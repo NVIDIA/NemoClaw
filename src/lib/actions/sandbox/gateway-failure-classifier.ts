@@ -82,6 +82,31 @@ export function classifySandboxPhaseRecoveryAction({
   return "start";
 }
 
+/** Render the shared recovery contract while callers retain their output channel. */
+export function getSandboxPhaseRecoveryGuidance(
+  sandboxName: string,
+  action: SandboxPhaseRecoveryAction,
+): string[] {
+  if (action === "replace_missing_docker_container") {
+    return [
+      "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",
+      "  To create a clean replacement:",
+      `    1. ${CLI_NAME} ${sandboxName} destroy --yes`,
+      `    2. ${CLI_NAME} onboard`,
+      "  Restore a separately created snapshot afterward if one is available.",
+    ];
+  }
+  if (action === "start") {
+    return [
+      `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
+      `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
+    ];
+  }
+  return [
+    `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+  ];
+}
+
 function defaultDockerInfo(): boolean {
   return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;
 }

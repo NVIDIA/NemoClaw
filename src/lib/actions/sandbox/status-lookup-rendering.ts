@@ -9,6 +9,7 @@ import { isTerminalSandboxPhase } from "../../state/gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
   classifySandboxPhaseRecoveryAction,
+  getSandboxPhaseRecoveryGuidance,
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
@@ -345,26 +346,7 @@ function printNonReadySandboxPhaseGuidance({
     printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
     deferSandboxLifecycleExit(1);
   }
-  if (recoveryAction === "replace_missing_docker_container") {
-    console.log(
-      "  The Docker-driver container is missing, so NemoClaw cannot back up its live workspace for rebuild.",
-    );
-    console.log("  To create a clean replacement:");
-    console.log(`    1. ${CLI_NAME} ${sandboxName} destroy --yes`);
-    console.log(`    2. ${CLI_NAME} onboard`);
-    console.log("  Restore a separately created snapshot afterward if one is available.");
-    return;
+  for (const line of getSandboxPhaseRecoveryGuidance(sandboxName, recoveryAction)) {
+    console.log(line);
   }
-  if (recoveryAction === "start") {
-    console.log(
-      `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the sandbox through OpenShell with workspace state preserved.`,
-    );
-    console.log(
-      `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead; use it only if start does not recover the sandbox.)`,
-    );
-    return;
-  }
-  console.log(
-    `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
-  );
 }
