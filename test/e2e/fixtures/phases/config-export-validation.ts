@@ -535,13 +535,13 @@ export class ConfigExportValidationPhaseFixture {
     let diagnostic: string | undefined;
     let knownSecretsAbsent: boolean | null = null;
     let internalTransportsAbsent: boolean | null = null;
-    let failureStage: ConfigExportFailureStage = "transport";
+    let failureStage: ConfigExportFailureStage =
+      expectation === "required" ? "observation" : "transport";
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
 
     try {
       if (expectation === "required") {
-        failureStage = "observation";
         expected = await expectedSemantics(
           target,
           instance,
@@ -549,7 +549,6 @@ export class ConfigExportValidationPhaseFixture {
           this.readPolicy.bind(this),
         );
       }
-      failureStage = "transport";
       const result = await this.host.nemoclaw(
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
         {
