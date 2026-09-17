@@ -424,6 +424,7 @@ function reportInferenceProbeRetry(
 export async function collectSandboxStatusSnapshot(
   sandboxName: string,
   opts: {
+    sandboxEntry?: registry.SandboxEntry | null;
     suppressInferenceProbe?: boolean;
     preflight?: SandboxStatusPreflightResult;
     deps?: CollectSandboxStatusSnapshotDeps;
@@ -435,7 +436,9 @@ export async function collectSandboxStatusSnapshot(
       const entry = registry.getSandbox(name);
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
-  const sb = getSandbox(sandboxName);
+  const sb = Object.hasOwn(opts, "sandboxEntry")
+    ? (opts.sandboxEntry ?? null)
+    : getSandbox(sandboxName);
   const initialPreflight =
     opts.preflight ??
     (sb?.stopped

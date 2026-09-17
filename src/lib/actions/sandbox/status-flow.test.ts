@@ -132,18 +132,38 @@ describe("showSandboxStatus flow", () => {
       openshellDriver: "docker",
       expected: "nemoclaw alpha destroy --yes",
       unexpected: "nemoclaw alpha start",
+      registryEntry: "present" as const,
+      publishedAcrossGatewayRoots: false,
     },
     {
       label: "native",
       openshellDriver: "mxc",
       expected: "nemoclaw alpha start",
       unexpected: "nemoclaw alpha destroy --yes",
+      registryEntry: "present" as const,
+      publishedAcrossGatewayRoots: false,
+    },
+    {
+      label: "cross-root native",
+      openshellDriver: "mxc",
+      expected: "nemoclaw alpha start",
+      unexpected: "nemoclaw alpha destroy --yes",
+      registryEntry: "missing" as const,
+      publishedAcrossGatewayRoots: true,
     },
   ])(
     "passes the $label driver to missing-container Error recovery guidance",
-    async ({ openshellDriver, expected, unexpected }) => {
+    async ({
+      openshellDriver,
+      expected,
+      unexpected,
+      registryEntry = "present",
+      publishedAcrossGatewayRoots = false,
+    }) => {
       const harness = createStatusFlowHarness({
         sandboxEntry: { openshellDriver },
+        registryEntry,
+        publishedAcrossGatewayRoots,
         lookup: {
           state: "present",
           output: "Name: alpha\nPhase: Error\nEndpoint: http://127.0.0.1:18789\n",
@@ -164,6 +184,12 @@ describe("showSandboxStatus flow", () => {
       const output = harness.logSpy.mock.calls.flat().join("\n");
       expect(output).toContain(expected);
       expect(output).not.toContain(unexpected);
+      expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          sandboxEntry: expect.objectContaining({ openshellDriver }),
+        }),
+      );
     },
   );
 
@@ -669,14 +695,17 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("gateway is still refusing connections after restart");
     expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
     expect(output).toContain("If the gateway never becomes healthy");
-    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
-      preflight: {
-        failure: null,
-        failureLayer: "docker_unreachable",
-        suppressInferenceProbe: true,
-        exitCode: 1,
-      },
-    });
+    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        preflight: {
+          failure: null,
+          failureLayer: "docker_unreachable",
+          suppressInferenceProbe: true,
+          exitCode: 1,
+        },
+      }),
+    );
   });
 
   it("renders the refreshed preflight after Docker recovery", async () => {
@@ -704,9 +733,10 @@ describe("showSandboxStatus flow", () => {
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).not.toContain("Failure layer: sandbox_container_stopped");
     expect(process.exitCode).toBeUndefined();
-    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
-      preflight,
-    });
+    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ preflight }),
+    );
   });
 
   it("renders llama.cpp details already classified in the snapshot", async () => {

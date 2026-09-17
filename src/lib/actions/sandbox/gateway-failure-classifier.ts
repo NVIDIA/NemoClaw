@@ -10,10 +10,7 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
-import {
-  normalizeRuntimeProviderIdentity,
-  type RuntimeProviderSnapshotLifecycleState,
-} from "../../onboard/runtime-provider/contract";
+import type { RuntimeProviderSnapshotLifecycleState } from "../../onboard/runtime-provider/contract";
 import {
   inspectPortableRuntimeReceiptReadiness,
   type PortableRuntimeReceiptReadinessDeps,
@@ -78,7 +75,8 @@ export function classifySandboxPhaseRecoveryAction({
   dockerContainerName: string | null | undefined;
 }): SandboxPhaseRecoveryAction {
   if (phase !== "Error") return "rebuild";
-  if (normalizeRuntimeProviderIdentity(openshellDriver) === "docker" && !dockerContainerName) {
+  const driver = openshellDriver?.trim().toLowerCase();
+  if ((!driver || driver === "docker") && !dockerContainerName) {
     return "replace_missing_docker_container";
   }
   return "start";

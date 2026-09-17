@@ -177,7 +177,8 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 }
 
 async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
-  const preflight = await getSandboxStatusPreflight(getPublishedSandbox(sandboxName));
+  const sandboxEntry = getPublishedSandbox(sandboxName);
+  const preflight = await getSandboxStatusPreflight(sandboxEntry);
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
@@ -185,6 +186,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     preflight,
+    sandboxEntry,
   });
   const {
     sb,

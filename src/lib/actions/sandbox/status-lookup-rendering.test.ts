@@ -231,24 +231,28 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("nemoclaw beta start");
   });
 
-  it.each([
-    ["legacy vm alias", "vm"],
-    ["missing legacy metadata", null],
-  ])(
-    "steers a Docker sandbox with %s and no container to clean replacement",
-    async (_case, driver) => {
-      const cap = captureConsoleLog();
-      await printGuidance({ phase: "Error", openshellDriver: driver, dockerRuntime: null });
-      const text = cap.lines();
-      cap.restore();
+  it("steers a Docker sandbox with missing legacy metadata and no container to clean replacement", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: null, dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
 
-      expect(text).toContain("cannot back up its live workspace for rebuild");
-      expect(text).toContain("nemoclaw beta destroy --yes");
-      expect(text).toContain("nemoclaw onboard");
-      expect(text).not.toContain("nemoclaw beta rebuild --yes");
-      expect(text).not.toContain("nemoclaw beta start");
-    },
-  );
+    expect(text).toContain("cannot back up its live workspace for rebuild");
+    expect(text).toContain("nemoclaw beta destroy --yes");
+    expect(text).toContain("nemoclaw onboard");
+    expect(text).not.toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
+  it("steers a VM sandbox without a Docker container to OpenShell start", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({ phase: "Error", openshellDriver: "vm", dockerRuntime: null });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("nemoclaw beta destroy --yes");
+  });
 
   it("steers a native provider without a Docker container to OpenShell start", async () => {
     const cap = captureConsoleLog();
