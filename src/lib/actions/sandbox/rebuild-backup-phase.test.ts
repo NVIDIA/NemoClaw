@@ -106,7 +106,8 @@ describe("rebuild policy handoff", () => {
       "alpha",
       undefined,
     );
-    expect(mocks.finishOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({ sandboxName: "alpha" });
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalledWith({
       sandboxName: "alpha",
     });
   });

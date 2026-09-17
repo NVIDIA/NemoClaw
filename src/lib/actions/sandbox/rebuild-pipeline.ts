@@ -31,6 +31,8 @@ import {
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
+  type RebuildBackupPhaseResult,
+  releaseRebuildSourceOpenClawWindow,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
@@ -251,6 +253,9 @@ async function rebuildSandboxUnlocked(
       },
     );
     let retainPolicyHandoffForRecovery = false;
+    let sourceOpenClawDoctorWindow: NonNullable<
+      RebuildBackupPhaseResult["sourceOpenClawDoctorWindow"]
+    > | null = null;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -493,6 +498,7 @@ async function rebuildSandboxUnlocked(
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       });
       if (!backup) return;
+      sourceOpenClawDoctorWindow = backup.sourceOpenClawDoctorWindow ?? null;
       try {
         recreateOptions = bindRebuildSnapshotGpuAuthority(recreateOptions, backup.backupManifest);
       } catch (error) {
@@ -940,6 +946,7 @@ async function rebuildSandboxUnlocked(
           retainPolicyHandoffForRecovery = true;
         },
       });
+      if (mcpPreparation) sourceOpenClawDoctorWindow = null;
       if (!mcpPreparation) return;
       registryRollback.recordRemoval(mcpPreparation.removalReceipt);
 
@@ -1057,6 +1064,15 @@ async function rebuildSandboxUnlocked(
       }
       retainPolicyHandoffForRecovery = false;
     } finally {
+      if (sourceOpenClawDoctorWindow) {
+        const finished = await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
+        if (!finished.ok) {
+          console.error(
+            `  Warning: OpenClaw source maintenance cleanup did not return the retained sandbox healthy (${finished.stage}: ${finished.detail}).`,
+          );
+        }
+        sourceOpenClawDoctorWindow = null;
+      }
       const handoffManifest = rebuildPolicyHandoffManifest;
       if (
         handoffManifest &&
