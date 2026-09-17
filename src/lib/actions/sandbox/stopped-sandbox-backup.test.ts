@@ -249,6 +249,45 @@ describe("startStoppedSandboxContainerForBackup", () => {
     expect(d.startContainer).toHaveBeenCalledWith(expect.any(Object), "openshell-my-sb-abc123");
   });
 
+  it("retains an uncertain OpenShell start so cleanup stops it through OpenShell", () => {
+    const inspectStatus = vi.fn().mockReturnValueOnce("exited").mockReturnValueOnce("running");
+    const d = deps({
+      inspectStatus,
+      startThroughOpenShell: vi.fn().mockReturnValue(false),
+    });
+    const result = startStoppedSandboxContainerForBackup("my-sb", d);
+
+    expect(result).toEqual({
+      containerName: "openshell-my-sb-abc123",
+      gatewayName: "nemoclaw",
+      runtimeProviderId: "docker",
+      sandboxName: "my-sb",
+      startedThroughOpenShell: true,
+    });
+    expect(d.startContainer).not.toHaveBeenCalled();
+
+    const stopEngine = lifecycleEngine();
+    const stopThroughOpenShell = vi.fn().mockReturnValue(true);
+    expect(
+      returnSandboxContainerToStopped(result!, {
+        inspectStatus: vi.fn().mockReturnValue("exited"),
+        resolveLifecycleEngine: vi.fn().mockReturnValue(stopEngine),
+        stopThroughOpenShell,
+      }),
+    ).toBe(true);
+    expect(stopThroughOpenShell).toHaveBeenCalledWith("my-sb", "nemoclaw", 30_000);
+  });
+
+  it("fails closed when an uncertain OpenShell start cannot be reconciled", () => {
+    const d = deps({
+      inspectStatus: vi.fn().mockReturnValueOnce("exited").mockReturnValueOnce(null),
+      startThroughOpenShell: vi.fn().mockReturnValue(false),
+    });
+
+    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    expect(d.startContainer).not.toHaveBeenCalled();
+  });
+
   it("returns null when both start operations fail", () => {
     const d = deps({
       startThroughOpenShell: vi.fn().mockReturnValue(false),
@@ -400,10 +439,10 @@ describe("returnSandboxContainerToStopped", () => {
     );
   });
 
-  it("reports failure when the provider stop operation fails", () => {
+  it("reports failure when a failed provider stop leaves the container running", () => {
     const engine = lifecycleEngine("podman");
     const stopContainer = vi.fn().mockReturnValue(false);
-    const inspectStatus = vi.fn();
+    const inspectStatus = vi.fn().mockReturnValue("running");
     expect(
       returnSandboxContainerToStopped(
         { ...started, startedThroughOpenShell: false },
@@ -414,7 +453,19 @@ describe("returnSandboxContainerToStopped", () => {
         },
       ),
     ).toBe(false);
-    expect(inspectStatus).not.toHaveBeenCalled();
+    expect(inspectStatus).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
+  });
+
+  it("accepts an uncertain OpenShell stop when the container is already exited", () => {
+    const engine = lifecycleEngine("podman");
+    const stopThroughOpenShell = vi.fn().mockReturnValue(false);
+    expect(
+      returnSandboxContainerToStopped(started, {
+        resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
+        stopThroughOpenShell,
+        inspectStatus: vi.fn().mockReturnValue("exited"),
+      }),
+    ).toBe(true);
   });
 
   it("reports failure when the container is still running after stop", () => {

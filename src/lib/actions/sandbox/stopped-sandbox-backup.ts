@@ -163,16 +163,14 @@ const defaultStartDeps: StartDeps = {
   listLabeledContainerNames,
   inspectStatus: inspectContainerStatus,
   startThroughOpenShell: (sandboxName, gatewayName, timeoutMs) => {
-    const result = captureSanitizedResolvedOpenshell(
-      ["sandbox", "start", "-g", gatewayName, sandboxName],
-      {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        maxBuffer: 64 * 1024,
-        timeout: timeoutMs,
-      },
-    );
+    const command = buildGatewayScopedSandboxCommand({ name: sandboxName, gatewayName }, "start");
+    const result = captureSanitizedResolvedOpenshell(command.args, {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 64 * 1024,
+      timeout: timeoutMs,
+    });
     return result.status === 0 && result.error === undefined;
   },
   startContainer: (engine, containerName) =>
@@ -209,13 +207,22 @@ export function startStoppedSandboxContainerForBackup(
     gatewayName,
     engine.mutationTimeoutMs,
   );
-  if (!startedThroughOpenShell && !deps.startContainer(engine, containerName)) return null;
+  let actualStartThroughOpenShell = startedThroughOpenShell;
+  if (!startedThroughOpenShell) {
+    const reconciledStatus = deps.inspectStatus(engine, containerName);
+    if (reconciledStatus === "running") {
+      actualStartThroughOpenShell = true;
+    } else {
+      if (reconciledStatus !== "exited" && reconciledStatus !== "created") return null;
+      if (!deps.startContainer(engine, containerName)) return null;
+    }
+  }
   return {
     containerName,
     gatewayName,
     runtimeProviderId: engine.runtimeProviderId,
     sandboxName,
-    startedThroughOpenShell,
+    startedThroughOpenShell: actualStartThroughOpenShell,
   };
 }
 
@@ -266,16 +273,14 @@ interface StopDeps {
 const defaultStopDeps: StopDeps = {
   resolveLifecycleEngine: resolveSandboxLifecycleEngine,
   stopThroughOpenShell: (sandboxName, gatewayName, timeoutMs) => {
-    const result = captureSanitizedResolvedOpenshell(
-      ["sandbox", "stop", "-g", gatewayName, sandboxName],
-      {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        maxBuffer: 64 * 1024,
-        timeout: timeoutMs,
-      },
-    );
+    const command = buildGatewayScopedSandboxCommand({ name: sandboxName, gatewayName }, "stop");
+    const result = captureSanitizedResolvedOpenshell(command.args, {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: 64 * 1024,
+      timeout: timeoutMs,
+    });
     return result.status === 0 && result.error === undefined;
   },
   stopContainer: (engine, containerName) =>
@@ -284,7 +289,8 @@ const defaultStopDeps: StopDeps = {
 };
 
 /** Return a container started by {@link startStoppedSandboxContainerForBackup}
- * to its stopped state. Returns false when the provider operation fails. */
+ * to its stopped state. Returns true only when the authoritative provider
+ * state confirms the container is exited. */
 export function returnSandboxContainerToStopped(
   started: StartedForBackup,
   depsOverride: Partial<StopDeps> = {},
@@ -292,10 +298,13 @@ export function returnSandboxContainerToStopped(
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
   const engine = deps.resolveLifecycleEngine(started.runtimeProviderId);
   if (!engine) return false;
-  const stopped = started.startedThroughOpenShell
-    ? deps.stopThroughOpenShell(started.sandboxName, started.gatewayName, engine.mutationTimeoutMs)
-    : deps.stopContainer(engine, started.containerName);
-  if (!stopped) return false;
+  if (started.startedThroughOpenShell) {
+    deps.stopThroughOpenShell(started.sandboxName, started.gatewayName, engine.mutationTimeoutMs);
+  } else {
+    deps.stopContainer(engine, started.containerName);
+  }
+  // A bounded lifecycle command can report timeout after the provider already
+  // applied the mutation. The container's final state is authoritative.
   return deps.inspectStatus(engine, started.containerName) === "exited";
 }
 

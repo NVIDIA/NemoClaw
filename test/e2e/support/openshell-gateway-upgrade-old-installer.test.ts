@@ -24,6 +24,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 const HISTORICAL_BUILD_CONTEXT_MODULE = "src/lib/sandbox/build-context.ts";
+const SYNC_SUBPROCESS_TIMEOUT_MS = 30_000;
 
 function historicalReleaseCommitRef(nemoclawRef: string): string {
   return `refs/tags/${nemoclawRef}^{commit}`;
@@ -43,7 +44,7 @@ function assertHistoricalReleaseIdentity(identity: {
       "--end-of-options",
       historicalReleaseCommitRef(identity.nemoclawRef),
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: SYNC_SUBPROCESS_TIMEOUT_MS },
   );
   expect(
     resolved.status,
@@ -135,7 +136,9 @@ function extractReviewedHistoricalSource(fixture: ReviewedGatewayUpgradeFixture)
     "git",
     ["-C", REPO_ROOT, "archive", historicalReleaseCommitRef(fixture.nemoclawRef)],
     {
+      killSignal: "SIGKILL",
       maxBuffer: 128 * 1024 * 1024,
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     },
   );
   expect(
@@ -144,7 +147,9 @@ function extractReviewedHistoricalSource(fixture: ReviewedGatewayUpgradeFixture)
   ).toBe(0);
   const extract = spawnSync("tar", ["-xf", "-", "-C", sourceRoot], {
     input: archive.stdout,
+    killSignal: "SIGKILL",
     maxBuffer: 128 * 1024 * 1024,
+    timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
   });
   expect(extract.status, extract.stderr.toString()).toBe(0);
   return sourceRoot;
@@ -180,7 +185,12 @@ writeFileSync(outputPath, staged.buildCtx);
       path.dirname(sourceRoot),
       outputPath,
     ],
-    { cwd: REPO_ROOT, encoding: "utf8" },
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
+    },
   );
   expect(result.status, result.stderr).toBe(0);
   return fs.readFileSync(outputPath, "utf8");
@@ -199,6 +209,8 @@ function runReviewedHistoricalFixture(
       NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
       NEMOCLAW_OLD_OPENCLAW_VERSION: profile.openclawVersion,
     },
+    killSignal: "SIGKILL",
+    timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
   });
   expect(result.status, result.stderr).toBe(0);
 
@@ -274,6 +286,8 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
         NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
         NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
       },
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("historical mcporter advisory audits; expected 1");
@@ -292,6 +306,8 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
         NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
         NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
       },
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("found 0 historical mcporter advisory audits; expected 1");
