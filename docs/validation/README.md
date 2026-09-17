@@ -12,6 +12,7 @@ Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pi
 The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
+The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.
 The newer [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the remaining managed Podman blocker.
 
 | Contract | Evidence |

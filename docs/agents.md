@@ -103,7 +103,8 @@ Retire the sandbox using [deployment destroy](usage.md#destroy), which deletes i
 
 This follows the [native access test](../crates/nemoclaw-e2e/tests/fabric_live.rs) and [retained Linux ARM64 result](validation/rust-fabric-live-linux-arm64.json) at revision `b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`.
 That result confirmed a short Deep Agents reply through OpenShell and preservation of the hosted runtime identity.
-That result does not qualify conversation recovery or every model/tool combination.
+The [Spark example checks](validation/spark-examples-linux-arm64.md) add Pi and managed-model results.
+Neither result qualifies conversation recovery or every model/tool combination.
 
 ### Run One Headless OpenClaw Request
 

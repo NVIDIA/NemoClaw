@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Build current images and replace these local digests and the deployment UID.
+# Model sources, host requirements, and validation limits: README.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: spark-local-and-oracle
+  uid: 23323bf7-b237-4407-b08d-8b5e0947ab7e
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17805
+    networkCIDR: 172.30.165.0/24
+  inferenceProviders:
+  - name: local
+    provider: openai
+    service:
+      backend: vllm
+      authentication: bearer
+      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
+      model:
+        repository: nvidia/Qwen3.8-27B-NVFP4
+        revision: 482ca0f3832238542f8f5295dde86b5f22711d80
+      serving:
+        toolParser: qwen3_xml
+        reasoningParser: qwen3
+        port: 19006
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 32
+        hostReserveGiB: 32
+        kvCacheGiB: 4
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  - name: oracle
+    provider: openai
+    endpoint: https://oracle.example/v1
+    credential:
+      env: ORACLE_API_KEY
+  sandboxes:
+  - name: assistant
+    image:
+      ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: openclaw
+      execution:
+        timeoutSeconds: 300
+    agents:
+    - name: assistant
+      inference:
+        routes:
+        - name: local
+          providerRef: local
+          overrides:
+            model: nvidia/Qwen3.8-27B-NVFP4
+            contextWindow: 32768
+            maxTokens: 2048
+        - name: oracle
+          providerRef: oracle
+          overrides:
+            model: replace-with-your-hosted-model
+            contextWindow: 32768
+            maxTokens: 2048
+        default: local
