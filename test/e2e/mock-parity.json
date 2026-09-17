@@ -419,9 +419,9 @@
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "liveSources": [
         "test/e2e/live/channels-add-remove-helpers.ts",
-        "test/e2e/lib/installed-telegram-runtime-proof.ts",
         "test/e2e/live/messaging-providers-telegram-runtime-proof.ts"
       ],
+      "sharedSources": ["test/e2e/lib/installed-telegram-runtime-proof.ts"],
       "fast": [
         "src/lib/messaging/channels/openclaw-bridge-health.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
@@ -652,12 +652,12 @@
       "live": "test/e2e/live/messaging-providers.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
-        "test/e2e/lib/installed-telegram-runtime-proof.ts",
         "test/e2e/live/phase6-messaging-helpers.ts",
         "test/e2e/live/messaging-providers-slack-runtime-proof.ts",
         "test/e2e/live/messaging-providers-telegram-runtime-proof.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
+      "sharedSources": ["test/e2e/lib/installed-telegram-runtime-proof.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
