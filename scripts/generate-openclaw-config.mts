@@ -1042,12 +1042,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
   const plugins: JsonObject = {
-    allow: unique([
-      "nemoclaw",
-      ...openclawPlugins.map((plugin) => plugin.id),
-      ...(openclawOtel ? ["diagnostics-otel"] : []),
-      ...(webSearchProvider ? [webSearchProvider] : []),
-    ]),
     entries: pluginEntries,
   };
   const pluginLoadPaths: string[] = [];
@@ -1104,7 +1098,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,
-    update: { checkOnStart: false },
     ...(securityAuditSuppressions.length > 0
       ? { security: { audit: { suppressions: securityAuditSuppressions } } }
       : {}),

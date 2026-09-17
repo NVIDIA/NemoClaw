@@ -464,7 +464,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         `[ "$(bash -ic 'printf %s "$PATH"' 2>/dev/null)" = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]`,
         `[ "$(bash -lc 'printf %s "$PATH"' 2>/dev/null)" = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]`,
         "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
-        `python3 -c 'import json; assert json.load(open("/sandbox/.openclaw/openclaw.json"))["update"]["checkOnStart"] is False'`,
+        `python3 -c 'import json; assert "update" not in json.load(open("/sandbox/.openclaw/openclaw.json"))'`,
         'printf "%s:%s:%s\\n" "$gateway_uid" "$sandbox_uid" "$sandbox_gid"',
       ].join("\n"),
       "managed-image-openclaw-identities",

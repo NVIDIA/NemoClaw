@@ -39,7 +39,6 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           root*      600   root*    inherited no
-# /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
@@ -134,13 +133,8 @@ validate_tmp_permissions() {
   done
 
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
-  # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
-  # log is written after privilege drop as sandbox, so keep it private and
-  # reject symlinks/non-regular files before launching services. OpenClaw's
-  # entrypoint sets PLUGIN_REFRESH_LOG; shared tests can override it while
-  # production keeps the fixed /tmp path.
-  local plugin_refresh_log="${PLUGIN_REFRESH_LOG:-/tmp/nemoclaw-plugin-refresh.log}"
-  for f in /tmp/gateway.log /tmp/auto-pair.log "$plugin_refresh_log"; do
+  # world-readable for diagnostics). auto-pair.log is 600.
+  for f in /tmp/gateway.log /tmp/auto-pair.log; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     if [ -L "$f" ]; then
       echo "[SECURITY] $f is a symlink (expected regular log file)" >&2
@@ -159,16 +153,6 @@ validate_tmp_permissions() {
       */gateway.log)
         if [ "$perms" != "600" ] && [ "$perms" != "644" ]; then
           echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600 or 644)" >&2
-          failed=1
-        fi
-        ;;
-      */nemoclaw-plugin-refresh.log)
-        if [ "$perms" != "600" ]; then
-          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
-          failed=1
-        fi
-        if [ "$(id -u)" -eq 0 ] && [ "$owner" != "sandbox" ]; then
-          echo "[SECURITY] $f has unsafe owner: owner=$owner (expected sandbox)" >&2
           failed=1
         fi
         ;;

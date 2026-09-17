@@ -282,7 +282,6 @@ GATEWAY_PID_START_IDENTITY=""
 AUTO_PAIR_PID_START_IDENTITY=""
 GATEWAY_LOG_TAIL_PID_START_IDENTITY=""
 GATEWAY_LOG_PERSIST_PID_START_IDENTITY=""
-PLUGIN_REFRESH_PID_START_IDENTITY=""
 
 openclaw_load_pid_identity() {
   local pid="$1"
@@ -606,32 +605,6 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
   if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
     printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
-    return 1
-  fi
-}
-
-# OpenClaw 2026.7.1 requires its startup migration checkpoint to complete
-# without warnings before the gateway reports readiness. Older NemoClaw images
-# persisted update-check.json as update polling and notification cache. Empty
-# placeholders fail JSON parsing, while nonempty files cannot be archived by
-# the separate gateway user when a stale root-owned parent remains.
-# NemoClaw pins OpenClaw in the image, so discard only a descriptor-pinned,
-# stable regular cache file before the mandatory checkpoint.
-# Remove this repair after every supported upgrade source stops seeding the
-# cache or OpenClaw can migrate it across split users and a protected parent.
-remove_openclaw_legacy_update_check_state() {
-  local config_dir="/sandbox/.openclaw"
-  if [ ! -e "$config_dir" ] && [ ! -L "$config_dir" ]; then
-    return 0
-  fi
-
-  local normalizer
-  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
-    printf '[SECURITY] Refusing legacy update-check repair — trusted normalizer is missing\n' >&2
-    return 1
-  fi
-  if ! python3 -I "$normalizer" remove-legacy-update-check "$config_dir"; then
-    printf '[SECURITY] Refusing legacy update-check repair — expected a stable regular file or no file\n' >&2
     return 1
   fi
 }
@@ -4558,108 +4531,6 @@ setup_auth_profile_as_sandbox() {
     harden_auth_profiles
 }
 
-PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
-PLUGIN_REFRESH_TIMEOUT_DURATION="30s"
-
-prepare_plugin_refresh_log() {
-  local dir base tmp
-  dir="$(dirname "$PLUGIN_REFRESH_LOG")"
-  base="$(basename "$PLUGIN_REFRESH_LOG")"
-
-  if [ -L "$PLUGIN_REFRESH_LOG" ]; then
-    echo "[SECURITY] refusing to use symlinked plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
-    return 1
-  fi
-  if [ -e "$PLUGIN_REFRESH_LOG" ] && [ ! -f "$PLUGIN_REFRESH_LOG" ]; then
-    echo "[SECURITY] refusing to use non-regular plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
-    return 1
-  fi
-
-  # Create the log through a same-directory temp file and rename it into place.
-  # Root never opens the sandbox-controlled final /tmp path, and the refresh
-  # command below performs its redirection after dropping to the sandbox user.
-  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
-  if [ "$(id -u)" -eq 0 ] && ! chown sandbox:sandbox "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! chmod 600 "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! mv -f "$tmp" "$PLUGIN_REFRESH_LOG"; then
-    rm -f "$tmp"
-    return 1
-  fi
-}
-
-start_plugin_registry_refresh() {
-  (
-    local ready=0
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      if [ "$(id -u)" -eq 0 ]; then
-        if "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox "$OPENCLAW" gateway status >/dev/null 2>&1; then
-          ready=1
-          break
-        fi
-      elif env HOME=/sandbox "$OPENCLAW" gateway status >/dev/null 2>&1; then
-        ready=1
-        break
-      fi
-      sleep 1
-    done
-    if [ "$ready" -ne 1 ]; then
-      echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
-      exit 0
-    fi
-    local refresh_rc=0
-    if [ "$(id -u)" -eq 0 ]; then
-      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
-        "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
-        sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
-    else
-      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
-        env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
-        sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
-    fi
-    if [ "$refresh_rc" -eq 124 ]; then
-      echo "[plugin-refresh] registry refresh timed out after $PLUGIN_REFRESH_TIMEOUT_DURATION" >&2
-    fi
-
-    if ! normalize_mutable_config_perms; then
-      echo "[plugin-refresh] mutable OpenClaw config permission normalization failed" >&2
-      exit 1
-    fi
-    # The registry refresh may rewrite openclaw.json after the gateway reports
-    # ready. Keep the mutable integrity metadata ordered after that writer so a
-    # rebuild cannot observe the refreshed config with its previous hash. Run
-    # this even when the best-effort refresh fails because it may have written
-    # part of the config before returning nonzero.
-    if ! ensure_mutable_openclaw_config_hash; then
-      echo "[plugin-refresh] mutable OpenClaw config hash refresh failed" >&2
-      exit 1
-    fi
-  ) &
-  PLUGIN_REFRESH_PID=$!
-  if ! capture_openclaw_pid_start_identity "$PLUGIN_REFRESH_PID" PLUGIN_REFRESH_PID_START_IDENTITY; then
-    # The best-effort refresh may legitimately finish before PID 1 can read
-    # its stat record.  An uncaptured PID is never admitted or signalled.
-    PLUGIN_REFRESH_PID_START_IDENTITY=""
-  fi
-}
-
-wait_for_plugin_registry_refresh() {
-  local refresh_rc=0
-  [ -n "${PLUGIN_REFRESH_PID:-}" ] || return 0
-  wait "$PLUGIN_REFRESH_PID" || refresh_rc=$?
-  if [ "$refresh_rc" -ne 0 ]; then
-    echo "[plugin-refresh] registry refresh postcondition failed" >&2
-    return "$refresh_rc"
-  fi
-}
-
 openclaw_gateway_pid_owns_listener() {
   local pid="$1"
   local port="$2"
@@ -4884,9 +4755,6 @@ refresh_openclaw_supervised_child_pids() {
   openclaw_supervised_aux_pid_is_live \
     "${GATEWAY_LOG_PERSIST_PID:-}" "${GATEWAY_LOG_PERSIST_PID_START_IDENTITY:-}" \
     && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
-  openclaw_supervised_aux_pid_is_live \
-    "${PLUGIN_REFRESH_PID:-}" "${PLUGIN_REFRESH_PID_START_IDENTITY:-}" \
-    && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
   return 0
 }
 
@@ -4987,8 +4855,6 @@ fi
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_openclaw_legacy_update_check_state || exit 1
-
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
 if [ -f .env ]; then
@@ -5071,8 +4937,6 @@ if [ "$(id -u)" -ne 0 ]; then
 
   prepare_auto_pair_log
 
-  prepare_plugin_refresh_log || exit 1
-
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
@@ -5095,9 +4959,6 @@ if [ "$(id -u)" -ne 0 ]; then
   # Persistent mirror: see root-mode block for rationale.
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
-  start_plugin_registry_refresh
-  refresh_openclaw_supervised_child_pids
-  wait_for_plugin_registry_refresh || exit 1
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -5157,8 +5018,6 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
 fi
 
 prepare_auto_pair_log
-
-prepare_plugin_refresh_log || exit 1
 
 # Provision per-agent workspaces for multi-agent OpenClaw deployments.
 #
@@ -5280,26 +5139,6 @@ capture_openclaw_pid_start_identity \
 start_persistent_gateway_log_mirror || exit 1
 
 start_auto_pair
-
-# Re-register non-bundled plugins after the gateway's first policy-changed
-# regen. Under GPU sandbox onboard, OpenClaw rebuilds plugins[] from bundled
-# extensions only and drops path/npm-origin entries like the NemoClaw plugin
-# and the WeChat plugin. Their installRecords survive on disk, but the runtime
-# registry forgets them — so `/nemoclaw` is unreachable in the TUI and
-# `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
-# A `plugins registry --refresh` repopulates plugins[] from installRecords.
-# Run in a supervised child so PID 1 can forward shutdown signals while the
-# caller waits for its config postcondition before publishing readiness.
-# Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
-# regeneration path, outside NemoClaw. NemoClaw can only heal the initial
-# post-start registry from persisted installRecords until upstream preserves
-# path/npm-origin plugins itself. Later runtime policy mutations are owned by
-# OpenClaw's upstream fix, not by this one-shot startup workaround. Remove this
-# workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
-# proves /nemoclaw registration without the refresh.
-start_plugin_registry_refresh
-refresh_openclaw_supervised_child_pids
-wait_for_plugin_registry_refresh || exit 1
 
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before

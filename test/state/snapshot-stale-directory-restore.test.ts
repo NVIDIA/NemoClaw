@@ -121,8 +121,6 @@ process.exit(0);
       cmd.includes("d='/sandbox/.openclaw/workspace'"),
     );
     expect(cleanupCommand).toBeDefined();
-    expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-    expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
     expect(cleanupCommand).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
     expect(cleanupCommand).not.toContain("d='/sandbox/.openclaw/extensions'");
     expect(loggedCommands).not.toEqual(
@@ -336,9 +334,8 @@ process.exit(0);
     const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
 
     expect(restore.success).toBe(false);
-    expect(restore.failedDirs).toEqual(
-      expect.arrayContaining(["agents", "extensions", "workspace"]),
-    );
+    expect(restore.failedDirs).toEqual(expect.arrayContaining(["agents", "workspace"]));
+    expect(restore.failedDirs).not.toContain("extensions");
   } finally {
     restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
     restoreEnv("PATH", oldPath);
