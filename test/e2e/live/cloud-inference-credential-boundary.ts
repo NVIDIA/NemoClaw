@@ -5,8 +5,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE } from "../../../nemoclaw/src/security/secret-scanner.ts";
 
 const DEFAULT_SANDBOX_STATE_DIRECTORIES = ["/sandbox/.openclaw", "/sandbox/.nemoclaw"];
-const PROTECTED_STATE_DIRECTORY = "openclaw-gateway-state";
-
 /** Build a path-only scan for concrete credential values in sandbox state. */
 export function buildSandboxCredentialScanCommand(
   directories: readonly string[] = DEFAULT_SANDBOX_STATE_DIRECTORIES,
@@ -15,7 +13,7 @@ export function buildSandboxCredentialScanCommand(
   return [
     `for dir in ${roots}; do`,
     '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rlE --exclude-dir=${PROTECTED_STATE_DIRECTORY} '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$dir")`,
+    `  matches=$(grep -rlE '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$dir")`,
     "  scan_status=$?",
     '  case "$scan_status" in',
     `    0) printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/'`,

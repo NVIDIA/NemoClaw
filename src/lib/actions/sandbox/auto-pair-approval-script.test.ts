@@ -84,6 +84,9 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_PENDING_FD']");
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_PAIRED_FD']");
     expect(restoredClone).toContain("approve_env['NEMOCLAW_OPENCLAW_IDENTITY_FD']");
+    expect(restoredClone).toContain("Only explicitly projected local-device records");
+    expect(restoredClone).toContain("local_device_only=True");
+    expect(restoredClone).toContain("local_device_id: paired_device");
     expect(restoredClone).toContain("clone_legacy_directory_is_current('devices'");
     expect(restoredClone).toContain("if not related_pending:");
     expect(restoredClone).toContain("len(related_pending) > 1");

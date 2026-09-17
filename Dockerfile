@@ -1616,17 +1616,15 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 
 # OpenClaw 2026.9.1 moved gateway startup work into shared and per-agent SQLite
 # databases, but hardens them to owner-only modes on every open. NemoClaw's
-# root entrypoint runs the CLI and gateway as separate users, so the split-user
-# marker preserves gateway-owned, owner-only modes. Same-UID OpenShell
-# sandboxes retain the same private modes. The patch leaves generic credential
-# and identity store enforcement unchanged, avoids redundant chmod calls when
-# a reviewed private database mode already matches, keeps generated models
-# files private, and ignores the obsolete update-check cache migration that
-# cannot archive across a root-owned parent.
+# native lifecycle runs the CLI and gateway as the sandbox identity, so keep
+# the retired split-user marker unset and preserve OpenClaw's owner-only modes.
+# The patch leaves generic credential and identity store enforcement unchanged,
+# avoids redundant chmod calls when a reviewed private database mode already
+# matches, keeps generated models files private, and ignores the obsolete
+# update-check cache migration that cannot archive through a root-owned parent.
 #
-# Removal criteria: drop when upstream OpenClaw supports split-user,
-# gateway-owned state databases and split-user cache migrations without
-# startup warnings.
+# Removal criteria: drop when upstream OpenClaw no longer needs the managed
+# runtime permission and legacy-cache compatibility changes.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
@@ -2390,11 +2388,8 @@ RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
 # (for plugin state/config), but the parent and blueprints are immutable at
 # runtime. Root ownership on the parent prevents the agent from renaming or
-# replacing root-owned or gateway-owned entries. Only state/, migration/,
-# snapshots/, staging/, and config.json are sandbox-owned for runtime writes.
-# The gateway-state directory is owner-only. A separate gateway-owned observer
-# directory exposes only credential-free initial pairing fields to the sandbox
-# group, without granting access to the authentication database.
+# replacing root-owned entries. Only state/, migration/, snapshots/, staging/,
+# and config.json are sandbox-owned for runtime writes.
 # Sticky bit (1755): OpenShell's prepare_filesystem() chowns read_write paths
 # to run_as_user at sandbox start, flipping this dir to sandbox:sandbox.
 # The sticky bit survives the chown and prevents the sandbox user from
@@ -2405,11 +2400,6 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \
     && chown -R root:root /sandbox/.nemoclaw/blueprints \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
-    && install -d -o gateway -g gateway -m 0700 \
-        /sandbox/.nemoclaw/openclaw-gateway-state \
-        /sandbox/.nemoclaw/openclaw-gateway-state/state \
-    && install -d -o gateway -g sandbox -m 2750 \
-        /sandbox/.nemoclaw/openclaw-pairing-observer \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \

@@ -3,21 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.9.1 split-user state.
+ * Temporary compatibility patch for OpenClaw 2026.9.1 managed state.
  *
- * NemoClaw's root entrypoint runs the OpenClaw CLI and gateway as separate
- * users. OpenClaw 2026.9.1 makes shared and per-agent SQLite state part of
- * gateway startup and hardens those paths to owner-only modes. The root
- * topology keeps the authoritative databases owner-only beneath a
- * gateway-owned state root; a separate credential-free observer publishes the
- * bounded initial pending-pairing fields needed by the sandbox watcher.
- * Generic credential and identity stores remain owner-only. Leave
- * private-store enforcement unchanged, and ignore only the obsolete pinned-
- * version update cache when its migration cannot archive through a root-owned
- * parent.
+ * NemoClaw's native OpenClaw lifecycle runs the gateway, doctor, auto-pair,
+ * one-shot, and agent paths as the sandbox identity. OpenClaw 2026.9.1 makes
+ * shared and per-agent SQLite state part of gateway startup and hardens those
+ * paths to owner-only modes. Preserve those private modes, leave generic
+ * credential and identity store enforcement unchanged, and ignore only the
+ * obsolete pinned-version update cache when its migration cannot archive
+ * through a root-owned parent.
  *
- * Remove this patch once upstream supports a gateway-owned state database for
- * split-user containers without requiring cross-user access to gateway state.
+ * Remove this patch once upstream no longer needs these managed-runtime
+ * permission and legacy-cache compatibility changes.
  */
 
 import fs from "node:fs";

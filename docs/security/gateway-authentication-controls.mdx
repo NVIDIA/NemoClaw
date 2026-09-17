@@ -62,7 +62,7 @@ Device authentication requires each connecting device to go through a pairing fl
 | Risk if relaxed | Bypassing device identity would allow a client to connect without proving its paired identity. NemoClaw does not emit the retired bypass. |
 | Recommendation | Prefer loopback access or SSH port forwarding and complete the normal pairing flow for every browser or CLI device. |
 
-Direct managed containers keep authoritative gateway authentication state in a gateway-owned, owner-only database. A separate gateway-written observer exposes only bounded, credential-free fields for an initial pending CLI pairing request; sandbox processes cannot read the database or its SQLite sidecars. NemoClaw does not import the former sandbox-writable database into that trust boundary, and the recognized local client re-pairs through the bounded auto-pair flow on the first protected start.
+OpenClaw's native managed lifecycle runs the gateway and agent commands as the sandbox identity. Its authentication database and SQLite sidecars use owner-only modes, which protect them from other OS identities but do not create a privilege boundary between processes running as that same sandbox identity. The OpenShell sandbox remains the isolation boundary from the host. NemoClaw's restored-clone approval path passes only the matching local device's pending request, paired record, and credential to its bounded approval child; unrelated device credentials are not included.
 
 ## Gateway Bind Address
 

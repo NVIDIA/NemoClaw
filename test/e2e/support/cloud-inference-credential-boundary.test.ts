@@ -76,17 +76,15 @@ describe("cloud inference sandbox credential scan", () => {
     expect(scan(root)).toBe("");
   });
 
-  it("skips the gateway-owned OpenClaw authentication database", () => {
+  it("scans OpenClaw authentication state without a claimed cross-principal exemption", () => {
     const root = createScanRoot();
-    const protectedRoot = path.join(root, "openclaw-gateway-state");
-    writeFixture(protectedRoot, "state/openclaw.sqlite", "nvapi-protected-gateway-canary\n");
-    fs.chmodSync(protectedRoot, 0o000);
+    const leakedFile = writeFixture(
+      root,
+      "openclaw-state/state/openclaw.sqlite",
+      "nvapi-nemoclaw-auth-state-credential-canary\n",
+    );
 
-    try {
-      expect(scan(root)).toBe("");
-    } finally {
-      fs.chmodSync(protectedRoot, 0o700);
-    }
+    expect(scan(root).trim()).toBe(leakedFile);
   });
 
   it.each([

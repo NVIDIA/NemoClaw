@@ -51,8 +51,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "d181ff3c36d8982f78b5627d1f4a02fd30d2667cd1ca8ffb97fb65535ae452ee",
   "6d4094a9d7c21eeb408cadd728da7cd7e0ee9574746436be59c26b218c8ab218",
   "fa9a9916a254ea4faa06339c759b89ade441bd54c22fa8fc4c927547e40ff456",
-  // Reviewed gateway-owned pairing state directories; the instruction only
-  // changes filesystem metadata and preserves the generated dashboard config.
+  // Reviewed NemoClaw runtime-state permissions; the instruction only changes
+  // filesystem metadata and preserves the generated dashboard config.
   "aa187c9fe08e2cb807bee638fc605e0ba1e2fc4f56e34772179a6f7602ed6c00",
   "42ef0b12e92ebe146c25367831b4ce3a2664f0fa99fd5e4fb98a8939d3af8800",
   "8b49e78185185f1b7e24d01631186554fef21d2300db65c9bc9998e7ec00469f",

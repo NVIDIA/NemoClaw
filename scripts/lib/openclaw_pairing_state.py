@@ -351,7 +351,7 @@ def _paired_record(row):
     return record
 
 
-def _read_records(connection):
+def _read_records(connection, *, local_device_only=False):
     identities = connection.execute(
         "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
         "created_at_ms, updated_at_ms "
@@ -366,16 +366,32 @@ def _read_records(connection):
         "publicKeyPem": identity_row["public_key_pem"],
         "privateKeyPem": identity_row["private_key_pem"],
     }
-    pending_rows = connection.execute(
-        "SELECT * FROM device_pairing_pending ORDER BY request_id"
-    ).fetchall()
-    paired_rows = connection.execute(
-        "SELECT * FROM device_pairing_paired ORDER BY device_id"
-    ).fetchall()
-    auth_rows = connection.execute(
-        "SELECT device_id, role, token, scopes_json, updated_at_ms "
-        "FROM device_auth_tokens ORDER BY device_id, role"
-    ).fetchall()
+    if local_device_only:
+        local_device_id = identity_row["device_id"]
+        pending_rows = connection.execute(
+            "SELECT * FROM device_pairing_pending WHERE device_id = ? ORDER BY request_id",
+            (local_device_id,),
+        ).fetchall()
+        paired_rows = connection.execute(
+            "SELECT * FROM device_pairing_paired WHERE device_id = ? ORDER BY device_id",
+            (local_device_id,),
+        ).fetchall()
+        auth_rows = connection.execute(
+            "SELECT device_id, role, token, scopes_json, updated_at_ms "
+            "FROM device_auth_tokens WHERE device_id = ? ORDER BY device_id, role",
+            (local_device_id,),
+        ).fetchall()
+    else:
+        pending_rows = connection.execute(
+            "SELECT * FROM device_pairing_pending ORDER BY request_id"
+        ).fetchall()
+        paired_rows = connection.execute(
+            "SELECT * FROM device_pairing_paired ORDER BY device_id"
+        ).fetchall()
+        auth_rows = connection.execute(
+            "SELECT device_id, role, token, scopes_json, updated_at_ms "
+            "FROM device_auth_tokens ORDER BY device_id, role"
+        ).fetchall()
     pending = {row["request_id"]: _pending_record(row) for row in pending_rows}
     paired = {row["device_id"]: _paired_record(row) for row in paired_rows}
     auth_by_device = {}
@@ -412,6 +428,7 @@ def read_openclaw_pairing_state(
     state_fd=None,
     sqlite_state_fd=None,
     database_fd=None,
+    local_device_only=False,
 ):
     """Read one canonical snapshot, optionally through caller-owned base descriptors."""
 
@@ -488,7 +505,7 @@ def read_openclaw_pairing_state(
                 )
         if schema_version is None or schema_version[0] != OPENCLAW_STATE_SCHEMA_VERSION:
             raise ValueError("unsupported canonical device state schema")
-        records = _read_records(connection)
+        records = _read_records(connection, local_device_only=local_device_only)
         if wal_descriptors is None:
             late_wal_descriptors = _open_wal_descriptors(
                 state_dir, state_fd, sqlite_state_fd

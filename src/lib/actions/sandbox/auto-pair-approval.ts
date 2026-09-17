@@ -577,6 +577,7 @@ def read_clone_sqlite_state():
         state_fd=clone_state_dir_fd,
         sqlite_state_fd=clone_database_dir_fd,
         database_fd=clone_database_fd,
+        local_device_only=True,
     )
     operator_auth_by_device = {
         device_id: roles['operator']
@@ -594,7 +595,32 @@ clone_database_dir_fd = -1
 clone_database_fd = -1
 clone_devices_dir_fd = -1
 clone_identity_dir_fd = -1
+clone_pending_snapshot_fd = -1
+clone_paired_snapshot_fd = -1
+clone_identity_snapshot_fd = -1
 clone_state_layout = 'legacy'
+clone_snapshot_handles = []
+def open_clone_snapshot_descriptor(value):
+    # Keep secret-bearing child snapshots anonymous for the lifetime of this
+    # bounded process. Only explicitly projected local-device records are
+    # passed to the approval child; unrelated device credentials never cross
+    # that process boundary.
+    handle = tempfile.TemporaryFile(mode='w+b')
+    try:
+        os.fchmod(handle.fileno(), 0o600)
+        payload = json.dumps(value, separators=(',', ':')).encode('utf-8')
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.seek(0)
+        metadata = os.fstat(handle.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 0:
+            raise OSError('clone snapshot descriptor is not anonymous')
+        clone_snapshot_handles.append(handle)
+        return handle.fileno()
+    except Exception:
+        handle.close()
+        raise
 try:
     clone_database_dir_fd = _open_state_directory(state_dir, clone_state_dir_fd)
     try:
@@ -629,33 +655,6 @@ if clone_state_layout == 'sqlite':
         except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError, KeyError, TypeError):
             ${exitWithReceipt("list-pending-unsafe")}
         break
-    clone_snapshot_handles = []
-    def open_clone_snapshot_descriptor(value):
-        # Keep secret-bearing snapshots anonymous for the lifetime of this
-        # bounded process. The child receives only /proc/self/fd/N handles;
-        # no crash can strand identity or pairing credentials in /tmp.
-        handle = tempfile.TemporaryFile(mode='w+b')
-        try:
-            os.fchmod(handle.fileno(), 0o600)
-            payload = json.dumps(value, separators=(',', ':')).encode('utf-8')
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-            handle.seek(0)
-            metadata = os.fstat(handle.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 0:
-                raise OSError('clone snapshot descriptor is not anonymous')
-            clone_snapshot_handles.append(handle)
-            return handle.fileno()
-        except Exception:
-            handle.close()
-            raise
-    try:
-        clone_identity_snapshot_fd = open_clone_snapshot_descriptor(local_identity)
-        clone_pending_snapshot_fd = open_clone_snapshot_descriptor(local_pending_by_id)
-        clone_paired_snapshot_fd = open_clone_snapshot_descriptor(local_paired_by_id)
-    except (OSError, ValueError, TypeError):
-        ${exitWithReceipt("list-pending-unsafe")}
     pending = list(local_pending_by_id.values())
 else:
     try:
@@ -669,7 +668,7 @@ else:
     pending_read_failure = 'unavailable'
     for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
         try:
-            local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
+            local_pending_by_id, _clone_pending_source_fd = open_clone_json_descriptor(
                 clone_devices_dir_fd,
                 'devices',
                 'pending.json',
@@ -874,7 +873,7 @@ def client_auth_matches_paired(token, scopes):
 if clone_state_layout == 'legacy':
     try:
         clone_identity_dir_fd = open_clone_legacy_directory('identity')
-        local_identity, clone_identity_snapshot_fd = open_clone_json_descriptor(
+        local_identity, _clone_identity_source_fd = open_clone_json_descriptor(
             clone_identity_dir_fd,
             'identity',
             'device.json',
@@ -907,14 +906,14 @@ if (
 # config is never a credential.
 if clone_state_layout == 'legacy':
     try:
-        local_paired_by_id, clone_paired_snapshot_fd = open_clone_json_descriptor(
+        local_paired_by_id, _clone_paired_source_fd = open_clone_json_descriptor(
             clone_devices_dir_fd,
             'devices',
             'paired.json',
         )
     except FileNotFoundError:
         local_paired_by_id = {}
-        clone_paired_snapshot_fd = -1
+        _clone_paired_source_fd = -1
     except (OSError, ValueError):
         ${exitWithReceipt("request-rejected")}
 if not isinstance(local_paired_by_id, dict):
@@ -1174,6 +1173,21 @@ local_approval_auth_mode = local_pairing_transition_auth_mode(related_pending[0]
 if local_approval_auth_mode is None:
     ${exitWithReceipt("request-rejected")}
 pending = related_pending
+if local_approval_auth_mode == 'paired-token':
+    # The approval child needs exactly one pending request, one local paired
+    # record, and the matching local identity. Re-serialize those projections
+    # into anonymous descriptors so unrelated devices and their bearer tokens
+    # are not inherited by the child.
+    try:
+        clone_pending_snapshot_fd = open_clone_snapshot_descriptor({
+            local_request_id: related_pending[0],
+        })
+        clone_paired_snapshot_fd = open_clone_snapshot_descriptor({
+            local_device_id: paired_device,
+        })
+        clone_identity_snapshot_fd = open_clone_snapshot_descriptor(local_identity)
+    except (OSError, ValueError, TypeError):
+        ${exitWithReceipt("request-rejected")}
 `
     : "";
   return `
