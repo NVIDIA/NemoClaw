@@ -37,11 +37,15 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    if let Some(service) = document.lifecycle_provider()?.service.as_ref() {
+    for provider in document.selected_inference_providers()? {
+        let Some(service) = provider.service.as_ref() else {
+            continue;
+        };
+        let key = document.provider_key(provider);
         let spec = Spec {
             layout: 0,
             kind: SERVICE_KIND.into(),
-            name: format!("{}-inference", document.workspace()),
+            name: format!("{}-inference-{key}", document.workspace()),
             owner: document.metadata.uid.clone(),
             generation: generation(generations, SERVICE_KIND)?.into(),
             gateway: if service.placement.is_some() {
@@ -52,13 +56,21 @@ pub fn runtime_targets(
             service: Some(service.runtime_settings()),
         };
         let storage = Storage {
-            name: format!("{}-inference-data", document.workspace()),
+            name: format!("{}-data", spec.name),
             owner: spec.owner.clone(),
             generation: spec.generation.clone(),
             engine: spec.engine().to_owned(),
         };
-        result.push(target(STORAGE_KIND, storage.json()?));
-        result.push(target(SERVICE_KIND, spec.json()?));
+        for (kind, spec) in [
+            (STORAGE_KIND, storage.json()?),
+            (SERVICE_KIND, spec.json()?),
+        ] {
+            result.push(Target {
+                kind: kind.into(),
+                address: format!("nemoclaw_{kind}.inference_{key}"),
+                values: Row::from([("spec".into(), spec)]),
+            });
+        }
     }
     Ok(result)
 }
@@ -78,24 +90,21 @@ pub fn compile_runtime(
             }
             GATEWAY_KIND => attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]),
             SERVICE_KIND => {
-                attrs["depends_on"] = if document.spec.gateway.management == "managed"
-                    && document
-                        .lifecycle_provider()?
-                        .service
-                        .as_ref()
-                        .is_some_and(|s| s.placement.is_none())
+                let spec: Spec = serde_json::from_str(&target.values["spec"])
+                    .map_err(|_| Error::State("invalid compiled runtime"))?;
+                let logical = target.address.split_once('.').unwrap().1;
+                let mut dependencies = vec![format!("nemoclaw_inference_storage.{logical}")];
+                if document.spec.gateway.management == "managed"
+                    && spec.service.as_ref().is_some_and(|s| s.placement.is_none())
                 {
-                    json!([
-                        "nemoclaw_managed_gateway.runtime",
-                        "nemoclaw_inference_storage.runtime"
-                    ])
-                } else {
-                    json!(["nemoclaw_inference_storage.runtime"])
+                    dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
                 }
+                attrs["depends_on"] = json!(dependencies);
             }
             _ => unreachable!(),
         }
-        graph["resource"][format!("nemoclaw_{}", target.kind)]["runtime"] = attrs;
+        let (kind, logical) = target.address.split_once('.').unwrap();
+        graph["resource"][kind][logical] = attrs;
     }
     Ok(graph)
 }

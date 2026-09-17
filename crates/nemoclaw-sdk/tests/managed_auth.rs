@@ -72,7 +72,7 @@ fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() 
     let runtime = compile::compile_runtime(&doc, &generations, "0.1.0").unwrap();
     for value in [
         &graph["resource"]["nemoclaw_provider"]["inference_qwen"]["credential_source"],
-        &runtime["resource"]["nemoclaw_inference_service"]["runtime"]["spec"],
+        &runtime["resource"]["nemoclaw_inference_service"]["inference_qwen"]["spec"],
     ] {
         assert!(
             value

@@ -24,7 +24,7 @@ pub struct Storage {
 }
 impl Storage {
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-inference-data$")
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-inference(?:-[a-z][a-z0-9-]{0,62})?-data$")
             .unwrap()
             .is_match(&self.name)
             || !regex::Regex::new(r"^[a-f0-9-]{36}$")

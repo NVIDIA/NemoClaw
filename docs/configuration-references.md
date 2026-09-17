@@ -32,7 +32,7 @@ Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `rout
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
-| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; at most one with managed inference dependencies |
+| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; multiple vLLM services, at most one managed Ollama or Ollama proxy |
 | Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw supports named choices with an explicit default; other harnesses require one choice |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration per sandbox; all agents use that implementation |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
@@ -170,7 +170,7 @@ No single active configuration exercises every schema branch:
 | Alternative | Example or guide | Why separate |
 |---|---|---|
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
-| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | A provider selects one service mode; at most one selected provider may have managed dependencies |
+| Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service mode; managed Ollama and its proxy still require a singleton lifecycle |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Multiple-agent sandboxes require OpenClaw; Hermes Relay also excludes Hermes interfaces |
 | Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Specific to Pi; other harnesses reject it |

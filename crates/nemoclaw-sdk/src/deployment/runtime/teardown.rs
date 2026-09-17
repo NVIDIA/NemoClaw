@@ -121,7 +121,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
-        let retained = retained_addresses(runtime);
+        let retained = retained_addresses(runtime, &bindings);
         let graph = teardown_graph(
             record,
             &bundle.manifest.version,
@@ -154,9 +154,19 @@ impl Deployment {
     }
 }
 
-fn retained_addresses(runtime: bool) -> BTreeSet<String> {
+fn retained_addresses(
+    runtime: bool,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> BTreeSet<String> {
     if runtime {
-        [GATEWAY_STORAGE.into(), MODEL_STORAGE.into()].into()
+        bindings
+            .keys()
+            .filter(|address| {
+                address.as_str() == GATEWAY_STORAGE
+                    || address.starts_with("nemoclaw_inference_storage.")
+            })
+            .cloned()
+            .collect()
     } else {
         [
             "nemoclaw_workspace.deployment".into(),
@@ -216,11 +226,11 @@ fn bind_teardown_processes(
 ) -> Result<(), Error> {
     for target in targets {
         let storage = match target.kind.as_str() {
-            GATEWAY_KIND => GATEWAY_STORAGE,
-            SERVICE_KIND => MODEL_STORAGE,
+            GATEWAY_KIND => GATEWAY_STORAGE.to_owned(),
+            SERVICE_KIND => model_storage(&target.address),
             _ => continue,
         };
-        if bindings.contains_key(&target.address) && !bindings.contains_key(storage) {
+        if bindings.contains_key(&target.address) && !bindings.contains_key(&storage) {
             return Err(Error::Conflict(
                 "destroy requires independent storage bindings before removing a managed process",
             ));
@@ -286,24 +296,16 @@ fn validate_teardown_state(
 }
 
 fn retained_bindings(bindings: &BTreeMap<String, StateBinding>, runtime: bool) -> Vec<String> {
-    let addresses = if runtime {
-        [GATEWAY_STORAGE, MODEL_STORAGE]
-    } else {
-        [
-            "nemoclaw_workspace.deployment",
-            crate::deployment::ollama::STORAGE,
-        ]
-    };
-    addresses
+    retained_addresses(runtime, bindings)
         .into_iter()
-        .filter(|address| bindings.contains_key(*address))
-        .map(str::to_owned)
+        .filter(|address| bindings.contains_key(address))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    const MODEL_STORAGE: &str = "nemoclaw_inference_storage.inference_qwen";
 
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {
         let document =
@@ -324,6 +326,57 @@ mod tests {
             })
             .collect();
         (record, bindings)
+    }
+
+    #[test]
+    fn multiple_services_retain_each_volume_and_require_its_own_binding() {
+        let (mut record, _) = runtime_state();
+        let mut provider = record.document.spec.inference_providers[0].clone();
+        provider.name = "other".into();
+        provider.service.as_mut().unwrap().serving.port += 1;
+        record.document.spec.inference_providers.push(provider);
+        let mut sandbox = record.document.spec.sandboxes[0].clone();
+        sandbox.name = "other".into();
+        sandbox.agents[0].inference.as_mut().unwrap().routes[0].provider_ref = Some("other".into());
+        record.document.spec.sandboxes.push(sandbox);
+        let bindings: BTreeMap<_, _> =
+            compile::runtime_targets(&record.document, &record.generations)
+                .unwrap()
+                .into_iter()
+                .map(|target| {
+                    (
+                        target.address.clone(),
+                        StateBinding {
+                            id: format!("id-{}", target.address),
+                            spec: target.values["spec"].clone(),
+                        },
+                    )
+                })
+                .collect();
+        let expected = teardown_expected(&record, &bindings, true).unwrap();
+        let retained = retained_addresses(true, &bindings);
+        assert_eq!(retained.len(), 3);
+        let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
+        assert_eq!(
+            graph["resource"]["nemoclaw_inference_storage"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            graph["resource"]
+                .get("nemoclaw_inference_service")
+                .is_none()
+        );
+        for address in retained {
+            let mut missing = bindings.clone();
+            missing.remove(&address);
+            assert!(
+                teardown_expected(&record, &missing, true).is_err(),
+                "{address}"
+            );
+        }
     }
 
     #[test]
@@ -349,9 +402,9 @@ mod tests {
             .unwrap()
             .image = format!("local@sha256:{}", "a".repeat(64));
         let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let process = "nemoclaw_inference_service.runtime";
+        let process = "nemoclaw_inference_service.inference_qwen";
         assert_eq!(expected[process]["spec"], bindings[process].spec);
-        let retained = retained_addresses(true);
+        let retained = retained_addresses(true, &bindings);
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
@@ -379,7 +432,7 @@ mod tests {
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
         let mut changed_owner = bindings;
         let binding = changed_owner
-            .get_mut("nemoclaw_inference_service.runtime")
+            .get_mut("nemoclaw_inference_service.inference_qwen")
             .unwrap();
         let mut spec: Spec = serde_json::from_str(&binding.spec).unwrap();
         spec.generation = "a".repeat(32);

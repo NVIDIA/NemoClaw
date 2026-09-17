@@ -41,7 +41,8 @@ flowchart TD
     Route --> External[External inference endpoint]
 ```
 
-A deployment can select multiple inference providers; at most one may have managed inference dependencies.
+A deployment can select multiple inference providers, including independently managed vLLM services.
+See [service limits](inference.md#combine-local-and-hosted-providers) for Ollama and shared-host constraints.
 The gateway may also be managed or external.
 The diagram separates deployment operations from the agent's requests: the CLI can exit while the agent and managed services keep running.
 

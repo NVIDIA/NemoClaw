@@ -32,11 +32,6 @@ pub fn check_capacity(
             "insufficient disk for remaining pinned model, prepared data, and 16 GiB working reserve",
         ));
     }
-    if starting && c.foreign_gpu_processes != 0 {
-        return Err(Error::Conflict(
-            "GPU is in use by an unrelated process; service was not started",
-        ));
-    }
     check_memory(service, c, starting)
 }
 
@@ -137,4 +132,62 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
     } else {
         super::spark::check_compatibility(c)
     }
+}
+
+/// Account for all selected services on one engine before starting any of them.
+/// Running services already consume the observed free memory; only stopped or
+/// new services add startup demand. GPU budgets remain reserved across restarts.
+pub fn check_service_budgets(services: &[(&Service, bool)], c: &Capacity) -> Result<(), Error> {
+    let mut total_budget = 0u64;
+    let mut new_budget = 0u64;
+    let mut reserve = 0u64;
+    let mut startup = 0u64;
+    let dedicated = services.first().is_some_and(|(s, _)| s.hardware.is_some());
+    for &(service, starting) in services {
+        check_memory(service, c, starting)?;
+        if service.hardware.is_some() != dedicated {
+            return Err(Error::Conflict(
+                "services sharing an engine must use the same GPU memory contract",
+            ));
+        }
+        let budget = service
+            .memory
+            .gpu_memory_utilization
+            .as_ref()
+            .and_then(serde_json::Number::as_f64)
+            .map_or(service.gpu_bytes()?, |ratio| {
+                (c.gpu_memory.as_ref().map_or(0, |g| g.total) as f64 * ratio).floor() as u64
+            });
+        total_budget = total_budget
+            .checked_add(budget)
+            .ok_or(Error::State("combined GPU budget overflow"))?;
+        reserve = reserve.max(service.memory.host_reserve_gib as u64 * GIB);
+        if starting {
+            new_budget = new_budget
+                .checked_add(budget)
+                .ok_or(Error::State("combined GPU budget overflow"))?;
+            let headroom = service.recipe.as_ref().map_or(20, |r| {
+                r.resources
+                    .startup_headroom_gi_b
+                    .max(r.resources.preparation_memory_gi_b)
+            });
+            startup = startup
+                .checked_add(headroom * GIB)
+                .ok_or(Error::State("combined startup budget overflow"))?;
+        }
+    }
+    let fits = if dedicated {
+        c.gpu_memory
+            .as_ref()
+            .is_some_and(|gpu| total_budget <= gpu.total && new_budget <= gpu.free)
+            && (new_budget == 0 || reserve + startup <= c.available)
+    } else {
+        total_budget + reserve <= c.total && new_budget + startup <= c.available
+    };
+    if !fits {
+        return Err(Error::Conflict(
+            "combined inference budgets exceed available GPU or host startup memory",
+        ));
+    }
+    Ok(())
 }

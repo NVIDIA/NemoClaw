@@ -7,8 +7,8 @@ Choose who operates the inference service, then select the API and model used by
 A deployment can select up to 32 inference providers across its sandboxes.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](configuration-references.md).
 
-Live deployment with the current OpenShell pin is [blocked by a main-process environment propagation bug](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker).
-The configuration below is implemented and fixture-tested; it is not yet qualified end to end with that pin.
+The [earlier native-inference attempt](validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) records a blocker at its tested OpenShell revision.
+Use the current images and verify your chosen harness and model; historical results do not qualify every supported configuration.
 
 OpenShell's managed inference-route API has been removed at our pinned development revision.
 For each selected provider, NemoClaw creates an owned profile binding credentials to its host, port, and API path, attaches the provider to the sandbox, and configures native model connections.
@@ -64,11 +64,13 @@ OpenClaw's per-agent model-selection policy is not separate credential or networ
 Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
-One selected provider may have managed inference dependencies: a vLLM service, managed Ollama, or an Ollama proxy.
-Other selected providers must be external endpoints.
-That managed lifecycle belongs to its provider even when other agents select another provider.
-Multiple independently managed inference lifecycles in one document are rejected.
-Multiple sandboxes can share the selected managed service or external providers.
+Multiple selected providers can each own a vLLM service, with independent storage and separate generated credentials when `service.authentication: bearer` is configured.
+Services on the same engine require distinct publication addresses and the same managed network CIDR.
+Plan checks their combined GPU budgets and startup memory; the runtime rechecks available memory before starting inference and keeps its memory watchdog active.
+An existing GPU process alone does not reject startup when measured capacity is sufficient.
+Managed Ollama and Ollama proxies still share a singleton lifecycle: at most one selected provider may use either mode.
+Multiple sandboxes can share any selected provider.
+Managed vLLM resource identities now include the provider identity; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode

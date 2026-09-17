@@ -140,15 +140,13 @@ impl Document {
         Ok(selected.into_values().collect())
     }
 
-    // Managed inference has one lifecycle per deployment. An external provider
-    // supplies a deterministic no-op fallback when no managed dependencies exist.
+    // Ollama lifecycle callers still require one selected daemon/proxy.
+    // Managed services are compiled independently for each selected provider.
     pub(crate) fn lifecycle_provider(&self) -> Result<&InferenceProvider, ConfigError> {
         let providers = self.selected_inference_providers()?;
-        let mut managed = providers.into_iter().filter(|provider| {
-            provider.service.is_some()
-                || provider.ollama.is_some()
-                || provider.ollama_proxy.is_some()
-        });
+        let mut managed = providers
+            .into_iter()
+            .filter(|provider| provider.ollama.is_some() || provider.ollama_proxy.is_some());
         let selected = managed.next();
         if managed.next().is_some() {
             return Err(ConfigError::new(

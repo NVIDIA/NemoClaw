@@ -157,6 +157,37 @@ impl Document {
         self.validate_harness_references()?;
         let selected_providers = self.selected_inference_providers()?;
         self.lifecycle_provider()?;
+        let mut publications = std::collections::BTreeSet::new();
+        let mut networks = std::collections::BTreeMap::new();
+        if gateway.management == "managed" {
+            networks.insert(gateway.engine.as_str(), gateway.network_cidr.as_str());
+        }
+        for provider in &selected_providers {
+            if let Some(service) = &provider.service {
+                let engine = service
+                    .placement
+                    .as_ref()
+                    .map_or(gateway.engine.as_str(), |p| p.engine.as_str());
+                let cidr = service
+                    .placement
+                    .as_ref()
+                    .map_or(gateway.network_cidr.as_str(), |p| p.network_cidr.as_str());
+                require(
+                    networks
+                        .insert(engine, cidr)
+                        .is_none_or(|previous| previous == cidr),
+                    "managed services sharing an engine must use the same network CIDR",
+                )?;
+                let bind = service
+                    .publication
+                    .as_ref()
+                    .map_or_else(|| gateway.bridge(), |p| Ok(p.bind_address.clone()))?;
+                require(
+                    publications.insert((engine, bind, service.serving.port)),
+                    "managed inference publication addresses must be distinct on each engine",
+                )?;
+            }
+        }
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
             validate_provider(definition, gateway)?;
