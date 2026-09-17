@@ -344,7 +344,7 @@ describe("npm audit handoff", () => {
               advisory: acceptedAdvisory,
               compensatingControls: ["The vulnerable input is rejected before use."],
               decision: "temporary-risk-acceptance",
-              expires: "2026-09-16",
+              expires: new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10),
               graph: "mcporter-runtime",
               installedVersion: "1.0.0",
               owner: "security-maintainers",
