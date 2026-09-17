@@ -588,7 +588,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code).toBe(1);
     expect(r.out).toContain("Shared NemoClaw gateway left running");
     expect(r.out).toContain("--cleanup-gateway was not applied");
     expect(r.out).toContain("'beta'");
