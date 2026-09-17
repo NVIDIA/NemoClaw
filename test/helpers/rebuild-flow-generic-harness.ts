@@ -952,6 +952,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       };
     });
   vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(processRecovery, "releaseOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
+    ok: true,
+  });
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(

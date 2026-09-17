@@ -15,6 +15,7 @@ import {
   buildOpenClawPostUpgradeDoctorMarkerCommand,
   buildOpenClawPostUpgradeDoctorReleaseCommand,
   finishOpenClawPostRestoreDoctor,
+  releaseOpenClawPostRestoreDoctorForDelete,
 } from "./process-recovery";
 
 function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
@@ -262,6 +263,30 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[3]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
     expect(execute.mock.calls[4]?.[1]).toContain("curl");
     expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("releases a delete-edge maintenance gate without waiting for gateway health", async () => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      captureOpenshell: vi.fn() as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      releaseOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha" }, deps),
+    ).resolves.toEqual({ ok: true });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(
+      "alpha",
+      buildOpenClawPostUpgradeDoctorReleaseCommand(),
+      30_000,
+      { localDockerFallbackPolicy: "never" },
+    );
+    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.sleep).not.toHaveBeenCalled();
   });
 
   it("uses the pinned direct container while the OpenShell exec relay is intentionally offline", async () => {

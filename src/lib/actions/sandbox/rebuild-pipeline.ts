@@ -32,9 +32,9 @@ import {
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
   type RebuildBackupPhaseResult,
+  releaseRebuildSourceOpenClawWindowForDelete,
   releaseRebuildSourceOpenClawWindow,
   runRebuildBackupPhase,
-  stopRebuildSourceOpenClawWindow,
   writeRebuildMcpHandoff,
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
@@ -941,11 +941,12 @@ async function rebuildSandboxUnlocked(
         },
         prepareSourceForDelete: sourceWindowForDelete
           ? async () => {
-              const stopped = await stopRebuildSourceOpenClawWindow(sourceWindowForDelete);
-              if (!stopped.ok) {
+              const released =
+                await releaseRebuildSourceOpenClawWindowForDelete(sourceWindowForDelete);
+              if (!released.ok) {
                 return {
                   ok: false,
-                  message: `OpenClaw source maintenance marker could not be cleared before deletion (${stopped.stage}: ${stopped.detail}).`,
+                  message: `OpenClaw source maintenance window could not be released before deletion (${released.stage}: ${released.detail}).`,
                 };
               }
               sourceOpenClawDoctorWindow = null;

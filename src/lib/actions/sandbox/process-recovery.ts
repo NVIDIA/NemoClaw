@@ -711,8 +711,14 @@ export async function beginOpenClawPostRestoreDoctor(
   };
 }
 
-/** Release the doctor-owned maintenance gate, then prove final gateway health. */
-export async function finishOpenClawPostRestoreDoctor(
+/**
+ * Release a verified source maintenance gate immediately before deleting that
+ * source sandbox. Rebuild has already captured its consistent backup, and the
+ * next mutation is the pinned OpenShell delete, so waiting for a gateway that
+ * will be discarded only widens the race. Keep the supervisor live instead of
+ * forcing the source into OpenShell's terminal stopped lifecycle.
+ */
+export async function releaseOpenClawPostRestoreDoctorForDelete(
   window: OpenClawPostRestoreDoctorWindow,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
@@ -731,6 +737,18 @@ export async function finishOpenClawPostRestoreDoctor(
       detail: "could not release the verified post-upgrade maintenance window",
     };
   }
+  return { ok: true };
+}
+
+/** Release the doctor-owned maintenance gate, then prove final gateway health. */
+export async function finishOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
+  const released = await releaseOpenClawPostRestoreDoctorForDelete(window, deps);
+  if (!released.ok) return released;
+
+  const { sandboxName, runtimeSelection } = window;
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(

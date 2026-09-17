@@ -26,6 +26,7 @@ import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawPostRestoreDoctor,
   finishOpenClawPostRestoreDoctor,
+  releaseOpenClawPostRestoreDoctorForDelete,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 
@@ -87,8 +88,10 @@ export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRes
   return finished;
 }
 
-export function stopRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  return abortOpenClawPostRestoreDoctor(window);
+export function releaseRebuildSourceOpenClawWindowForDelete(
+  window: OpenClawPostRestoreDoctorWindow,
+) {
+  return releaseOpenClawPostRestoreDoctorForDelete(window);
 }
 
 export async function captureRebuildPolicyDocument(
