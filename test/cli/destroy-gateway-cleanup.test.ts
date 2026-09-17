@@ -534,6 +534,21 @@ describe("CLI dispatch", () => {
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
     const bashLog = path.join(home, "docker.log");
+    const deletedMarker = path.join(home, "alpha-deleted");
+    const sandboxListJson = (names: string[]) =>
+      JSON.stringify(
+        names.map((name) => ({
+          id: `sandbox-${name}`,
+          name,
+          labels: {},
+          resource_version: 1,
+          created_at: "2026-09-16T00:00:00Z",
+          phase: "Ready",
+          current_policy_version: 1,
+        })),
+      );
+    const beforeDeleteListJson = sandboxListJson(["alpha", "beta"]);
+    const afterDeleteListJson = sandboxListJson(["beta"]);
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -558,10 +573,30 @@ describe("CLI dispatch", () => {
         "#!/bin/sh",
         ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
+        `deleted_marker=${JSON.stringify(deletedMarker)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
-        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        '  case " $* " in',
+        '    *" -o json "*)',
+        '      if [ -e "$deleted_marker" ]; then',
+        `        output=${JSON.stringify(afterDeleteListJson)}`,
+        "      else",
+        `        output=${JSON.stringify(beforeDeleteListJson)}`,
+        "      fi",
+        "      ;;",
+        "    *)",
+        '      if [ -e "$deleted_marker" ]; then',
+        '        output="NAME STATUS\\nbeta Ready"',
+        "      else",
+        '        output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
+        "      fi",
+        "      ;;",
+        "  esac",
+        '  printf "%b\\n" "$output" >> "$log_file"',
+        '  printf "%b\\n" "$output"',
         "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  : > "$deleted_marker"',
         "fi",
         'printf \'%s\\n\' "$*" >> "$log_file"',
         "exit 0",
@@ -579,12 +614,15 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy --yes --cleanup-gateway 2>&1", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Shared NemoClaw gateway left running");
+    expect(r.out).toContain("--cleanup-gateway was not applied");
+    expect(r.out).toContain("'beta'");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
@@ -659,6 +697,7 @@ describe("CLI dispatch", () => {
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
+      NEMOCLAW_CLEANUP_GATEWAY: "0",
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 

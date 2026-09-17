@@ -1439,6 +1439,22 @@ If the sandbox remains missing after restarting the gateway, its authoritative O
 
 When the default-port gateway runs under the packaged OpenShell gateway service, destroying the final sandbox with `--cleanup-gateway` stops that service before it reaps host gateway processes whose ownership NemoClaw verifies. This does not prove that the port is free: a foreign, ambiguous, or other-user listener may remain. Verify the gateway port after cleanup. The service is stopped, not disabled or removed, and the next onboarding run starts it again. If the systemd user manager is unavailable and the service cannot activate automatically, `destroy` can instead stop the recorded standalone gateway after verifying its exact process identity and port. For other service-stop failures, `destroy` exits non-zero and prints the status command for the service.
 
+If `destroy` prints `Shared NemoClaw gateway left running`, NemoClaw skipped gateway cleanup because `openshell sandbox list` still reported a live sandbox after the post-delete wait, or because that command failed.
+The message names those sandboxes or the failed command.
+First confirm that the gateway reports no sandboxes:
+
+```bash
+openshell sandbox list -g <gateway-name>
+```
+
+When the list is empty, remove the gateway:
+
+```bash
+openshell gateway remove <gateway-name>
+```
+
+Use the gateway name from the `destroy` message in both commands.
+
 On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
 ```bash
