@@ -55,11 +55,12 @@ export async function removeMcpBridge(
     let removedLegacySource = false;
     if (Object.keys(observed.sources.legacy).length > 0) {
       const legacyEntry = observed.sources.legacy[server];
-      const committedEntry = readCommittedLegacyRegistryEntries(
+      const committedEntries = readCommittedLegacyRegistryEntries(
         sandboxName,
         agent.name,
         getBridgeAdapter(agent),
-      )[server];
+      );
+      const committedEntry = committedEntries[server];
       if (!legacyEntry) {
         throw new McpBridgeError(
           `Legacy MCP agent configuration requires explicit migration. Remove a named owned legacy registration or run \`nemoclaw ${sandboxName} mcp migrate\`.`,
@@ -69,6 +70,18 @@ export async function removeMcpBridge(
       if (!committedEntry || !sameMcpRegistration(legacyEntry, committedEntry)) {
         throw new McpBridgeError(
           `Legacy MCP server '${server}' cannot be proven as registry-owned and was preserved. No source was changed.`,
+          2,
+        );
+      }
+      const registryOnlyServers = Object.keys(committedEntries).filter(
+        (candidateServer) =>
+          candidateServer !== server && observed.sources.legacy[candidateServer] === undefined,
+      );
+      if (registryOnlyServers.length > 0) {
+        throw new McpBridgeError(
+          `Legacy MCP server '${server}' cannot be removed while registry-only legacy registration(s) '${registryOnlyServers.join(
+            "', '",
+          )}' remain. Migrate or explicitly resolve them first. No source was changed.`,
           2,
         );
       }

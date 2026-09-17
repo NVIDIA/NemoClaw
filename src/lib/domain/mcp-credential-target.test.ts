@@ -15,6 +15,23 @@ describe("managed MCP credential targets", () => {
     ).toMatchObject({ entry: { server: "beta" }, conflict: { server: "alpha" } });
   });
 
+  it("treats query-only URL variants as the same enforced endpoint", () => {
+    expect(
+      findAmbiguousMcpCredentialTarget([
+        {
+          server: "alpha",
+          url: "https://mcp.example.test/mcp?tenant=alpha",
+          providerName: "alpha-provider",
+        },
+        {
+          server: "beta",
+          url: "https://mcp.example.test/mcp?tenant=beta",
+          providerName: "beta-provider",
+        },
+      ]),
+    ).toMatchObject({ entry: { server: "beta" }, conflict: { server: "alpha" } });
+  });
+
   it("allows distinct endpoints and unauthenticated aliases", () => {
     expect(
       findAmbiguousMcpCredentialTarget([

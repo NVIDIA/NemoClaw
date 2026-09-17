@@ -391,6 +391,33 @@ describe("explicit MCP migration", () => {
     });
   });
 
+  it("rejects legacy removal before mutation when another registry-only row remains", async () => {
+    const registryOnlyEntry = {
+      ...entry,
+      server: "gitlab",
+      url: "https://gitlab.example.test/mcp",
+      env: ["GITLAB_TOKEN"],
+      providerName: "alpha-mcp-gitlab",
+      providerId: "gitlab-provider-id",
+      policyName: "mcp-bridge-gitlab",
+    };
+    mocks.inspectSource.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy: { github: entry } },
+    });
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry, gitlab: registryOnlyEntry } } } },
+    });
+
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow(
+      /registry-only legacy registration.*gitlab.*No source was changed/,
+    );
+    expect(mocks.selectGateway).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+  });
+
   it("preserves a named legacy entry without matching registry ownership", async () => {
     mocks.readConfig.mockReturnValue({});
 
