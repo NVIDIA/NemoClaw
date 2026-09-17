@@ -151,6 +151,14 @@ The runner records `qualified: false`; qualification requires external artifact-
 It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
 Do not run it as part of an ignored-test aggregate.
 
+## Hosted NVIDIA Hermes Parity
+
+The [issue #12019 Linux/Docker scenario](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) reuses the hosted parity lifecycle with a reviewed raw Hermes export.
+It verifies the normal v1 parser, Hermes harness and interface intent, a real Hermes reply, no-op apply, export/reapply, and owned cleanup.
+Use `issue-12019` only for a clean native-Linux qualification candidate or `issue-12019-local-feedback` for a non-qualifying Docker Desktop run.
+It requires the same absolute paths, immutable bundle, owned state, and dedicated NVIDIA credential as the OpenClaw scenario, but produces `hermes-nvidia-hosted-parity.json` and must be run with the `v0_export_artifact_drives_v1_hosted_hermes_lifecycle` test filter.
+This scenario does not qualify Relay or Switchyard.
+
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.

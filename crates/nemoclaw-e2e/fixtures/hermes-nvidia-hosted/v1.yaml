@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Parsed and defaulted form of the raw v0 export produced by NVIDIA/NemoClaw
+# b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hermes-nvidia-hosted
+  uid: 06b13b70-649d-4bc5-848d-1e116c36615d
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17692
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
+    networkCIDR: 172.30.187.0/24
+  inferenceProviders:
+    - name: hosted-nvidia-prod
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: hermes
+        interfaces:
+          api:
+            port: 8643
+      image:
+        ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
+      runtime:
+        provider: docker
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/local/bin/hermes
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /opt/hermes
+              read_write:
+                - /sandbox
+      agents:
+        - name: primary
+          inference:
+            routes:
+              - name: primary
+                providerRef: hosted-nvidia-prod
+                overrides:
+                  model: nvidia/nemotron-3-super-120b-a12b

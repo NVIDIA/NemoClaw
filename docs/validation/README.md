@@ -11,6 +11,9 @@ The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hos
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
 The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
 
+The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) applies the same direct-parser and owned-lifecycle contract to Hermes for issue #12019.
+It adds Hermes interface and runtime-policy preservation without introducing a migration translator or extending the result to Relay or Switchyard.
+
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The newer [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the remaining managed Podman blocker.
 

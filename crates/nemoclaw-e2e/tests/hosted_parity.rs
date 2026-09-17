@@ -2,35 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::config::Document;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
-const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
-const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
+const OPENCLAW_V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
+const OPENCLAW_V0_MANIFEST_SHA256: &str =
+    "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
+const HERMES_V0_REVISION: &str = "b6934c6300c4e1e175757e9281ae3a641d9a5b1f";
+const HERMES_V0_MANIFEST_SHA256: &str =
+    "692182cceaa8b9784d616176f9bf03c32af671e68c2e31b0ce15764957dc9be5";
+const HERMES_V0_EXPORT_SHA256: &str =
+    "6159d9351d25b4d30e6df80fdb700f144418eaae80a2385b9602e15f5412543a";
 
-#[test]
-fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
-    let v0 = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml");
-    let digest = Sha256::digest(v0)
+fn assert_source_manifest(bytes: &[u8], revision: &str, expected_sha256: &str) {
+    let digest = Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    assert_eq!(digest, V0_MANIFEST_SHA256);
-    assert_eq!(V0_REVISION.len(), 40);
+    assert_eq!(digest, expected_sha256);
+    assert_eq!(revision.len(), 40);
+    assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
 
-    let v1 = Document::parse(
-        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-    )
-    .unwrap();
-    let expected =
-        Document::parse(include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice())
-            .unwrap();
-    assert_eq!(v1, expected);
-    let gateway = &v1.spec.gateway;
+fn assert_hosted_document(document: &Document, harness: &str, runtime_root: &str) {
+    let gateway = &document.spec.gateway;
     assert_eq!(gateway.management, "managed");
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
     assert_eq!(gateway.image, nemoclaw_sdk::config::DEFAULT_GATEWAY_IMAGE);
 
-    let provider = &v1.spec.inference_providers[0];
+    let provider = &document.spec.inference_providers[0];
     assert_eq!(provider.name, "hosted-nvidia-prod");
     assert_eq!(provider.provider, "openai");
     assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
@@ -41,45 +41,33 @@ fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
     assert!(provider.service.is_none());
     assert!(provider.ollama.is_none());
 
-    let sandbox = &v1.spec.sandboxes[0];
+    let sandbox = &document.spec.sandboxes[0];
     assert_eq!(
         sandbox.image.ref_,
         nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
     );
     assert_eq!(sandbox.runtime.provider, "docker");
     assert!(sandbox.network.tier.is_empty());
-    let process = sandbox
-        .network
-        .policy
-        .as_ref()
-        .unwrap()
-        .explicit
-        .process
-        .as_ref()
-        .unwrap();
+    let explicit = &sandbox.network.policy.as_ref().unwrap().explicit;
+    let process = explicit.process.as_ref().unwrap();
     assert_eq!(process.run_as_user.as_deref(), Some("1000"));
     assert_eq!(process.run_as_group.as_deref(), Some("1000"));
-    let read_only = sandbox
-        .network
-        .policy
-        .as_ref()
-        .unwrap()
-        .explicit
+    let read_only = explicit
         .filesystem_policy
         .as_ref()
         .unwrap()
         .read_only
         .as_ref()
         .unwrap();
-    for runtime_root in ["/app", "/opt/fabric", "/opt/nemoclaw"] {
+    for root in [runtime_root, "/opt/fabric", "/opt/nemoclaw"] {
         assert!(
-            read_only.iter().any(|path| path == runtime_root),
-            "raw export policy must grant the v1 runtime root {runtime_root}"
+            read_only.iter().any(|path| path == root),
+            "raw export policy must grant the v1 runtime root {root}"
         );
     }
     let agent = &sandbox.agents[0];
-    assert_eq!(v1.sandbox_harness(sandbox).unwrap().kind, "openclaw");
-    let inference = v1.agent_inference(agent).unwrap();
+    assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, harness);
+    let inference = document.agent_inference(agent).unwrap();
     assert_eq!(
         inference.routes[0].provider_ref.as_deref(),
         Some(provider.name.as_str())
@@ -87,6 +75,53 @@ fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
     assert_eq!(
         inference.routes[0].overrides.model,
         "nvidia/nemotron-3-super-120b-a12b"
+    );
+}
+
+#[test]
+fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
+    assert_source_manifest(
+        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml"),
+        OPENCLAW_V0_REVISION,
+        OPENCLAW_V0_MANIFEST_SHA256,
+    );
+
+    let v1 = Document::parse(
+        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+    )
+    .unwrap();
+    let expected =
+        Document::parse(include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice())
+            .unwrap();
+    assert_eq!(v1, expected);
+    assert_hosted_document(&v1, "openclaw", "/app");
+}
+
+#[test]
+fn hosted_hermes_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
+    assert_source_manifest(
+        include_bytes!("../fixtures/hermes-nvidia-hosted/v0.yaml"),
+        HERMES_V0_REVISION,
+        HERMES_V0_MANIFEST_SHA256,
+    );
+
+    let export = include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml");
+    let export_digest = Sha256::digest(export)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(export_digest, HERMES_V0_EXPORT_SHA256);
+    let v1 = Document::parse(export.as_slice()).unwrap();
+    let expected =
+        Document::parse(include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml").as_slice())
+            .unwrap();
+    assert_eq!(v1, expected);
+    assert_hosted_document(&v1, "hermes", "/opt/hermes");
+
+    let harness = v1.sandbox_harness(&v1.spec.sandboxes[0]).unwrap();
+    assert_eq!(
+        serde_json::to_value(harness.interfaces.as_ref().unwrap()).unwrap(),
+        json!({"api":{"port":8643}})
     );
 }
 
@@ -108,7 +143,36 @@ mod live {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    const SCENARIO: &str = "openclaw-nvidia-hosted-linux-docker";
+    #[derive(Clone, Copy)]
+    struct Scenario {
+        name: &'static str,
+        issue: &'static str,
+        qualification_gate: &'static str,
+        feedback_gate: &'static str,
+        harness: &'static str,
+        runtime_root: &'static str,
+        evidence_file: &'static str,
+    }
+
+    const OPENCLAW: Scenario = Scenario {
+        name: "openclaw-nvidia-hosted-linux-docker",
+        issue: "NVIDIA/NemoClaw#11810",
+        qualification_gate: "issue-11810",
+        feedback_gate: "issue-11810-local-feedback",
+        harness: "openclaw",
+        runtime_root: "/app",
+        evidence_file: "openclaw-nvidia-hosted-parity.json",
+    };
+
+    const HERMES: Scenario = Scenario {
+        name: "hermes-nvidia-hosted-linux-docker",
+        issue: "NVIDIA/NemoClaw#12019",
+        qualification_gate: "issue-12019",
+        feedback_gate: "issue-12019-local-feedback",
+        harness: "hermes",
+        runtime_root: "/opt/hermes",
+        evidence_file: "hermes-nvidia-hosted-parity.json",
+    };
 
     struct Evidence {
         path: PathBuf,
@@ -205,16 +269,20 @@ mod live {
 
     #[test]
     fn standalone_v0_artifact_does_not_require_pipeline_provenance() {
-        let bytes = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
-        let digest = sha256(bytes);
-        let without_source = v0_artifact_audit(bytes, None);
-        assert_eq!(without_source["sha256"], digest);
-        assert!(without_source.get("source").is_none());
+        for bytes in [
+            include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
+        ] {
+            let digest = sha256(bytes);
+            let without_source = v0_artifact_audit(bytes, None);
+            assert_eq!(without_source["sha256"], digest);
+            assert!(without_source.get("source").is_none());
 
-        assert_eq!(
-            v0_artifact_audit(bytes, Some("optional audit note"))["source"],
-            "optional audit note"
-        );
+            assert_eq!(
+                v0_artifact_audit(bytes, Some("optional audit note"))["source"],
+                "optional audit note"
+            );
+        }
     }
 
     #[test]
@@ -258,46 +326,18 @@ mod live {
         );
     }
 
-    fn validate_scenario_document(document: &Document) {
-        assert_eq!(document.spec.gateway.management, "managed");
-        assert_eq!(document.spec.gateway.engine, "unix:///var/run/docker.sock");
+    fn validate_scenario_document(document: &Document, scenario: Scenario) {
+        super::assert_hosted_document(document, scenario.harness, scenario.runtime_root);
         validate_gateway_image(&document.spec.gateway.image);
-        let provider = &document.spec.inference_providers[0];
-        assert_eq!(provider.provider, "openai");
-        assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
-        assert_eq!(
-            provider.credential.as_ref().map(|value| value.env.as_str()),
-            Some("NVIDIA_INFERENCE_API_KEY")
-        );
         let sandbox = &document.spec.sandboxes[0];
-        assert_eq!(
-            sandbox.image.ref_,
-            nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
-        );
         validate_immutable_image("default agent image", &sandbox.image.ref_);
-        assert_eq!(sandbox.runtime.provider, "docker");
-        let process = sandbox
-            .network
-            .policy
-            .as_ref()
-            .unwrap()
-            .explicit
-            .process
-            .as_ref()
-            .unwrap();
-        assert_eq!(process.run_as_user.as_deref(), Some("1000"));
-        assert_eq!(process.run_as_group.as_deref(), Some("1000"));
-        let agent = &sandbox.agents[0];
-        assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, "openclaw");
-        let inference = document.agent_inference(agent).unwrap();
-        assert_eq!(
-            inference.routes[0].provider_ref.as_deref(),
-            Some(provider.name.as_str())
-        );
-        assert_eq!(
-            inference.routes[0].overrides.model,
-            "nvidia/nemotron-3-super-120b-a12b"
-        );
+        if scenario.harness == "hermes" {
+            let harness = document.sandbox_harness(sandbox).unwrap();
+            assert_eq!(
+                serde_json::to_value(harness.interfaces.as_ref().unwrap()).unwrap(),
+                json!({"api":{"port":8643}})
+            );
+        }
     }
 
     fn state_bindings(directory: &Path) -> (BTreeMap<String, String>, Option<Row>) {
@@ -364,21 +404,22 @@ mod live {
         format!("{}:{}", field("ID"), field("VERSION_ID"))
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires a manually curated redacted raw v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
-    async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
+    async fn run_hosted_lifecycle(scenario: Scenario) {
         let gate = std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").unwrap();
-        let qualification_candidate = match gate.as_str() {
-            "issue-11810" => {
-                assert_eq!(
-                    std::env::consts::OS,
-                    "linux",
-                    "qualification requires Linux"
-                );
-                true
-            }
-            "issue-11810-local-feedback" => false,
-            _ => panic!("set an issue-specific live gate"),
+        let qualification_candidate = if gate == scenario.qualification_gate {
+            assert_eq!(
+                std::env::consts::OS,
+                "linux",
+                "qualification requires Linux"
+            );
+            true
+        } else if gate == scenario.feedback_gate {
+            false
+        } else {
+            panic!(
+                "set NEMOCLAW_RUN_LIVE_HOSTED_PARITY to {} or {}",
+                scenario.qualification_gate, scenario.feedback_gate
+            );
         };
         let credential = std::env::var("NVIDIA_INFERENCE_API_KEY")
             .expect("dedicated NVIDIA_INFERENCE_API_KEY must be supplied by the environment");
@@ -411,7 +452,7 @@ mod live {
             json!(String::from_utf8(v0_export_bytes.clone()).unwrap());
         let document = Document::parse(v0_export_bytes.as_slice())
             .expect("the curated raw v0 export must parse through the ordinary v1 path");
-        validate_scenario_document(&document);
+        validate_scenario_document(&document, scenario);
         let image = &document.spec.sandboxes[0].image.ref_;
         assert_eq!(
             text(Command::new("docker").args([
@@ -430,7 +471,7 @@ mod live {
                 .expect("state directory must contain the explicit ownership marker"),
         )
         .unwrap();
-        assert_eq!(ownership["scenario"], SCENARIO);
+        assert_eq!(ownership["scenario"], scenario.name);
         assert_eq!(ownership["deploymentUid"], document.metadata.uid);
         assert_eq!(ownership["owned"], true);
         let fresh = !directory.join("terraform.tfstate").exists()
@@ -442,10 +483,12 @@ mod live {
         let current_environment = environment();
 
         let mut evidence = Evidence {
-            path: directory.join("openclaw-nvidia-hosted-parity.json"),
+            path: directory.join(scenario.evidence_file),
             value: json!({
-                "scenario": SCENARIO,
+                "scenario": scenario.name,
                 "parentIssue": "NVIDIA/NemoClaw#11810",
+                "issue": scenario.issue,
+                "harness": scenario.harness,
                 "passed": false,
                 "qualified": false,
                 "qualificationCandidate": qualification_candidate,
@@ -592,5 +635,17 @@ mod live {
             "raw v0 export parses directly and its v1 lifecycle and agent behavior are verified",
         );
         evidence.record("passed", true);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a manually curated redacted raw v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
+        run_hosted_lifecycle(OPENCLAW).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a manually curated redacted raw v0 Hermes export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    async fn v0_export_artifact_drives_v1_hosted_hermes_lifecycle() {
+        run_hosted_lifecycle(HERMES).await;
     }
 }
