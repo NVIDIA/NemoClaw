@@ -428,6 +428,37 @@ describe("explicit MCP migration", () => {
     expect(mocks.unregister).not.toHaveBeenCalled();
   });
 
+  it("preserves legacy source and ownership when teardown capability fails", async () => {
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry } } } },
+    });
+    mocks.assertTeardown.mockRejectedValueOnce(new Error("teardown capability unavailable"));
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow(
+      "teardown capability unavailable",
+    );
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+    expect(mocks.removePolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("preserves dual legacy and native registrations before any removal", async () => {
+    mocks.inspectSource.mockReturnValue({
+      bridges: { github: entry },
+      sources: { legacy: { github: entry }, native: { github: { ...entry, source: "native" } } },
+    });
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry } } } },
+    });
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow(/both legacy and native/);
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+    expect(mocks.removePolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
   it("enriches native ownership before rejecting a differently credentialed alias", async () => {
     const nativeEntry = {
       server: "gitlab",

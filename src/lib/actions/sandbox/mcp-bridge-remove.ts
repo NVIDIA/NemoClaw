@@ -73,6 +73,12 @@ export async function removeMcpBridge(
           2,
         );
       }
+      if (observed.sources.native[server]) {
+        throw new McpBridgeError(
+          `MCP server '${server}' exists in both legacy and native configuration. Migrate or explicitly resolve the duplicate before removal. No source was changed.`,
+          2,
+        );
+      }
       const registryOnlyServers = Object.keys(committedEntries).filter(
         (candidateServer) =>
           candidateServer !== server && observed.sources.legacy[candidateServer] === undefined,
@@ -86,6 +92,10 @@ export async function removeMcpBridge(
         );
       }
       await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+      const legacyAdapter = isAgentMcpAdapter(committedEntry.adapter)
+        ? committedEntry.adapter
+        : getBridgeAdapter(agent);
+      await assertAgentMcpTeardownRuntimeCapability(sandboxName, legacyAdapter, runtimeSelection);
       await removeLegacyAgentMcpEntry(sandbox, legacyEntry, runtimeSelection);
       // A normal serialization retires the deprecated registry projection. Any
       // unrelated legacy agent entries remain authoritative and migratable.
@@ -120,7 +130,9 @@ export async function removeMcpBridge(
       ? entry.adapter
       : getBridgeAdapter(getSandboxAgent(sandbox));
 
-    await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    if (!removedLegacySource) {
+      await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    }
     const removal = removedLegacySource
       ? "removed"
       : await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {

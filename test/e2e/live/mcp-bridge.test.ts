@@ -417,11 +417,15 @@ async function assertBridgeInfrastructure(
   expect(policyText).not.toContain("FAKE_MCP_SECRET");
   expect(policyText).toContain(`tool: ${MCP_BRIDGE_DENIED_TOOL_SELECTOR}`);
   expect(policyText).toContain(new URL(options.mcpUrl).hostname);
-  const provider = await host.command("openshell", ["provider", "get", options.providerName], {
-    artifactName: `${options.artifactPrefix}-openshell-provider-get-mcp`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
+  const provider = await host.command(
+    host.openshellCommandPath,
+    ["provider", "get", options.providerName],
+    {
+      artifactName: `${options.artifactPrefix}-openshell-provider-get-mcp`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
   expectExitZero(provider, `${options.artifactPrefix} openshell provider get mcp provider`);
   expect(resultText(provider)).toContain("FAKE_MCP_SECRET");
   expect(resultText(provider)).not.toContain(HOST_SECRET);
