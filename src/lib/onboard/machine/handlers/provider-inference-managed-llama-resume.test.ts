@@ -131,7 +131,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     });
   });
 
-  it("preserves installer vLLM profile provenance when provider setup omits it (#11896)", async () => {
+  it("persists installer vLLM profile provenance returned by provider setup (#11896)", async () => {
     const session = createSession({
       servingProfileProvenance: vllmProfile,
     });
@@ -143,6 +143,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
         endpointUrl: "http://host.openshell.internal:8000/v1",
         credentialEnv: null,
         preferredInferenceApi: "openai-completions",
+        servingProfileProvenance: vllmProfile,
       })),
     });
 
@@ -164,6 +165,35 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     );
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: vllmProfile,
+    });
+  });
+
+  it("does not authorize vLLM profile provenance from session-only state (#11896)", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm-local",
+        model: "unrelated/model",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      provider: "vllm-local",
+      servingProfileProvenance: null,
     });
   });
 
