@@ -75,9 +75,12 @@ The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
 
 Before it validates deployment semantics, the config export fixture rejects
-known fixture secrets and internal credential transport markers. It creates
-the export in a private temporary directory. It registers cleanup before it
-invokes the CLI and removes the directory before it writes retained evidence.
+known fixture secrets and internal credential transport markers. Both checks
+scan the raw export and decoded YAML scalar keys and values, so YAML escaping
+cannot hide either value. The fixture caps each captured stdout and
+stderr stream at 64 KiB. It creates the export in a private temporary
+directory. It registers cleanup before it invokes the CLI and removes the
+directory before it writes retained evidence.
 For `required` coverage, the fixture parses the exported document without the
 product config validator. It reads the host registry directly and queries the
 effective policy through the OpenShell CLI. These independent observations

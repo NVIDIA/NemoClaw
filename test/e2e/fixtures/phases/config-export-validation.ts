@@ -26,6 +26,7 @@ import type { NemoClawInstance } from "./onboarding.ts";
 
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
+const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
 const INTERNAL_TRANSPORT_PATTERN = /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u;
 
@@ -494,6 +495,22 @@ function refusalCategory(output: string): string | undefined {
   return /Config export failed \(([a-z-]+)\)/u.exec(output)?.[1];
 }
 
+function decodedScalarsMatch(
+  value: unknown,
+  matches: (value: string) => boolean,
+  visited = new WeakSet<object>(),
+): boolean {
+  if (typeof value === "string") return matches(value);
+  if (value === null || typeof value !== "object" || visited.has(value)) return false;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => decodedScalarsMatch(entry, matches, visited));
+  }
+  return Object.entries(value).some(
+    ([key, entry]) => matches(key) || decodedScalarsMatch(entry, matches, visited),
+  );
+}
+
 export class ConfigExportValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -579,6 +596,7 @@ export class ConfigExportValidationPhaseFixture {
         ["config", "export", instance.sandboxName, "--output", outputPath, "--json"],
         {
           artifactName: "config-export-automatic",
+          captureLimitBytes: CONFIG_EXPORT_CAPTURE_LIMIT_BYTES,
           redactionValues: this.secrets.redactionValues(),
           timeoutMs: 120_000,
         },
@@ -616,8 +634,18 @@ export class ConfigExportValidationPhaseFixture {
         raw = this.dependencies.readFile(outputPath);
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        knownSecretsAbsent = !secretValues.some((value) => value && raw!.includes(value));
-        internalTransportsAbsent = !INTERNAL_TRANSPORT_PATTERN.test(raw);
+        const rawSecretsAbsent = !secretValues.some((value) => value && raw!.includes(value));
+        failureStage = "verification";
+        const decoded = YAML.parse(raw) as unknown;
+        failureStage = "security";
+        knownSecretsAbsent =
+          rawSecretsAbsent &&
+          !decodedScalarsMatch(decoded, (value) =>
+            secretValues.some((secret) => secret.length > 0 && value.includes(secret)),
+          );
+        internalTransportsAbsent =
+          !INTERNAL_TRANSPORT_PATTERN.test(raw) &&
+          !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value));
         if (!knownSecretsAbsent) throw new Error("config export exposed a known fixture secret");
         if (!internalTransportsAbsent) {
           throw new Error("config export exposed an internal credential transport");

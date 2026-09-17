@@ -358,12 +358,49 @@ describe("automatic config export validation phase", () => {
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
   });
 
+  it("withholds export metadata when YAML escapes a known fixture secret (#11485)", async () => {
+    const escapedSecret = [...SECRET]
+      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join("");
+    const raw = `leak: "${escapedSecret}"\n`;
+    expect(raw).not.toContain(SECRET);
+    const test = fixture({ host: successfulHost(raw), secret: SECRET });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "security",
+      security: { knownSecretsAbsent: false },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+  });
+
   it("withholds export metadata when an internal credential transport leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# openshell:resolve:env:KEY\n`),
     });
 
     await captureFailure(test.phase.from(target("required"), instance()));
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "security",
+      security: { internalTransportsAbsent: false },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+  });
+
+  it("withholds export metadata when YAML escapes an internal credential transport (#11485)", async () => {
+    const escapedTransport = [..."openshell:resolve:env:KEY"]
+      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join("");
+    const raw = `transport: "${escapedTransport}"\n`;
+    expect(raw).not.toMatch(/openshell:resolve:env:/u);
+    const test = fixture({ host: successfulHost(raw) });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
     expect(test.writes.at(-1)).toMatchObject({
       classification: "failure",
       failureStage: "security",
@@ -468,6 +505,23 @@ describe("automatic config export validation phase", () => {
       expectedRefusalCategory: "unsupported",
       observedRefusalCategory: "unclassified",
     });
+  });
+
+  it("bounds exporter output while retaining an actionable failure (#11485)", async () => {
+    const host = refusalHost(`unrelated failure ${"x".repeat(128 * 1024)}`);
+    const test = fixture({ host: host as ReturnType<typeof successfulHost> });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(host.nemoclaw).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ captureLimitBytes: 64 * 1024 }),
+    );
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "export",
+    });
+    expect(test.writes.at(-1)?.diagnostic).toHaveLength(2_048);
   });
 
   it("records no usable sandbox without invoking export (#11485)", async () => {
