@@ -7,11 +7,16 @@ import {
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
+  ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
+  it("retains redacted Docker logs for failed startup diagnosis", () => {
+    expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
+  });
+
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();
 

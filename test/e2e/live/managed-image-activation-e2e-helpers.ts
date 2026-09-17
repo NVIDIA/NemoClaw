@@ -46,6 +46,9 @@ const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal"
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
+export const ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS = Object.freeze({
+  persistArtifacts: true as const,
+});
 type OnboardFailureStartupSignal = keyof typeof ONBOARD_FAILURE_STARTUP_SIGNALS;
 
 export function summarizeOnboardFailureStartupSignals(
@@ -550,7 +553,7 @@ async function collectOnboardFailureDockerDiagnostics(
           artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
-          persistArtifacts: true,
+          ...ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
           redactionValues: [API_KEY],
           timeoutMs: 30_000,
         });

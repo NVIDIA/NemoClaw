@@ -2618,9 +2618,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
-    let managedStartupTransaction: ReturnType<
-      typeof managedWorkloadOnboard.applyDockerManagedStartupRootRequest
-    > = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
       allowsNotReadyCreatedSandboxRevalidation({
         managedBootstrapCreateFinished,
@@ -2953,13 +2950,28 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     sandboxId: identity.sandboxId,
                   });
                   console.log("  ✓ Selected the exact managed startup runtime");
-                  managedStartupTransaction =
+                  const managedStartupTransaction =
                     managedWorkloadOnboard.applyDockerManagedStartupRootRequest({
                       bootstrapIdentity: managedBootstrapIdentity,
                       containerId,
                       request: managedStartupRootApplyRequest,
                     });
                   console.log("  ✓ Applied the managed startup profile");
+                  if (managedStartupTransaction) {
+                    console.log("  Committing managed startup shared state...");
+                    const sharedState =
+                      managedWorkloadOnboard.finalizeDockerManagedStartupSharedState({
+                        transaction: managedStartupTransaction,
+                        supervisorReady: true,
+                      });
+                    if (!sharedState.supervisorReady || sharedState.failure) {
+                      throw (
+                        sharedState.failure ??
+                        new Error("Managed startup shared-state commit failed.")
+                      );
+                    }
+                    console.log("  ✓ Committed managed startup shared state");
+                  }
                   managedBootstrapCreateFinished = true;
                   context.revalidateSandboxIdentity(
                     `confirming managed startup profile for sandbox '${sandboxName}'`,
@@ -3032,18 +3044,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
-          if (managedStartupTransaction) {
-            console.log("  Committing managed startup shared state...");
-            const sharedState = managedWorkloadOnboard.finalizeDockerManagedStartupSharedState({
-              transaction: managedStartupTransaction,
-              supervisorReady: true,
-            });
-            if (!sharedState.supervisorReady || sharedState.failure) {
-              throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
-            }
-            console.log("  ✓ Committed managed startup shared state");
-            managedStartupTransaction = null;
-          }
           persistFinalHandoffAcknowledgement(created.runtimePatch);
           return created;
         },
