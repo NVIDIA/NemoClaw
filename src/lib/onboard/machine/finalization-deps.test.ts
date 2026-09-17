@@ -25,6 +25,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   ordinaryOpenClawPairingIncompleteMessage,
+  restartNativeGatewayForInitialSetup,
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
 
@@ -882,5 +883,26 @@ describe("finalization process-recovery refusal propagation", () => {
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
     ).resolves.toBe(true);
+  });
+});
+
+describe("initial native gateway startup", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses the native agent restart path without restoring supervisor authority", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
+      ok: true as const,
+      restarted: true as const,
+      healthPassed: true as const,
+      forwardRecovered: true,
+    }));
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway,
+    });
+
+    await expect(restartNativeGatewayForInitialSetup("alpha")).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
   });
 });

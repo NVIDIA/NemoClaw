@@ -7,7 +7,7 @@ import { createSandboxRecreateProtection } from "./sandbox-recreate-protection";
 import type { SandboxRecreateSourceProof } from "./sandbox-recreate-transaction";
 
 describe("createSandboxRecreateProtection", () => {
-  it("forwards one custom-image protection context to every recreation path (#6108)", () => {
+  it("forwards one journal-bound backup context to every recreation path", () => {
     const note = vi.fn();
     const sandboxEntry = {
       name: "my-assistant",
@@ -31,7 +31,6 @@ describe("createSandboxRecreateProtection", () => {
       {
         sandboxName: "my-assistant",
         sandboxEntry,
-        customOpenClawImage: true,
         note,
       },
       {
@@ -70,8 +69,6 @@ describe("createSandboxRecreateProtection", () => {
       registryEntry: sandboxEntry,
       readRegistryEntry,
       observation: expect.any(Function),
-      existingSandboxEntry: sandboxEntry,
-      requireOpenClawImagePluginProvenance: true,
       sandboxName: "my-assistant",
       note,
     });
@@ -84,13 +81,11 @@ describe("createSandboxRecreateProtection", () => {
       kind: "proceed",
       restoreBackupPath: "/tmp/backup",
     });
-    expect(resolveNotReadyOutcome).toHaveBeenCalledWith("my-assistant", note, sandboxEntry, true);
+    expect(resolveNotReadyOutcome).toHaveBeenCalledWith("my-assistant", note);
 
     expect(protection.backup()).toBe(backupResult);
     expect(backupSandboxBeforeRecreate).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
-      sandboxEntry,
-      requireOpenClawImagePluginProvenance: true,
     });
   });
 
@@ -114,7 +109,6 @@ describe("createSandboxRecreateProtection", () => {
         {
           sandboxName: "my-assistant",
           sandboxEntry: { name: "my-assistant" },
-          customOpenClawImage: false,
           note: vi.fn(),
         },
         {
