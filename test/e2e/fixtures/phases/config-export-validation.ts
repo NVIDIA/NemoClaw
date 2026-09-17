@@ -13,6 +13,10 @@ import type {
   NemoClawSandboxConfig,
   ValidatedNemoClawConfig,
 } from "../../../../src/lib/config/model.ts";
+import {
+  createCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+} from "../../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
@@ -289,29 +293,40 @@ async function readEffectivePolicyDocument(
   gatewayName: string,
   sandboxName: string,
 ): Promise<string> {
-  const result = await host.command(
-    host.openshellCommandPath,
-    ["policy", "get", "-g", gatewayName, "--full", sandboxName],
-    {
-      artifactName: "config-export-effective-policy",
-      captureLimitBytes: CONFIG_EXPORT_FILE_LIMIT_BYTES,
-      persistArtifacts: false,
-      redactionValues: secrets.redactionValues(),
-      timeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  const reader = createCliOpenShellSandboxPolicyReader({
+    capture: async (args, options) => {
+      const result = await host.command(host.openshellCommandPath, args, {
+        artifactName: "config-export-effective-policy",
+        captureLimitBytes: options.outputLimitBytes,
+        persistArtifacts: false,
+        redactionValues: secrets.redactionValues(),
+        timeoutMs: options.timeout,
+      });
+      return {
+        status: result.exitCode,
+        output: `${result.stderr}\n${result.stdout}`.trim(),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ...(result.timedOut
+          ? {
+              error: Object.assign(new Error("OpenShell policy read timed out"), {
+                code: "ETIMEDOUT",
+              }),
+            }
+          : {}),
+      };
     },
-  );
-  if (result.timedOut || result.signal !== null || result.exitCode !== 0) {
+    defaultTimeoutMs: CONFIG_EXPORT_POLICY_TIMEOUT_MS,
+  });
+  const policy = await reader.readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: "effective",
+  });
+  if (!policy.ok) {
     throw new Error("the effective sandbox policy could not be read");
   }
-  if (Buffer.byteLength(result.stdout, "utf8") > CONFIG_EXPORT_FILE_LIMIT_BYTES) {
-    throw new Error("the effective sandbox policy exceeds the observation limit");
-  }
-  const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(result.stdout);
-  const document = (
-    separator ? result.stdout.slice(separator.index + separator[0].length) : result.stdout
-  ).trim();
-  requiredRecord(YAML.parse(document), "effective policy");
-  return document;
+  return policy.value.document;
 }
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
