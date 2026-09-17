@@ -1314,6 +1314,8 @@ export async function restartSandboxGateway(
             timeout,
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
+        executeManagedGatewayRestart: (name, timeout) =>
+          executeGatewaySupervisorAction(name, "restart", timeout),
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
             ...options,

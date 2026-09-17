@@ -55,6 +55,11 @@ describe("restartSandboxGateway native lifecycle", () => {
         stdout: "",
         stderr: "",
       })),
+      executeManagedGatewayRestart: vi.fn(async () => ({
+        status: 0,
+        stdout: `v1 ${"a".repeat(64)} complete ok 41 42\nGATEWAY_PID=42`,
+        stderr: "",
+      })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
@@ -65,7 +70,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     };
   }
 
-  it("asks OpenClaw to restart its gateway", async () => {
+  it("asks the pinned managed controller to restart OpenClaw", async () => {
     silenceConsole();
     const deps = baseDeps();
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
@@ -75,11 +80,8 @@ describe("restartSandboxGateway native lifecycle", () => {
       restarted: true,
       healthPassed: true,
     });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw gateway restart",
-      210000,
-    );
+    expect(deps.executeManagedGatewayRestart).toHaveBeenCalledWith("alpha", 210000);
+    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -100,6 +102,24 @@ describe("restartSandboxGateway native lifecycle", () => {
       "hermes gateway restart",
       210000,
     );
+    expect(deps.executeManagedGatewayRestart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the managed OpenClaw controller omits its completion receipt", async () => {
+    silenceConsole();
+    const deps = baseDeps({
+      executeManagedGatewayRestart: vi.fn(async () => ({
+        status: 0,
+        stdout: "GATEWAY_PID=42",
+        stderr: "",
+      })),
+    });
+
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toEqual({
+      ok: false,
+      failureLayer: "launch failure",
+      detail: "managed gateway supervisor returned an invalid completion receipt",
+    });
   });
 
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
@@ -126,21 +146,21 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
-  it("reports the native agent failure without an authorization verdict", async () => {
+  it("reports the managed controller failure without an authorization verdict", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeSandboxExecCommand: vi.fn(async () => ({
+      executeManagedGatewayRestart: vi.fn(async () => ({
         status: 1,
         stdout: "",
-        stderr: "native restart failed",
+        stderr: "managed restart failed",
       })),
     });
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
     expect(result).toEqual({
       ok: false,
-      failureLayer: "native agent command",
-      detail: "native restart failed",
+      failureLayer: "launch failure",
+      detail: "managed restart failed",
     });
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
     expect(vi.mocked(console.error).mock.calls.join("\n")).not.toContain("authorization");

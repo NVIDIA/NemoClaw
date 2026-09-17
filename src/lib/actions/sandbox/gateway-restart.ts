@@ -81,6 +81,11 @@ type SandboxExec = (
   timeout?: number,
 ) => Promise<GatewayRestartCommandResult | null>;
 
+type ManagedGatewayRestart = (
+  sandboxName: string,
+  timeout?: number,
+) => GatewayRestartCommandResult | null | Promise<GatewayRestartCommandResult | null>;
+
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
@@ -88,6 +93,7 @@ export type GatewayRestartDeps = {
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
   executeSandboxExecCommand: SandboxExec;
+  executeManagedGatewayRestart: ManagedGatewayRestart;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
     options?: {
@@ -411,23 +417,36 @@ export async function restartSandboxGatewayWithDeps(
     );
   }
   const nativeCommand = `${agentName} gateway restart`;
-  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
-  if (!restartResult || restartResult.status !== 0) {
+  const restartResult =
+    agentName === "openclaw"
+      ? await deps.executeManagedGatewayRestart(sandboxName, 210000)
+      : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  const managedCompletion =
+    agentName === "openclaw" ? parseManagedGatewayControlCompletion(restartResult) : null;
+  if (
+    !restartResult ||
+    restartResult.status !== 0 ||
+    (agentName === "openclaw" && !managedCompletion)
+  ) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
       printGatewayRestartFailure(sandboxName, classified.layer, classified.detail);
       return { ok: false, failureLayer: classified.layer, detail: classified.detail };
     }
-    const detail = restartResult
-      ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
-        `${nativeCommand} exited ${restartResult.status}`
-      : `${nativeCommand} did not return command output`;
+    const detail =
+      agentName === "openclaw" && restartResult?.status === 0 && !managedCompletion
+        ? "managed gateway supervisor returned an invalid completion receipt"
+        : restartResult
+          ? sanitizeGatewayRestartFailureDetail(gatewayRestartOutput(restartResult)) ||
+            `${nativeCommand} exited ${restartResult.status}`
+          : `${nativeCommand} did not return command output`;
     const gatewayLogTail =
       agentName === "hermes"
         ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
-    printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
-    return { ok: false, failureLayer: "native agent command", detail };
+    const failureLayer = agentName === "openclaw" ? classified.layer : "native agent command";
+    printGatewayRestartFailure(sandboxName, failureLayer, detail, gatewayLogTail);
+    return { ok: false, failureLayer, detail };
   }
 
   if (

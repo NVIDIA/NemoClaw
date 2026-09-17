@@ -1032,7 +1032,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,
-    update: { checkOnStart: false },
     plugins,
     gateway: {
       mode: "local",
