@@ -30,30 +30,11 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     order.push("openshell-start");
     return { status: 0, output: "started" };
   });
-  const findLabeledSandboxContainers = vi.fn<
-    DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
-  >(() => [
-    {
-      name: "openshell-my-sandbox",
-      status: "Exited (0) 2 hours ago",
-      running: false,
-    },
-  ]);
   const hasPortableLifecycleReceipt = vi.fn<
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
   const recoverPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverPortableSandbox"]>(
     async () => ({ kind: "not-installed" }),
-  );
-  const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
-    () => {
-      order.push("openshell-start");
-      return {
-        recovered: true,
-        via: "started-stopped-original",
-        containerName: "openshell-my-sandbox",
-      };
-    },
   );
   const observer: OpenShellSandboxObserver = {
     listSandboxes: vi.fn(async () => {
@@ -79,13 +60,8 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       createDockerRuntimeProviderBundle({
         withLifecycleLock: async (_name, operation) => operation(),
         captureSandboxLifecycle,
-        findLabeledSandboxContainers,
         hasPortableLifecycleReceipt,
-        isRuntimeDown: () => false,
-        printRuntimeDownGuidance: () => {},
-        recoverSandbox: recoverDockerDriverSandbox,
         recoverPortableSandbox,
-        unpauseContainer: () => ({ status: 0 }),
       }),
     ],
   ]);
@@ -108,15 +84,14 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     ...overrides,
   };
   return {
+    captureSandboxLifecycle,
     deps,
-    findLabeledSandboxContainers,
     getSandbox,
     hasPortableLifecycleReceipt,
     log,
     observer,
     order,
     probeGatewayProcess,
-    recoverDockerDriverSandbox,
     recoverPortableSandbox,
     updateSandbox,
     verifyGateway,
@@ -147,7 +122,7 @@ describe("startSandbox native lifecycle", () => {
     );
   });
 
-  it("uses recorded portable authority without ambient container discovery", async () => {
+  it("uses recorded portable authority without standard OpenShell lifecycle dispatch", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -169,8 +144,7 @@ describe("startSandbox native lifecycle", () => {
     });
 
     expect(h.recoverPortableSandbox).toHaveBeenCalledOnce();
-    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
-    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.captureSandboxLifecycle).not.toHaveBeenCalled();
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
   });
 
