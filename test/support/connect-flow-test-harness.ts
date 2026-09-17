@@ -48,6 +48,7 @@ export type ConnectHarness = {
   forwardReachabilitySpy: MockInstance;
   forwardServiceOwnerSpy: MockInstance;
   launchForwardServiceSpy: MockInstance;
+  prepareHermesPortableLaunchForwardsSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   dockerStartSpy: MockInstance;
@@ -131,6 +132,11 @@ export type ConnectHarnessOptions = {
     secretBoundaryReason?: SecretBoundaryRefusalReason;
   };
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
+  preparedForwardRecovery?: {
+    readonly kind?: "restored" | "verified";
+    readonly release: () => unknown;
+    readonly rollback: () => Promise<void>;
+  };
   portableReceiptDisposition?:
     | { kind: "absent" }
     | { kind: "openclaw" }
@@ -589,6 +595,23 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const launchForwardServiceSpy = vi
     .spyOn(forwardService, "launchForwardService")
     .mockImplementation(() => undefined);
+  const prepareHermesPortableLaunchForwardsSpy = options.preparedForwardRecovery
+    ? vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards")
+    : vi.fn();
+  if (options.preparedForwardRecovery) {
+    const result = {
+      kind: options.preparedForwardRecovery.kind ?? "restored",
+      restoredPorts: [],
+    } as const;
+    prepareHermesPortableLaunchForwardsSpy.mockResolvedValue({
+      result,
+      release: () => {
+        options.preparedForwardRecovery!.release();
+        return result;
+      },
+      rollback: options.preparedForwardRecovery.rollback,
+    });
+  }
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
@@ -734,6 +757,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     forwardReachabilitySpy,
     forwardServiceOwnerSpy,
     launchForwardServiceSpy,
+    prepareHermesPortableLaunchForwardsSpy,
     ensureLiveSandboxSpy,
     getSandboxDockerRuntimeSpy,
     dockerStartSpy,

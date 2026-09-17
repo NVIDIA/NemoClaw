@@ -387,15 +387,39 @@ async function runSandboxConnectProbe(
   if (hermesPortable) {
     if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
     let retainedInference: HermesPortablePublicationProof["inference"] | null = null;
-    const route = await measureAsync("inference", () =>
-      verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(sandboxName, agent, undefined, {
-        commandAuthority: hermesPortableCommandAuthority,
-        probeTiming,
-        retainVerified: (entry, probe) => {
-          retainedInference = { entry: structuredClone(entry), probe };
-        },
-      }),
-    );
+    let initialAuthority: HermesPortableActiveLifecycleAuthority;
+    try {
+      initialAuthority = requireHermesPortableActiveLifecycleAuthority(
+        sandboxName,
+        undefined,
+        portableAgentLifecycleAuthorityDeps(),
+      );
+    } catch {
+      failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+    }
+    const routeOptions: HermesPortableProbeRouteOptions = {
+      commandAuthority: hermesPortableCommandAuthority,
+      probeTiming,
+      retainVerified: (entry, probe) => {
+        retainedInference = { entry: structuredClone(entry), probe };
+      },
+    };
+    const route =
+      initialAuthority.entry.provider === "ollama-local"
+        ? await measureAsync("inference", () =>
+            verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
+              sandboxName,
+              agent,
+              initialAuthority,
+              routeOptions,
+            ),
+          )
+        : await prepareHermesPortableRemoteRouteForConnectOrExit(
+            sandboxName,
+            agent,
+            initialAuthority,
+            routeOptions,
+          );
     if (!route.forwardsRecovered) {
       let authority: HermesPortableActiveLifecycleAuthority;
       try {
@@ -1125,6 +1149,78 @@ type HermesPortableProbeRouteOptions = {
     probe: ReturnType<typeof parseSandboxInferenceRouteProbeResult>,
   ) => void;
 };
+
+/**
+ * Prepare remote-provider forwards before taking the final inference proof.
+ * Forward mutations remain rollback-owned until inference is verified, so a
+ * failed route check restores exactly the ports introduced by this attempt.
+ */
+async function prepareHermesPortableRemoteRouteForConnectOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  authority: HermesPortableActiveLifecycleAuthority,
+  options: HermesPortableProbeRouteOptions,
+): Promise<HermesPortableProbeRouteResult> {
+  let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
+  try {
+    preparedForwards = await prepareHermesPortableForwardsForConnectProbeMeasured(
+      sandboxName,
+      authority,
+      options.probeTiming,
+      options.commandAuthority,
+    );
+    const entry = await (options.probeTiming
+      ? options.probeTiming.measureAsync("inference", () =>
+          verifyHermesPortableInferenceRoute(
+            sandboxName,
+            agent,
+            authority,
+            options.commandAuthority,
+            options.retainVerified,
+          ),
+        )
+      : verifyHermesPortableInferenceRoute(
+          sandboxName,
+          agent,
+          authority,
+          options.commandAuthority,
+          options.retainVerified,
+        ));
+    try {
+      options.validateVerified?.(entry);
+    } catch {
+      refuseHermesPortableInferenceRoute("changed during verification");
+    }
+    const forwardRecovery = preparedForwards.release();
+    options.probeTiming?.setForwardAction(
+      forwardRecovery.kind === "restored" ? "restored" : "verified",
+    );
+    return { entry, forwardsRecovered: true };
+  } catch (error) {
+    if (preparedForwards) {
+      try {
+        await preparedForwards.rollback();
+      } catch (rollbackError) {
+        failHermesPortableForwardRecovery(
+          sandboxName,
+          rollbackError instanceof HermesPortableForwardRecoveryError
+            ? rollbackError.failure
+            : "restoration-unproved",
+          rollbackError instanceof HermesPortableForwardRecoveryError
+            ? rollbackError.context
+            : undefined,
+        );
+      }
+    }
+    if (error instanceof HermesPortableForwardRecoveryError) {
+      failHermesPortableForwardRecovery(sandboxName, error.failure, error.context);
+    }
+    failHermesPortableInferenceRoute(
+      sandboxName,
+      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
+    );
+  }
+}
 
 /** Verify the recorded route and resume published Ollama under the requested connect intent. */
 async function verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
