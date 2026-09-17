@@ -823,7 +823,7 @@ assert_status_mode disabled
     }
   });
 
-  it("stops only the tagged TUI process and rejects a count above baseline (#11847)", async () => {
+  it("shares process classification across normal waits and failed-session cleanup (#11847)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-session-guard-"));
     const binDir = path.join(testRoot, "bin");
     const processRoot = path.join(testRoot, "proc");
@@ -871,6 +871,22 @@ assert_status_mode disabled
         .poll(() => fs.existsSync(path.join(processRoot, String(other.pid), "environ")))
         .toBe(true);
 
+      const baseline = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "baseline", "deepagents-sandbox", processRoot],
+        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+      );
+      expect(baseline.status, baseline.stderr).toBe(0);
+      expect(baseline.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:2");
+
+      const waitFailure = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+      );
+      expect(waitFailure.status, waitFailure.stderr).toBe(4);
+      expect(waitFailure.stderr).toContain("did not return to baseline 1");
+
       const recovery = spawnSync(
         "bash",
         [dcodeTuiSessionGuard, "recover", "deepagents-sandbox", targetSession, "1", processRoot],
@@ -880,6 +896,14 @@ assert_status_mode disabled
       expect(recovery.stdout).toContain("NEMOCLAW_TUI_CALLER_RECOVERY_OK:1");
       await expect(targetExit).resolves.toBe(0);
       expect(() => process.kill(other.pid!, 0)).not.toThrow();
+
+      const waitSuccess = spawnSync(
+        "bash",
+        [dcodeTuiSessionGuard, "wait", "deepagents-sandbox", "1", "0", processRoot],
+        { encoding: "utf8", env: guardEnv, timeout: 10_000 },
+      );
+      expect(waitSuccess.status, waitSuccess.stderr).toBe(0);
+      expect(waitSuccess.stdout).toContain("NEMOCLAW_DCODE_PROCESS_COUNT:1");
 
       const baselineFailure = spawnSync(
         "bash",

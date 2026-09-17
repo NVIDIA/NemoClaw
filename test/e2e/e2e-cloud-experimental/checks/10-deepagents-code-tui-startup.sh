@@ -17,6 +17,8 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
+CHECK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+DCODE_TUI_SESSION_GUARD="${CHECK_DIR}/../dcode-tui-session-guard.sh"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-120}"
 TUI_SESSION_ID="${NEMOCLAW_TUI_SESSION_ID:-}"
 PROCESS_CLEANUP_TIMEOUT=20
@@ -58,20 +60,25 @@ pass() {
   PASSED=$((PASSED + 1))
 }
 
-sandbox_exec() {
+run_bounded_host_command() {
   local timeout_command
   if command -v timeout >/dev/null 2>&1; then
     timeout_command="$(command -v timeout)"
   elif command -v gtimeout >/dev/null 2>&1; then
     timeout_command="$(command -v gtimeout)"
   else
-    printf '%s\n' "${PREFIX}: timeout or gtimeout is required for bounded sandbox execution" >&2
+    printf '%s\n' "${PREFIX}: timeout or gtimeout is required for bounded host execution" >&2
     return 127
   fi
   "$timeout_command" \
     --signal=TERM \
     --kill-after="${SANDBOX_EXEC_KILL_AFTER_SECONDS}s" \
     "${SANDBOX_EXEC_TIMEOUT_SECONDS}s" \
+    "$@"
+}
+
+sandbox_exec() {
+  run_bounded_host_command \
     openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
@@ -98,25 +105,14 @@ is_positive_integer() {
 }
 
 dcode_process_count() {
-  sandbox_exec 'self=$$; parent=$PPID; count=0; for proc_dir in /proc/[0-9]*; do pid=${proc_dir##*/}; case " $self $parent " in *" $pid "*) continue ;; esac; [ -r "$proc_dir/cmdline" ] || continue; cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue; case "${cmdline,,}" in *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;; esac; done; printf "NEMOCLAW_DCODE_PROCESS_COUNT:%s\n" "$count"'
+  run_bounded_host_command "$DCODE_TUI_SESSION_GUARD" baseline "$SANDBOX_NAME" 2>&1
 }
 
 wait_for_dcode_process_baseline() {
   local baseline="$1"
-  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  local count output
-  while :; do
-    output="$(dcode_process_count)" || return 1
-    count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$output" | tail -n1)"
-    [[ "$count" =~ ^[0-9]+$ ]] || return 1
-    if [ "$count" -le "$baseline" ]; then
-      return 0
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      return 1
-    fi
-    sleep 1
-  done
+  run_bounded_host_command \
+    "$DCODE_TUI_SESSION_GUARD" wait "$SANDBOX_NAME" "$baseline" "$PROCESS_CLEANUP_TIMEOUT" \
+    >/dev/null 2>&1
 }
 
 ensure_expect_available() {
@@ -543,7 +539,7 @@ main() {
   capture_dir="$(make_capture_dir)"
   # The typed target may inherit agent processes from earlier checks, so the
   # acceptance contract is no increase from one recorded baseline. The small
-  # local polling helper is reused for both sessions; separate capture names
+  # shared session guard is reused for both sessions; separate capture names
   # retain per-session evidence instead of overwriting the first failure.
   local baseline_output baseline_process_count
   if ! baseline_output="$(dcode_process_count)"; then
