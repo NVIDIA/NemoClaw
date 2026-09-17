@@ -48,7 +48,9 @@ export function validateGrowthGuardrailsWorkflowBoundary(
   const expectedWorkflow = {
     name: "Governance / Enforce Codebase Growth Limits",
     on: {
-      pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
+      pull_request_target: {
+        types: ["opened", "reopened", "synchronize", "ready_for_review", "edited"],
+      },
     },
     permissions: { contents: "read" },
     jobs: {
