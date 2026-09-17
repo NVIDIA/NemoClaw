@@ -185,6 +185,7 @@ impl OpenShell {
                     allow_missing: false,
                     name: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
                 });
                 // Podman's default graceful stop is 45 seconds. Allow cleanup
                 // after that stop without retrying an ambiguous deletion.
@@ -197,6 +198,7 @@ impl OpenShell {
                     allow_missing: false,
                     id: name.into(),
                     workspace: workspace.into(),
+                    ..Default::default()
                 }))
                 .await
                 .map(|_| ()),
@@ -206,6 +208,7 @@ impl OpenShell {
                     allow_missing: false,
                     name: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
                 }))
                 .await
                 .map(|_| ()),

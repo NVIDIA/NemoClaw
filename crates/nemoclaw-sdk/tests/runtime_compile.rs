@@ -147,7 +147,8 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
 #[test]
 fn remote_example_parses_with_pinned_model_and_runtime() {
     let document =
-        Document::parse(include_bytes!("../../../examples/remote-vllm.yaml").as_slice()).unwrap();
+        Document::parse(include_bytes!("../../../examples/spark/remote-vllm.yaml").as_slice())
+            .unwrap();
     assert_eq!(document.spec.sandboxes[0].runtime.provider, "podman");
     assert_eq!(
         document.inference_endpoint().unwrap(),

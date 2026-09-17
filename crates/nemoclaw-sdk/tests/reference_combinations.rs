@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[path = "support/examples.rs"]
+mod examples;
+
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
 use nemoclaw_sdk::{
@@ -127,28 +130,24 @@ fn example_settings_satisfy_the_maintained_fabric_adapter_contracts() {
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
     let mut checked = 0;
-    for entry in std::fs::read_dir(root.join("examples")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
-        }
+    for path in examples::yaml_files(&root.join("examples")) {
         let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
-        let Some(contract) = contracts.get(
-            document
-                .sandbox_harness(&document.spec.sandboxes[0])
-                .unwrap()
-                .kind
-                .as_str(),
-        ) else {
-            continue;
-        };
         let rows = targets(&document, &generations).unwrap();
-        let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
-        let settings = json!({"agent_name": sandbox.values["agent_name"], "inference": serde_json::from_str::<Value>(&sandbox.values["inference_json"]).unwrap()});
-        contract
-            .validate(&settings)
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        checked += 1;
+        for definition in &document.spec.sandboxes {
+            let kind = &document.sandbox_harness(definition).unwrap().kind;
+            let Some(contract) = contracts.get(kind.as_str()) else {
+                continue;
+            };
+            let sandbox = rows
+                .iter()
+                .find(|row| row.kind == "sandbox" && row.values["name"] == definition.name)
+                .unwrap();
+            let settings = json!({"agent_name": sandbox.values["agent_name"], "inference": serde_json::from_str::<Value>(&sandbox.values["inference_json"]).unwrap()});
+            contract.validate(&settings).unwrap_or_else(|error| {
+                panic!("{} / {}: {error}", path.display(), definition.name)
+            });
+            checked += 1;
+        }
     }
     assert!(checked > 0);
 }

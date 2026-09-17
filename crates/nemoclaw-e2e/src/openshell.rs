@@ -310,6 +310,7 @@ fn get_provider(
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
 }
 // Wire limits from the pinned OpenShell server (d1155aa), independently checked
@@ -356,6 +357,7 @@ fn create_provider(
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
 }
 fn update_provider(
@@ -392,6 +394,7 @@ fn update_provider(
     provider.credentials.clear();
     Ok(p::ProviderResponse {
         provider: Some(provider),
+        ..Default::default()
     })
 }
 fn delete_provider(

@@ -23,10 +23,10 @@
         "OPENSHELL_DB_URL=sqlite:/var/lib/docker/volumes/fixture/_data/gateway.db"
       ],
       "Hostname": "",
-      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7",
+      "Image": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "nemoclaw.nvidia.com/runtime-spec": "b61606ed81683bd77839e731dfcc399a36a39aa4187dad877de8997a5be4921a",
+        "nemoclaw.nvidia.com/runtime-spec": "621263822a68b7ef9bdbae5c3a08649dcafd6e4913c493df1f52927034fd6c59",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
       },
       "OpenStdin": false,
@@ -36,7 +36,7 @@
       "Volumes": null,
       "WorkingDir": ""
     },
-    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nsandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:d3b585783ce176c2246452823a486d999faaa4ecc74e7c6731346c549766eee0\"\nsupervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:4ad55b244816544da501a6230fc533903ddf8e3fed56f6d8df77444f2866a65e\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nsandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:5b2131ff985a0ab7b3bb2fd21cba5a18819431134fce9f17ceffde20970ec736\"\nsupervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:d039ba7f9a0c3e6788cb04c17fc7738f06db42002fcaaef01e0d2dda375938d1\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-gateway\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
       "AutoRemove": false,
       "Binds": null,
@@ -131,10 +131,10 @@
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "nemoclaw.nvidia.com/runtime-spec": "b61606ed81683bd77839e731dfcc399a36a39aa4187dad877de8997a5be4921a",
+      "nemoclaw.nvidia.com/runtime-spec": "621263822a68b7ef9bdbae5c3a08649dcafd6e4913c493df1f52927034fd6c59",
       "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
     },
-    "spec": "{\"layout\":2,\"kind\":\"managed_gateway\",\"name\":\"nc-68d203b0c7e6083f-gateway\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7\",\"networkCIDR\":\"172.30.110.0/24\"}}"
+    "spec": "{\"layout\":2,\"kind\":\"managed_gateway\",\"name\":\"nc-68d203b0c7e6083f-gateway\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66\",\"networkCIDR\":\"172.30.110.0/24\"}}"
   },
   {
     "config": {
@@ -153,7 +153,7 @@
       "Image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "Labels": {
         "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "nemoclaw.nvidia.com/runtime-spec": "d538d8af563fd785486450e021432674af675b49b7dcb1d9d252be2933c37161",
+        "nemoclaw.nvidia.com/runtime-spec": "9259dec5248a2f5d2a42c7680506a8f11c0abd2c0e335332943eebe3f7058ae7",
         "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
       },
       "OpenStdin": false,
@@ -163,7 +163,7 @@
       "Volumes": null,
       "WorkingDir": ""
     },
-    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nsandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:d3b585783ce176c2246452823a486d999faaa4ecc74e7c6731346c549766eee0\"\nsupervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:4ad55b244816544da501a6230fc533903ddf8e3fed56f6d8df77444f2866a65e\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-inference\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
+    "gatewayConfig": "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"docker\"\ndisable_tls = true\n\n[openshell.drivers.docker]\nnetwork_name = \"nc-68d203b0c7e6083f-network\"\nsandbox_runtime_image = \"ghcr.io/nvidia/openshell/sandbox@sha256:5b2131ff985a0ab7b3bb2fd21cba5a18819431134fce9f17ceffde20970ec736\"\nsupervisor_image = \"ghcr.io/nvidia/openshell/supervisor@sha256:d039ba7f9a0c3e6788cb04c17fc7738f06db42002fcaaef01e0d2dda375938d1\"\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/signing.pem\"\npublic_key_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/public.pem\"\nkid_path = \"/var/lib/docker/volumes/fixture/_data/tls/jwt/kid\"\ngateway_id = \"nc-68d203b0c7e6083f-inference\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
     "hostConfig": {
       "AutoRemove": false,
       "Binds": null,
@@ -283,9 +283,9 @@
     },
     "labels": {
       "nemoclaw.nvidia.com/generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "nemoclaw.nvidia.com/runtime-spec": "d538d8af563fd785486450e021432674af675b49b7dcb1d9d252be2933c37161",
+      "nemoclaw.nvidia.com/runtime-spec": "9259dec5248a2f5d2a42c7680506a8f11c0abd2c0e335332943eebe3f7058ae7",
       "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
     },
-    "spec": "{\"kind\":\"inference_service\",\"name\":\"nc-68d203b0c7e6083f-inference\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7\",\"networkCIDR\":\"172.30.110.0/24\"},\"service\":{\"recipe\":{\"apiVersion\":\"nemoclaw.nvidia.com/recipe/v1\",\"compatibility\":{\"architecture\":\"arm64\",\"gpu\":\"NVIDIA GB10\",\"minDriverMajor\":580,\"minHostMemoryGiB\":118,\"imageLabels\":{\"org.nemoclaw.recipe.protocol\":\"v1\"}},\"preparation\":{\"executable\":\"/opt/recipe/prepare\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"verification\":{\"executable\":\"/opt/recipe/verify\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"resources\":{\"preparedBytes\":30064771072,\"preparationMemoryGiB\":20,\"gpuMemoryBytes\":91804925952,\"startupHeadroomGiB\":20},\"serving\":{\"modelName\":\"fixture-model\",\"toolParser\":\"\",\"reasoningParser\":\"\",\"kvCacheDtype\":\"fp8\",\"mambaCacheDtype\":\"\",\"lazyLoading\":true,\"chunkedPrefill\":true,\"environment\":{},\"preparedEnvironment\":{}},\"licenses\":[\"/opt/recipe/LICENSE\"],\"sourceNotices\":[\"/opt/recipe/NOTICE\"],\"snapshot\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"files\":[{\"name\":\"config.json\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"model.safetensors\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}},\"backend\":\"vllm\",\"image\":\"fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}}"
+    "spec": "{\"kind\":\"inference_service\",\"name\":\"nc-68d203b0c7e6083f-inference\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"management\":\"managed\",\"endpoint\":\"http://127.0.0.1:17681\",\"engine\":\"unix:///var/run/docker.sock\",\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66\",\"networkCIDR\":\"172.30.110.0/24\"},\"service\":{\"recipe\":{\"apiVersion\":\"nemoclaw.nvidia.com/recipe/v1\",\"compatibility\":{\"architecture\":\"arm64\",\"gpu\":\"NVIDIA GB10\",\"minDriverMajor\":580,\"minHostMemoryGiB\":118,\"imageLabels\":{\"org.nemoclaw.recipe.protocol\":\"v1\"}},\"preparation\":{\"executable\":\"/opt/recipe/prepare\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"verification\":{\"executable\":\"/opt/recipe/verify\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"resources\":{\"preparedBytes\":30064771072,\"preparationMemoryGiB\":20,\"gpuMemoryBytes\":91804925952,\"startupHeadroomGiB\":20},\"serving\":{\"modelName\":\"fixture-model\",\"toolParser\":\"\",\"reasoningParser\":\"\",\"kvCacheDtype\":\"fp8\",\"mambaCacheDtype\":\"\",\"lazyLoading\":true,\"chunkedPrefill\":true,\"environment\":{},\"preparedEnvironment\":{}},\"licenses\":[\"/opt/recipe/LICENSE\"],\"sourceNotices\":[\"/opt/recipe/NOTICE\"],\"snapshot\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"files\":[{\"name\":\"config.json\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"model.safetensors\",\"size\":1,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}},\"backend\":\"vllm\",\"image\":\"fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"model\":{\"repository\":\"fixture/model\",\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"serving\":{\"port\":18888,\"contextTokens\":32768,\"maxSequences\":1,\"batchTokens\":1024,\"speculativeTokens\":0,\"startupTimeoutSeconds\":1800},\"memory\":{\"hostReserveGiB\":32,\"kvCacheGiB\":8,\"minAvailableGiB\":8,\"minFreeGiB\":3,\"freeGateGiB\":12,\"consecutiveSamples\":5}}}"
   }
 ]

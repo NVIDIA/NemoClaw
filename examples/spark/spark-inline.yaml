@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Model tuning informed by MiaAI Lab's AGPL-3.0-or-later single-Spark recipe.
-# Upstream revision and attribution: ../runtimes/qwen38/NOTICE.md.
-# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# Upstream revision and attribution: ../../runtimes/qwen38/NOTICE.md.
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -13,7 +13,7 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17705
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
+    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.125.0/24
   inferenceProviders:
   - name: qwen

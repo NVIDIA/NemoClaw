@@ -1,24 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: qwen3-selected-model
-  uid: b89a891a-5fb9-4314-8fba-448928c8312b
+  name: remote-qwen3-model
+  uid: b9acbf25-75a7-424a-a5b8-6296b094cb83
 spec:
   gateway:
-    management: managed
-    endpoint: http://127.0.0.1:17695
-    engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:2a745259fd2dd579300f3e4b76a7fcce1dc92305d653d36b67ca6b3ecabefad7
-    networkCIDR: 172.30.121.0/24
+    management: external
+    endpoint: http://127.0.0.1:17697
   inferenceProviders:
     - name: qwen
       provider: openai
       service:
+        placement:
+          engine: ssh://gpu-box
+          networkCidr: 172.30.119.0/24
+        publication:
+          endpoint: http://10.0.0.8:18898/v1
+          bindAddress: 10.0.0.8
         backend: vllm
-        image: nc-prototype-vllm@sha256:e3f95d68664394c97ed9ea31f55f2183a5f1b6f07a61ffa15177f5dcacdb8b5e
+        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
         model:
           repository: Qwen/Qwen3-4B
           revision: 1cfa9a7208912126459214e8b04321603b3df60c
@@ -42,7 +45,7 @@ spec:
   sandboxes:
     - name: assistant
       runtime:
-        provider: docker
+        provider: podman
       network:
         tier: isolated
       harness:

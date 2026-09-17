@@ -83,7 +83,7 @@ fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
 
 #[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
-    let mut omitted = input("spark-inline.yaml");
+    let mut omitted = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
         omitted["spec"]["gateway"]
             .as_object_mut()
@@ -158,7 +158,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
         assert!(parse(&invalid).is_err(), "{path}");
     }
     for field in ["endpoint", "credential", "ollama"] {
-        let mut invalid = input("spark-inline.yaml");
+        let mut invalid = input("spark/spark-inline.yaml");
         invalid["spec"]["inferenceProviders"][0][field] = match field {
             "endpoint" => json!("https://inference.example.com/v1"),
             "credential" => json!({"env": "MODEL_TOKEN"}),

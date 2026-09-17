@@ -217,6 +217,7 @@ impl OpenShell {
                     }),
                     source: "NemoClaw".into(),
                 }],
+                ..Default::default()
             }))
             .await
             .map_err(|e| remote_error(&e))?

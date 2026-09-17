@@ -15,6 +15,7 @@ pub fn runtime_targets(
     }
     let gateway = Spec {
         layout: 2,
+        compute_driver: document.spec.sandboxes[0].runtime.provider.clone(),
         kind: GATEWAY_KIND.into(),
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -44,6 +45,7 @@ pub fn runtime_targets(
         let key = document.provider_key(provider);
         let spec = Spec {
             layout: 0,
+            compute_driver: "docker".into(),
             kind: SERVICE_KIND.into(),
             name: format!("{}-inference-{key}", document.workspace()),
             owner: document.metadata.uid.clone(),

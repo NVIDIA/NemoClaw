@@ -187,7 +187,8 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
 #[test]
 fn model_specific_backend_names_are_rejected() {
     let mut document = serde_json::to_value(
-        Document::parse(include_bytes!("../../../examples/spark-inline.yaml").as_slice()).unwrap(),
+        Document::parse(include_bytes!("../../../examples/spark/spark-inline.yaml").as_slice())
+            .unwrap(),
     )
     .unwrap();
     let service = &mut document["spec"]["inferenceProviders"][0]["service"];

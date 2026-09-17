@@ -46,6 +46,29 @@ Verify inference and a native agent reply separately; see [verification levels](
 For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
 Ordinary models can omit `service.recipe`.
 
+## Use a Managed Podman Gateway
+
+Use a local rootless Linux Podman engine through its Unix API socket.
+[Linux ARM64 qualification](validation/rust-managed-podman-linux-arm64.md) covers Podman 5.8.7, Deep Agents, and an existing Qwen3-4B inference service.
+Rootful operation, remote Podman engines, and other operating systems remain unqualified.
+
+Select `runtime.provider: podman` for every sandbox and set `gateway.engine` to the local Podman API service's Unix socket.
+See [the Podman example](../examples/managed-podman.yaml).
+The API service is an operator prerequisite; NemoClaw manages its gateway, network, and credential storage through that service.
+Load the harness image into the selected Podman image store and use the digest reported there.
+
+Rootless operation requires an API that reports `pasta` networking, as required by the pinned OpenShell callback listener.
+Older APIs that omit this information fail during plan.
+The host must have a private IPv4 address on its default-route interface.
+OpenShell uses that address for sandbox-only callbacks while keeping its user API on loopback.
+Every managed gateway uses one compute driver; use separate deployments to select different drivers.
+Managed vLLM with Podman sandboxes still requires explicit SSH Docker placement and publication.
+
+Podman's changing compatibility `/info.ID` is not a durable identity.
+Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
+A missing or replaced bound network is a conflict, not permission to recreate it.
+Destroy retains that network and gateway storage.
+
 ## Fabric Health During Apply
 
 Apply requests health from the existing hosted Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
@@ -84,7 +107,7 @@ Unknown fields, duplicate keys, inline secrets, and unsupported combinations are
 Images must use immutable SHA-256 references.
 Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`, with a pinned model, backend, serving settings, and memory policy.
 
-The checked-in [DGX Spark example](../examples/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
+The checked-in [DGX Spark example](../examples/spark/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
 Follow [managed Ollama](inference.md#run-managed-ollama) for its endpoint, local engine, network, model, and recovery requirements.
 Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
 Gateway and inference ownership are independent of the harness; the selected service must still support its request API.

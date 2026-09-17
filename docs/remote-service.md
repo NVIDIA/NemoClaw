@@ -3,7 +3,9 @@
 
 # Configure an SSH Model Service
 
-[remote-vllm.yaml](../examples/remote-vllm.yaml) manages a Docker inference service through SSH while an existing native OpenShell gateway owns Podman sandboxes.
+[remote-vllm.yaml](../examples/spark/remote-vllm.yaml) manages a Docker inference service through SSH while an existing native OpenShell gateway owns Podman sandboxes.
+The pinned OpenShell Podman supervisor currently has a [TLS initialization bug](https://github.com/NVIDIA/OpenShell/issues/3427) that blocks provider traffic.
+Use an existing Docker gateway with `runtime.provider: docker` to exercise SSH inference while that Podman issue remains open.
 `service.placement` selects the SSH engine and its private Docker network.
 `service.publication` declares the private host address and inference URL that OpenShell can reach.
 Existing `providerRef` routes remain unchanged.
@@ -26,8 +28,8 @@ Use a fresh deployment UID and a dedicated state directory.
 From the repository root, preview and apply the configuration:
 
 ```sh
-nemoclaw plan --state-dir .local/remote examples/remote-vllm.yaml
-nemoclaw apply --state-dir .local/remote examples/remote-vllm.yaml
+nemoclaw plan --state-dir .local/remote examples/spark/remote-vllm.yaml
+nemoclaw apply --state-dir .local/remote examples/spark/remote-vllm.yaml
 ```
 
 Apply creates retained model storage and the inference network/container on the SSH target, checks preparation receipts and readiness there, then configures the sandbox's OpenShell route.

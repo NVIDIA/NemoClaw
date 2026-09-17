@@ -42,7 +42,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_PRINTED_WORKSPACE
 ```
 
 This matches the SDK's [workspace derivation](../crates/nemoclaw-sdk/src/config/mod.rs).
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/7e7a8d5610f336f5f7f9f60da0951adbf295475d/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 

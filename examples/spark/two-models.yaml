@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Build current images and replace these local digests and the deployment UID.
+# Model sources, host requirements, and validation limits: README.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: spark-two-models
+  uid: 98d0bfa3-8ef2-4edb-a428-cd9b97aa0571
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17804
+    networkCIDR: 172.30.164.0/24
+  inferenceProviders:
+  - name: fast
+    provider: openai
+    service:
+      backend: vllm
+      authentication: bearer
+      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 19004
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  - name: smart
+    provider: openai
+    service:
+      backend: vllm
+      authentication: bearer
+      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
+      model:
+        repository: nvidia/Qwen3.6-27B-NVFP4
+        revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
+      serving:
+        toolParser: qwen3_coder
+        reasoningParser: qwen3
+        port: 19005
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 32
+        hostReserveGiB: 32
+        kvCacheGiB: 4
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  sandboxes:
+  - name: assistant
+    image:
+      ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: pi
+      execution:
+        timeoutSeconds: 300
+    agents:
+    - name: assistant
+      inference:
+        routes:
+        - name: fast
+          providerRef: fast
+          overrides:
+            model: Qwen/Qwen3-4B
+            piModel:
+              api: openai-completions
+              contextWindow: 32768
+              maxTokens: 2048
+              reasoning: false
+              input:
+              - text
+        - name: smart
+          providerRef: smart
+          overrides:
+            model: nvidia/Qwen3.6-27B-NVFP4
+            piModel:
+              api: openai-completions
+              contextWindow: 32768
+              maxTokens: 2048
+              reasoning: false
+              input:
+              - text
+        default: fast

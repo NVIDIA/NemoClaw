@@ -3,14 +3,14 @@
 
 # Inline Model Recipes
 
-An [ordinary vLLM service](../examples/vllm.yaml) needs a pinned image and model snapshot.
+An [ordinary vLLM service](../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
 Use [the ordinary vLLM image build](build.md#build-a-runtime-image).
 Add `service.recipe` when the model needs preparation or serving features supplied by its runtime image.
 
 The CLI does not load recipe code.
 Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
 
-See [the inline Qwen example](../examples/spark-inline.yaml).
+See [the inline Qwen example](../examples/spark/spark-inline.yaml).
 Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded validation run.
 Build the pinned images from `sourceRevision` in [the validation evidence](validation/rust-recipe-removal-linux-arm64.json).
 Later revisions can produce different digests.

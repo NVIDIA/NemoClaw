@@ -28,8 +28,8 @@ sha1 = "0.11"
 regex = "1"
 url = "2"
 ipnet = "2"
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "7e7a8d5610f336f5f7f9f60da0951adbf295475d", default-features = false }
-openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "7e7a8d5610f336f5f7f9f60da0951adbf295475d", default-features = false }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "1fe79f53991debf32776853a60f0cbd4e127dcfb", default-features = false }
+openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "1fe79f53991debf32776853a60f0cbd4e127dcfb", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 prost = "0.14"
 tonic-prost = "0.14"

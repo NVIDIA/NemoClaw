@@ -97,7 +97,8 @@ pub struct TLS {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Choose a managed local Docker gateway or connect to an external gateway. Credentials and TLS require HTTPS.
+/// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
+/// Choose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.
 pub struct Gateway {
     /// Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,7 +126,7 @@ pub struct Gateway {
     pub tls: Option<TLS>,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed gateway Docker socket. Omit or leave empty for an external gateway.
+    /// Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway.
     pub engine: String,
     #[serde(rename = "image", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -257,7 +258,7 @@ pub struct Sandbox {
     pub image: Image,
     #[serde(rename = "runtime")]
     #[schemars(default)]
-    /// Sandbox driver; omission selects Docker. A managed gateway requires Docker.
+    /// Sandbox driver; omission selects Docker. Every sandbox on a managed gateway must select the same driver.
     pub runtime: Runtime,
     #[serde(rename = "network")]
     #[schemars(default)]

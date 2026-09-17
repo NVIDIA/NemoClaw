@@ -3,18 +3,25 @@
 
 use crate::{
     args::{Cli, Command},
+    authoring::{
+        Answers, AuthoredDocument, Capabilities, Draft, IdentityEdits, InferenceEdits, Session,
+    },
     io::document,
 };
 use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
 use tokio::io::AsyncRead;
 
 pub(crate) enum CommandResult {
+    Onboard(Box<AuthoredDocument>),
+    OnboardExit,
     Export(Box<Document>),
     Operation(OperationResult),
 }
 impl CommandResult {
     pub(crate) fn render(self) -> Result<String, Box<dyn std::error::Error>> {
         match self {
+            Self::Onboard(authored) => Ok(authored.yaml().to_owned()),
+            Self::OnboardExit => Ok(String::new()),
             Self::Export(document) => Ok(document.yaml()?),
             Self::Operation(result) => Ok(format!("{}\n", serde_json::to_string(&result)?)),
         }
@@ -41,6 +48,37 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     stdin: R,
     cancel: &CancellationToken,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
+    let command = match cli.command {
+        Command::Onboard {
+            generate_only: _,
+            output: _,
+            non_interactive,
+            edit,
+            name,
+            sandbox,
+            agent,
+            provider,
+            model,
+            credential_env,
+        } => {
+            return onboard(
+                non_interactive,
+                OnboardValues {
+                    edit,
+                    name,
+                    sandbox,
+                    agent,
+                    provider,
+                    model,
+                    credential_env,
+                },
+                stdin,
+                cancel,
+            )
+            .await;
+        }
+        command => command,
+    };
     let bundle = match cli.bundle_dir {
         Some(path) => path,
         None => std::env::current_exe()?
@@ -59,7 +97,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             }
         }));
     }
-    let result = match cli.command {
+    let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
             file: Some(file), ..
@@ -83,8 +121,197 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             )));
         }
         Command::Destroy => deployment.destroy(cancel).await?,
+        Command::Onboard { .. } => unreachable!("onboarding returns before lifecycle setup"),
     };
     Ok(CommandResult::Operation(result))
+}
+
+struct OnboardValues {
+    edit: Option<std::path::PathBuf>,
+    name: Option<String>,
+    sandbox: Option<String>,
+    agent: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    credential_env: Option<String>,
+}
+
+async fn onboard<R: AsyncRead + Unpin>(
+    non_interactive: bool,
+    values: OnboardValues,
+    stdin: R,
+    cancel: &CancellationToken,
+) -> Result<CommandResult, Box<dyn std::error::Error>> {
+    let capabilities = Capabilities::first_slice();
+    let mut answers = Answers::first_slice();
+    if non_interactive {
+        answers.deployment_name = values.name.unwrap_or(answers.deployment_name);
+        answers.sandbox_name = values.sandbox.unwrap_or(answers.sandbox_name);
+        answers.agent_name = values.agent.unwrap_or(answers.agent_name);
+        answers.provider_name = values.provider.unwrap_or(answers.provider_name);
+        answers.model = values.model.unwrap_or(answers.model);
+        answers.credential_env = values.credential_env.unwrap_or(answers.credential_env);
+        let authored = Session::new()?.project(&capabilities, &answers)?;
+        return Ok(CommandResult::Onboard(Box::new(authored)));
+    }
+
+    use tokio::io::AsyncBufReadExt;
+    let mut lines = tokio::io::BufReader::new(stdin).lines();
+    let mut draft = if let Some(path) = values.edit {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take(nemoclaw_sdk::config::MAX_DOCUMENT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > nemoclaw_sdk::config::MAX_DOCUMENT_BYTES {
+            return Err("configuration exceeds 1 MiB".into());
+        }
+        Draft::from_yaml(&capabilities, &bytes)?
+    } else {
+        answers.deployment_name = value_or_prompt(
+            values.name,
+            "Deployment name",
+            &answers.deployment_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.sandbox_name = value_or_prompt(
+            values.sandbox,
+            "Sandbox name",
+            &answers.sandbox_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.agent_name = value_or_prompt(
+            values.agent,
+            "Agent name",
+            &answers.agent_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.provider_name = value_or_prompt(
+            values.provider,
+            "Provider name",
+            &answers.provider_name,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        answers.model =
+            value_or_prompt(values.model, "Model", &answers.model, &mut lines, cancel).await?;
+        answers.credential_env = value_or_prompt(
+            values.credential_env,
+            "Credential environment variable",
+            &answers.credential_env,
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        Draft::new(Session::new()?, answers)
+    };
+
+    loop {
+        let review = draft.review(&capabilities)?;
+        eprintln!("Review authored configuration:\n{}", review.render());
+        let action = value_or_prompt(
+            None,
+            "Accept [a], edit inference [i], edit identity [d], inspect YAML [y], or exit [x]",
+            "a",
+            &mut lines,
+            cancel,
+        )
+        .await?;
+        match action.as_str() {
+            "a" | "accept" => {
+                return Ok(CommandResult::Onboard(Box::new(review.into_authored())));
+            }
+            "x" | "exit" => return Ok(CommandResult::OnboardExit),
+            "y" | "yaml" => eprintln!("Authored YAML:\n{}", review.yaml()),
+            "d" | "identity" => {
+                let deployment_name = review.deployment_name().to_owned();
+                let sandbox_name = review.sandbox_name().to_owned();
+                let agent_name = review.agent_name().to_owned();
+                let edits = IdentityEdits {
+                    deployment_name: Some(
+                        value_or_prompt(
+                            None,
+                            "Deployment name",
+                            &deployment_name,
+                            &mut lines,
+                            cancel,
+                        )
+                        .await?,
+                    ),
+                    sandbox_name: Some(
+                        value_or_prompt(None, "Sandbox name", &sandbox_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                    agent_name: Some(
+                        value_or_prompt(None, "Agent name", &agent_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                };
+                if let Err(diagnostics) = draft.edit_identity(&capabilities, edits) {
+                    eprintln!("Edit rejected: {diagnostics}");
+                }
+            }
+            "i" | "inference" => {
+                let provider_name = review.provider_name().to_owned();
+                let model = review.model().to_owned();
+                let credential_env = review.credential_env().to_owned();
+                let edits = InferenceEdits {
+                    provider_name: Some(
+                        value_or_prompt(None, "Provider name", &provider_name, &mut lines, cancel)
+                            .await?,
+                    ),
+                    model: Some(value_or_prompt(None, "Model", &model, &mut lines, cancel).await?),
+                    credential_env: Some(
+                        value_or_prompt(
+                            None,
+                            "Credential environment variable",
+                            &credential_env,
+                            &mut lines,
+                            cancel,
+                        )
+                        .await?,
+                    ),
+                };
+                if let Err(diagnostics) = draft.edit_inference(&capabilities, edits) {
+                    eprintln!("Edit rejected: {diagnostics}");
+                }
+            }
+            _ => eprintln!("Choose a, i, d, y, or x."),
+        }
+    }
+}
+
+async fn value_or_prompt<R: tokio::io::AsyncBufRead + Unpin>(
+    supplied: Option<String>,
+    label: &str,
+    default: &str,
+    lines: &mut tokio::io::Lines<R>,
+    cancel: &CancellationToken,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(value) = supplied {
+        return Ok(value);
+    }
+    use std::io::Write;
+    eprint!("{label} [{default}]: ");
+    std::io::stderr().flush()?;
+    let line = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Err(Error::Cancelled.into()),
+        line = lines.next_line() => line?,
+    }
+    .ok_or("interactive input ended before authoring completed")?;
+    Ok(if line.is_empty() {
+        default.into()
+    } else {
+        line
+    })
 }
 
 #[cfg(test)]

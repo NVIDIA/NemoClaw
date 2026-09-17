@@ -28,7 +28,14 @@ pub(crate) const HARNESSES: &[&str] = &[
     "remote-agent",
     "pi",
 ];
-pub(crate) const TOOL_PARSERS: &[&str] = &["", "hermes", "qwen3_coder", "llama3_json", "mistral"];
+pub(crate) const TOOL_PARSERS: &[&str] = &[
+    "",
+    "hermes",
+    "qwen3_coder",
+    "qwen3_xml",
+    "llama3_json",
+    "mistral",
+];
 pub(crate) const REASONING_PARSERS: &[&str] = &["", "qwen3", "deepseek_r1", "nemotron_v3"];
 pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 pub(crate) const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";

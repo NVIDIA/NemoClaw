@@ -89,10 +89,37 @@ impl Engine {
                 "invalid gateway storage specification or engine",
             ));
         }
+        if spec.compute_driver == "podman" {
+            #[cfg(unix)]
+            {
+                let native = self.podman_json("info").await?;
+                let rootless = native["host"]["security"]["rootless"]
+                    .as_bool()
+                    .ok_or(ObservationError::Incomplete)?;
+                if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
+                    return Err(Error::Conflict(
+                        "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
+                    ));
+                }
+            }
+            let version = self.api.version().await.map_err(|error| remote(&error))?;
+            if !version
+                .components
+                .unwrap_or_default()
+                .iter()
+                .any(|part| part.name == "Podman Engine")
+            {
+                return Err(Error::Conflict(
+                    "Podman sandbox driver requires a Podman engine socket",
+                ));
+            }
+        }
         let info = self.info().await?;
         let mut volume = self.volume(&spec.volume()).await?;
         let network = self.network(&spec.network()).await?;
-        let helper = self.container(&format!("{}-initialize", spec.name)).await?;
+        let helper = self
+            .managed_container(spec, &format!("{}-initialize", spec.name))
+            .await?;
         if let Some(volume) = &volume {
             verify_volume(spec, volume, info.docker_root_dir.as_deref())?;
         }
@@ -199,7 +226,7 @@ impl Engine {
         let network = network.ok_or(ObservationError::Incomplete)?;
         let actual = format!(
             "{}/{}/{}/{}/{}",
-            info.id.ok_or(ObservationError::Incomplete)?,
+            spec.binding_namespace(info.id.as_deref(), network.id.as_deref())?,
             volume.name,
             volume.created_at.ok_or(ObservationError::Incomplete)?,
             network.id.ok_or(ObservationError::Incomplete)?,
@@ -234,7 +261,7 @@ impl Engine {
                 "gateway encryption key is missing; resources retained",
             ));
         }
-        if self.container(&spec.name).await?.is_some() {
+        if self.managed_container(spec, &spec.name).await?.is_some() {
             return Err(Error::Conflict(
                 "gateway has no persistent credential key; resources retained",
             ));
@@ -249,7 +276,7 @@ impl Engine {
     }
     async fn initialize_gateway(&self, spec: &Spec, data_path: &str) -> Result<(), Error> {
         let name = format!("{}-initialize", spec.name);
-        let mut helper = self.container(&name).await?;
+        let mut helper = self.managed_container(spec, &name).await?;
         if helper.is_none() {
             let created = self
                 .api
@@ -265,7 +292,7 @@ impl Engine {
             if created.id.is_empty() {
                 return Err(ObservationError::Incomplete.into());
             }
-            helper = self.container(&created.id).await?;
+            helper = self.managed_container(spec, &created.id).await?;
         }
         let helper = helper.ok_or(ObservationError::Incomplete)?;
         verify_initializer(spec, &helper, Some(data_path))?;

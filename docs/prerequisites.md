@@ -24,14 +24,14 @@ For remote model placement, use the [SSH service guide](remote-service.md); SSH 
 The [first-deployment guide](get-started.md) uses OpenClaw with an existing OpenShell gateway and external inference endpoint.
 Prepare these inputs before running apply:
 
-- An OpenShell **0.0.117-dev.167+g7e7a8d561** gateway with the Docker compute driver and permission to create a deployment workspace and sandbox.
+- An OpenShell **0.0.117-dev.186+g1fe79f539** gateway with the selected Docker or Podman compute driver and permission to create a deployment workspace and sandbox.
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
 - An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
 - An OpenClaw image built from this checkout and available by immutable digest on the sandbox compute daemon.
-- An authenticated OpenShell **0.0.117-dev.167+g7e7a8d561** CLI for native access, configured for the same gateway and the deployment's workspace.
+- An authenticated OpenShell **0.0.117-dev.186+g1fe79f539** CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-The client, gateway, and supervisor are pinned to OpenShell commit `7e7a8d5610f336f5f7f9f60da0951adbf295475d`; this is a development build, not a stable release.
+The client, gateway, and supervisor are pinned to OpenShell commit `1fe79f53991debf32776853a60f0cbd4e127dcfb`; this is a development build, not a stable release.
 The [gateway check](../crates/nemoclaw-sdk/src/openshell/probes.rs) verifies the version and compute driver.
 Use [inference API selection](inference.md) to match the endpoint to the agent.
 A successful connection or listed model does not establish that the model can complete an agent turn.
@@ -60,6 +60,7 @@ Use the existing [source-build procedure](build.md) for the documented developme
 | Fabric agent image | The local build uses a native Linux ARM64 Docker builder with Buildx; see [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](models.md) and [AMD64 Nemotron configuration](models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Local Unix engine socket, an existing network supporting published ports, reachable private endpoint, and CPU-sized model; see [managed Ollama](inference.md#run-managed-ollama) |
+| Managed rootless Podman gateway | Local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](usage.md#use-a-managed-podman-gateway) |
 | External Ollama with managed proxy | Local Linux Docker host, loopback-only daemon, installed model digest, and a reachable private proxy endpoint; see [proxy setup](inference.md#use-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](remote-service.md) |
 

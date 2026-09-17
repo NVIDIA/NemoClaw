@@ -207,8 +207,13 @@ impl Document {
                 "sandbox runtime must be docker or podman",
             )?;
             require(
-                gateway.management != "managed" || sandbox.runtime.provider == "docker",
-                "managed gateway requires the qualified Docker driver",
+                gateway.management != "managed"
+                    || self
+                        .spec
+                        .sandboxes
+                        .iter()
+                        .all(|other| other.runtime.provider == sandbox.runtime.provider),
+                "managed gateway requires every sandbox to select the same runtime driver",
             )?;
             sandbox.network.validate()?;
             require(!sandbox.agents.is_empty(), "at least one agent is required")?;
@@ -362,9 +367,10 @@ impl Gateway {
                 && bind.is_some_and(|a| a.port() >= 1024)
                 && self.credential.is_none()
                 && self.tls.is_none()
-                && self.engine == constraints::GATEWAY_ENGINE
+                && self.engine.starts_with("unix:///")
+                && crate::docker::Engine::validate_endpoint(&self.engine).is_ok()
                 && self.image == DEFAULT_GATEWAY_IMAGE,
-            "managed gateway requires pinned image, local Docker, and unprivileged loopback HTTP port without credentials",
+            "managed gateway requires pinned image, a local engine socket, and unprivileged loopback HTTP port without credentials",
         )?;
         let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(

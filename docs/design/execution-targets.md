@@ -45,7 +45,7 @@ The gateway supplies provider attachments and policy; inference requests do not 
 A successful model request from the CLI host cannot establish that reachability.
 The [connection-resolution change](https://github.com/NVIDIA/NemoClaw/commit/80deefbd97) and [independent placement change](https://github.com/NVIDIA/NemoClaw/commit/8bdf4960c0) established these separate paths.
 
-The pinned OpenShell implementation uses [provider-backed native inference](https://github.com/NVIDIA/OpenShell/blob/7e7a8d5610f336f5f7f9f60da0951adbf295475d/docs/sandboxes/inference-routing.mdx).
+The pinned OpenShell implementation uses [provider-backed native inference](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/docs/sandboxes/inference-routing.mdx).
 
 For example, suppose the alias used by an established deployment is redirected to a second daemon containing identically named containers.
 The observed daemon identity no longer matches the binding, so planning stops before mutation.
@@ -120,11 +120,11 @@ Current apply stops at configuration and readiness; [explicit verification](../i
 
 ### Native Podman Validation
 
-Upstream inspection found a native OpenShell Podman driver in the pinned gateway.
+The earlier [external gateway proof](../validation/rust-podman-rootless-linux-arm64.json) used OpenShell `d1155aa70042d3e2ee49dbfa15346b108b7c1d92` and its native Podman driver.
 It uses Podman image volumes, secrets and rootless networking rather than merely substituting a socket in the Docker driver.
 Manual qualification must exercise that driver and record daemon identity behavior by rootless/rootful namespace.
 
-The rootless Linux ARM64 proof now exercises the native driver on Podman 4.9.3.
+That rootless Linux ARM64 proof exercised the native driver on Podman 4.9.3.
 It accepts the client's v5.0.0 API requests and runs Fabric OpenClaw with inference on the existing Docker host.
 Isolated egress returns a policy denial, while the OpenShell inference route returns an actual agent reply.
 
@@ -144,7 +144,10 @@ No automatic mutation retry was added.
 The live proof and a delayed-delete fixture protect the correction.
 
 This result covers an external native OpenShell gateway and rootless Podman sandboxes on this Linux host.
-Managed Podman gateway/inference resources, rootful operation, remote placement and other operating systems remain unqualified.
+That earlier result did not qualify managed Podman resources.
+The [managed gateway contract](../usage.md#use-a-managed-podman-gateway) anchors identity in its retained owned network and signing keys.
+[New managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies Deep Agents inference and the lifecycle on local rootless Podman 5.8.7 with OpenShell `1fe79f539`.
+Managed Podman inference servers, rootful operation, remote placement, and other operating systems remain unqualified.
 See the [Podman evidence](../validation/rust-podman-rootless-linux-arm64.json).
 
 ### SSH Transport Validation

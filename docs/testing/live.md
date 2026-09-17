@@ -35,7 +35,8 @@ It checks export/reapply and stable resource/runtime identities before destroyin
 It retains the workspace, persistent storage, apply output, and `upgrade-proof.json`; failures retain state and resources for diagnosis and explicit cleanup.
 It never starts inference or substitutes another agent process through exec.
 
-The current OpenShell pin has a [known main-process startup blocker](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker); this gate is not yet live-qualified with that pin.
+The gate passed with OpenShell `1fe79f539` on Linux ARM64; see the [upgrade qualification and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
+The [earlier main-process failure](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) remains specific to its recorded revision.
 A failed gate must not be recorded as compatibility success because lower-level fixtures passed.
 Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
 
@@ -55,14 +56,14 @@ Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json)
 
 ## Spark and Fabric
 
-For complete DGX Spark qualification, use the concrete `examples/spark-inline.yaml` on an available GB10 host.
+For complete DGX Spark qualification, use the concrete `examples/spark/spark-inline.yaml` on an available GB10 host.
 The Spark lifecycle and image-upgrade tests require OpenClaw or Hermes for their explicit agent-response check.
 Change its deployment UID, gateway port, and network only when creating a separate deployment.
 Build the pinned local runtime artifact first, check capacity, and preserve the same state directory throughout:
 
 ```sh
-nemoclaw plan --state-dir .local/spark examples/spark-inline.yaml
-nemoclaw apply --state-dir .local/spark examples/spark-inline.yaml
+nemoclaw plan --state-dir .local/spark examples/spark/spark-inline.yaml
+nemoclaw apply --state-dir .local/spark examples/spark/spark-inline.yaml
 nemoclaw export --state-dir .local/spark --output .local/spark-export.yaml
 nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
 ```

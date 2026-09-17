@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 fn input() -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let service = &mut value["spec"]["inferenceProviders"][0]["service"];
     *service = json!({
         "backend":"vllm", "authentication":"bearer",
@@ -219,4 +219,31 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
         args.windows(2)
             .any(|p| p == ["--gpu-memory-utilization", "0.7555"])
     );
+}
+
+#[test]
+fn qwen_xml_tools_reach_the_native_server_without_changing_reasoning() {
+    let mut value = input();
+    value["spec"]["inferenceProviders"][0]["service"]["serving"]["toolParser"] = json!("qwen3_xml");
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let args = document.spec.inference_providers[0]
+        .service
+        .as_ref()
+        .unwrap()
+        .arguments("/data/model", 96 * GIB)
+        .unwrap();
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--tool-call-parser", "qwen3_xml"])
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--reasoning-parser", "nemotron_v3"])
+    );
+    assert!(args.iter().any(|arg| arg == "--enable-auto-tool-choice"));
 }

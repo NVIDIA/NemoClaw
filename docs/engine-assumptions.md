@@ -17,19 +17,22 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 
 | Boundary and owner | Constraint |
 |---|---|
-| SDK `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets and SSH endpoints select Docker connections on Unix clients. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
+| SDK `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets select local Docker or Podman API connections on Unix clients; SSH endpoints select Docker. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
 | SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, preflight, readiness, and export. |
 | Provider `provider.rs`; SDK `deployment/ollama.rs` and `ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. The SDK and provider must select the same daemon. |
-| SDK `config/` and `managed/spec.rs` | Managed gateways retain the local Docker topology. Managed inference can declare independent SSH placement and publication. |
-| SDK `managed/storage.rs`, `managed/observation.rs`, and `ollama/service.rs` | Durable bindings combine daemon identity with resource identity, ownership, and generation. Names and labels on another daemon cannot authorize adoption or deletion. |
+| SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
+| SDK `managed/storage.rs`, `managed/observation.rs`, and `ollama/service.rs` | Docker bindings combine daemon identity with resource identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Names and labels on another daemon cannot authorize adoption or deletion. |
 | SDK `openshell/transport.rs`, `state/`, and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
 A changed bound endpoint is rejected; there is no target migration or lost-state adoption command.
 Unavailable or mismatched identity stops the operation.
 The rootless Podman validation found that Podman 4.9.3 changes Docker-compatible `/info.ID` between requests.
 
-Managed Podman resources need a separately qualified persistent namespace identity.
-The [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) covers an external OpenShell gateway and rootless sandbox path.
+[Managed Podman qualification](validation/rust-managed-podman-linux-arm64.md) covers local rootless Podman 5.8.7 on Linux ARM64 after the OpenShell TLS fix.
+Its gateway bindings use the retained network UUID together with container identity, volume creation time, and signing keys.
+They do not derive identity from the changing compatibility field, a socket path, or a hostname.
+This is a gateway-specific binding, not a hardware or general inference-engine identity.
+The earlier [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) covers an external OpenShell gateway and rootless sandbox path.
 
 ## Storage and Network Placement
 
@@ -41,6 +44,10 @@ The [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) c
 | SDK `managed/artifacts.rs` and `docker/mod.rs` | Image pulls and archive transfers use the selected daemon. Model metadata and registry access are separate clients. Failed reads are not absence. |
 | SDK `config/`, `compile.rs`, and `openshell/probes.rs` | Local managed inference uses bridge publication; SSH services declare a private publication URL. Explicit inference verification sends requests from the sandbox through OpenShell to the configured endpoint. A client-side request cannot prove sandbox reachability. |
 | Build crate and `runtimes/` | Build-engine selection is separate from runtime placement. A locally loaded image must be transferred before another daemon can use it. |
+
+Podman gateway observation checks the native effective and bounding capability sets before normalizing the compatibility API representation of `CapDrop=ALL`.
+Missing or nonempty sets fail observation.
+The gateway stores OpenShell’s extracted runtime binaries under its shared data volume, where both the gateway and Podman can read the same paths.
 
 The runtime retains model storage on destroy.
 Do not inspect a remote daemon’s mountpoint as if it were a client-host path.

@@ -117,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn pinned_executable_receives_structured_input_and_tampering_stops_execution() {
         let d = nemoclaw_sdk::config::Document::parse(
-            include_bytes!("../../../examples/spark-inline.yaml").as_slice(),
+            include_bytes!("../../../examples/spark/spark-inline.yaml").as_slice(),
         )
         .unwrap();
         let mut recipe = d.spec.inference_providers[0]
