@@ -144,7 +144,6 @@ The preset excludes unspecified, loopback, and link-local address ranges, includ
 
 </Warning>
 
-Every fresh onboarding run through the experimental Portable profile selects the Personal tier. When `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace, Portable uses `suggested` mode with no optional preset override. If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, Portable treats that list as authoritative for additional presets while still applying mandatory `personal-open-internet` during that onboarding transaction. Resume and reuse derive effective access from the current OpenShell policy rather than a recorded tier.
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude optional presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access. On Personal, NemoClaw restores `personal-open-internet` if it is deselected in the screen. Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent. NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations. The `personal-open-internet` preset uses L4 passthrough, so its read-write label does not add HTTP method or path inspection.
 

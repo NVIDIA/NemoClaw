@@ -67,6 +67,7 @@ function runReadTaskSeed(root: string, seedScript: string) {
     encoding: "utf8",
     env: { PATH: process.env.PATH, BASH_ENV: "", ENV: "" },
     timeout: 2_000,
+    killSignal: "SIGKILL",
   });
 }
 

@@ -112,7 +112,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       nimContainer: string | null,
       agent: Agent,
       ready: boolean,
-    ): void;
+    ): Promise<void>;
     error(message?: string): void;
     log(message?: string): void;
   };
@@ -424,7 +424,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
-    deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    await deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);

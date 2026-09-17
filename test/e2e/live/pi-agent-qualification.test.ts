@@ -228,7 +228,6 @@ async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, 
     { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout.trim()).not.toBe("");
   return result.stdout.trim();
 }
 
@@ -394,9 +393,15 @@ test(
       },
     });
 
+    const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
+    const sessionsAfterOnboard = await sessionInventory(sandbox, env, "after-onboard");
+
     progress.phase("run interactive Pi and preserve its session through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
     const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
+    expect(sessionsBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
+      sessionsAfterOnboard.split("\n").filter(Boolean).length,
+    );
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "pi-candidate-rebuild",
@@ -552,6 +557,7 @@ test(
       },
       tasks: {
         version: TASK_VERSION,
+        headlessAfterOnboard: onboardProof,
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,
