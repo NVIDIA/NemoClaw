@@ -2924,7 +2924,7 @@ launch_hermes_gateway_current_user() {
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
-    nohup "$HERMES" gateway run >>/tmp/gateway.log 2>&1 &
+    nohup "$HERMES" gateway run --external-supervisor >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   if ! hermes_capture_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT"; then
     hermes_fatal_unproven_child gateway "$GATEWAY_PID"
@@ -2932,6 +2932,32 @@ launch_hermes_gateway_current_user() {
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
+}
+
+# With --external-supervisor, Hermes 0.21.3 handles SIGUSR1 by exiting with
+# EX_TEMPFAIL (75). In the non-root OpenShell topology, this entrypoint remains
+# alive and relaunches the gateway only for that status. Other exits propagate
+# to OpenShell unchanged.
+readonly HERMES_SERVICE_RESTART_STATUS=75
+
+supervise_hermes_service_restarts_current_user() {
+  local gateway_status=0
+
+  while :; do
+    gateway_status=0
+    wait "$GATEWAY_PID" || gateway_status=$?
+    if [ "$gateway_status" -ne "$HERMES_SERVICE_RESTART_STATUS" ]; then
+      return "$gateway_status"
+    fi
+
+    echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
+    mark_hermes_gateway_stopped
+    launch_hermes_gateway_current_user || return $?
+    wait_for_hermes_gateway_internal "$GATEWAY_PID" || return $?
+    ensure_hermes_supervised_auxiliaries || return $?
+    finalize_tirith_marker_retry
+    refresh_hermes_supervised_child_pids
+  done
 }
 
 start_hermes_root_gateway() {
@@ -2998,7 +3024,7 @@ if [ "$(id -u)" -ne 0 ]; then
   ensure_hermes_supervised_auxiliaries || exit 1
   finalize_tirith_marker_retry
   print_dashboard_urls
-  wait "$GATEWAY_PID"
+  supervise_hermes_service_restarts_current_user
   exit $?
 fi
 
