@@ -536,7 +536,7 @@ exec ollama pull qwen2.5:0.5b`,
     );
     expect(exported.exitCode, resultText(exported)).not.toBe(0);
     expect(resultText(exported)).toContain("managed vLLM and Ollama compatibility are deferred");
-    expect(resultText(exported)).toContain("spec.inferenceProviders");
+    expect(resultText(exported)).not.toContain("spec.inferenceProviders");
     expect(resultText(exported)).toContain("unsupported");
     expect(resultText(exported)).toContain("Config export failed");
     expect(fs.existsSync(firstPath), "Deferred compatibility must prevent publication").toBe(false);
