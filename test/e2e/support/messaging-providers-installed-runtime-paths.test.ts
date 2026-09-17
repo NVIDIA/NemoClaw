@@ -14,14 +14,14 @@ import {
 } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 describe("messaging provider installed-runtime paths", () => {
-  it("finds the installed WeChat runtime in its managed npm project", () => {
+  it("finds the installed WeChat runtime through the root reported by OpenClaw (#11766)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-runtime-location-"));
     const stateDir = path.join(dir, "state");
     const pluginRoot = path.join(
       stateDir,
       "npm",
       "projects",
-      "wechat-project",
+      "openclaw-openclaw-weixin-0123456789",
       "node_modules",
       "@tencent-weixin",
       "openclaw-weixin",
@@ -33,7 +33,34 @@ describe("messaging provider installed-runtime paths", () => {
         path.join(pluginRoot, "package.json"),
         JSON.stringify({ name: "@tencent-weixin/openclaw-weixin", version: "2.4.3" }),
       );
-      expect(resolveInstalledWechatPluginRoot(stateDir)).toBe(fs.realpathSync(pluginRoot));
+      expect(resolveInstalledWechatPluginRoot(stateDir, pluginRoot)).toBe(
+        fs.realpathSync(pluginRoot),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not discover WeChat from the retired managed npm project tree (#11766)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-retired-runtime-"));
+    const stateDir = path.join(dir, "state");
+    const retiredRoot = path.join(
+      stateDir,
+      "npm",
+      "projects",
+      "legacy",
+      "node_modules",
+      "@tencent-weixin",
+      "openclaw-weixin",
+    );
+
+    try {
+      fs.mkdirSync(retiredRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(retiredRoot, "package.json"),
+        JSON.stringify({ name: "@tencent-weixin/openclaw-weixin", version: "2.4.3" }),
+      );
+      expect(resolveInstalledWechatPluginRoot(stateDir)).toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

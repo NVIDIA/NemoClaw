@@ -85,7 +85,6 @@ COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
-COPY agents/hermes/runtime-boundaries.patch /scripts/hermes-runtime-boundaries.patch
 COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /scripts/hermes-secure-dir-skip-chmod.patch
 
@@ -106,9 +105,6 @@ COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/pa
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
-COPY agents/hermes/hindsight-lazy-integrity.patch /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
-COPY agents/hermes/hindsight-client-probe-requirements.txt /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt
-ADD --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54 https://files.pythonhosted.org/packages/1a/99/84ba7273339d0f3dfa57901b846489d2e5c2cd731470167757f1935fffbd/aiohttp_retry-2.9.1-py3-none-any.whl /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
@@ -224,7 +220,6 @@ ENV HERMES_SKIP_CHMOD=1
 # appends to the OpenShell trust bundle at runtime. The CA is a public
 # certificate, not a secret, so baking it into an image layer is acceptable.
 ARG NEMOCLAW_CORPORATE_CA_B64
-ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670001bb9974ac8a5584901880982f6509747b8
 ARG NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256=ffae3271120cf53eb8a7f574f76758eac3ea172f9ddc22c1056277e37d8d392c
 ARG NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256=1c1a898226bc67b123ec72847d4dcda7abbab1e95958c9e019790d9425e15d69
 ARG NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256=130cf4e76d6f4f16b85517cf8d3d81dfe294aff63d6c561b979971c401f78761
@@ -314,36 +309,7 @@ RUN rm /scripts/npm-12.0.2.tgz \
         "$NEMOCLAW_HERMES_SECURE_DIR_OUTPUT_SHA256" /opt/hermes/hermes_cli/config.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes secure-directory patched output identity mismatch" >&2; exit 1; } \
-    && rm /scripts/hermes-secure-dir-skip-chmod.patch \
-    && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
-    && if ! grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py; then \
-        git -C /opt/hermes apply --check \
-            --include=hermes_constants.py \
-            --include=hermes_cli/env_loader.py \
-            --include=hermes_cli/plugins.py \
-            --include=plugins/memory/__init__.py \
-            --include=plugins/cron_providers/__init__.py \
-            --include=providers/__init__.py \
-            --include=tools/lazy_deps.py \
-            /scripts/hermes-runtime-boundaries.patch; \
-        git -C /opt/hermes apply \
-            --include=hermes_constants.py \
-            --include=hermes_cli/env_loader.py \
-            --include=hermes_cli/plugins.py \
-            --include=plugins/memory/__init__.py \
-            --include=plugins/cron_providers/__init__.py \
-            --include=providers/__init__.py \
-            --include=tools/lazy_deps.py \
-            /scripts/hermes-runtime-boundaries.patch; \
-    fi \
-    && grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py \
-    && grep -Fq 'nemoclaw_protected_process_control' /opt/hermes/hermes_cli/env_loader.py \
-    && grep -Fq 'nemoclaw_sanitized_installer_env' /opt/hermes/tools/lazy_deps.py \
-    && grep -Fq 'Managed gateway: user and project plugins disabled' /opt/hermes/hermes_cli/plugins.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
-    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
-    && rm /scripts/hermes-runtime-boundaries.patch
+    && rm /scripts/hermes-secure-dir-skip-chmod.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
@@ -485,22 +451,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-# Hermes 0.20.6 pins the Hindsight version but does not authenticate a
-# same-version wheel selected by its lazy installer. Bind that production
-# boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
-ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
 ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=5a3c5e9b51228649dc916aa36b3c51f2df8fa6807b139a35926844fd81b7a100
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    | sha256sum -c - \
-    && git -C /opt/hermes apply --check \
-        --include=tools/lazy_deps.py \
-        /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && git -C /opt/hermes apply \
-        --include=tools/lazy_deps.py \
-        /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -811,9 +762,9 @@ RUN node \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf0212bd824b0db8a33a66331
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=0fd14ee9db7be48bb5a55922618e5dc8574e03812abaf72f06fd26d07d9d56a3
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=631bd3e8bce109be73c4883b6f9536270eea4d09f7abc1f9af6b9ac5709c8d33
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=e2093cae9d6460262c118c4445b82745df7eaad3cbe0be7bb4907d6facd5d321
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=8173abf39766a41afad3110622ce7dc78612a4cc96ea75e88150125e7dabc8b5
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=dbd32832383f174878c08529947f5d81911152e1516b6f960824db3c7f7ac1e9
 # hadolint ignore=DL4006
@@ -1275,124 +1226,10 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# Exercise all sandbox-authored plugin roots against the real patched Hermes
-# loaders. The root-separated marker makes them inert for gateway while the
-# no-marker same-identity probe retains upstream user-plugin behavior. Every
-# hostile fixture and marker is removed in this layer.
-# hadolint ignore=DL3003
-RUN set -eu; \
-    marker=/run/nemoclaw/hermes-bundled-plugins-only; \
-    user_plugins=/sandbox/.hermes/plugins; \
-    project_root=/sandbox/nemoclaw-hostile-project; \
-    fake_bundled=/sandbox/nemoclaw-hostile-bundled; \
-    rm -rf "$user_plugins" "$project_root" "$fake_bundled"; \
-    install -d -o sandbox -g sandbox -m 0770 \
-        "$user_plugins/nemoclaw" \
-        "$user_plugins/model-providers/nemoclaw-hostile" \
-        "$user_plugins/nemoclaw-hostile-memory" \
-        "$user_plugins/nemoclaw-hostile-cron" \
-        "$project_root/.hermes/plugins/nemoclaw" \
-        "$fake_bundled/nemoclaw"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-user-plugin").write_text("executed")' \
-        'def register(ctx): pass' \
-        > "$user_plugins/nemoclaw/__init__.py"; \
-    printf '%s\n' 'name: nemoclaw' 'version: 0.0.0' > "$user_plugins/nemoclaw/plugin.yaml"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-model-provider").write_text("executed")' \
-        > "$user_plugins/model-providers/nemoclaw-hostile/__init__.py"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-memory-provider").write_text("executed")' \
-        '# MemoryProvider' \
-        > "$user_plugins/nemoclaw-hostile-memory/__init__.py"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-cron-provider").write_text("executed")' \
-        '# CronScheduler' \
-        > "$user_plugins/nemoclaw-hostile-cron/__init__.py"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-project-plugin").write_text("executed")' \
-        'def register(ctx): pass' \
-        > "$project_root/.hermes/plugins/nemoclaw/__init__.py"; \
-    printf '%s\n' 'name: nemoclaw' 'version: 0.0.0' > "$project_root/.hermes/plugins/nemoclaw/plugin.yaml"; \
-    printf '%s\n' \
-        'from pathlib import Path' \
-        'Path("/tmp/nemoclaw-hostile-bundled-plugin").write_text("executed")' \
-        'def register(ctx): pass' \
-        > "$fake_bundled/nemoclaw/__init__.py"; \
-    printf '%s\n' 'name: nemoclaw' 'version: 0.0.0' > "$fake_bundled/nemoclaw/plugin.yaml"; \
-    chown -R sandbox:sandbox "$user_plugins" "$project_root" "$fake_bundled"; \
-    if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        'from hermes_constants import nemoclaw_managed_gateway_plugins_only; nemoclaw_managed_gateway_plugins_only()' 2>/dev/null; then \
-        echo "ERROR: gateway accepted a missing managed plugin marker" >&2; exit 1; \
-    fi; \
-    printf 'unsafe\n' > "$marker"; \
-    chown root:root "$marker"; \
-    chmod 0644 "$marker"; \
-    if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        'from hermes_constants import nemoclaw_managed_gateway_plugins_only; nemoclaw_managed_gateway_plugins_only()' 2>/dev/null; then \
-        echo "ERROR: gateway accepted an unsafe managed plugin marker" >&2; exit 1; \
-    fi; \
-    printf '1\n' > "$marker"; \
-    chown root:root "$marker"; \
-    chmod 0444 "$marker"; \
-    cd /opt/hermes; \
-    HERMES_HOME=/sandbox/.hermes \
-        HERMES_BUNDLED_PLUGINS="$fake_bundled" \
-        HERMES_ENABLE_PROJECT_PLUGINS=0 \
-        /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        "from pathlib import Path; from hermes_cli.plugins import discover_plugins, get_plugin_manager; from plugins.memory import _get_user_plugins_dir as memory_user_dir; from plugins.cron_providers import _get_user_plugins_dir as cron_user_dir; from providers import _user_plugins_dir as model_user_dir; discover_plugins(); plugin = get_plugin_manager()._plugins['nemoclaw']; assert plugin.enabled is True and plugin.error is None; assert plugin.manifest.source == 'bundled'; assert Path(plugin.manifest.path).resolve() == Path('/opt/hermes/plugins/nemoclaw').resolve(); assert memory_user_dir() is None; assert cron_user_dir() is None; assert model_user_dir() is None"; \
-    test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'; \
-    cd "$project_root"; \
-    HERMES_HOME=/sandbox/.hermes \
-        HERMES_BUNDLED_PLUGINS="$fake_bundled" \
-        HERMES_ENABLE_PROJECT_PLUGINS=1 \
-        /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        "from hermes_cli.plugins import discover_plugins; discover_plugins()"; \
-    test ! -e /tmp/nemoclaw-hostile-user-plugin; \
-    test ! -e /tmp/nemoclaw-hostile-model-provider; \
-    test ! -e /tmp/nemoclaw-hostile-memory-provider; \
-    test ! -e /tmp/nemoclaw-hostile-cron-provider; \
-    test ! -e /tmp/nemoclaw-hostile-project-plugin; \
-    test ! -e /tmp/nemoclaw-hostile-bundled-plugin; \
-    rm -f "$marker"; \
-    cd /opt/hermes; \
-    HERMES_HOME=/sandbox/.hermes \
-        HERMES_BUNDLED_PLUGINS=/opt/hermes/plugins \
-        HERMES_ENABLE_PROJECT_PLUGINS=0 \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        "from hermes_cli.plugins import discover_plugins; discover_plugins()"; \
-    test "$(stat -c '%U:%G' /tmp/nemoclaw-hostile-user-plugin)" = 'sandbox:sandbox'; \
-    rm -rf "$user_plugins" "$project_root" "$fake_bundled"; \
-    rm -f /tmp/nemoclaw-hostile-user-plugin; \
-    install -d -o sandbox -g sandbox -m 0770 "$user_plugins"; \
-    rm -f /sandbox/.hermes/runtime/state.db \
-        /sandbox/.hermes/runtime/state.db-wal \
-        /sandbox/.hermes/runtime/state.db-shm
-
-# Exercise the reviewed runtime installer without shipping Hindsight in the
-# image. Root-separated startup gives the gateway a private, ephemeral target
-# below root-owned /run/nemoclaw; the sandbox-owned durable target remains for
-# interactive sandbox commands and is never activated by the gateway. The
-# hostile module and executable .pth fixture below prove that separation at the
-# real Hermes bootstrap boundary. Remove both probe installs before publishing
-# the image so selecting Hindsight still owns the runtime retrieval event.
-#
 # uv creates the Hermes virtual environment without pip. Seed pip from Python's
 # bundled ensurepip payload while this layer is still root, then verify the
 # sandbox can read but cannot modify the virtual environment used by the
-# installer. The build-only probe wheel has no upstream payload;
-# Dockerfile.base separately verifies the checksum-pinned official Hindsight
-# artifacts without distributing them.
+# installer.
 RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
@@ -1434,56 +1271,6 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
             if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
             exit 0' \
     && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
-    && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \
-    && cp /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
-        /tmp/nemoclaw-hindsight-probe/aiohttp_retry-2.9.1-py3-none-any.whl \
-    && rm /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
-    && /opt/hermes/.venv/bin/python -I -c \
-        "import zipfile; entries = {'nemoclaw_lazy_probe/__init__.py': 'NEMOCLAW_BUILD_PROBE_FIXTURE = True\n', 'nemoclaw_lazy_probe-1.0.0.dist-info/METADATA': 'Metadata-Version: 2.4\nName: nemoclaw-lazy-probe\nVersion: 1.0.0\nSummary: NemoClaw offline lazy-installer build probe\n\n', 'nemoclaw_lazy_probe-1.0.0.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: NemoClaw build probe\nRoot-Is-Purelib: true\nTag: py3-none-any\n', 'nemoclaw_lazy_probe-1.0.0.dist-info/RECORD': 'nemoclaw_lazy_probe/__init__.py,,\nnemoclaw_lazy_probe-1.0.0.dist-info/METADATA,,\nnemoclaw_lazy_probe-1.0.0.dist-info/WHEEL,,\nnemoclaw_lazy_probe-1.0.0.dist-info/RECORD,,\n'}; wheel = zipfile.ZipFile('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl', 'w', compression=zipfile.ZIP_DEFLATED); [wheel.writestr(name, data) for name, data in entries.items()]; wheel.close()" \
-    && chown root:root /tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl \
-    && chmod 0444 /tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl \
-    && install -d -o root -g root -m 0755 /run/nemoclaw \
-    && printf '1\n' > /run/nemoclaw/hermes-bundled-plugins-only \
-    && chown root:root /run/nemoclaw/hermes-bundled-plugins-only \
-    && chmod 0444 /run/nemoclaw/hermes-bundled-plugins-only \
-    && rm -rf /run/nemoclaw/hermes-gateway-lazy-packages \
-    && install -d -o gateway -g gateway -m 0700 /run/nemoclaw/hermes-gateway-lazy-packages \
-    && test "$(stat -c '%U:%G %a' /run/nemoclaw/hermes-gateway-lazy-packages)" = "gateway:gateway 700" \
-    && rm -rf /sandbox/.hermes/lazy-packages \
-    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe \
-    && printf '%s\n' 'NEMOCLAW_SANDBOX_TAMPER_FIXTURE = True' > /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe/__init__.py \
-    && printf '%s\n' "import pathlib; pathlib.Path('/tmp/nemoclaw-sandbox-lazy-pth-executed').write_text('unsafe')" > /sandbox/.hermes/lazy-packages/nemoclaw_sandbox_tamper.pth \
-    && chown -R sandbox:sandbox /sandbox/.hermes/lazy-packages \
-    && chmod 0750 /sandbox/.hermes/lazy-packages /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe \
-    && chmod 0640 /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe/__init__.py /sandbox/.hermes/lazy-packages/nemoclaw_sandbox_tamper.pth \
-    && HOME=/sandbox \
-        PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
-        PIP_NO_INDEX=1 \
-        UV_CACHE_DIR=/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache \
-        UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
-        UV_NO_CACHE=1 \
-        UV_OFFLINE=1 \
-        HERMES_HOME=/sandbox/.hermes \
-        HERMES_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages \
-        /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        /opt/hermes/.venv/bin/python -I -c \
-        "from tools import lazy_deps; result = lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',)); assert result.success, result.stderr or result.stdout" \
-    && rm -rf /tmp/nemoclaw-hindsight-probe \
-    && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
-        env HERMES_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages \
-        /opt/hermes/.venv/bin/python -I -c \
-        "import hermes_bootstrap, nemoclaw_lazy_probe, importlib.metadata as m, pathlib, sys; gateway_target = pathlib.Path('/run/nemoclaw/hermes-gateway-lazy-packages').resolve(); sandbox_target = pathlib.Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('nemoclaw-lazy-probe') == '1.0.0'; assert nemoclaw_lazy_probe.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert pathlib.Path(nemoclaw_lazy_probe.__file__).resolve().is_relative_to(gateway_target); assert str(sandbox_target) not in sys.path; assert not pathlib.Path('/tmp/nemoclaw-sandbox-lazy-pth-executed').exists()" \
-    && test ! -e /tmp/nemoclaw-sandbox-lazy-pth-executed \
-    && test "$(stat -c '%U:%G' /run/nemoclaw/hermes-gateway-lazy-packages/nemoclaw_lazy_probe/__init__.py)" = "gateway:gateway" \
-    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        sh -eu -c 'test ! -r /run/nemoclaw/hermes-gateway-lazy-packages/nemoclaw_lazy_probe/__init__.py; if printf unsafe > /run/nemoclaw/hermes-gateway-lazy-packages/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi' \
-    && test ! -e /run/nemoclaw/hermes-gateway-lazy-packages/.nemoclaw-sandbox-write-probe \
-    && rm -rf /run/nemoclaw/hermes-gateway-lazy-packages \
-    && rm -f /run/nemoclaw/hermes-bundled-plugins-only \
-    && rm -rf /sandbox/.hermes/lazy-packages \
-    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
-    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
-    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && rm -rf /sandbox/.cache \
     && chown sandbox:sandbox /sandbox/.hermes \
     && chmod 3770 /sandbox/.hermes \
@@ -1659,8 +1446,6 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
-    && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && check_absent /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
@@ -1669,9 +1454,6 @@ RUN check_metadata() { \
     && check_absent /root/.cache/node-gyp \
     && check_absent /root/.cache/uv \
     && check_absent /sandbox/.cache \
-    && check_absent /run/nemoclaw/hermes-gateway-lazy-packages \
-    && check_absent /run/nemoclaw/hermes-bundled-plugins-only \
-    && check_absent /tmp/nemoclaw-sandbox-lazy-pth-executed \
     && check_absent /sandbox/.hermes/managed-policy.json \
     && check_absent /sandbox/.hermes/runtime/state.db \
     && check_absent /sandbox/.hermes/runtime/state.db-wal \
@@ -1690,7 +1472,6 @@ RUN check_metadata() { \
     && check_metadata /scripts/upgrade-bundled-npm.mts 'root:root 444' \
     && check_metadata /ci/reviewed-npm-audit.json 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
-    && check_metadata /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/managed_policy.py 'root:root 444' \
