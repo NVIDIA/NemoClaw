@@ -39,25 +39,20 @@ API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 HERMES_API_PORT_RANGE_START = 8642
 HERMES_API_PORT_RANGE_END = 8652
 MANAGED_HERMES_HOME = "/sandbox/.hermes"
-MANAGED_BUNDLED_PLUGINS = "/opt/hermes/plugins"
 SANDBOX_LAZY_INSTALL_TARGET = "/sandbox/.hermes/lazy-packages"
-GATEWAY_LAZY_INSTALL_TARGET = "/run/nemoclaw/hermes-gateway-lazy-packages"
 ENV_FILE_DENIED_CONTROL_KEYS = frozenset(
     {
         "BASH_ENV",
         "ENV",
-        "HERMES_BUNDLED_PLUGINS",
         "HERMES_CONFIG",
-        "HERMES_ENABLE_PROJECT_PLUGINS",
         "HERMES_ENV",
         "HERMES_HOME",
-        "HERMES_LAZY_INSTALL_TARGET",
         "HOME",
         "PATH",
         "VIRTUAL_ENV",
     }
 )
-ENV_FILE_DENIED_CONTROL_PREFIXES = ("DYLD_", "LD_", "PIP_", "PYTHON", "UV_")
+ENV_FILE_DENIED_CONTROL_PREFIXES = ("DYLD_", "LD_")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
 # API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
@@ -144,20 +139,6 @@ def _sandbox_identity() -> tuple[int, int] | None:
         return pwd.getpwnam("sandbox").pw_uid, grp.getgrnam("sandbox").gr_gid
     except KeyError:
         return None
-
-
-def _expected_lazy_install_target() -> str:
-    effective_uid = os.geteuid()
-    if effective_uid == 0:
-        return GATEWAY_LAZY_INSTALL_TARGET
-    try:
-        if effective_uid == pwd.getpwnam("gateway").pw_uid:
-            return GATEWAY_LAZY_INSTALL_TARGET
-    except KeyError:
-        # Development hosts commonly have no gateway account; their current
-        # user exercises the same-identity sandbox contract.
-        pass
-    return SANDBOX_LAZY_INSTALL_TARGET
 
 
 def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
@@ -542,30 +523,22 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
-def _validate_runtime_env(source: dict[str, str], expected_lazy_target: str) -> int:
+def _validate_runtime_env(source: dict[str, str]) -> int:
     violations: list[str] = []
     violation_count = 0
-    if source.get("HERMES_LAZY_INSTALL_TARGET") != expected_lazy_target:
-        violation_count += 1
-        if len(violations) < MAX_VIOLATIONS:
-            violations.append("HERMES_LAZY_INSTALL_TARGET")
     if source.get("HERMES_HOME") != MANAGED_HERMES_HOME:
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:
             violations.append("HERMES_HOME")
-    if source.get("HERMES_BUNDLED_PLUGINS") != MANAGED_BUNDLED_PLUGINS:
-        violation_count += 1
-        if len(violations) < MAX_VIOLATIONS:
-            violations.append("HERMES_BUNDLED_PLUGINS")
     for key, value in sorted(source.items()):
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
             continue
-        if key in {"HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS"}:
+        if key in {"HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME"}:
             continue
-        if key in {"HERMES_CONFIG", "HERMES_ENABLE_PROJECT_PLUGINS", "HERMES_ENV"}:
+        if key in {"HERMES_CONFIG", "HERMES_ENV"}:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
@@ -608,7 +581,7 @@ def _validate_runtime_env(source: dict[str, str], expected_lazy_target: str) -> 
 
 def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
-    return _validate_runtime_env(source, _expected_lazy_install_target())
+    return _validate_runtime_env(source)
 
 
 def validate_runtime_env_json(stream: BinaryIO) -> int:
@@ -649,10 +622,9 @@ def validate_managed_gateway_env(supervisor_env: dict[str, str]) -> int:
         {
             "HERMES_LAZY_INSTALL_TARGET": SANDBOX_LAZY_INSTALL_TARGET,
             "HERMES_HOME": MANAGED_HERMES_HOME,
-            "HERMES_BUNDLED_PLUGINS": MANAGED_BUNDLED_PLUGINS,
         }
     )
-    return _validate_runtime_env(gateway_env, SANDBOX_LAZY_INSTALL_TARGET)
+    return _validate_runtime_env(gateway_env)
 
 
 # Config-output masking layer for the wrapper-installed `hermes config show`

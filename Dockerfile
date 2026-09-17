@@ -1449,13 +1449,10 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 # present. Same-UID OpenShell sandboxes retain OpenClaw's private modes. The
 # patch leaves generic credential and identity store enforcement unchanged,
 # avoids a non-owner chmod when a reviewed shared database mode is already
-# safe, keeps generated models files readable by the shared group, and ignores
-# the obsolete update-check cache migration that cannot archive across a
-# root-owned parent.
+# safe and keeps generated models files readable by the shared group.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
-# group-shared state databases and split-user cache migrations without
-# startup warnings.
+# group-shared state databases.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
@@ -2112,12 +2109,6 @@ RUN set -eu; \
         "$config_dir/plugin-runtime-deps"; do \
         install -d -o sandbox -g sandbox -m 2770 "$dir"; \
     done; \
-    update_check="$config_dir/update-check.json"; \
-    [ ! -L "$update_check" ] \
-        || { echo "ERROR: refusing symlinked OpenClaw update-check state" >&2; exit 1; }; \
-    [ ! -e "$update_check" ] || [ -f "$update_check" ] \
-        || { echo "ERROR: refusing non-regular OpenClaw update-check state" >&2; exit 1; }; \
-    rm -f "$update_check"; \
     exec_approvals="$config_dir/exec-approvals.json"; \
     [ ! -L "$exec_approvals" ] \
         || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
