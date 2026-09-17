@@ -220,10 +220,8 @@ export async function assertHermesCliAdapterLiveContract({
       timeoutMs: 60_000,
     },
   );
-  expect(guardedUsage.exitCode, resultText(guardedUsage)).toBe(2);
-  expect(resultText(guardedUsage)).toContain(
-    "[COMPATIBILITY] Refusing resumed one-shot with --usage-file",
-  );
+  expect(guardedUsage.exitCode, resultText(guardedUsage)).toBe(1);
+  expect(resultText(guardedUsage)).toContain(`session not found: ${seedSessionId}`);
   expect(
     [...(await listDefaultSessions("phase-4-cli-adapter-sessions-after-guarded-usage"))].sort(),
   ).toEqual([...sessionsBeforeGuardedUsage].sort());
