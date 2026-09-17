@@ -379,22 +379,6 @@ export function isAdvisoryGatewayRouteConflict(
   );
 }
 
-/**
- * True only when a provider/model-only route mutation can safely reconcile the
- * conflict. Provider-global endpoint, API-family, and credential changes stay
- * fail-closed while another registered sandbox depends on the current identity.
- */
-export function isAdvisoryProviderModelRouteConflict(
-  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
-): boolean {
-  return (
-    result.conflicts.length > 0 &&
-    result.conflicts.every(
-      (conflict) => conflict.scope !== "requested" && conflict.reason === "provider-model",
-    )
-  );
-}
-
 /** Explain the single-gateway side effect immediately before route mutation. */
 export function formatGatewayRouteImpactWarning(
   result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,

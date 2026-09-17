@@ -5,7 +5,7 @@ import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
   formatGatewayRouteImpactWarning,
-  isAdvisoryProviderModelRouteConflict,
+  isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import {
   buildHttpsPinRouteBaseUrl,
@@ -420,7 +420,7 @@ function routeImpactWarningOrThrow(options: {
     sandboxes: options.sandboxes,
   });
   if (compatibility.ok) return null;
-  if (isAdvisoryProviderModelRouteConflict(compatibility)) {
+  if (isAdvisoryGatewayRouteConflict(compatibility)) {
     return formatGatewayRouteImpactWarning(compatibility, "inference-set");
   }
   throw new InferenceSetError(formatGatewayRouteConflict(compatibility), 2);
