@@ -295,4 +295,18 @@ describe("createLlamaCppSelectionHandler", () => {
     expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("host.openshell.internal:8081"));
   });
+
+  it("skips the sandbox probe after managed llama.cpp install (#11626)", async () => {
+    const probeSandboxReachability = vi.fn(async () => ({
+      ok: false as const,
+      reason: "tcp_failed" as const,
+      networkName: "openshell",
+    }));
+    const handler = createLlamaCppSelectionHandler(deps({ probeSandboxReachability }));
+
+    await expect(handler(state(), null, null, { skipSandboxReachability: true })).resolves.toBe(
+      "selected",
+    );
+    expect(probeSandboxReachability).not.toHaveBeenCalled();
+  });
 });

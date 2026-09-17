@@ -10,6 +10,8 @@ export interface HostServiceUnreachableResult {
   readonly networkName: string;
   readonly subnet?: string;
   readonly gatewayIp?: string;
+  readonly sandboxHostAddress?: string | null;
+  readonly runtimeProviderId?: string;
 }
 
 const HOST_INTERNAL_NAME = "host.openshell.internal";

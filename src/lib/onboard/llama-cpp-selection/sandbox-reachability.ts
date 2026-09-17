@@ -11,6 +11,7 @@
  */
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp";
+import { cliName } from "../branding";
 import {
   formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
@@ -19,6 +20,7 @@ import {
 } from "../host-service-reachability";
 
 const SERVICE_LABEL = "llama.cpp server";
+const HOST_INTERNAL_NAME = "host.openshell.internal";
 
 export type LlamaCppSandboxReachabilityResult = HostServiceReachabilityResult;
 export type LlamaCppSandboxReachabilityOptions = Partial<HostServiceReachabilityOptions>;
@@ -36,6 +38,15 @@ export function formatLlamaCppSandboxUnreachableMessage(
   result: LlamaCppSandboxReachabilityResult,
   port: number = LLAMA_CPP_PORT,
 ): string {
+  const sandboxHost = result.sandboxHostAddress;
+  if (typeof sandboxHost === "string" && sandboxHost.length > 0) {
+    return [
+      `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
+      `    Host-side 127.0.0.1:${port} passed. The sandbox route uses ${sandboxHost}.`,
+      `    Bind or publish the llama.cpp listener so ${sandboxHost}:${port} is reachable from the sandbox.`,
+      `    Then rerun \`${cliName()} onboard\`.`,
+    ].join("\n");
+  }
   const gatewayBind =
     result.gatewayIp === undefined
       ? `-p 127.0.0.1:${port}:${port} -p <docker-gateway-ip>:${port}:${port}`
@@ -46,8 +57,9 @@ export function formatLlamaCppSandboxUnreachableMessage(
     extraLines: [
       `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the OpenShell Docker bridge IP.`,
       `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind can make this sandbox route unreachable.`,
-      "    Publish the port on the Docker gateway IP as well, for example:",
+      "    If the server runs in Docker, publish the port on the Docker gateway IP as well, for example:",
       `      docker run ... ${gatewayBind} ...`,
+      `    If you run llama-server on the host, bind it on ${result.gatewayIp ?? "the Docker gateway IP"}:${port} or allow the sandbox subnet. A 127.0.0.1-only host bind is not enough.`,
     ],
   });
 }
