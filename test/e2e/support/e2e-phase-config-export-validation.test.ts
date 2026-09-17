@@ -22,7 +22,7 @@ import {
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
-import { ShellProbe } from "../fixtures/shell-probe.ts";
+import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
 import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
 
@@ -210,7 +210,13 @@ function dependencies(
     closeFile: fs.closeSync,
     inspectFile: (filePath) => {
       const stat = fs.lstatSync(filePath);
-      return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+      return {
+        device: stat.dev,
+        inode: stat.ino,
+        isFile: stat.isFile(),
+        linkCount: stat.nlink,
+        size: stat.size,
+      };
     },
     inspectOpenFile: (file) => {
       const stat = fs.fstatSync(file);
@@ -284,13 +290,17 @@ function dependencies(
 
 function successfulHost(raw: string) {
   return {
-    command: vi.fn(async () => ({
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
-      stderr: "",
-    })),
+    command: vi.fn(
+      async (): Promise<
+        Pick<ShellProbeResult, "exitCode" | "signal" | "timedOut" | "stdout" | "stderr">
+      > => ({
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+        stderr: "",
+      }),
+    ),
     nemoclaw: vi.fn(async (args: string[]) => {
       const outputPath = args.at(args.indexOf("--output") + 1)!;
       fs.writeFileSync(outputPath, raw, "utf8");
@@ -480,6 +490,88 @@ describe("automatic config export validation phase", () => {
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(host.nemoclaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects truncated policy output even when its tail contains a complete policy (#11485)", async () => {
+    const policySuffix = `\n---\n${JSON.stringify(POLICY)}`;
+    const retainedTail =
+      "x".repeat(1024 * 1024 - Buffer.byteLength(policySuffix, "utf8")) + policySuffix;
+    const host = successfulHost(JSON.stringify(document()));
+    host.command.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: `[shell-probe omitted 2048 earlier bytes; showing up to the last 1048576 bytes]\n${retainedTail}`,
+      stderr: "",
+    });
+    const test = fixture({ host });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      failureStage: "observation",
+      passed: false,
+      cleanup: { succeeded: true },
+    });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(host.nemoclaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects a truncated policy after redaction shrinks the captured tail (#11485)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-policy-capture-"));
+    createdDirectories.push(directory);
+    const openshellPath = path.join(directory, "fake-openshell.cjs");
+    const secret = `policy-redaction-canary-${"q".repeat(256)}`;
+    const policySuffix = `\n${secret}\n---\n${JSON.stringify(POLICY)}`;
+    fs.writeFileSync(
+      openshellPath,
+      `#!${process.execPath}
+const suffix = ${JSON.stringify(policySuffix)};
+process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "utf8")) + suffix);
+`,
+      { mode: 0o700 },
+    );
+    const progress = startTestProgress("policy capture", ["observe policy", "validate export"], {
+      logLine: () => undefined,
+    });
+    try {
+      const probe = new ShellProbe({
+        artifacts: new ArtifactSink(directory, [secret]),
+        progress,
+        redact: (text) => text,
+        signal: new AbortController().signal,
+      });
+      const capturedHost = new HostCliClient(probe, { openshellPath });
+      progress.phase("observe policy");
+      const captured = await capturedHost.command(openshellPath, [], {
+        captureLimitBytes: 1024 * 1024,
+        persistArtifacts: false,
+        redactionValues: [secret],
+      });
+      expect(captured.exitCode).toBe(0);
+      expect(captured.stdout).toMatch(/^\[shell-probe omitted \d+ earlier bytes;/u);
+      expect(Buffer.byteLength(captured.stdout, "utf8")).toBeLessThan(1024 * 1024);
+      expect(captured.stdout).not.toContain(secret);
+
+      const host = successfulHost(JSON.stringify(document()));
+      host.command.mockResolvedValueOnce(captured);
+      const test = fixture({ host, secret });
+      progress.phase("validate export");
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)).toMatchObject({
+        classification: "failure",
+        failureStage: "observation",
+        passed: false,
+        cleanup: { succeeded: true },
+      });
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+      expect(host.nemoclaw).not.toHaveBeenCalled();
+    } finally {
+      progress.stop();
+    }
   });
 
   it("rejects unsafe registry endpoints without retaining credential material (#11485)", async () => {
@@ -1040,6 +1132,44 @@ process.exitCode = 1;
       diagnostic: "config export output must have exactly one hard link",
     });
     expect(readOpenFile).not.toHaveBeenCalled();
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
+    expect(fs.existsSync(exportDirectory.path)).toBe(false);
+    expect(fs.readFileSync(outsidePath, "utf8")).toBe(raw);
+  });
+
+  it("withholds export evidence when a hard link is added during the read (#11485)", async () => {
+    const exportDirectory = { path: "" };
+    const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "config-export-link-race-"));
+    createdDirectories.push(outsideDirectory);
+    const outsidePath = path.join(outsideDirectory, "alias.yaml");
+    const raw = JSON.stringify(document());
+    const base = dependencies();
+    const test = fixture({
+      dependencies: {
+        ...base,
+        makeTempDirectory: (prefix) => {
+          const directory = base.makeTempDirectory(prefix);
+          exportDirectory.path = directory;
+          return directory;
+        },
+        readOpenFile: (file, limitBytes) => {
+          const contents = base.readOpenFile(file, limitBytes);
+          fs.linkSync(path.join(exportDirectory.path, "config.yaml"), outsidePath);
+          return contents;
+        },
+      },
+      host: successfulHost(raw),
+    });
+
+    await captureFailure(test.phase.from(target("required"), instance()));
+
+    expect(test.writes.at(-1)).toMatchObject({
+      classification: "failure",
+      passed: false,
+      failureStage: "export",
+      cleanup: { succeeded: true },
+      diagnostic: "config export output changed while it was being read",
+    });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
     expect(fs.existsSync(exportDirectory.path)).toBe(false);
     expect(fs.readFileSync(outsidePath, "utf8")).toBe(raw);

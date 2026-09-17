@@ -147,7 +147,13 @@ export type ConfigExportDocument = ValidatedNemoClawConfig;
 
 export interface ConfigExportValidationDependencies {
   closeFile(file: number): void;
-  inspectFile(filePath: string): { device: number; inode: number; isFile: boolean; size: number };
+  inspectFile(filePath: string): {
+    device: number;
+    inode: number;
+    isFile: boolean;
+    linkCount: number;
+    size: number;
+  };
   inspectOpenFile(file: number): {
     device: number;
     inode: number;
@@ -170,7 +176,13 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
   closeFile: fs.closeSync,
   inspectFile: (filePath) => {
     const stat = fs.lstatSync(filePath);
-    return { device: stat.dev, inode: stat.ino, isFile: stat.isFile(), size: stat.size };
+    return {
+      device: stat.dev,
+      inode: stat.ino,
+      isFile: stat.isFile(),
+      linkCount: stat.nlink,
+      size: stat.size,
+    };
   },
   inspectOpenFile: (file) => {
     const stat = fs.fstatSync(file);
@@ -300,6 +312,12 @@ async function readEffectivePolicyDocument(
         redactionValues: secrets.redactionValues(),
         timeoutMs: options.timeout,
       });
+      if (
+        Buffer.byteLength(result.stdout, "utf8") > options.outputLimitBytes ||
+        /^\[shell-probe omitted \d+ earlier bytes;/u.test(result.stdout)
+      ) {
+        throw new Error("the effective sandbox policy exceeds the observation limit");
+      }
       return {
         status: result.exitCode,
         output: `${result.stderr}\n${result.stdout}`.trim(),
@@ -671,6 +689,7 @@ export class ConfigExportValidationPhaseFixture {
           const published = this.dependencies.inspectFile(outputPath);
           if (
             !published.isFile ||
+            published.linkCount !== 1 ||
             published.device !== output.device ||
             published.inode !== output.inode
           ) {

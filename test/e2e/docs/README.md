@@ -81,12 +81,14 @@ and base64url forms, and literal, escaped, wrapped, or encoded internal
 credential transport markers. It separately checks decoded YAML scalar keys
 and values, including binary scalars, for literal or encoded secrets and
 internal transport markers.
-The fixture caps each captured stdout and stderr stream at 64 KiB. Before
-reading or retaining an export, it opens the file without following symbolic
+The fixture caps each exporter stdout and stderr stream at 64 KiB. Effective
+policy stdout is limited to 1 MiB; truncated observations fail before export.
+Before reading or retaining an export, it opens the file without following symbolic
 links.
 The open descriptor must identify a regular file with exactly one hard link,
 no larger than 1 MiB. After the descriptor read, the published path must still
-identify the same device and inode. The fixture rejects a replacement. It
+identify the same device and inode with exactly one hard link. The fixture
+rejects a replacement or an added hard link. It
 creates the export in a private temporary directory, registers cleanup before
 it invokes the CLI, and removes the directory before it writes retained evidence.
 
