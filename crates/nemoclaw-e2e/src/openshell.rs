@@ -501,10 +501,20 @@ fn policy_status(
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
             version: 1,
-            policy: state
-                .active_policy
-                .clone()
-                .or_else(|| sandbox.spec.as_ref().unwrap().policy.clone()),
+            policy: state.active_policy.clone().or_else(|| {
+                let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
+                if !policy.network_policies.is_empty()
+                    && let Some(fs) = &mut policy.filesystem
+                    && !fs
+                        .read_only
+                        .iter()
+                        .chain(&fs.read_write)
+                        .any(|p| p == "/var/log")
+                {
+                    fs.read_only.push("/var/log".into());
+                }
+                Some(policy)
+            }),
             status: p::PolicyStatus::Loaded as i32,
             ..Default::default()
         }),

@@ -226,12 +226,13 @@ fn active_policy(
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
-        || policy_json(
+        || !network::loaded_policy_matches(
             revision
                 .policy
                 .as_ref()
                 .ok_or(ObservationError::Incomplete)?,
-        )? != expected
+            expected,
+        )?
     {
         return Err(ObservationError::Incomplete);
     }

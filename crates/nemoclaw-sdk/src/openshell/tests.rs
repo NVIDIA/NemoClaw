@@ -98,3 +98,61 @@ fn mutation_identity_checks_reject_foreign_ownership_and_replacements() {
     unbound.insert("id".into(), String::new());
     assert!(verify_identity(&unbound, &row).is_ok());
 }
+
+#[test]
+fn loaded_policy_accepts_only_the_runtime_log_directory_enrichment() {
+    let mut declared = policy();
+    let profile =
+        native_profile::definition("local", "http://172.30.122.1:18899/v1", "openai", false)
+            .unwrap();
+    declared.network_policies.insert(
+        profile.id.clone(),
+        proto::NetworkPolicyRule {
+            name: profile.id,
+            endpoints: profile.endpoints,
+            binaries: profile.binaries,
+        },
+    );
+    let expected = policy_json(&declared).unwrap();
+    let mut loaded = declared.clone();
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/var/log".into());
+    let response = |policy| proto::GetSandboxPolicyStatusResponse {
+        active_version: 2,
+        revision: Some(proto::SandboxPolicyRevision {
+            version: 2,
+            status: proto::PolicyStatus::Loaded as i32,
+            policy: Some(policy),
+            ..Default::default()
+        }),
+    };
+    assert!(active_policy(response(loaded.clone()), &expected).is_ok());
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/private".into());
+    assert!(active_policy(response(loaded), &expected).is_err());
+    let mut writable = declared.clone();
+    writable
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_write
+        .push("/var/log".into());
+    assert!(active_policy(response(writable), &expected).is_err());
+    let mut missing = declared.clone();
+    missing
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .retain(|p| p != "/usr");
+    assert!(active_policy(response(missing), &expected).is_err());
+    assert!(active_policy(response(declared), &expected).is_ok());
+}
