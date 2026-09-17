@@ -436,6 +436,7 @@ const {
 const {
   createFinalOnboardFlowPhases,
   finalizationHandlerDeps,
+  restartNativeGatewayForInitialSetup,
   runFinalOnboardFlowSlice,
 }: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
@@ -2448,19 +2449,18 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
-
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
-
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
+  restartNativeGateway: restartNativeGatewayForInitialSetup,
+  shouldRestartNativeGateway: isRoutedInferenceProvider,
 });
 const {
   buildChain,

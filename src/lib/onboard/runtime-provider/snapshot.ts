@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { captureOpenshell } from "../../adapters/openshell/runtime";
+import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry } from "../../state/registry/types";
 import { resolveSandboxGatewayName } from "../gateway-binding";
 import {
@@ -333,6 +334,26 @@ function dockerCanRepresentAcceleration(
   return Boolean(
     canonicalSource && canonicalTarget && isDeepStrictEqual(canonicalSource, canonicalTarget),
   );
+}
+
+/**
+ * Resolve the exact Docker-owned GPU selector that can replay a captured
+ * runtime snapshot during an authoritative rebuild. Device-path evidence is
+ * retained by restore validation, but it is not a sandbox-create selector.
+ */
+export function resolveDockerSnapshotRecreateGpuDevice(
+  snapshot: SandboxRuntimeSnapshot,
+): string | null {
+  if (snapshot.providerId !== "docker" || snapshot.runtime.providerId !== "docker") return null;
+  const acceleration = canonicalDockerAcceleration(snapshot.runtime.acceleration);
+  if (!acceleration || acceleration.kind === "none") return null;
+  const selectors = acceleration.devices.filter((device) => /^nvidia[.]com\/gpu=/iu.test(device));
+  if (selectors.length !== 1) {
+    throw new RuntimeProviderSnapshotError(
+      "Docker snapshot acceleration cannot be replayed by one sandbox GPU selector",
+    );
+  }
+  return selectors[0] ?? null;
 }
 
 function dockerGpuSelectors(

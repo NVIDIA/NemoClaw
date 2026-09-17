@@ -980,6 +980,7 @@ async function runInferenceSetWithoutHostLock(
     explicitPreferredInferenceApi,
     directProviderBinding,
     httpsPinProviderBinding,
+    routeImpactWarning,
   } = await finalizeInferenceSetRoute({
     prepared: preparedRoute,
     sandboxName,
@@ -1193,6 +1194,7 @@ async function runInferenceSetWithoutHostLock(
     }
 
     await assertProviderCurrentBeforeSelection?.();
+    if (routeImpactWarning) deps.log(`  ${routeImpactWarning}`);
     deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
     const setInferenceRoute = () =>
       deps.captureOpenshell(
