@@ -202,6 +202,7 @@ async function runDestroy(
     currentAfterDelete?: SandboxEntry | null;
     deleteResult?: { status: number; stdout: string; stderr: string };
     listResult?: { status: number; stdout: string; stderr: string };
+    listResults?: Array<{ status: number; stdout: string; stderr: string }>;
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -217,6 +218,11 @@ async function runDestroy(
       NonNullable<
         Parameters<typeof executeSandboxDestroy>[0]["deps"]
       >["hostLocalInferenceLifecycleOptions"]
+    >;
+    waitForSandboxDeleteAbsence?: NonNullable<
+      NonNullable<
+        Parameters<typeof executeSandboxDestroy>[0]["deps"]
+      >["waitForSandboxDeleteAbsence"]
     >;
   } = {},
 ) {
@@ -238,7 +244,10 @@ async function runDestroy(
     runtimeProvider.events.push(command);
     switch (`${String(args[0])}:${String(args[1])}`) {
       case "sandbox:list":
-        return options.listResult ?? { status: 0, stdout: "", stderr: "" };
+        return (
+          options.listResults?.shift() ??
+          options.listResult ?? { status: 0, stdout: "", stderr: "" }
+        );
       case "sandbox:delete":
         current = args.at(-1) === "alpha" ? afterDelete : current;
         return options.deleteResult ?? { status: 0, stdout: "", stderr: "" };
@@ -266,6 +275,8 @@ async function runDestroy(
             inspectOpenShellSandboxIdentityFingerprint: options.inspectSandboxIdentityFingerprint,
           }
         : {}),
+      waitForSandboxDeleteAbsence:
+        options.waitForSandboxDeleteAbsence ?? (async (condition) => await condition()),
       wipeSandboxState: () => undefined,
     },
   });
@@ -714,6 +725,20 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("waits for an accepted delete to become authoritatively absent", async () => {
+    const runtimeProvider = provider();
+    const { result } = await runDestroy(runtimeProvider, {
+      listResults: [
+        { status: 0, stdout: "alpha Deleting", stderr: "" },
+        { status: 0, stdout: "", stderr: "" },
+      ],
+      waitForSandboxDeleteAbsence: async (condition) => (await condition()) || (await condition()),
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
   });
 
   it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {

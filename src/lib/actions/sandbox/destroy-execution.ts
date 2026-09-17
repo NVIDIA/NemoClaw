@@ -89,6 +89,7 @@ type SandboxDestroyExecutionInput = {
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
+    waitForSandboxDeleteAbsence?: (condition: () => Promise<boolean>) => Promise<boolean>;
     wipeSandboxState?: typeof wipeSandboxState;
   };
 };
@@ -118,6 +119,14 @@ export type SandboxDestroyExecutionResult =
       hostLocalInferenceCleanupFailure?: string;
       deleteConfirmed?: boolean;
     };
+
+async function waitForSandboxDeleteAbsence(condition: () => Promise<boolean>): Promise<boolean> {
+  for (let attempt = 1; attempt <= 60; attempt += 1) {
+    if (await condition()) return true;
+    if (attempt < 60) await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+  }
+  return false;
+}
 
 function emptyMcpDestroyPreparation(
   runtimeSelection?: McpDestroyPreparation["runtimeSelection"],
@@ -599,14 +608,27 @@ export async function executeSandboxDestroy({
       (deleteResult.kind === "accepted" ||
         (deleteResult.kind === "failed" && deleteResult.ambiguous))
     ) {
-      const observed = await createCliOpenShellSandboxObserverFromRunner(
-        selectedRunOpenshell,
-      ).listSandboxes({
+      const observer = createCliOpenShellSandboxObserverFromRunner(selectedRunOpenshell);
+      let observed = await observer.listSandboxes({
         target: { kind: "named", gatewayName: effectiveDeleteGatewayName },
       });
+      const observeAbsence = async () => {
+        observed = await observer.listSandboxes({
+          target: { kind: "named", gatewayName: effectiveDeleteGatewayName },
+        });
+        return (
+          observed.ok &&
+          !observed.value.sandboxes.some((candidate) => candidate.name === sandboxName)
+        );
+      };
       alreadyGone =
         observed.ok &&
         !observed.value.sandboxes.some((candidate) => candidate.name === sandboxName);
+      if (!alreadyGone && deleteResult.kind === "accepted") {
+        alreadyGone = await (deps.waitForSandboxDeleteAbsence ?? waitForSandboxDeleteAbsence)(
+          observeAbsence,
+        );
+      }
       if (!alreadyGone && deleteResult.kind === "accepted") {
         const mcpRecoveryFailure = await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation);
         return {

@@ -238,35 +238,6 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
-                executeManagedGatewayRestart: async (_name) => {
-                  const result = spawnSync(
-                    process.execPath,
-                    [
-                      "-e",
-                      [
-                        'const fs = require("node:fs");',
-                        'const config = JSON.parse(fs.readFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_CONFIG, "utf8"));',
-                        "fs.writeFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_RUNTIME, JSON.stringify({ ownerAllowFrom: config.commands.ownerAllowFrom }));",
-                        'fs.appendFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG, "managed gateway restart\\n");',
-                      ].join("\n"),
-                    ],
-                    {
-                      encoding: "utf8",
-                      env: {
-                        ...process.env,
-                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: restartLog,
-                      },
-                    },
-                  );
-                  return {
-                    status: result.status ?? 1,
-                    stdout:
-                      result.status === 0
-                        ? `v1 ${"a".repeat(64)} complete ok 4241 4242\nGATEWAY_PID=4242`
-                        : result.stdout,
-                    stderr: result.stderr,
-                  };
-                },
                 waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
@@ -298,7 +269,9 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(fs.readFileSync(restartLog, "utf8")).toBe("managed gateway restart\n");
+      expect(fs.readFileSync(restartLog, "utf8")).toBe(
+        "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart\n",
+      );
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

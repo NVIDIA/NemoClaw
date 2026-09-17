@@ -55,11 +55,6 @@ describe("restartSandboxGateway native lifecycle", () => {
         stdout: "",
         stderr: "",
       })),
-      executeManagedGatewayRestart: vi.fn(async () => ({
-        status: 0,
-        stdout: `v1 ${"a".repeat(64)} complete ok 41 42\nGATEWAY_PID=42`,
-        stderr: "",
-      })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: vi.fn(() => true),
       ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => null),
@@ -70,7 +65,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     };
   }
 
-  it("asks the pinned managed controller to restart OpenClaw", async () => {
+  it("asks OpenClaw to restart with canonical HOME-derived state paths", async () => {
     silenceConsole();
     const deps = baseDeps();
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
@@ -80,8 +75,11 @@ describe("restartSandboxGateway native lifecycle", () => {
       restarted: true,
       healthPassed: true,
     });
-    expect(deps.executeManagedGatewayRestart).toHaveBeenCalledWith("alpha", 210000);
-    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
+    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
+      "alpha",
+      "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart",
+      210000,
+    );
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -102,24 +100,28 @@ describe("restartSandboxGateway native lifecycle", () => {
       "hermes gateway restart",
       210000,
     );
-    expect(deps.executeManagedGatewayRestart).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the managed OpenClaw controller omits its completion receipt", async () => {
+  it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeManagedGatewayRestart: vi.fn(async () => ({
-        status: 0,
-        stdout: "GATEWAY_PID=42",
-        stderr: "",
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      executeSandboxExecCommand: vi.fn(async () => ({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error: code: 'The service is currently unavailable', message: exec relay closed before the command reported an exit status",
       })),
     });
 
-    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toEqual({
-      ok: false,
-      failureLayer: "launch failure",
-      detail: "managed gateway supervisor returned an invalid completion receipt",
-    });
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toMatchObject(
+      {
+        ok: true,
+        healthPassed: true,
+      },
+    );
+    expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledOnce();
   });
 
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
@@ -146,21 +148,21 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway restart", 210000);
   });
 
-  it("reports the managed controller failure without an authorization verdict", async () => {
+  it("reports the native OpenClaw restart failure without an authorization verdict", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeManagedGatewayRestart: vi.fn(async () => ({
+      executeSandboxExecCommand: vi.fn(async () => ({
         status: 1,
         stdout: "",
-        stderr: "managed restart failed",
+        stderr: "native restart failed",
       })),
     });
     const result = await restartSandboxGateway("alpha", { quiet: true, deps });
 
     expect(result).toEqual({
       ok: false,
-      failureLayer: "launch failure",
-      detail: "managed restart failed",
+      failureLayer: "native agent command",
+      detail: "native restart failed",
     });
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
     expect(vi.mocked(console.error).mock.calls.join("\n")).not.toContain("authorization");

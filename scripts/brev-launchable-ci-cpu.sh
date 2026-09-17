@@ -330,7 +330,12 @@ sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
 rm -rf "$reviewed_npm_tmp"
 trap - EXIT
 [[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
-npm install --ignore-scripts 2>&1 | tail -3
+if [[ -n "${RUNNER_TEMP:-}" && -d "${RUNNER_TEMP}/openshell-sdk" ]]; then
+  env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+    bash .github/actions/ci-install-dependencies.sh none artifact
+else
+  npm install --ignore-scripts 2>&1 | tail -3
+fi
 info "Root deps installed"
 
 # --ignore-scripts above skips the `prepare` lifecycle which normally
