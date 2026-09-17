@@ -266,7 +266,7 @@ def configuration(name, harness="deepagents", model=None, inference=None):
             model_connection(inference, model["model"] if harness == "pi" else None)
         )
         if harness == "remote-agent":
-            config["harness"]["settings"]["base_url"] = model_connection(inference)["base_url"]
+            config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
     return config
 
 
