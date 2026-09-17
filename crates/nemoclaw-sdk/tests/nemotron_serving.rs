@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 fn input() -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let service = &mut value["spec"]["inferenceProviders"][0]["service"];
     *service = json!({
         "backend":"vllm", "authentication":"bearer",

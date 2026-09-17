@@ -55,7 +55,7 @@ mod tests {
     use super::*;
     use std::io::{self, Cursor};
 
-    const YAML: &[u8] = include_bytes!("../../../examples/remote-vllm.yaml");
+    const YAML: &[u8] = include_bytes!("../../../examples/spark/remote-vllm.yaml");
 
     #[tokio::test]
     async fn file_and_explicit_stdin_read_the_same_document() {

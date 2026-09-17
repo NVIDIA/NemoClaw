@@ -168,8 +168,8 @@ fn references_reject_missing_names_shadowing_and_distinct_inline_instances() {
 fn inline_managed_providers_preserve_runtime_graphs_and_defaults() {
     for input in [
         include_str!("../../../examples/managed-ollama.yaml"),
-        include_str!("../../../examples/vllm.yaml"),
-        include_str!("../../../examples/remote-vllm.yaml"),
+        include_str!("../../../examples/spark/vllm.yaml"),
+        include_str!("../../../examples/spark/remote-vllm.yaml"),
     ] {
         let value: Value = serde_saphyr::from_str(input).unwrap();
         let shared = Document::parse(input.as_bytes()).unwrap();

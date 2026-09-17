@@ -27,7 +27,7 @@ For an external endpoint, its operator owns installation and capacity; use [exte
 Mutable branches and tags are rejected so a later apply cannot silently change weights.
 The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it is omitted.
 
-A concrete configuration is in [examples/vllm.yaml](../examples/vllm.yaml).
+A concrete configuration is in [examples/spark/vllm.yaml](../examples/spark/vllm.yaml).
 Its image digest refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[path = "support/examples.rs"]
+mod examples;
+
 use nemoclaw_sdk::config::{Document, schema::input_schema};
 use serde_json::{Value, json};
 
@@ -73,7 +76,7 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
 #[test]
 fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("spark-inline.yaml");
+    let mut value = input("spark/spark-inline.yaml");
     for key in ["endpoint", "engine", "image", "networkCIDR"] {
         value["spec"]["gateway"]
             .as_object_mut()
@@ -107,8 +110,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
 fn schema_and_parser_accept_every_maintained_example() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let path = entry.unwrap().path();
+    for path in examples::yaml_files(&directory) {
         if path.extension().is_some_and(|ext| ext == "yaml") {
             let value: Value =
                 serde_saphyr::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -185,97 +187,97 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/endpoint",
             json!("https://api.example.com/v1"),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/credential",
             json!({"env": "TOKEN"}),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/backend",
             json!("removed-backend"),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/speculativeTokens",
             json!(1),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
             json!(0),
             true,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
             json!(59),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
             json!(60),
             true,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
             json!(3600),
             true,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
             json!(3601),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
             json!(27),
             false,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
             json!(0),
             true,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/sandboxes/0/harness/kind",
             json!("deepagents"),
             true,
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/sandboxes/0/runtime/provider",
             json!("podman"),
             false,
         ),
         (
-            "spark-inline.yaml",
+            "spark/spark-inline.yaml",
             "/spec/inferenceProviders/0/service/recipe/apiVersion",
             json!("future"),
             false,
         ),
         (
-            "spark-inline.yaml",
+            "spark/spark-inline.yaml",
             "/spec/inferenceProviders/0/service/memory/gpuMemoryGiB",
             json!(16),
             false,
         ),
         (
-            "spark-inline.yaml",
+            "spark/spark-inline.yaml",
             "/spec/inferenceProviders/0/service/recipe/resources/preparedBytes",
             json!(0),
             false,
@@ -287,7 +289,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         agrees(&validator, &value, accepted);
     }
     for field in ["placement", "publication"] {
-        let mut value = input("remote-vllm.yaml");
+        let mut value = input("spark/remote-vllm.yaml");
         value["spec"]["inferenceProviders"][0]["service"]
             .as_object_mut()
             .unwrap()
@@ -319,7 +321,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
             (max, true),
             (max + 1, false),
         ] {
-            let mut value = input("vllm.yaml");
+            let mut value = input("spark/vllm.yaml");
             let service = &mut value["spec"]["inferenceProviders"][0]["service"];
             service["memory"]["minAvailableGiB"] = json!(6);
             service["memory"]["freeGateGiB"] = json!(24);
@@ -346,12 +348,12 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
             json!("http://remote.example.com"),
         ),
         (
-            "remote-vllm.yaml",
+            "spark/remote-vllm.yaml",
             "/spec/inferenceProviders/0/service/publication/endpoint",
             json!("http://10.0.0.8:9999/v1"),
         ),
         (
-            "vllm.yaml",
+            "spark/vllm.yaml",
             "/spec/inferenceProviders/0/service/memory/freeGateGiB",
             json!(6),
         ),
@@ -375,11 +377,7 @@ fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
         .unwrap();
     let schema: Value = serde_json::from_slice(&std::fs::read(&expected).unwrap()).unwrap();
     let validator = jsonschema::validator_for(&schema).unwrap();
-    for entry in std::fs::read_dir(root.join("examples")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|extension| extension != "yaml") {
-            continue;
-        }
+    for path in examples::yaml_files(&root.join("examples")) {
         let text = std::fs::read_to_string(&path).unwrap();
         let associations: Vec<_> = text
             .lines()
@@ -400,5 +398,17 @@ fn every_authored_example_selects_and_passes_the_checked_in_editor_schema() {
         );
         let value: Value = serde_saphyr::from_str(&text).unwrap();
         agrees(&validator, &value, true);
+    }
+}
+
+#[test]
+fn maintained_examples_include_the_spark_directory() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let files = examples::yaml_files(&root);
+    for name in ["vllm.yaml", "spark-inline.yaml", "remote-vllm.yaml"] {
+        assert!(
+            files.contains(&root.join("spark").join(name)),
+            "missing Spark example: {name}"
+        );
     }
 }

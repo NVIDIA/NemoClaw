@@ -336,7 +336,7 @@ fn harness_selection_does_not_determine_service_ownership() {
         "pi",
     ] {
         for fixture in [
-            include_str!("../../../examples/vllm.yaml"),
+            include_str!("../../../examples/spark/vllm.yaml"),
             include_str!("fixtures/config/managed-ollama.yaml"),
         ] {
             let mut document = Document::parse(fixture.as_bytes()).unwrap();
@@ -349,7 +349,7 @@ fn harness_selection_does_not_determine_service_ownership() {
         }
     }
     let mut claude =
-        Document::parse(include_str!("../../../examples/vllm.yaml").as_bytes()).unwrap();
+        Document::parse(include_str!("../../../examples/spark/vllm.yaml").as_bytes()).unwrap();
     claude.spec.sandboxes[0].harness.as_mut().unwrap().kind = "claude".into();
     assert!(
         claude.validate().is_err(),

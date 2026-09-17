@@ -81,9 +81,9 @@ The current tests establish configuration, compilation, API attachment, and drif
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
 | NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
-| NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/vllm.yaml) |
-| The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/remote-vllm.yaml) |
-| The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark-inline.yaml) |
+| NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
+| The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
+| The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.

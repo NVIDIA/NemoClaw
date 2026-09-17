@@ -84,7 +84,7 @@ Unknown fields, duplicate keys, inline secrets, and unsupported combinations are
 Images must use immutable SHA-256 references.
 Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`, with a pinned model, backend, serving settings, and memory policy.
 
-The checked-in [DGX Spark example](../examples/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
+The checked-in [DGX Spark example](../examples/spark/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
 Follow [managed Ollama](inference.md#run-managed-ollama) for its endpoint, local engine, network, model, and recovery requirements.
 Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
 Gateway and inference ownership are independent of the harness; the selected service must still support its request API.

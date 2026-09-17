@@ -55,14 +55,14 @@ Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json)
 
 ## Spark and Fabric
 
-For complete DGX Spark qualification, use the concrete `examples/spark-inline.yaml` on an available GB10 host.
+For complete DGX Spark qualification, use the concrete `examples/spark/spark-inline.yaml` on an available GB10 host.
 The Spark lifecycle and image-upgrade tests require OpenClaw or Hermes for their explicit agent-response check.
 Change its deployment UID, gateway port, and network only when creating a separate deployment.
 Build the pinned local runtime artifact first, check capacity, and preserve the same state directory throughout:
 
 ```sh
-nemoclaw plan --state-dir .local/spark examples/spark-inline.yaml
-nemoclaw apply --state-dir .local/spark examples/spark-inline.yaml
+nemoclaw plan --state-dir .local/spark examples/spark/spark-inline.yaml
+nemoclaw apply --state-dir .local/spark examples/spark/spark-inline.yaml
 nemoclaw export --state-dir .local/spark --output .local/spark-export.yaml
 nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
 ```

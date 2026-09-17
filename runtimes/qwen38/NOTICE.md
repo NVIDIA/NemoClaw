@@ -58,7 +58,7 @@ The recipe's generated draft vocabulary, `files/draft_vocab_en_code_47k.txt`, st
 ## Related NemoClaw Code
 
 The SDK's memory-policy and serving-budget credits are retained in `crates/nemoclaw-sdk/NOTICE.md` inside `supervisor-source.tar.gz`.
-`examples/spark-inline.yaml` records model settings informed by `start.sh`.
+`examples/spark/spark-inline.yaml` records model settings informed by `start.sh`.
 The snapshot downloader, recipe protocol, supervisor lifecycle, and preparation receipts are NemoClaw implementations.
 Calling a recipe program does not replace that program's license with the caller's license.
 

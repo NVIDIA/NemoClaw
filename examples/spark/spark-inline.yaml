@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Model tuning informed by MiaAI Lab's AGPL-3.0-or-later single-Spark recipe.
-# Upstream revision and attribution: ../runtimes/qwen38/NOTICE.md.
-# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# Upstream revision and attribution: ../../runtimes/qwen38/NOTICE.md.
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

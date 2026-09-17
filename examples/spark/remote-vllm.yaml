@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

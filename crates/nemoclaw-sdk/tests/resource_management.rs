@@ -64,7 +64,7 @@ fn unsupported_management_and_creation_fields_are_rejected() {
 #[test]
 fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
     let legacy: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let mut explicit = legacy.clone();
     for path in ["/spec/gateway", "/spec/inferenceProviders/0/service"] {
         let resource = explicit.pointer_mut(path).unwrap();
@@ -154,7 +154,7 @@ fn inference_management_must_match_the_selected_service_form() {
             include_str!("../../../examples/managed-ollama.yaml"),
             "managed",
         ),
-        (include_str!("../../../examples/vllm.yaml"), "managed"),
+        (include_str!("../../../examples/spark/vllm.yaml"), "managed"),
     ] {
         let legacy: Value = serde_saphyr::from_str(source).unwrap();
         let mut explicit = legacy.clone();
@@ -188,7 +188,7 @@ fn inference_management_must_match_the_selected_service_form() {
 #[test]
 fn remote_network_management_does_not_change_placement_or_publication() {
     let legacy: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/remote-vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/remote-vllm.yaml")).unwrap();
     let mut explicit = legacy.clone();
     explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"] =
         json!({"management":"managed"});

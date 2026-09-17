@@ -87,7 +87,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
 #[test]
 fn managed_inference_remains_owned_when_the_default_uses_an_external_oracle() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let local_name = value["spec"]["inferenceProviders"][0]["name"]
         .as_str()
         .unwrap()
@@ -174,7 +174,7 @@ fn multiple_selected_managed_lifecycles_are_rejected_before_resources_are_create
 #[test]
 fn managed_services_have_independent_storage_credentials_and_dependencies() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/vllm.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let first = value["spec"]["inferenceProviders"][0]["name"]
         .as_str()
         .unwrap()

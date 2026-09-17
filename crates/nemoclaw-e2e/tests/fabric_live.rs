@@ -331,7 +331,7 @@ fn upgrade_gate_requires_inference_to_exist_independently_of_apply() {
             true,
         ),
         (include_str!("../../../examples/managed-ollama.yaml"), false),
-        (include_str!("../../../examples/vllm.yaml"), false),
+        (include_str!("../../../examples/spark/vllm.yaml"), false),
         (include_str!("../../../examples/fabric-hermes.yaml"), false),
     ] {
         assert_eq!(
