@@ -738,7 +738,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/ollama/proxy-observation.ts",
       "scripts/ollama-auth-proxy.mts",
       "src/lib/adapters/config/live-export-source.ts",
-      "src/lib/domain/config/verify-ollama-serving.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
     ],
