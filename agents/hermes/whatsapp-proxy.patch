@@ -48,6 +48,104 @@ index 408203b500..b2e8fc88e2 100644
      logger,
      printQRInTerminal: false,
      browser: ['Hermes Agent', 'Chrome', '120.0'],
+diff --git a/scripts/whatsapp-bridge/proxy-agent.test.mjs b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+new file mode 100644
+index 000000000..4b489e7e0
+--- /dev/null
++++ b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+@@ -0,0 +1,92 @@
++import { strict as assert } from 'node:assert';
++import { once } from 'node:events';
++import { createServer } from 'node:http';
++import { after, mock, test } from 'node:test';
++import { WebSocketClient } from './node_modules/@whiskeysockets/baileys/lib/Socket/Client/websocket.js';
++
++const originalArgv = [...process.argv];
++const originalHttpsProxy = process.env.HTTPS_PROXY;
++const socketOptions = [];
++
++process.argv.push('--pair-only', '--pair-json');
++
++mock.module('@whiskeysockets/baileys', {
++  namedExports: {
++    DisconnectReason: { loggedOut: 401 },
++    decryptPollVote: () => undefined,
++    downloadMediaMessage: async () => Buffer.alloc(0),
++    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0] }),
++    getAggregateVotesInPollMessage: () => [],
++    getKeyAuthor: () => '',
++    jidNormalizedUser: (value) => value,
++    makeWASocket: (options) => {
++      socketOptions.push(options);
++      return { ev: { on() {} }, user: {} };
++    },
++    useMultiFileAuthState: async () => ({ state: {}, saveCreds() {} }),
++  },
++});
++
++after(() => {
++  process.argv.splice(0, process.argv.length, ...originalArgv);
++  if (originalHttpsProxy === undefined) {
++    delete process.env.HTTPS_PROXY;
++  } else {
++    process.env.HTTPS_PROXY = originalHttpsProxy;
++  }
++});
++
++async function loadBridge(name) {
++  await import(`./bridge.js?proxy-agent-test=${name}`);
++  for (let attempt = 0; attempt < 20 && socketOptions.length === 0; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  return socketOptions.at(-1);
++}
++
++test('routes the pinned Baileys WebSocket through the configured HTTPS proxy', async (t) => {
++  const connectTargets = [];
++  const proxy = createServer();
++  proxy.on('connect', (request, socket) => {
++    connectTargets.push(request.url);
++    socket.destroy();
++  });
++  proxy.listen(0, '127.0.0.1');
++  await once(proxy, 'listening');
++  t.after(() => new Promise((resolve) => proxy.close(resolve)));
++
++  const address = proxy.address();
++  assert.ok(address && typeof address !== 'string');
++  process.env.HTTPS_PROXY = `http://127.0.0.1:${address.port}`;
++  const options = await loadBridge('configured');
++
++  assert.ok(options.agent);
++  assert.strictEqual(options.fetchAgent, options.agent);
++  assert.equal(options.agent.proxy.href, `${process.env.HTTPS_PROXY}/`);
++
++  const client = new WebSocketClient(new URL('wss://web.whatsapp.com/ws/chat'), {
++    agent: options.agent,
++    connectTimeoutMs: 1000,
++    options: {},
++  });
++  client.on('error', () => {});
++  client.connect();
++  for (let attempt = 0; attempt < 50 && connectTargets.length === 0; attempt += 1) {
++    await new Promise((resolve) => setTimeout(resolve, 10));
++  }
++
++  assert.deepEqual(connectTargets, ['web.whatsapp.com:443']);
++});
++
++test('leaves both Baileys transport paths unset without HTTPS_PROXY', async () => {
++  delete process.env.HTTPS_PROXY;
++  const priorCalls = socketOptions.length;
++  await import('./bridge.js?proxy-agent-test=unset');
++  for (let attempt = 0; attempt < 20 && socketOptions.length === priorCalls; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  const options = socketOptions.at(-1);
++
++  assert.equal(options.agent, undefined);
++  assert.equal(options.fetchAgent, undefined);
++});
 diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
 index 74fe2df378..7a023bfa9c 100644
 --- a/scripts/whatsapp-bridge/package-lock.json

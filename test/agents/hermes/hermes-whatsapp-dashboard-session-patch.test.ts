@@ -126,6 +126,25 @@ it("applies the WhatsApp proxy root dependency hunk to the active lockfile", () 
   }
 });
 
+it("adds the WhatsApp proxy regression executed by the image build", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-proxy-test-"));
+  const testPath = path.join(tmp, "scripts", "whatsapp-bridge", "proxy-agent.test.mjs");
+
+  try {
+    const applied = spawnSync(
+      "git",
+      ["apply", "--include=scripts/whatsapp-bridge/proxy-agent.test.mjs", PATCH],
+      { cwd: tmp, encoding: "utf8" },
+    );
+    expect(applied.status, applied.stderr).toBe(0);
+    const testSource = fs.readFileSync(testPath, "utf8");
+    expect(testSource).toContain("routes the pinned Baileys WebSocket");
+    expect(testSource).toContain("leaves both Baileys transport paths unset");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 it("stores Hermes dashboard pairing state in the gateway session directory (#8184)", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-dashboard-"));
   const source = path.join(tmp, "hermes_cli", "web_server_messaging.py");
