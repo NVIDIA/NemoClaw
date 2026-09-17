@@ -11,6 +11,10 @@ import {
 
 const qualificationTest =
   process.env.NEMOCLAW_RUN_WINDOWS_MXC_OPENCLAW_E2E === "1" ? test : test.skip;
+// A cold Windows ARM64 host can spend more than 30 minutes in the mandatory
+// full-tree identity scans alone. Keep the qualification bounded without
+// racing those checks or the two complete sandbox lifecycles.
+const QUALIFICATION_TIMEOUT_MS = 90 * 60_000;
 const EXPECTED_STARTUP_OBSERVATION = {
   outcome: "ready",
   gatewayExitCode: null,
@@ -48,7 +52,7 @@ function expectQualificationReceipt(
 qualificationTest(
   "repeats forwarded chat and cleanup for the inactive native OpenClaw process_container candidate (#8178)",
   {
-    timeout: 30 * 60_000,
+    timeout: QUALIFICATION_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "qualify the Windows host and validate exact artifact identities",
