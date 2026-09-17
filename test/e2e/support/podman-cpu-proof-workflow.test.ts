@@ -350,16 +350,14 @@ function withProofFixture(run: (fixture: ProofFixture) => void): void {
   }
 }
 describe("native Podman CPU proof workflow", () => {
-  it("selects the proof when an OpenShell lifecycle adapter changes", () => {
-    for (const adapterPath of [
-      "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts",
-      "src/lib/adapters/openshell/sdk.ts",
-    ]) {
-      const selectedPath = workflow().on.pull_request.paths.find(
-        (candidate) => candidate === adapterPath,
-      );
-      expect(selectedPath).toBe(adapterPath);
-    }
+  it.each([
+    "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts",
+    "src/lib/adapters/openshell/sdk.ts",
+  ])("selects the proof when %s changes", (adapterPath) => {
+    const selectedPath = workflow().on.pull_request.paths.find(
+      (candidate) => candidate === adapterPath,
+    );
+    expect(selectedPath).toBe(adapterPath);
   });
 
   it("installs the reviewed OpenShell SDK before the lifecycle proof", () => {
