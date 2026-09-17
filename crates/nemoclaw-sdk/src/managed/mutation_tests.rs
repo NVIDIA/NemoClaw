@@ -31,6 +31,33 @@ struct State {
     exit_on_start: bool,
     lose_create: bool,
 }
+
+#[tokio::test]
+async fn managed_gateway_accepts_a_native_linux_amd64_image() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let fixture = Fixture::start(|request| {
+        assert!(request.path.starts_with("/images/"));
+        Some((
+            200,
+            serde_json::to_vec(&json!({
+                "Id": "sha256:gateway",
+                "Architecture": "amd64",
+                "Os": "linux",
+                "Config": {"Env": []}
+            }))
+            .unwrap(),
+        ))
+    })
+    .await;
+
+    fixture
+        .engine_for(&spec.gateway.engine)
+        .ensure_image(&spec)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identity() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();

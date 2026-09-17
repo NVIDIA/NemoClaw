@@ -128,23 +128,32 @@ impl Engine {
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
         spec.validate_image_authentication(&image)?;
+        let architecture = image.architecture.as_deref();
+        let architecture_matches = spec.service.as_ref().map_or_else(
+            || matches!(architecture, Some("arm64" | "amd64")),
+            |service| {
+                architecture
+                    == Some(
+                        service
+                            .hardware
+                            .as_ref()
+                            .map(|hardware| hardware.architecture.as_str())
+                            .or_else(|| {
+                                service
+                                    .recipe
+                                    .as_ref()
+                                    .map(|recipe| recipe.compatibility.architecture.as_str())
+                            })
+                            .unwrap_or("arm64"),
+                    )
+            },
+        );
         if image.id.as_ref().is_none_or(String::is_empty)
-            || image.architecture.as_deref()
-                != Some(spec.service.as_ref().map_or("arm64", |s| {
-                    s.hardware
-                        .as_ref()
-                        .map(|h| h.architecture.as_str())
-                        .or_else(|| {
-                            s.recipe
-                                .as_ref()
-                                .map(|r| r.compatibility.architecture.as_str())
-                        })
-                        .unwrap_or("arm64")
-                }))
+            || !architecture_matches
             || image.os.as_deref() != Some("linux")
         {
             return Err(Error::Conflict(
-                "runtime image is unavailable or incompatible with Spark",
+                "runtime image is unavailable or incompatible with the execution target",
             ));
         }
         if let Some(service) = &spec.service {
