@@ -103,6 +103,26 @@ class PiRuntimeConfiguration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await client("check", "main", "pi", model, drift), 2)
                 self.assertEqual(len(self.starts), 1)
 
+    async def test_client_uses_inference_from_environment_when_argument_is_omitted(self):
+        model = {"model": "qwen3:4b"}
+        inference = {"api": "openai-completions", "tuning": {}}
+        socket = str(Path(self.directory.name) / "fabric.sock")
+
+        async def handle(reader, writer):
+            request = json.loads(await reader.readline())
+            response = await self.host.configure(request["model"])
+            writer.write(json.dumps(response).encode() + b"\n")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        with (
+            patch.dict("os.environ", {"NEMOCLAW_INFERENCE_CONFIG": json.dumps(inference)}),
+            patch("fabric.SOCKET", socket),
+        ):
+            async with await asyncio.start_unix_server(handle, socket):
+                self.assertEqual(await client("configure", "main", "pi", model), 0)
+
     async def test_failed_start_is_not_ready_and_explicit_apply_can_recover(self):
         self.fail_start = True
         with self.assertRaises(RuntimeError):

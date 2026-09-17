@@ -346,6 +346,8 @@ async def serve():
 
 
 async def client(operation, argument, harness="deepagents", model=None, inference=None):
+    if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
+        inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
     expected = configuration(argument, harness, model, inference)
     deadline = asyncio.get_running_loop().time() + 90
     while True:
