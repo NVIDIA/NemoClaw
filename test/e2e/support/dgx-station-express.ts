@@ -266,7 +266,10 @@ export async function runStationExpressSmoke(options: {
       artifactName: label,
       timeoutMs,
     });
-    requireCondition(result.exitCode === 0, `${label} failed; inspect its command artifact`);
+    requireCondition(
+      result.exitCode === 0 && !result.timedOut,
+      `${label} failed; inspect its command artifact`,
+    );
     return result.stdout;
   };
   options.phases.inspect();
@@ -415,7 +418,7 @@ export async function runStationExpressSmoke(options: {
       { env, artifactName: "station-routed-inference", timeoutMs: 120_000 },
     );
     requireCondition(
-      response.exitCode === 0,
+      response.exitCode === 0 && !response.timedOut,
       "Station sandbox inference request failed; inspect its artifact",
     );
     assertStationInference(response.stdout);

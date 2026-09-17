@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
@@ -194,6 +195,99 @@ describe("Station Express smoke boundaries", () => {
     expect(stationModelCacheMetadata(home).sha256).not.toBe(original.sha256);
   });
 
+  it.each([
+    {
+      name: "accepts zero-exit commands that finish before their deadline",
+      timeoutAt: "none",
+      expectedFailure: null,
+      inferenceCalls: 1,
+    },
+    {
+      name: "rejects a timed-out host command even when it exits zero and still cleans up",
+      timeoutAt: "host",
+      expectedFailure: "station-express-install failed; inspect its command artifact",
+      inferenceCalls: 0,
+    },
+    {
+      name: "rejects timed-out routed inference even when it exits zero with valid content",
+      timeoutAt: "inference",
+      expectedFailure: "Station sandbox inference request failed; inspect its artifact",
+      inferenceCalls: 1,
+    },
+  ])("$name", async ({ timeoutAt, expectedFailure, inferenceCalls }) => {
+    const home = cleanupHome();
+    const normal = await stationProbeOutcome(home, false);
+    expect(normal).toMatchObject({ exitCode: 0, timedOut: false });
+    const observed = timeoutAt === "none" ? normal : await stationProbeOutcome(home, true);
+    expect(observed).toMatchObject({ exitCode: 0, timedOut: timeoutAt !== "none" });
+    const state = path.join(home, ".nemoclaw");
+    const effects: Record<string, () => void> = {
+      "station-express-install": () => {
+        fs.mkdirSync(state);
+        fs.writeFileSync(
+          path.join(state, "sandboxes.json"),
+          JSON.stringify({
+            sandboxes: {
+              [STATION_SMOKE_SANDBOX]: {
+                agent: "openclaw",
+                workload: {
+                  kind: "managed-image",
+                  sourceRevision: base.E2E_MANAGED_IMAGE_REVISION,
+                },
+              },
+            },
+          }),
+        );
+      },
+      "station-express-uninstall": () => fs.rmSync(state, { recursive: true }),
+    };
+    const outputs: Record<string, string> = {
+      "station-platform": "DGX Station\n",
+      "station-initial-images": `${container.Image}\n`,
+      "station-sandbox-ready": JSON.stringify([ready]),
+      "station-managed-vllm": JSON.stringify([container]),
+    };
+    const command = vi.fn<HostCliClient["command"]>(async (_executable, _args, options) => {
+      const label = options?.artifactName ?? "";
+      effects[label]?.();
+      const result =
+        label === "station-express-install" && timeoutAt === "host" ? observed : normal;
+      return { ...result, stdout: outputs[label] ?? "" };
+    });
+    const exec = vi
+      .fn<SandboxClient["exec"]>()
+      .mockResolvedValue(timeoutAt === "inference" ? observed : normal);
+    const cleanup = new CleanupRegistry();
+    const writeEvidence = vi.fn(async () => {});
+    const result = runStationExpressSmoke({
+      host: { command },
+      sandbox: { exec },
+      cleanup,
+      environment: { ...base, HOME: home, NEMOCLAW_STATION_RUNNER_HOME: home },
+      repoRoot: "/candidate",
+      phases: { inspect: vi.fn(), install: vi.fn(), assert: vi.fn(), cleanup: vi.fn() },
+      writeEvidence,
+      modelCacheMetadata: () => ({ sha256: "unchanged", entries: 1 }),
+    });
+    await expect(
+      result.then(
+        () => null,
+        (error: Error) => error.message,
+      ),
+    ).resolves.toBe(expectedFailure);
+    expect(exec).toHaveBeenCalledTimes(inferenceCalls);
+    expect(command).toHaveBeenCalledWith(
+      "bash",
+      ["uninstall.sh", "--yes", "--destroy-user-data"],
+      expect.anything(),
+    );
+    expect(writeEvidence).toHaveBeenCalledWith("station-cleanup.json", {
+      passed: ["clean up Station job runtime"],
+      failures: [],
+    });
+    expect(fs.existsSync(state)).toBe(false);
+  });
+
   it("uninstalls after installer failure and records installer and cleanup durations", async () => {
     const home = cleanupHome();
     let time = 0;
@@ -290,6 +384,63 @@ function cleanupHome() {
   directories.push(home);
   return home;
 }
+async function stationProbeOutcome(home: string, timeOut: boolean) {
+  const progress = startTestProgress(
+    "Station timeout result",
+    ["observe the child result", "record the child outcome"],
+    {
+      logLine: () => {},
+    },
+  );
+  progress.phase("observe the child result");
+  const abort = new AbortController();
+  let reportReady = () => {};
+  const ready = new Promise<void>((resolve) => {
+    reportReady = resolve;
+  });
+  const probe = new ShellProbe({
+    artifacts: new ArtifactSink(path.join(home, "probe-artifacts")),
+    progress,
+    redact: (value) => value,
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+  });
+  const output = JSON.stringify({
+    model: STATION_SMOKE_MODEL,
+    choices: [{ message: { content: "PONG" } }],
+  });
+  const script = timeOut
+    ? 'process.on("SIGTERM", () => process.exit(0)); process.stdout.write(process.argv[1]); setInterval(() => {}, 1000);'
+    : "process.stdout.write(process.argv[1]);";
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const pending = probe.run(
+    trustedShellCommand({
+      command: process.execPath,
+      args: ["-e", script, output],
+      reason: "observe a real zero-exit child",
+    }),
+    { timeoutMs: 1000, killGraceMs: 1000, onOutput: () => reportReady() },
+  );
+  try {
+    await Promise.race([
+      ready,
+      pending.then(() => {
+        throw new Error("The child exited before reporting readiness");
+      }),
+    ]);
+    // Wait for the signal handler before firing the supervisor's actual deadline callback.
+    await (timeOut ? vi.advanceTimersByTimeAsync(1000) : pending);
+    const result = await pending;
+    progress.phase("record the child outcome");
+    return result;
+  } finally {
+    abort.abort();
+    await vi.advanceTimersByTimeAsync(1000);
+    await pending.catch(() => {});
+    vi.useRealTimers();
+    progress.stop();
+  }
+}
+
 const leftover = {
   Name: STATION_STATE_VOLUME,
   Driver: "local",
