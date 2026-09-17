@@ -1531,7 +1531,7 @@ A passing target establishes that the source-checkout option-2 path selects the 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
 Live modules import `fixtures/e2e-test.ts`; selected integration modules import
-`fixtures/workflow-e2e-test.ts` and declare their final release phase explicitly.
+`fixtures/workflow-e2e-test.ts`.
 It also follows shared E2E runtime helpers. Run child processes through
 `ShellProbe` or an existing audited progress-aware boundary; new direct async
 process boundaries fail the check. Synchronous calls require both a positive
