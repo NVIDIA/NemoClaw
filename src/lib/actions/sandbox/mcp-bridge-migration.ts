@@ -275,7 +275,10 @@ export async function migrateMcpBridges(
     const entries = Object.values(legacyEntries).sort((left, right) =>
       left.server.localeCompare(right.server),
     );
-    const ambiguousTarget = findAmbiguousMcpCredentialTarget(entries);
+    const ambiguousTarget = findAmbiguousMcpCredentialTarget([
+      ...entries,
+      ...Object.values(observed.sources.native),
+    ]);
     if (ambiguousTarget) {
       throw new McpBridgeError(
         `Legacy MCP server '${ambiguousTarget.entry.server}' targets the same URL as credential-bound server '${ambiguousTarget.conflict.server}'. OpenShell cannot safely choose between credentials for an indistinguishable endpoint. No source was changed.`,
