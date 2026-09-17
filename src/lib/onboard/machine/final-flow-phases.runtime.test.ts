@@ -492,6 +492,9 @@ describe("final onboard flow runtime boundary", () => {
       const harness = createRuntimeHarness(sessionAt(initialState));
       const recorders = harness.boundary.recorders();
       const recovery = vi.fn().mockResolvedValue(recoveryResult);
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => null,
+      } as never);
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: recovery,
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),

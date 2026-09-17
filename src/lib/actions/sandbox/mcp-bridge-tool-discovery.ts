@@ -3,11 +3,11 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
-import type {
-  McpSourceEntry,
-  McpBridgeStatus,
-  McpBridgeToolDiscoveryFailedStage,
-  McpBridgeToolDiscoveryFailureClass,
+import {
+  type McpSourceEntry,
+  type McpBridgeStatus,
+  type McpBridgeToolDiscoveryFailedStage,
+  type McpBridgeToolDiscoveryFailureClass,
 } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
@@ -16,7 +16,7 @@ import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
-import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -89,8 +89,14 @@ export function toolDiscoveryReadinessSkipDetail(
   return undefined;
 }
 
+/**
+ * Build the in-sandbox command that runs authenticated tool discovery for a
+ * persisted MCP entry. Returns null when the entry has no credential binding or
+ * its stored URL fails the current authenticated-endpoint boundary under the
+ * entry's recorded trust.
+ */
 export function buildMcpToolDiscoveryCommand(
-  entry: Pick<McpSourceEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,
 ): McpToolDiscoveryCommand | null {
   const credentialEnv = entry.env[0];
@@ -101,8 +107,15 @@ export function buildMcpToolDiscoveryCommand(
   // Under the approved trusted-configured-endpoint contract, advertised names
   // remain untrusted and bounded display text, but may be credential-derived;
   // parser validation is not a confidentiality proof for a malicious server.
+  //
+  // The recorded exact-host trust intent must ride along: a trusted private
+  // endpoint is canonical only under that intent, and dropping it made status
+  // skip a healthy registration as "no valid managed endpoint" (#11377).
+  // Entries without a recorded trusted host keep the strict public boundary.
   try {
-    if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
+    if (normalizeRecordedMcpServerUrl(entry) !== entry.url) {
+      return null;
+    }
   } catch {
     return null;
   }

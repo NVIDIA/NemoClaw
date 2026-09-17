@@ -30,6 +30,31 @@ const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
 const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
 const FOREIGN_ID = fingerprintSandboxRecreateValue("foreign-openshell-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({ agent: "openclaw", provider: "nvidia" });
+const LEGACY_N1X_DURABLE_ROW = Object.freeze({
+  name: "alpha",
+  createdAt: ISO,
+  compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
+  nimContainer: null,
+  gpuEnabled: false,
+  hostGpuDetected: false,
+  sandboxGpuEnabled: false,
+  sandboxGpuMode: null,
+  sandboxGpuDevice: null,
+  sandboxGpuProof: null,
+  openshellDriver: "docker",
+  openshellVersion: null,
+  webSearchProvider: null,
+  agent: "openclaw",
+  agentVersion: null,
+  nemoclawVersion: null,
+  fromDockerfile: null,
+  hermesAuthMethod: null,
+  imageTag: null,
+  deferredN1xManagedVllmAccepted: true,
+});
+const LEGACY_N1X_DURABLE_FINGERPRINT =
+  "7c96c6e2304fd21de3e4f6037683bcd1224e19b7533afce41aa8d7fc2392c51d";
 const SOURCE_ENTRY: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
@@ -323,6 +348,201 @@ describe("sandbox recreate recovery from a void journal", () => {
         JOURNAL_GATEWAY,
       ),
     ).toEqual({ action: "continue_create" });
+  });
+
+  it("resumes a deleted N1x journal recorded before acceptance left the fingerprint (#11886)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      registry.registerSandbox({
+        name: "alpha",
+        agent: "openclaw",
+        createdAt: ISO,
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      });
+      const sourceEntry = registry.getSandbox("alpha") as SandboxEntry;
+      expect(fingerprintSandboxRecreateValue(LEGACY_N1X_DURABLE_ROW)).toBe(
+        LEGACY_N1X_DURABLE_FINGERPRINT,
+      );
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          provider: "vllm-local",
+          model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          openshellDriver: "docker",
+          reservationSessionId: "session-n1x-rebuild",
+        }),
+      ).toBe(true);
+      const reservedEntry = registry.getSandbox("alpha") as SandboxEntry;
+      const legacyTransaction = {
+        ...transactionAt("deleted", sourceEntry),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sourceRegistryFingerprint: LEGACY_N1X_DURABLE_FINGERPRINT,
+      };
+      const deleteStoreFor = (session: ReturnType<typeof createSession>) => ({
+        loadSession: () => session,
+        updateSession: (mutator: (current: typeof session) => typeof session | void) => {
+          mutator(session);
+          return session;
+        },
+        compareAndSwapSession: (
+          matches: (current: typeof session) => boolean,
+          mutator: (current: typeof session) => typeof session | void,
+        ) => (matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const)),
+      });
+
+      expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(LEGACY_N1X_DURABLE_FINGERPRINT);
+      expect(reservedEntry.deferredN1xManagedVllmAccepted).toBeUndefined();
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          reservedEntry,
+          {
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+          "session-n1x-rebuild",
+        ),
+      ).toEqual({ action: "continue_create" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, reservationSessionId: "session-foreign" },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+          "session-n1x-rebuild",
+        ),
+      ).toMatchObject({ action: "reject" });
+      const { pendingRouteReservation: _, ...unreservedEntry } = reservedEntry;
+      expect(
+        planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, unreservedEntry, {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        }),
+      ).toMatchObject({ action: "reject" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, endpointUrl: "http://example.com/v1" },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        ),
+      ).toMatchObject({ action: "reject" });
+      expect(
+        planSandboxRecreateRecovery(
+          legacyTransaction,
+          ABSENT_SOURCE,
+          { ...reservedEntry, gatewayName: "other-gateway", gatewayPort: 9090 },
+          { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        ),
+      ).toMatchObject({ action: "reject" });
+
+      const owningSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      owningSession.sessionId = "session-n1x-rebuild";
+      owningSession.checkpoint = {
+        ...owningSession.checkpoint!,
+        sandboxRecreate: legacyTransaction,
+      };
+      const owned = ownSandboxRecreateTransaction({
+        sessionStore: deleteStoreFor(owningSession),
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => reservedEntry,
+        observe: () => ABSENT_SOURCE,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      });
+      expect(owned.recovery).toEqual({ action: "continue_create" });
+      expect(owned.replacedTransactionId).toBeNull();
+      expect(owned.transaction).toEqual(legacyTransaction);
+      expect(owningSession.checkpoint.sandboxRecreate).toEqual(legacyTransaction);
+
+      const rejectedOwner = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      rejectedOwner.sessionId = "session-n1x-rebuild";
+      rejectedOwner.checkpoint = {
+        ...rejectedOwner.checkpoint!,
+        sandboxRecreate: structuredClone(legacyTransaction),
+      };
+      const rejectedJournal = structuredClone(rejectedOwner.checkpoint.sandboxRecreate!);
+      expect(() =>
+        ownSandboxRecreateTransaction({
+          sessionStore: deleteStoreFor(rejectedOwner),
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => ({
+            ...reservedEntry,
+            reservationSessionId: "session-foreign",
+          }),
+          observe: () => ABSENT_SOURCE,
+          decorateCheckpoint: (_current, checkpoint) => checkpoint,
+        }),
+      ).toThrow(/preserved source registry row changed/);
+      expect(rejectedOwner.checkpoint.sandboxRecreate).toEqual(rejectedJournal);
+
+      const deletingSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      deletingSession.sessionId = "session-n1x-rebuild";
+      deletingSession.checkpoint = {
+        ...deletingSession.checkpoint!,
+        sandboxRecreate: { ...legacyTransaction, phase: "planned" },
+      };
+      const expectedDelete = structuredClone(deletingSession.checkpoint.sandboxRecreate!);
+      expect(
+        beginSandboxRecreateDelete({
+          sessionStore: deleteStoreFor(deletingSession),
+          openingSessionId: deletingSession.sessionId,
+          expectedTransaction: expectedDelete,
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => reservedEntry,
+          observe: () => LIVE_SOURCE,
+        }).transaction.phase,
+      ).toBe("deleting");
+
+      const foreignSession = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      foreignSession.sessionId = "session-n1x-rebuild";
+      foreignSession.checkpoint = {
+        ...foreignSession.checkpoint!,
+        sandboxRecreate: { ...legacyTransaction, phase: "planned" },
+      };
+      expect(() =>
+        beginSandboxRecreateDelete({
+          sessionStore: deleteStoreFor(foreignSession),
+          openingSessionId: foreignSession.sessionId,
+          expectedTransaction: structuredClone(foreignSession.checkpoint!.sandboxRecreate!),
+          targetIntentFingerprint: TARGET_INTENT,
+          readRegistryEntry: () => ({
+            ...reservedEntry,
+            reservationSessionId: "session-foreign",
+          }),
+          observe: () => LIVE_SOURCE,
+        }),
+      ).toThrow(/source registry row changed/);
+      expect(foreignSession.checkpoint.sandboxRecreate?.phase).toBe("planned");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it("keeps accepting the registered replacement over a restart (#10473)", () => {
