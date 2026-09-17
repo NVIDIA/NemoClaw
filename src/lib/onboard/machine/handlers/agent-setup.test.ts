@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
-import { handleAgentSetupState, type AgentSetupStateOptions } from "./agent-setup";
+import {
+  agentSetupRuntime,
+  handleAgentSetupState,
+  type AgentSetupStateOptions,
+} from "./agent-setup";
 
 type Agent = { name: string; displayName: string };
+
+afterEach(() => vi.restoreAllMocks());
 
 function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = {}) {
   let session = createSession();
@@ -20,7 +26,6 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       return session;
     }),
     openclawReady: vi.fn(async () => false),
-    waitForOpenclawReady: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -41,7 +46,6 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
-      waitForOpenclawReady: calls.waitForOpenclawReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -128,7 +132,8 @@ describe("handleAgentSetupState", () => {
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
+    const { deps, calls } = createDeps();
+    calls.openclawReady.mockResolvedValue(true);
 
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
@@ -317,6 +322,8 @@ describe("handleAgentSetupState", () => {
 
   it("waits for managed OpenClaw before syncing selection metadata without legacy setup", async () => {
     const { deps, calls } = createDeps();
+    calls.openclawReady.mockResolvedValue(true);
+    const sleep = vi.spyOn(agentSetupRuntime, "sleepMs").mockResolvedValue();
     const revalidateSandboxIdentity = vi.fn();
 
     await handleAgentSetupState({
@@ -325,7 +332,8 @@ describe("handleAgentSetupState", () => {
       revalidateSandboxIdentity,
     });
 
-    expect(calls.waitForOpenclawReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.openclawReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(sleep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
       "my-assistant",
@@ -342,9 +350,8 @@ describe("handleAgentSetupState", () => {
   });
 
   it("does not sync managed OpenClaw metadata before native readiness", async () => {
-    const { deps, calls } = createDeps({
-      waitForOpenclawReady: vi.fn(async () => false),
-    });
+    const { deps, calls } = createDeps();
+    const sleep = vi.spyOn(agentSetupRuntime, "sleepMs").mockResolvedValue();
 
     await expect(
       handleAgentSetupState({ ...baseOptions(deps), managedOpenclawStartup: true }),
@@ -353,6 +360,8 @@ describe("handleAgentSetupState", () => {
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.openclawReady).toHaveBeenCalledTimes(60);
+    expect(sleep).toHaveBeenCalledTimes(59);
   });
 
   it("returns a session when the input session is null", async () => {

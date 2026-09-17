@@ -175,7 +175,6 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       runCaptureOpenshell: () => null,
       getGatewayName: () => "nemoclaw-18081",
       fetchGatewayAuthTokenFromSandbox: async () => null,
-      sleepSeconds: async () => undefined,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -195,7 +194,6 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       runCaptureOpenshell,
       getGatewayName: () => "nemoclaw-18081",
       fetchGatewayAuthTokenFromSandbox: async () => null,
-      sleepSeconds: async () => undefined,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -210,26 +208,5 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       { ignoreError: true },
     );
     expect(registryState.removeSandbox).not.toHaveBeenCalled();
-  });
-
-  it("waits for the native OpenClaw token before allowing managed setup", async () => {
-    const fetchGatewayAuthTokenFromSandbox = vi
-      .fn<() => Promise<string | null>>()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue("ready-token");
-    const sleepSeconds = vi.fn(async () => undefined);
-    const helpers = createSandboxLifecycleHelpers({
-      runCaptureOpenshell: () => null,
-      getGatewayName: () => "nemoclaw",
-      fetchGatewayAuthTokenFromSandbox,
-      sleepSeconds,
-      agentProductName: () => "OpenClaw",
-      prompt: async () => "no",
-      isAffirmativeAnswer: () => false,
-    });
-
-    await expect(helpers.waitForOpenclawReady("alpha")).resolves.toBe(true);
-    expect(fetchGatewayAuthTokenFromSandbox).toHaveBeenCalledTimes(2);
-    expect(sleepSeconds).toHaveBeenCalledExactlyOnceWith(1);
   });
 });

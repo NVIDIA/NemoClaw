@@ -4,6 +4,11 @@
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
+export const agentSetupRuntime = {
+  sleepMs: (milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
+};
+
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
 
 export interface AgentSetupStateOptions<Agent> {
@@ -33,7 +38,6 @@ export interface AgentSetupStateOptions<Agent> {
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
-    waitForOpenclawReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -124,7 +128,12 @@ export async function handleAgentSetupState<Agent>({
     );
   } else if (managedOpenclawStartup) {
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
-    if (!(await deps.waitForOpenclawReady(sandboxName))) {
+    let ready = false;
+    for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
+      ready = await deps.isOpenclawReady(sandboxName);
+      if (!ready && attempt < 59) await agentSetupRuntime.sleepMs(1_000);
+    }
+    if (!ready) {
       throw new Error(
         `Managed OpenClaw startup did not publish gateway readiness for sandbox '${sandboxName}' within 60 seconds.`,
       );
