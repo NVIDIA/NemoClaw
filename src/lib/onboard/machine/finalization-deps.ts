@@ -27,6 +27,10 @@ type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
+type GatewayRestartDeps = Pick<
+  typeof import("../../actions/sandbox/process-recovery"),
+  "restartSandboxGateway"
+>;
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
@@ -93,6 +97,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
 export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+  loadGatewayRestart: () => require("../../actions/sandbox/process-recovery") as GatewayRestartDeps,
   loadRegistryPersistence: () =>
     require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
   loadLaunchReadiness: () =>
@@ -106,6 +111,14 @@ export const finalizationHandlerRuntime = {
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
 };
+
+export async function restartNativeGatewayForInitialSetup(
+  sandboxName: string,
+): ReturnType<GatewayRestartDeps["restartSandboxGateway"]> {
+  return await finalizationHandlerRuntime
+    .loadGatewayRestart()
+    .restartSandboxGateway(sandboxName, { quiet: true });
+}
 
 function samePairingTarget(
   left: OpenClawPairingSettlementTarget,
