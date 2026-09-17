@@ -25,6 +25,8 @@ import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
+import { isShippedManagedImageAgent } from "./managed-image/contract";
+import { MANAGED_STARTUP_RELEASE_FILE } from "./managed-startup/image-runtime";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
@@ -334,6 +336,45 @@ type InitialPolicyOptions = {
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
 
+function addManagedStartupReleasePolicy(
+  policyContent: string,
+  policyPath: string,
+  agentName: string | null | undefined,
+): string {
+  if (!agentName || !isShippedManagedImageAgent(agentName)) return policyContent;
+  if (agentName === "hermes" && isPortableExperimentalProfile()) return policyContent;
+  const normalizedPath = policyPath.split(path.sep).join("/");
+  const expectedSuffix =
+    agentName === "openclaw"
+      ? "/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
+      : agentName === "hermes"
+        ? "/agents/hermes/policy-additions.yaml"
+        : "/agents/langchain-deepagents-code/policy-additions.yaml";
+  if (!normalizedPath.endsWith(expectedSuffix)) return policyContent;
+  const parsed = YAML.parse(policyContent);
+  if (!isObjectRecord(parsed)) {
+    throw new Error("Cannot prepare managed startup sandbox policy; policy is not a mapping.");
+  }
+  if (!isObjectRecord(parsed.filesystem_policy)) {
+    throw new Error(
+      "Cannot prepare managed startup sandbox policy; filesystem policy is not a mapping.",
+    );
+  }
+  const readOnly = parsed.filesystem_policy.read_only;
+  const readWrite = parsed.filesystem_policy.read_write;
+  if (!Array.isArray(readOnly) || !Array.isArray(readWrite)) {
+    throw new Error(
+      "Cannot prepare managed startup sandbox policy; filesystem grants are not lists.",
+    );
+  }
+  if (readWrite.includes(MANAGED_STARTUP_RELEASE_FILE)) {
+    throw new Error("Cannot grant write access to the managed startup release marker.");
+  }
+  if (readOnly.includes(MANAGED_STARTUP_RELEASE_FILE)) return policyContent;
+  readOnly.push(MANAGED_STARTUP_RELEASE_FILE);
+  return YAML.stringify(parsed);
+}
+
 function createTempPolicyMaterializer(exactCleanup: boolean): PolicyMaterializer {
   return (content, prefix) => {
     const policyPath = secureTempFile(prefix, ".yaml");
@@ -451,6 +492,14 @@ function resolveInitialSandboxCreatePolicy(
     effectivePolicy = next;
     basePolicy = content;
   };
+  const managedStartupPolicy = addManagedStartupReleasePolicy(
+    basePolicy,
+    basePolicyPath,
+    options.agentName,
+  );
+  if (managedStartupPolicy !== basePolicy) {
+    adoptPolicy(managedStartupPolicy, "nemoclaw-managed-startup-policy");
+  }
   if (options.directGpu) {
     adoptPolicy(
       buildDirectGpuPolicyYaml(basePolicy, {
