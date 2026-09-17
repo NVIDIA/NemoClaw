@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  assertExitCode,
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -1444,7 +1445,7 @@ describe("E2E fixture clients", () => {
     );
   });
 
-  it("assertExitZero reports non-zero and signaled commands", () => {
+  it("exit assertions report unexpected and signaled command results", () => {
     const result: ShellProbeResult = {
       command: ["cmd"],
       exitCode: 7,
@@ -1459,6 +1460,8 @@ describe("E2E fixture clients", () => {
     expect(() => assertExitZero({ ...result, exitCode: null, signal: "SIGTERM" }, "cmd")).toThrow(
       "cmd failed: signal=SIGTERM",
     );
+    expect(() => assertExitCode(result, 7, "cmd")).not.toThrow();
+    expect(() => assertExitCode(result, 1, "cmd")).toThrow("cmd expected exit=1, got exit=7");
   });
 
   it("assertExitZero accepts lightweight command results and retains both output streams", () => {

@@ -1989,8 +1989,9 @@ When final-sandbox gateway cleanup is enabled or you accept its prompt, `destroy
 A listed sandbox counts as live unless it is in the `Error` or `Failed` phase and NemoClaw confirms that no matching Docker container is running.
 With the native Podman provider, NemoClaw does not probe Docker, so every listed sandbox counts as live and gateway cleanup requires an empty list.
 If the deleted sandbox is the only listed live sandbox, `destroy` polls for up to 30 seconds until that row is gone.
-If the deleted sandbox is still listed after that wait, if a different live sandbox remains, or if the list command fails, `destroy` leaves the gateway running, names the live sandboxes or the failed command, and exits 0.
-When you passed `--cleanup-gateway`, the message states that the flag was not applied.
+If the deleted sandbox is still listed after that wait, if a different live sandbox remains, or if the list command fails, `destroy` leaves the gateway running and names the live sandboxes or the failed command.
+When cleanup comes from the platform default, the environment, or an accepted prompt, `destroy` still exits `0` after a successful sandbox deletion.
+When you pass `--cleanup-gateway`, `destroy` exits nonzero and the message states that the flag was not applied.
 After that message, confirm that `openshell sandbox list -g <gateway-name>` reports no sandboxes.
 Then run `openshell gateway remove <gateway-name>` to remove the gateway.
 

@@ -411,8 +411,9 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
-`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway and report the live
-sandbox plus the recovery commands. After cleanup, it onboards and destroys one final sandbox,
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 

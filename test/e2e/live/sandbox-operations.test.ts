@@ -3,7 +3,7 @@
 
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
-import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
@@ -188,8 +188,8 @@ test(
       redactionValues: redactions,
       timeoutMs: FINAL_DESTROY_TIMEOUT_MS,
     });
-    assertExitZero(preserved, "destroy with an unregistered live sandbox");
     const preservedText = resultText(preserved);
+    assertExitCode(preserved, 1, "destroy with an unregistered live sandbox");
     expect(preservedText).toMatch(
       new RegExp(
         `Shared NemoClaw gateway left running[\\s\\S]*--cleanup-gateway was not applied[\\s\\S]*${SURVIVOR_SANDBOX_NAME}[\\s\\S]*openshell sandbox list -g ${gatewayName}[\\s\\S]*openshell gateway remove ${gatewayName}`,
