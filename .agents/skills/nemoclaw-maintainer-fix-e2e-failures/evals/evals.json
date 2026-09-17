@@ -209,9 +209,10 @@
       "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
       "Classifies the failure before changing coverage.",
       "Does not update the expected third-party progress sentence.",
-      "Removes the incidental assertion or proves its deterministic contract in a lower layer.",
-      "Retains the smallest stable live assertion for the sandbox outcome.",
-      "Records each changed assertion as stayed live, moved to a lower layer, or removed.",
+      "Records the incidental assertion as removed because it protects no product contract, or moves its deterministic contract to a lower layer.",
+      "Defines the repaired replacement's real boundary, semantic outcome and distinct regression, lower-layer evidence owner or explicit statement that no deterministic behavior applies, canonical live test, and smallest live assertion.",
+      "Reserves stayed, moved, or removed dispositions for pruned or relocated evidence instead of applying them to the repaired replacement.",
+      "Retains the distinct live sandbox outcome through the smallest stable assertion.",
       "Explains why the recorded dispositions leave semantic coverage complete."
     ]
   }
