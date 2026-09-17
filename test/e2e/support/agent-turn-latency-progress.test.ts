@@ -485,6 +485,31 @@ describe("live test progress", () => {
     expect(cleanupGatewayRegistration).toHaveBeenCalledOnce();
   });
 
+  it("removes the inspected gateway when the environment overrides its name", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-custom");
+    const host = {
+      command: vi.fn(async () => successfulProbe()),
+      cleanupGatewayRegistration: vi.fn(async () => undefined),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn(async () => successfulProbe()),
+      hasGatewayForInitialCleanup: vi.fn(async () => true),
+    } as unknown as SandboxClient;
+
+    await cleanupTurnSandboxes(host, sandbox, fakeInference());
+
+    expect(sandbox.hasGatewayForInitialCleanup).toHaveBeenCalledWith(
+      "nemoclaw-custom",
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-custom" }),
+      }),
+    );
+    expect(host.cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw-custom",
+      expect.any(Object),
+    );
+  });
+
   it("skips sandbox deletion but retains forward cleanup when the gateway is absent", async () => {
     const host = {
       command: vi.fn(async () => successfulProbe()),

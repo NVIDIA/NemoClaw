@@ -149,12 +149,15 @@ export class SandboxClient {
     // this diagnostic; other commands' generic absence messages are not evidence here.
     const notConfigured = diagnostic === "No gateway configured.";
     const missing = diagnostic === `Unknown gateway '${gatewayName}'.` || notConfigured;
-    const guidanceOnly = lines.every((line) =>
-      notConfigured
-        ? line === "│ Register a gateway with: openshell gateway add <endpoint>"
-        : line === `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}` ||
-          line === "│ Or list available gateways: openshell gateway select",
-    );
+    const expectedGuidance = notConfigured
+      ? ["│ Register a gateway with: openshell gateway add <endpoint>"]
+      : [
+          `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}`,
+          "│ Or list available gateways: openshell gateway select",
+        ];
+    const guidanceOnly =
+      lines.length === expectedGuidance.length &&
+      lines.every((line, index) => line === expectedGuidance[index]);
     if (
       result.exitCode === 1 &&
       !result.timedOut &&

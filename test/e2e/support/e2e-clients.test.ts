@@ -865,6 +865,23 @@ describe("E2E fixture clients", () => {
     expect(runner.calls).toHaveLength(1);
   });
 
+  it.each([
+    "No gateway configured.",
+    "No gateway configured.\n  ",
+    "No gateway configured.\n│ Register a gateway with: openshell gateway add <endpoint>\n│ Register a gateway with: openshell gateway add <endpoint>",
+    "Unknown gateway 'nemoclaw'.",
+    "Unknown gateway 'nemoclaw'.\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+    "Unknown gateway 'nemoclaw'.\n│ Or list available gateways: openshell gateway select",
+    "Unknown gateway 'nemoclaw'.\n│ Or list available gateways: openshell gateway select\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+    "Unknown gateway 'nemoclaw'.\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw\n│ Register it first: openshell gateway add <endpoint> --name nemoclaw",
+  ])("initial cleanup rejects incomplete or repeated registration guidance: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr });
+    const sandbox = new SandboxClient(runner);
+    await expect(sandbox.cleanupSandboxBeforeOnboard("assistant")).rejects.toThrow();
+    expect(runner.calls).toHaveLength(1);
+  });
+
   it("initial cleanup retains deletion failures for a verified gateway", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: '{"gateway":"nemoclaw"}' });

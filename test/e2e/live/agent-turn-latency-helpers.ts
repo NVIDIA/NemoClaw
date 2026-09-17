@@ -367,10 +367,11 @@ export async function cleanupTurnSandboxes(
   progress?: AgentTurnProgress,
 ): Promise<void> {
   const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
+  const gatewayName = cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
   const gatewayPresent = await runCleanupStep(
     "inspect OpenShell gateway",
     () =>
-      sandbox.hasGatewayForInitialCleanup(cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw", {
+      sandbox.hasGatewayForInitialCleanup(gatewayName, {
         env: cleanupEnv,
         timeoutMs: 60_000,
       }),
@@ -414,7 +415,7 @@ export async function cleanupTurnSandboxes(
   await runCleanupStep(
     "remove OpenShell gateway",
     () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
+      host.cleanupGatewayRegistration(gatewayName, {
         artifactName: "cleanup-gateway-destroy-turn-latency",
         env: buildAvailabilityProbeEnv(),
         onOutput: progress?.onOutput,
