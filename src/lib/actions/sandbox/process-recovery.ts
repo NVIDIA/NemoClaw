@@ -464,31 +464,6 @@ export function buildOpenClawPostUpgradeDoctorAbortCommand(): string {
   ].join("; ");
 }
 
-export function buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(
-  markerValue = OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT,
-): string {
-  const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
-  const markerContent = shellQuote(markerValue);
-  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
-  const readyContent = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT);
-  return [
-    "set -e",
-    `[ -f ${marker} ] && [ ! -L ${marker} ] || exit 60`,
-    `marker_owner="$(stat -c '%u' ${marker} 2>/dev/null)"`,
-    `[ "$marker_owner" = "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] || exit 61`,
-    `[ "$(stat -c '%a %h %s' ${marker} 2>/dev/null)" = '600 1 ${String(markerValue.length + 1)}' ] || exit 61`,
-    `[ "$(cat ${marker})" = ${markerContent} ] || exit 62`,
-    `[ -f ${ready} ] && [ ! -L ${ready} ] || exit 63`,
-    `[ "$(stat -c '%u' ${ready} 2>/dev/null)" = "$marker_owner" ] || exit 64`,
-    `[ "$(stat -c '%a %h %s' ${ready} 2>/dev/null)" = '600 1 ${String(OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT.length + 1)}' ] || exit 64`,
-    `[ "$(cat ${ready})" = ${readyContent} ] || exit 65`,
-    `rm -f -- ${ready}`,
-    `[ ! -e ${ready} ] && [ ! -L ${ready} ] || exit 66`,
-    `rm -f -- ${marker}`,
-    `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 67`,
-  ].join("; ");
-}
-
 function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
@@ -644,58 +619,6 @@ export async function abortOpenClawPostRestoreDoctor(
     ok: false,
     stage: "abort",
     detail: "could not prove the aborted post-upgrade sandbox stopped",
-  };
-}
-
-/**
- * Retire a source-only doctor gate at the rebuild delete edge. Remove the
- * ephemeral receipt before the persistent marker so an interrupted command
- * leaves startup fail-closed in its gate. Once both are absent, stop and prove
- * the source sandbox terminal before its retained PVC can receive more writes.
- */
-export async function retireOpenClawPostRestoreDoctorForDelete(
-  window: OpenClawPostRestoreDoctorWindow,
-  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
-): Promise<OpenClawPostRestoreDoctorAbortResult> {
-  const { sandboxName, runtimeSelection } = window;
-  const retired = await executeOpenClawDoctorGateCommand(
-    deps,
-    sandboxName,
-    buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(openClawMaintenanceMarkerContent(window)),
-    30_000,
-    runtimeSelection,
-  );
-  if (!retired || retired.status !== 0) {
-    return {
-      ok: false,
-      stage: "abort",
-      detail: "could not retire the verified source maintenance gate before deletion",
-    };
-  }
-
-  const lifecycleOptions = withSelectedOpenShellCommandOptions(
-    {
-      ignoreError: true,
-      includeStderr: true,
-      killProcessTreeOnTimeout: true,
-      killSignal: "SIGKILL" as const,
-      timeout: OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
-    },
-    runtimeSelection,
-  );
-  const stop = captureOpenClawDoctorLifecycle(
-    deps,
-    ["sandbox", "stop", sandboxName],
-    lifecycleOptions,
-  );
-  const stopped =
-    stop.status === 0 ||
-    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
-  if (stopped) return { ok: true };
-  return {
-    ok: false,
-    stage: "abort",
-    detail: "source maintenance was retired, but the sandbox did not stop before deletion",
   };
 }
 

@@ -309,7 +309,7 @@ describe("rebuild resume snapshot repair", () => {
         window: { sandboxName: "alpha", kind: "backup" },
       }),
       vi
-        .spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete")
+        .spyOn(openClawLifecycle, "finishOpenClawPostRestoreDoctor")
         .mockResolvedValue({ ok: true }),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
