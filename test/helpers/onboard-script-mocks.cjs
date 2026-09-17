@@ -1266,17 +1266,10 @@ function mockManagedStateVolumeOnboardLifecycle() {
   const managedStartupRootApply = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-startup/docker-root-apply.ts"),
   );
-  const managedStartupSharedState = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/docker-shared-state.ts"),
-  );
   managedStartupRootApply.resolveDockerManagedStartupContainer = () =>
     ONBOARD_SANDBOX_OLD_CONTAINER_ID;
   managedStartupRootApply.applyDockerManagedStartupRootRequest = () => null;
   managedStartupRootApply.releaseDockerManagedStartupHold = () => {};
-  managedStartupSharedState.finalizeDockerManagedStartupSharedState = () => ({
-    supervisorReady: true,
-    failure: null,
-  });
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {

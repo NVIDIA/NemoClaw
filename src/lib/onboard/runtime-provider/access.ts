@@ -33,7 +33,6 @@ export {
   resolveDockerManagedStartupContainer,
   type DockerManagedStartupTransaction,
 } from "../managed-startup/docker-root-apply";
-export { finalizeDockerManagedStartupSharedState } from "../managed-startup/docker-shared-state";
 export {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,

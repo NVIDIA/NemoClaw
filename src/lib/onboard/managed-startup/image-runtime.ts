@@ -1763,7 +1763,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--release-startup-hold|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--release-startup-hold|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--rollback-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1854,6 +1854,19 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       bootstrapIdentity: argv.length === 6 ? readCliBootstrapIdentity(argv) : null,
     });
     if (!rolledBack) fail("read-only shared-state rollback receipt is missing");
+    console.log(`[managed-startup] verified and restored ${agent} shared state`);
+    return;
+  }
+  if (
+    (argv.length === 3 || argv.length === 5) &&
+    argv[0] === "--rollback-shared-state-transaction"
+  ) {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, argv.length));
+    const rolledBack = rollbackManagedStartupSharedStateTransaction(agent, {
+      bootstrapIdentity: argv.length === 5 ? readCliBootstrapIdentity(argv) : null,
+    });
+    if (!rolledBack) fail("managed startup transaction is missing at rollback");
     console.log(`[managed-startup] verified and restored ${agent} shared state`);
     return;
   }

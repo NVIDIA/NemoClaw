@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   normalizeRuntimeProviderIdentity,
@@ -13,6 +14,10 @@ import type {
 } from "../../../onboard/runtime-provider/contract";
 import { cliName } from "../../../onboard/branding";
 import type { SandboxEntry } from "../../../state/registry/types";
+import {
+  mutateStandardSandboxLifecycle,
+  type StandardSandboxLifecycleDeps,
+} from "./standard-lifecycle";
 
 export type { RuntimeProviderLifecycleResult as SandboxLifecycleResult };
 
@@ -74,4 +79,38 @@ export function resolveSandboxLifecycleProvider(
     };
   }
   return { ok: true, sandbox, bundle, control: bundle.lifecycle };
+}
+
+export interface RegisteredStandardLifecycleDeps extends StandardSandboxLifecycleDeps {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly log?: (message: string) => void;
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+/** Resolve registered provider ownership before crossing the standard OpenShell mutation boundary. */
+export async function mutateRegisteredStandardSandboxLifecycle(
+  action: RuntimeProviderLifecycleAction,
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  deps: RegisteredStandardLifecycleDeps = {},
+): Promise<RuntimeProviderLifecycleResult> {
+  const resolved = resolveSandboxLifecycleProvider(
+    sandboxName,
+    sandbox,
+    action,
+    deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  if (!resolved.ok) return resolved.result;
+  return await mutateStandardSandboxLifecycle(
+    action,
+    {
+      environment: deps.environment ?? process.env,
+      log: deps.log ?? console.error,
+      readRegistry: deps.readRegistry,
+      sandbox: resolved.sandbox,
+      sandboxName,
+    },
+    deps,
+  );
 }

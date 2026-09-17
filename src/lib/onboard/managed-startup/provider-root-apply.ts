@@ -7,7 +7,6 @@ import type {
   RuntimeProviderPrivilegedSandboxControl,
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
-import { finalizeDockerManagedStartupSharedState } from "./docker-shared-state";
 import {
   applyDockerManagedStartupRootRequest,
   type DockerManagedStartupTransaction,
@@ -172,6 +171,45 @@ function executeExact(
   });
 }
 
+function inspectExactTransactionRuntime(input: {
+  readonly runtimeProvider: RuntimeProviderBundle;
+  readonly sandboxName: string;
+  readonly sandboxId: string;
+  readonly transaction: ProviderManagedStartupTransaction;
+}): ProviderManagedStartupRuntime {
+  const pinned = inspectExactCreatedRuntime({
+    bundle: input.runtimeProvider,
+    sandboxName: input.sandboxName,
+    sandboxId: input.sandboxId,
+  });
+  if (
+    pinned.transaction.containerId !== input.transaction.containerId ||
+    pinned.transaction.image !== input.transaction.image ||
+    pinned.transaction.providerId !== input.transaction.providerId
+  ) {
+    throw new Error("Managed-startup runtime identity changed before transaction finalization.");
+  }
+  return { ...pinned, transaction: input.transaction };
+}
+
+function sharedStateTransactionCommand(
+  action: "commit" | "rollback",
+  transaction: ProviderManagedStartupTransaction,
+): readonly string[] {
+  return [
+    "/usr/bin/env",
+    "-i",
+    ...FIXED_ROOT_ENV,
+    "/usr/local/bin/node",
+    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+    `--${action}-shared-state-transaction`,
+    "--agent",
+    transaction.agent,
+    "--bootstrap-identity",
+    transaction.bootstrapIdentity,
+  ];
+}
+
 export function applyProviderManagedStartupRootRequest(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly sandboxName: string;
@@ -263,36 +301,56 @@ export function applyProviderManagedStartupRootRequest(input: {
   throw error;
 }
 
-function providerEngineDeps(input: {
-  readonly runtimeProvider: RuntimeProviderBundle;
-}): import("../docker-gpu-patch-types").DockerGpuPatchDeps {
-  const runtime = requireRuntimeProvider(input.runtimeProvider);
-  const capture = (args: readonly string[], timeout = 30_000) => runtime.capture(args, timeout);
-  return {
-    dockerRun: ((args: readonly string[], options?: { timeout?: number }) =>
-      capture(args, options?.timeout)) as never,
-    dockerStop: ((containerId: string, options?: { timeout?: number }) =>
-      capture(["stop", containerId], options?.timeout)) as never,
-    dockerRm: ((containerId: string, options?: { timeout?: number }) =>
-      capture(["rm", "--force", containerId], options?.timeout)) as never,
-  };
-}
-
 export function finalizeProviderManagedStartupSharedState(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
+  readonly sandboxName: string;
+  readonly sandboxId: string;
   readonly transaction: ProviderManagedStartupTransaction | null;
   readonly supervisorReady: boolean;
 }) {
-  if (input.runtimeProvider.identity.id === "docker") {
-    return finalizeDockerManagedStartupSharedState({
-      transaction: input.transaction,
-      supervisorReady: input.supervisorReady,
-    });
+  if (!input.transaction) {
+    return { supervisorReady: input.supervisorReady, failure: null };
   }
-  return finalizeDockerManagedStartupSharedState(
-    { transaction: input.transaction, supervisorReady: input.supervisorReady },
-    providerEngineDeps(input),
+  const runtime = inspectExactTransactionRuntime({ ...input, transaction: input.transaction });
+  if (input.supervisorReady) {
+    let commit = executeExact(runtime, sharedStateTransactionCommand("commit", input.transaction), {
+      timeoutMs: 30_000,
+    });
+    if (commit.status !== 0 && commit.error) {
+      commit = executeExact(runtime, sharedStateTransactionCommand("commit", input.transaction), {
+        timeoutMs: 30_000,
+      });
+    }
+    if (commit.status === 0) return { supervisorReady: true, failure: null };
+    const failure = new Error(
+      `OpenShell supervisor reconnected, but managed shared-state commit failed: ${commandDetail(commit)}`,
+    );
+    if (commit.error) {
+      throw new Error(
+        `${failure.message}. Commit completion is ambiguous; the exact sandbox is retained for recovery.`,
+      );
+    }
+    const rollback = executeExact(
+      runtime,
+      sharedStateTransactionCommand("rollback", input.transaction),
+      { timeoutMs: 30_000 },
+    );
+    if (rollback.status !== 0 || rollback.error) {
+      throw new Error(
+        `Managed-startup shared-state commit failed and exact in-sandbox rollback did not complete: ${commandDetail(rollback)}`,
+      );
+    }
+    return { supervisorReady: false, failure };
+  }
+  const rollback = executeExact(
+    runtime,
+    sharedStateTransactionCommand("rollback", input.transaction),
+    { timeoutMs: 30_000 },
   );
+  if (rollback.status !== 0 || rollback.error) {
+    throw new Error(`Exact in-sandbox managed-startup rollback failed: ${commandDetail(rollback)}`);
+  }
+  return { supervisorReady: false, failure: null };
 }
 
 export function releaseProviderManagedStartupHold(input: {
@@ -312,19 +370,12 @@ export function releaseProviderManagedStartupHold(input: {
     });
     return;
   }
-  const pinned = inspectExactCreatedRuntime({
-    bundle: input.runtimeProvider,
+  const runtime = inspectExactTransactionRuntime({
+    runtimeProvider: input.runtimeProvider,
     sandboxName: input.sandboxName,
     sandboxId: input.sandboxId,
+    transaction: input.transaction,
   });
-  const runtime: ProviderManagedStartupRuntime = { ...pinned, transaction: input.transaction };
-  if (
-    pinned.transaction.containerId !== input.transaction.containerId ||
-    pinned.transaction.image !== input.transaction.image ||
-    pinned.transaction.providerId !== input.transaction.providerId
-  ) {
-    throw new Error("Managed-startup runtime identity changed before hold release.");
-  }
   const result = executeExact(
     runtime,
     [

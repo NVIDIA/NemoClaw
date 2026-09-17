@@ -2844,8 +2844,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
             // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
             const startedStoppedContainer = hermesPortable
               ? false
-              : probeTiming!.measure("lifecycle", () =>
-                  startStoppedSandboxContainerForProbeRecovery(sandboxName),
+              : await probeTiming!.measureAsync("lifecycle", () =>
+                  startStoppedSandboxContainerForProbeRecovery(sandboxName, {
+                    getSandbox: registry.getSandbox,
+                  }),
                 );
             if (
               startedStoppedContainer &&

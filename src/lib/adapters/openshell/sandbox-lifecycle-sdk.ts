@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as delay } from "node:timers/promises";
+
 import { isValidName } from "../../name-validation";
 import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
@@ -22,20 +24,24 @@ export interface OpenShellSandboxStateLifecycle {
 }
 
 type CallOptions = Readonly<{ signal: AbortSignal }>;
+type SdkSandboxRef = Readonly<{ id: string; phase: string }>;
+type SdkSandboxMutationResponse = Readonly<{
+  sandbox?: Readonly<{ metadata?: Readonly<{ id?: string }> }>;
+}>;
 type SdkClient = Readonly<{
   sandbox: Readonly<{
-    get(name: string, options: CallOptions): Promise<Readonly<{ id: string }>>;
-    waitReady(name: string, timeoutSecs: number, options: CallOptions): Promise<unknown>;
+    get(name: string, options: CallOptions): Promise<SdkSandboxRef>;
+    waitReady(name: string, timeoutSecs: number, options: CallOptions): Promise<SdkSandboxRef>;
   }>;
   raw: Readonly<{
     startSandbox(
       request: Readonly<{ name: string; workspace: string }>,
       options: CallOptions,
-    ): Promise<unknown>;
+    ): Promise<SdkSandboxMutationResponse>;
     stopSandbox(
       request: Readonly<{ name: string; workspace: string }>,
       options: CallOptions,
-    ): Promise<unknown>;
+    ): Promise<SdkSandboxMutationResponse>;
   }>;
 }>;
 
@@ -44,6 +50,7 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<unknown>;
+  waitForStopPoll?: (signal: AbortSignal) => Promise<void>;
 }>;
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
@@ -91,6 +98,7 @@ async function mutate(
   action: "start" | "stop",
   request: MutateOpenShellSandboxRequest,
   connect: (target: OpenShellGatewayTarget, options: CallOptions) => Promise<SdkClient>,
+  waitForStopPoll: (signal: AbortSignal) => Promise<void>,
 ): Promise<OpenShellSandboxMutationSubmission> {
   if (
     !isValidName(request.sandboxName) ||
@@ -136,12 +144,25 @@ async function mutate(
       };
     }
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
-    await Promise.race([
+    const mutation = await Promise.race([
       operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
       aborted,
     ]);
+    if (
+      fingerprintOpenShellSandboxId(String(mutation.sandbox?.metadata?.id ?? "")) !==
+      request.sandboxIdentityFingerprint
+    ) {
+      return {
+        kind: "failed",
+        error: {
+          kind: "transport",
+          reason: "identity_mismatch",
+          message: "OpenShell lifecycle response changed sandbox identity.",
+        },
+      };
+    }
     if (action === "start") {
-      await Promise.race([
+      const ready = await Promise.race([
         client.sandbox.waitReady(
           request.sandboxName,
           Math.max(1, Math.ceil((request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS) / 1000)),
@@ -149,6 +170,35 @@ async function mutate(
         ),
         aborted,
       ]);
+      if (fingerprintOpenShellSandboxId(ready.id) !== request.sandboxIdentityFingerprint) {
+        return {
+          kind: "failed",
+          error: {
+            kind: "transport",
+            reason: "identity_mismatch",
+            message: "OpenShell readiness changed sandbox identity.",
+          },
+        };
+      }
+    } else {
+      for (;;) {
+        const stopped = await Promise.race([
+          client.sandbox.get(request.sandboxName, { signal: controller.signal }),
+          aborted,
+        ]);
+        if (fingerprintOpenShellSandboxId(stopped.id) !== request.sandboxIdentityFingerprint) {
+          return {
+            kind: "failed",
+            error: {
+              kind: "transport",
+              reason: "identity_mismatch",
+              message: "OpenShell stop observation changed sandbox identity.",
+            },
+          };
+        }
+        if (stopped.phase === "stopped") break;
+        await Promise.race([waitForStopPoll(controller.signal), aborted]);
+      }
     }
     return { kind: "accepted" };
   } catch (error) {
@@ -177,8 +227,10 @@ export function createSdkOpenShellSandboxStateLifecycle(
           : {}),
       })) as SdkClient;
     });
+  const waitForStopPoll =
+    deps.waitForStopPoll ?? ((signal: AbortSignal) => delay(250, undefined, { signal }));
   return {
-    startSandbox: (request) => mutate("start", request, connect),
-    stopSandbox: (request) => mutate("stop", request, connect),
+    startSandbox: (request) => mutate("start", request, connect, waitForStopPoll),
+    stopSandbox: (request) => mutate("stop", request, connect, waitForStopPoll),
   };
 }

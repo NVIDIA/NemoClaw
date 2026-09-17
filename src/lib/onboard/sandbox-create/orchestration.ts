@@ -2974,6 +2974,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     const sharedState =
                       managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
                         runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
                         transaction: managedStartupTransaction,
                         supervisorReady: true,
                       });

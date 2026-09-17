@@ -435,6 +435,25 @@ describe("managed startup image runtime", () => {
     expect(write).toHaveBeenCalledWith("pending\n");
   });
 
+  it("rolls back a pending transaction inside its exact managed sandbox", async () => {
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const rollback = vi
+      .spyOn(sharedStateTransaction, "rollbackManagedStartupSharedStateTransaction")
+      .mockReturnValue(true);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mainManagedStartupImageRuntime([
+      "--rollback-shared-state-transaction",
+      "--agent",
+      "openclaw",
+      "--bootstrap-identity",
+      bootstrapIdentity,
+    ]);
+
+    expect(rollback).toHaveBeenCalledWith("openclaw", { bootstrapIdentity });
+  });
+
   function mockRootOwnedPolicyInstallPaths(
     source: string,
     shareDirectory: string,

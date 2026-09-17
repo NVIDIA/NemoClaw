@@ -18,7 +18,7 @@ import {
   applyDockerManagedStartupRootRequest,
   releaseDockerManagedStartupHold,
 } from "../../src/lib/onboard/managed-startup/docker-root-apply.ts";
-import { finalizeDockerManagedStartupSharedState } from "../../src/lib/onboard/managed-startup/docker-shared-state.ts";
+import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "../../src/lib/onboard/managed-startup/image-runtime.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
@@ -174,13 +174,31 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     if (!transaction) {
       throw new Error("direct managed startup did not create one fresh shared-state transaction");
     }
-    const committed = finalizeDockerManagedStartupSharedState({
-      transaction,
-      supervisorReady: true,
-    });
-    if (!committed.supervisorReady || committed.failure) {
-      throw committed.failure ?? new Error("direct managed startup shared-state commit failed");
-    }
+    docker([
+      "exec",
+      "--user",
+      "0:0",
+      "--env",
+      "NODE_OPTIONS=",
+      "--env",
+      "NODE_PATH=",
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
+      containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--commit-shared-state-transaction",
+      "--agent",
+      transaction.agent,
+      "--bootstrap-identity",
+      transaction.bootstrapIdentity,
+    ]);
     releaseDockerManagedStartupHold({
       transaction,
       profileFingerprint: rootApplyRequest.profileFingerprint,

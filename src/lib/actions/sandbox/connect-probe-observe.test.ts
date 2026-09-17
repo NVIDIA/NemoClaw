@@ -372,6 +372,7 @@ describe("connectSandbox probe-only observe mode", () => {
   it("fails before recovery when the initial Error persists after the start (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      sandboxGetPhase: "Stopped",
       listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
     });
 
@@ -398,6 +399,7 @@ describe("connectSandbox probe-only observe mode", () => {
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
       sandboxLifecycleStartStatus: 1,
+      sandboxGetPhase: "Stopped",
       listOutput: "alpha Ready",
     });
 
@@ -405,7 +407,7 @@ describe("connectSandbox probe-only observe mode", () => {
 
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
-      "OpenShell could not start sandbox 'alpha' (exit 1); continuing with readiness checks.",
+      "OpenShell could not start sandbox 'alpha': OpenShell is unavailable (Error, code 1).",
     );
     expect(
       harness.captureOpenshellSpy.mock.calls.some(
@@ -419,6 +421,7 @@ describe("connectSandbox probe-only observe mode", () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       sandboxLifecycleStartStatus: null,
+      sandboxGetPhase: "Stopped",
       listOutput: "alpha Ready",
     });
 

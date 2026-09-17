@@ -8,6 +8,7 @@ import {
   managedStartupE2eProfile,
 } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
+import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
@@ -101,6 +102,8 @@ describe("provider-owned managed startup root application", () => {
     expect(
       finalizeProviderManagedStartupSharedState({
         runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
         transaction,
         supervisorReady: true,
       }),
@@ -118,4 +121,77 @@ describe("provider-owned managed startup root application", () => {
     expect(calls.some(({ args }) => args.includes("--release-startup-hold"))).toBe(true);
     expect(JSON.stringify(calls.map(({ args }) => args))).not.toContain("docker");
   });
+
+  it.each(["docker", "podman"] as const)(
+    "rolls back a definitive %s commit failure inside the exact sandbox without stop or removal",
+    (providerId) => {
+      const labels = {
+        ...(providerId === "docker"
+          ? { "openshell.ai/managed-by": "openshell" }
+          : { "openshell.managed": "true" }),
+        "openshell.ai/sandbox-name": SANDBOX_NAME,
+        "openshell.ai/sandbox-id": SANDBOX_ID,
+        "openshell.ai/sandbox-workspace": "default",
+      };
+      const capture = vi.fn((_args: readonly string[], _timeoutMs?: number) => ({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            Id: CONTAINER_ID,
+            Image: IMAGE_ID,
+            Config: { Labels: labels },
+            State: { Dead: false, Paused: false, Restarting: false, Running: true },
+          },
+        ]),
+        stderr: "",
+      }));
+      const execute = vi
+        .fn((_input: { readonly command: readonly string[] }) => ({
+          status: 0,
+          stdout: "",
+          stderr: "",
+        }))
+        .mockReturnValueOnce({ status: 1, stdout: "", stderr: "commit rejected" })
+        .mockReturnValueOnce({ status: 0, stdout: "restored", stderr: "" });
+      const runtimeProvider = {
+        identity: { id: providerId },
+        lifecycle: {
+          supported: true,
+          privilegedSandboxControl: {
+            resolveTarget: () => ({ resourceHandle: CONTAINER_ID }),
+            execute,
+          },
+        },
+        containerEngine: {
+          supported: true,
+          identities: [{ operation: "sandbox-lifecycle" }],
+          capture: (_operation: string, args: readonly string[], timeoutMs?: number) =>
+            capture(args, timeoutMs),
+        },
+      } as unknown as RuntimeProviderBundle;
+
+      const outcome = finalizeProviderManagedStartupSharedState({
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        transaction: {
+          agent: "openclaw",
+          bootstrapIdentity: "c".repeat(64),
+          containerId: CONTAINER_ID,
+          image: IMAGE_ID,
+          providerId,
+        },
+        supervisorReady: true,
+      });
+
+      expect(outcome.supervisorReady).toBe(false);
+      expect(outcome.failure?.message).toContain("commit rejected");
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[0]?.[0].command).toContain("--commit-shared-state-transaction");
+      expect(execute.mock.calls[1]?.[0].command).toContain("--rollback-shared-state-transaction");
+      expect(capture.mock.calls.flatMap(([args]) => args)).not.toEqual(
+        expect.arrayContaining(["stop", "rm", "--force"]),
+      );
+    },
+  );
 });

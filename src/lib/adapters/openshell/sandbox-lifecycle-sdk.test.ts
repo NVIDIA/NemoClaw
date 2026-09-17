@@ -12,10 +12,11 @@ const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const request = { sandboxName: "alpha", sandboxIdentityFingerprint, target };
 
 function harness() {
-  const startSandbox = vi.fn(async () => ({}));
-  const stopSandbox = vi.fn(async () => ({}));
-  const get = vi.fn(async () => ({ id: sandboxId }));
-  const waitReady = vi.fn(async () => ({}));
+  const response = { sandbox: { metadata: { id: sandboxId } } };
+  const startSandbox = vi.fn(async () => response);
+  const stopSandbox = vi.fn(async () => response);
+  const get = vi.fn(async () => ({ id: sandboxId, phase: "stopped" }));
+  const waitReady = vi.fn(async () => ({ id: sandboxId, phase: "ready" }));
   const connect = vi.fn(async () => ({
     raw: { startSandbox, stopSandbox },
     sandbox: { get, waitReady },
@@ -36,7 +37,7 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     });
 
     expect(connect).toHaveBeenCalledTimes(2);
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(3);
     expect(startSandbox).toHaveBeenCalledWith(
       { name: "alpha", workspace: "default" },
       { signal: expect.any(AbortSignal) },
@@ -65,10 +66,13 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     const denied = Object.assign(new Error("token=secret"), { code: "auth" });
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => ({
-        sandbox: { get: async () => ({ id: sandboxId }), waitReady: async () => ({}) },
+        sandbox: {
+          get: async () => ({ id: sandboxId, phase: "stopped" }),
+          waitReady: async () => ({ id: sandboxId, phase: "ready" }),
+        },
         raw: {
           startSandbox: async () => Promise.reject(denied),
-          stopSandbox: async () => ({}),
+          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
         },
       }),
     });
@@ -118,9 +122,12 @@ describe("OpenShell SDK sandbox lifecycle", () => {
       connect: async () => ({
         raw: {
           startSandbox: () => new Promise(() => undefined),
-          stopSandbox: async () => ({}),
+          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
         },
-        sandbox: { get: async () => ({ id: sandboxId }), waitReady: async () => ({}) },
+        sandbox: {
+          get: async () => ({ id: sandboxId, phase: "stopped" }),
+          waitReady: async () => ({ id: sandboxId, phase: "ready" }),
+        },
       }),
     });
 
@@ -134,11 +141,11 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
       connect: async () => ({
         raw: {
-          startSandbox: async () => ({}),
-          stopSandbox: async () => ({}),
+          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
         },
         sandbox: {
-          get: async () => ({ id: sandboxId }),
+          get: async () => ({ id: sandboxId, phase: "stopped" }),
           waitReady: () => new Promise(() => undefined),
         },
       }),
@@ -168,5 +175,82 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     });
     expect(startSandbox).not.toHaveBeenCalled();
     expect(stopSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects a lifecycle response for a same-name replacement", async () => {
+    const get = vi.fn(async () => ({ id: sandboxId, phase: "stopped" }));
+    const stopSandbox = vi.fn(async () => ({
+      sandbox: { metadata: { id: "replacement-id" } },
+    }));
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => ({
+        raw: {
+          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+          stopSandbox,
+        },
+        sandbox: {
+          get,
+          waitReady: async () => ({ id: sandboxId, phase: "ready" }),
+        },
+      }),
+    });
+
+    await expect(lifecycle.stopSandbox(request)).resolves.toEqual({
+      kind: "failed",
+      error: {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "OpenShell lifecycle response changed sandbox identity.",
+      },
+    });
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the same sandbox to report Stopped after the stop RPC", async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ id: sandboxId, phase: "ready" })
+      .mockResolvedValueOnce({ id: sandboxId, phase: "stopping" })
+      .mockResolvedValueOnce({ id: sandboxId, phase: "stopped" });
+    const waitForStopPoll = vi.fn(async () => undefined);
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => ({
+        raw: {
+          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+        },
+        sandbox: {
+          get,
+          waitReady: async () => ({ id: sandboxId, phase: "ready" }),
+        },
+      }),
+      waitForStopPoll,
+    });
+
+    await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(waitForStopPoll).toHaveBeenCalledOnce();
+  });
+
+  it("fails at the shared deadline when the exact sandbox never reaches Stopped", async () => {
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () => ({
+        raw: {
+          startSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+          stopSandbox: async () => ({ sandbox: { metadata: { id: sandboxId } } }),
+        },
+        sandbox: {
+          get: async () => ({ id: sandboxId, phase: "stopping" }),
+          waitReady: async () => ({ id: sandboxId, phase: "ready" }),
+        },
+      }),
+      waitForStopPoll: async () => await new Promise(() => undefined),
+    });
+
+    await expect(lifecycle.stopSandbox({ ...request, timeoutMs: 5 })).resolves.toEqual({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
   });
 });

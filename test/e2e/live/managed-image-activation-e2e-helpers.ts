@@ -456,16 +456,16 @@ function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-function enterGatewayRestartPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
+function enterPublicLifecyclePhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
   switch (agent) {
     case "openclaw":
-      progress.phase("restart OpenShell gateway and recheck OpenClaw");
+      progress.phase("stop and start OpenClaw through public NemoClaw lifecycle");
       return;
     case "hermes":
-      progress.phase("restart OpenShell gateway and recheck Hermes");
+      progress.phase("stop and start Hermes through public NemoClaw lifecycle");
       return;
     case "langchain-deepagents-code":
-      progress.phase("restart OpenShell gateway and recheck Deep Agents Code");
+      progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle");
       return;
   }
 }
@@ -637,7 +637,6 @@ async function qualifyAgent(
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
-  expectManagedReceipt(sandboxName, contract);
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
@@ -645,7 +644,7 @@ async function qualifyAgent(
     await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
   }
   const marker = `managed-activation-${agent}-${Date.now()}`;
-  const writeMarker = await sandbox.execShell(
+  await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
@@ -662,13 +661,26 @@ async function qualifyAgent(
       timeoutMs: 30_000,
     },
   );
-  expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
 
-  enterGatewayRestartPhase(progress, agent);
-  await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
-  await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
+  enterPublicLifecyclePhase(progress, agent);
+  const stop = await host.nemoclaw([sandboxName, "stop"], {
+    artifactName: `${agent}-public-stop`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs: 120_000,
+  });
+  const start = await host.nemoclaw([sandboxName, "start"], {
+    artifactName: `${agent}-public-start`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs: 10 * 60_000,
+  });
+  expect(
+    stop.exitCode === 0 && start.exitCode === 0,
+    `${resultText(stop)}\n${resultText(start)}`,
+  ).toBe(true);
   await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
-    artifactNamePrefix: `${agent}-post-restart-ready`,
+    artifactNamePrefix: `${agent}-post-public-start-ready`,
     env,
   });
   expectManagedReceipt(sandboxName, contract);
@@ -685,7 +697,7 @@ async function qualifyAgent(
         .join("\n"),
     ),
     {
-      artifactName: `${agent}-read-durable-marker`,
+      artifactName: `${agent}-read-durable-marker-after-public-lifecycle`,
       env,
       timeoutMs: 30_000,
     },
@@ -785,8 +797,10 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     lifecycle: [
       "onboard",
       "agent-turn",
-      "openshell-gateway-restart",
+      "nemoclaw-stop",
+      "nemoclaw-start",
       "native-readiness",
+      "durable-marker",
       "agent-turn",
       "openshell-delete",
     ],
