@@ -686,8 +686,11 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.p
     && test "$(grep -Fc 'conn.executescript(_kb.SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db_connect.py)" -eq 1 \
     && sed -i 's|conn.executescript(_kb.SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + _kb.SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db_connect.py \
     && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db_connect.py \
-    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
+    && session_probe_home="$(mktemp -d)" \
+    && printf '%s\n' 'database:' '  temp_store: 2' > "$session_probe_home/config.yaml" \
+    && HERMES_HOME="$session_probe_home" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-delete \
+    && rm -rf "$session_probe_home"
 
 # Hermes v0.21.3 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored

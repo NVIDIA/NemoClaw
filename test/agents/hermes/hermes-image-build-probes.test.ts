@@ -211,18 +211,20 @@ function runSessionDeleteProbe() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-session-delete-probe-"));
   const source = `
 import importlib.util
+import json
 import pathlib
 import sqlite3
 import sys
 import types
 
 database = pathlib.Path(sys.argv[2]) / "state.db"
+config = json.loads((database.parent / "config.yaml").read_text())
 
 class SessionDB:
     def __init__(self):
         self._conn = sqlite3.connect(database)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA temp_store=MEMORY")
+        self._conn.execute(f"PRAGMA temp_store={config['database']['temp_store']}")
         self._sessions = set()
 
     def create_session(self, session_id, _source):
@@ -248,6 +250,10 @@ spec.loader.exec_module(module)
 module.verify_session_delete()
 `;
   try {
+    fs.writeFileSync(
+      path.join(temporaryRoot, "config.yaml"),
+      JSON.stringify({ database: { temp_store: 2 } }),
+    );
     return spawnSync("python3", ["-I", "-c", source, probes, temporaryRoot], {
       encoding: "utf8",
       timeout: 5000,
@@ -356,6 +362,9 @@ describe("Hermes image build probes", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+    expect(dockerfile).toContain(
+      `printf '%s\\n' 'database:' '  temp_store: 2' > "$session_probe_home/config.yaml"`,
+    );
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {
