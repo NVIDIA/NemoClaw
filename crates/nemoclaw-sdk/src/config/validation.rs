@@ -241,10 +241,9 @@ impl Document {
             for agent in &sandbox.agents {
                 require(names.insert(&agent.name), "agent names must be unique")?;
 
-                require(
-                    agent.tools.is_none() || harness.kind == "openclaw",
-                    "tool restrictions require OpenClaw",
-                )?;
+                if let Some(tools) = &agent.tools {
+                    tools.validate(&harness.kind)?;
+                }
                 require(
                     SLUG.is_match(&agent.name),
                     "agent requires a lowercase name",

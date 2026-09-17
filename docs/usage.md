@@ -203,8 +203,8 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| OpenClaw model choices or a Pi catalog with multiple choices | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
-| Pi model or native model metadata with one declared choice | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
+| OpenClaw model choices or a Pi catalog with multiple choices or a tool policy | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
+| Pi model or native model metadata with one declared choice and no tool policy | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes the immutable native provider profile binding; use a separate deployment |
 | Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |

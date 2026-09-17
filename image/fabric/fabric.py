@@ -275,11 +275,16 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         )
         if harness == "remote-agent":
             config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
+    if harness in ("deepagents", "pi") and (inference or {}).get("agents"):
+        agent = next((a for a in inference["agents"] if a["name"] == name), None)
+        if agent is None:
+            raise ValueError("agent is not declared")
+        if agent.get("tools") is not None:
+            if agent["tools"] != {"allow": ["read"]}:
+                raise ValueError("unsupported native tool policy")
+            config["tools"] = {"enabled": ["read_file" if harness == "deepagents" else "read"]}
     if harness == "pi" and (inference or {}).get("agents"):
-        selected = next((a for a in inference["agents"] if a["name"] == name), None)
-        if selected is None:
-            raise ValueError("Pi agent is not declared")
-        choices = selected["inference"]
+        choices = agent["inference"]
         for alias, route in choices["models"].items():
             native = route["pi"]
             config["models"][f"route_{alias}"] = {

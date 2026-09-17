@@ -117,3 +117,33 @@ fn disclosure_round_trips_and_rejects_conflicting_gateway_modes() {
         "omitted unrestricted mode means progressive"
     );
 }
+
+#[test]
+fn native_read_only_policies_reach_deep_agents_and_pi_without_disclosure_modes() {
+    let schema = jsonschema::validator_for(&input_schema()).unwrap();
+    for harness in ["deepagents", "pi"] {
+        let mut value = input(1);
+        value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
+        value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"allow":["read"]});
+        let document = parse(&value).expect("native read tool policy");
+        assert!(schema.is_valid(&value));
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|key| (key.into(), "a".repeat(32)))
+            .into();
+        let rows = targets(&document, &generations).unwrap();
+        let settings: Value = serde_json::from_str(
+            &rows
+                .iter()
+                .find(|row| row.kind == "sandbox")
+                .unwrap()
+                .values["inference_json"],
+        )
+        .unwrap();
+        assert_eq!(settings["agents"][0]["tools"], json!({"allow":["read"]}));
+        for disclosure in ["direct", "progressive"] {
+            value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"disclosure":disclosure});
+            assert!(parse(&value).is_err());
+            assert!(!schema.is_valid(&value));
+        }
+    }
+}

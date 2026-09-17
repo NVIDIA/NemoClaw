@@ -91,7 +91,7 @@ pub struct AgentAuth {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
-/// OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+/// Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
 pub enum AgentTools {
     /// Expose only the read tool, independently of the gateway's discovery mode.
     ReadOnly {
@@ -103,6 +103,19 @@ pub enum AgentTools {
         /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
         disclosure: ToolDisclosure,
     },
+}
+impl AgentTools {
+    pub(crate) fn validate(&self, harness: &str) -> Result<(), ConfigError> {
+        if harness == "openclaw"
+            || (matches!(harness, "deepagents" | "pi") && matches!(self, Self::ReadOnly { .. }))
+        {
+            Ok(())
+        } else {
+            Err(ConfigError::new(
+                "read-only tools require OpenClaw, Deep Agents, or Pi; disclosure requires OpenClaw",
+            ))
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -136,7 +149,7 @@ impl ToolDisclosure {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
-/// Tool supported by the read-only OpenClaw policy.
+/// Tool supported by the native read-only policy.
 pub enum AllowedTool {
     /// Read a file within the sandbox's filesystem permissions.
     Read,
@@ -265,11 +278,16 @@ impl SandboxRuntimeSettings {
         if let Some(interfaces) = &self.interfaces {
             interfaces.validate(harness)?;
         }
+        for agent in &self.agents {
+            if let Some(tools) = &agent.tools {
+                tools.validate(harness)?;
+            }
+        }
         ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
         let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
-            && (!matches!(harness, "openclaw" | "pi")
-                || (harness == "pi" && self.agents.len() != 1)
+            && (!matches!(harness, "openclaw" | "pi" | "deepagents")
+                || (harness != "openclaw" && self.agents.len() != 1)
                 || self
                     .agents
                     .iter()
@@ -403,6 +421,7 @@ impl Document {
             .ok_or(ConfigError::new("at least one agent is required"))?;
         let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
+            || (harness.kind == "pi" && resolved.iter().any(|agent| agent.agent.tools.is_some()))
             || resolved
                 .iter()
                 .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);

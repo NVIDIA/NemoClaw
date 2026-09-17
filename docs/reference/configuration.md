@@ -65,7 +65,7 @@ Paths:
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access. |
+| `tools` | [AgentTools](#agenttools) | No | — | Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access. |
 
 ## AgentAuth
 
@@ -131,7 +131,7 @@ Paths:
 
 ## AgentTools
 
-OpenClaw tool restriction or discovery mode. These forms are mutually exclusive.
+Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -161,7 +161,7 @@ Select the shared gateway's tool discovery mode without granting additional tool
 
 ## AllowedTool
 
-Tool supported by the read-only OpenClaw policy.
+Tool supported by the native read-only policy.
 
 Guide: [Agent runtimes](../agents.md).
 

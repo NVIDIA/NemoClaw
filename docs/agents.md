@@ -113,7 +113,9 @@ With multiple agents, use an input object containing `agent` and `message`; ther
 Native OpenClaw commands can select any declared agent by name.
 The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
 
-Declare a read-only tool policy on any OpenClaw agent:
+Build the selected harness image from this revision before using read-only policies; older Deep Agents and Pi images do not apply the mapping.
+Follow [Build Agent Images](build.md#build-agent-images) and select its immutable digest.
+Declare a read-only tool policy on an OpenClaw, Deep Agents, or Pi agent:
 
 ```yaml
 tools:
@@ -121,12 +123,15 @@ tools:
 ```
 
 Only this allowlist is supported; empty lists, other tools, wildcards, and additional grant fields are rejected.
-Omitting `tools` selects progressive discovery without restricting tools.
+The policy selects native `read` in OpenClaw/Pi and `read_file` in Deep Agents; other tool calls are blocked.
+Omitting `tools` preserves the harness defaults.
+OpenClaw also defaults to progressive discovery.
 This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
-Each agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
+Each OpenClaw agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
+Deep Agents and Pi use `/sandbox/workspace`.
 Those directories are not separate security boundaries.
 
-An unrestricted agent can select tool disclosure instead of an allowlist:
+An unrestricted OpenClaw agent can select tool disclosure instead of an allowlist:
 
 ```yaml
 tools:
@@ -397,8 +402,8 @@ Pi rejects invalid native values at startup, with resources retained for a corre
 The optional inference probe uses Pi's native model API; apply does not invoke it.
 
 Apply configures Pi after attaching the native provider.
-For a single declared choice, applying changed model IDs or metadata restarts Pi in the existing sandbox.
-For multiple choices, changing the declared catalog changes the sandbox launch configuration and requires a fresh deployment.
+For a single declared choice without a tool policy, applying changed model IDs or metadata restarts Pi in the existing sandbox.
+With multiple choices or a tool policy, changing the declared catalog changes the sandbox launch configuration and requires a fresh deployment.
 Changes to provider attachments also require a new sandbox.
 Unchanged apply preserves the runtime.
 

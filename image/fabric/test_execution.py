@@ -173,5 +173,33 @@ process.stdout.write(JSON.stringify([timeout({cfg}), heartbeat(cfg)]));
                         await runtime.stop()
 
 
+class NativeToolConfiguration(unittest.TestCase):
+    def test_read_policy_uses_each_adapters_native_tool_name(self):
+        for harness, tool in (("deepagents", "read_file"), ("pi", "read")):
+            route = {
+                "connection": {
+                    "provider": "openai",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "api_key_env": "NEMOCLAW_ANONYMOUS_API_KEY",
+                },
+                "pi": {"model": "custom"},
+            }
+            inference = {
+                "api": "openai-completions",
+                "agents": [
+                    {
+                        "name": "main",
+                        "tools": {"allow": ["read"]},
+                        "inference": {"default": "primary", "models": {"primary": route}},
+                    }
+                ],
+            }
+            config = configuration("main", harness, {"model": "custom"}, inference)
+            self.assertEqual(config["tools"], {"enabled": [tool]})
+            inference["agents"][0]["tools"] = {"disclosure": "direct"}
+            with self.assertRaises(ValueError):
+                configuration("main", harness, {"model": "custom"}, inference)
+
+
 if __name__ == "__main__":
     unittest.main()

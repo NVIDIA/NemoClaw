@@ -66,7 +66,7 @@
         },
         "tools": {
           "$ref": "#/$defs/AgentTools",
-          "description": "OpenClaw tool restriction or disclosure mode. Omission selects progressive discovery without restricting tools. allow: [read] restricts tools, not OS-level filesystem access."
+          "description": "Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access."
         }
       },
       "required": [
@@ -193,10 +193,10 @@
           "type": "object"
         }
       ],
-      "description": "OpenClaw tool restriction or discovery mode. These forms are mutually exclusive."
+      "description": "Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive."
     },
     "AllowedTool": {
-      "description": "Tool supported by the read-only OpenClaw policy.",
+      "description": "Tool supported by the native read-only policy.",
       "oneOf": [
         {
           "const": "read",
@@ -2390,31 +2390,91 @@
       "allOf": [
         {
           "if": {
-            "anyOf": [
-              {
+            "properties": {
+              "agents": {
+                "minItems": 2
+              }
+            },
+            "required": [
+              "agents"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
                 "properties": {
-                  "agents": {
-                    "minItems": 2
+                  "kind": {
+                    "const": "openclaw"
                   }
-                },
-                "required": [
-                  "agents"
-                ]
-              },
-              {
-                "properties": {
-                  "agents": {
-                    "contains": {
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "agents": {
+                "contains": {
+                  "properties": {
+                    "tools": {
+                      "properties": {
+                        "allow": {}
+                      },
                       "required": [
-                        "tools"
+                        "allow"
                       ]
                     }
-                  }
-                },
-                "required": [
-                  "agents"
-                ]
+                  },
+                  "required": [
+                    "tools"
+                  ]
+                }
               }
+            },
+            "required": [
+              "agents"
+            ]
+          },
+          "then": {
+            "properties": {
+              "harness": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "openclaw",
+                      "deepagents",
+                      "pi"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "agents": {
+                "contains": {
+                  "properties": {
+                    "tools": {
+                      "properties": {
+                        "disclosure": {}
+                      },
+                      "required": [
+                        "disclosure"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tools"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "agents"
             ]
           },
           "then": {

@@ -122,10 +122,13 @@ pub(super) fn constrain(root: &mut Value) {
         }),
     );
     defs["Sandbox"]["allOf"] = json!([{
-        "if": {"anyOf": [
-            at("agents", json!({"minItems":2}), true),
-            at("agents", json!({"contains":{"required":["tools"]}}), true)
-        ]},
+        "if": at("agents", json!({"minItems":2}), true),
+        "then": at("harness/kind",json!({"const":"openclaw"}),false)
+    }, {
+        "if": at("agents", json!({"contains":at("tools/allow", json!({}), true)}), true),
+        "then": at("harness/kind",json!({"enum":["openclaw","deepagents","pi"]}),false)
+    }, {
+        "if": at("agents", json!({"contains":at("tools/disclosure", json!({}), true)}), true),
         "then": at("harness/kind",json!({"const":"openclaw"}),false)
     }, {
         "if": at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true),
