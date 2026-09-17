@@ -520,7 +520,7 @@ jobs:
           dotnet tool install --tool-path $tools wix --version 5.0.2
           if ($LASTEXITCODE -ne 0) { throw 'Pinned WiX installation failed.' }
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-burn-diagnostics-fixture.ps1" -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -PackageDirectory "$env:RUNNER_TEMP\finished-windows\package" -OutputDirectory "$env:RUNNER_TEMP\finished-windows\diagnostics-fixture" -ProductVersion $env:PRODUCT_VERSION -WixPath "$tools\wix.exe"
-      - name: Require native failed-stage reporting before any MSI
+      - name: Exercise backend-specific native prerequisite selection
         shell: pwsh
         env:
           QUALIFICATION_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}

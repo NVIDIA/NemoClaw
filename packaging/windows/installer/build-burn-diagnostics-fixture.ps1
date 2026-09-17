@@ -29,6 +29,10 @@ $fixture = Join-Path $output 'NemoClawPreparationFailure.exe'
     (Join-Path $SourceRoot 'packaging\windows\tests\host-preparation-diagnostics\failure-fixture.rs') -o $fixture
 if ($LASTEXITCODE -ne 0) { throw 'The failure-before-stdout fixture did not compile.' }
 $fixtureHash = (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash.ToLowerInvariant()
+$probeSource = Join-Path $PackageDirectory 'build\payload\mxc\wxc-exec.exe'
+$probe = Join-Path $output 'NemoClawMxcProbe.exe'
+Copy-Item -LiteralPath $probeSource -Destination $probe -ErrorAction Stop
+$probeHash = (Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash.ToLowerInvariant()
 $marker = Join-Path $output 'fixture.txt'; [IO.File]::WriteAllText($marker, 'This MSI must never execute in the prerequisite-failure test.')
 $msiSource = Join-Path $output 'Fixture.wxs'
 [IO.File]::WriteAllText($msiSource, @'
@@ -68,5 +72,6 @@ if ((Get-FileHash -LiteralPath $nativeUi -Algorithm SHA256).Hash.ToLowerInvarian
 $record = [ordered]@{schemaVersion=1;classification='actual-burn-host-preparation-failure-fixture';sourceRevision=$env:GITHUB_SHA;
     intendedForDistribution=$false;bootstrapperSha256=$uiHash;expectedStage='open-metadata-inspection-target';expectedWin32Error=32;
     helper=@{file=[IO.Path]::GetFileName($fixture);bytes=(Get-Item -LiteralPath $fixture).Length;sha256=$fixtureHash};
+    probe=@{file=[IO.Path]::GetFileName($probe);bytes=(Get-Item -LiteralPath $probe).Length;sha256=$probeHash};
     setup=@{file=[IO.Path]::GetFileName($setup);bytes=(Get-Item -LiteralPath $setup).Length;sha256=(Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()}}
 [IO.File]::WriteAllText((Join-Path $output 'fixture.json'), ($record | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
