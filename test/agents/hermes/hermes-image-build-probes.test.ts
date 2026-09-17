@@ -223,6 +223,8 @@ describe("Hermes image build probes", () => {
   it("pins the image dependency probe to the exact Hermes 0.21.3 lock", () => {
     expect(baseDockerfile).toContain("'tornado': '6.5.8'");
     expect(baseDockerfile).not.toContain("'tornado': '6.5.7'");
+    expect(baseDockerfile).toContain("from tools.browser_tool_install import _find_agent_browser");
+    expect(baseDockerfile).not.toContain("browser_tool._find_agent_browser() ");
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {

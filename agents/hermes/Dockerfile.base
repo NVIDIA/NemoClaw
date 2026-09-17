@@ -621,7 +621,7 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
 RUN HOME=/sandbox \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -c \
-        'from tools import browser_tool; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert browser_tool._find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL'
+        'from tools import browser_tool; from tools.browser_tool_install import _find_agent_browser; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert _find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL'
 RUN install -o root -g root -m 0400 /dev/null \
         /tmp/nemoclaw-agent-browser-userconfig \
     && install -o root -g root -m 0400 /dev/null \
@@ -657,7 +657,7 @@ RUN --network=none agent_browser_version="$( \
         /bin/sh -c 'rm /usr/local/bin/agent-browser' \
     && HOME=/sandbox /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -c \
-        'from tools import browser_tool; assert browser_tool._find_agent_browser() == "/usr/local/bin/agent-browser"'
+        'from tools.browser_tool_install import _find_agent_browser; assert _find_agent_browser() == "/usr/local/bin/agent-browser"'
 
 RUN /usr/local/bin/hermes --version \
     && /usr/local/bin/hermes acp --check \
