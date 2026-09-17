@@ -1708,11 +1708,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (
-    argv.length === 5 &&
+    (argv.length === 5 || argv.length === 7) &&
     (argv[0] === "--verify-completion" || argv[0] === "--wait-for-completion")
   ) {
-    const agent = readCliAgent(argv, 5);
+    const agent = readCliAgent(argv, argv.length);
     const fingerprint = readCliFingerprint(argv);
+    if (argv.length === 7) readCliBootstrapIdentity(argv);
     const result =
       argv[0] === "--wait-for-completion"
         ? waitForManagedStartupImageCompletion(agent, fingerprint)

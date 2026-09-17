@@ -333,6 +333,20 @@ describe("managed startup image runtime", () => {
     }
   });
 
+  it("recognizes the identity-bound completion wait used by the non-root startup hold", async () => {
+    await expect(
+      mainManagedStartupImageRuntime([
+        "--wait-for-completion",
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "not-an-identity",
+      ]),
+    ).rejects.toThrow(/bootstrap identity argument is missing or invalid/u);
+  });
+
   it("verifies copied transaction status only through a read-only receipt mount", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const profileFingerprint = fingerprintManagedStartupProfile(profile);

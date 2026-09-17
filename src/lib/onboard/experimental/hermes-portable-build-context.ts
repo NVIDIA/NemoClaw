@@ -31,7 +31,7 @@ const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
 // Portable retains the same image-owned non-root startup hold even though its
 // host lifecycle remains independently receipt-bound, so its staged context
-// must carry that hold explicitly.
+// must carry that hold and its identity-bound completion protocol explicitly.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
   "agents/hermes/config/",
