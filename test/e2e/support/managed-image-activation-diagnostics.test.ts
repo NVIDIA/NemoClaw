@@ -107,7 +107,9 @@ describe("managed image activation failure diagnostics", () => {
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();
 
-    expect(script).toContain('openclaw plugins install "$source_dir" --force');
+    expect(script).toContain(
+      'openclaw plugins install --force --accept-capabilities "$source_dir"',
+    );
     expect(script).toContain("/sandbox/managed-activation-native-plugin");
     expect(script).not.toContain("plugins.allow");
     expect(script).not.toContain("openclawImagePluginInstalls");

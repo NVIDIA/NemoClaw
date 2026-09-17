@@ -328,7 +328,7 @@ export function managedActivationOpenClawPluginScript(): string {
     `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
   ].join("\n");
 }
 
