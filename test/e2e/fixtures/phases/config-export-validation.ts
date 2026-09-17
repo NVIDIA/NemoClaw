@@ -414,9 +414,28 @@ function encodedSecretValues(secretValues: readonly string[]): string[] {
     if (secret.length === 0) continue;
     const base64 = Buffer.from(secret, "utf8").toString("base64");
     encoded.add(base64);
-    encoded.add(base64.replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, ""));
+    encoded.add(base64.replace(/=+$/u, ""));
+    const base64url = base64.replace(/\+/gu, "-").replace(/\//gu, "_");
+    encoded.add(base64url);
+    encoded.add(base64url.replace(/=+$/u, ""));
   }
   return [...encoded];
+}
+
+function normalizedEncodedSecretScanText(raw: string): string {
+  const decodedEscapes = raw
+    .replace(/\\x([0-9a-f]{2})/giu, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\u([0-9a-f]{4})/giu, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\U([0-9a-f]{8})/gu, (_match, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/\\[nrt]/gu, "");
+  return decodedEscapes.replace(/[\s#'"`>|\\]/gu, "");
 }
 
 export class ConfigExportValidationPhaseFixture {
@@ -570,16 +589,19 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
         const encodedSecrets = encodedSecretValues(secretValues);
+        const normalizedRaw = normalizedEncodedSecretScanText(raw);
         const rawSecretsAbsent =
           !secretValues.some((value) => value && raw!.includes(value)) &&
-          !encodedSecrets.some((value) => value && raw!.includes(value));
+          !encodedSecrets.some((value) => value && normalizedRaw.includes(value));
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
         failureStage = "security";
         knownSecretsAbsent =
           rawSecretsAbsent &&
           !decodedScalarsMatch(decoded, (value) =>
-            secretValues.some((secret) => secret.length > 0 && value.includes(secret)),
+            [...secretValues, ...encodedSecrets].some(
+              (secret) => secret.length > 0 && value.includes(secret),
+            ),
           );
         internalTransportsAbsent =
           !INTERNAL_TRANSPORT_PATTERN.test(raw) &&

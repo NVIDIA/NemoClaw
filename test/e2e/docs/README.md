@@ -74,13 +74,14 @@ Live execution happens through shared fixtures:
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
 
-Before it validates deployment semantics, the config export fixture rejects
-known fixture secrets and internal credential transport markers. The secret
-check also rejects standard base64 and unpadded base64url encodings in the raw
-export. Both checks inspect decoded YAML scalar keys and values, including
-binary scalars. YAML escaping or binary tags cannot hide either value. The
-fixture caps each captured stdout and stderr stream at 64 KiB. Before reading
-or retaining an export, it opens the file without following symbolic links.
+Before it validates deployment semantics, the config export fixture scans raw
+export text for literal known fixture secrets, wrapped or YAML-escaped base64
+and base64url forms, and internal credential transport markers. It separately
+checks decoded YAML scalar keys and values, including binary scalars, for
+literal or encoded secrets and internal transport markers.
+The fixture caps each captured stdout and stderr stream at 64 KiB. Before
+reading or retaining an export, it opens the file without following symbolic
+links.
 The open descriptor must identify a regular file no larger than 1 MiB. After
 the descriptor read, the published path must still identify the same device
 and inode. The fixture rejects a replacement. It creates the export in a

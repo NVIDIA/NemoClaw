@@ -441,6 +441,31 @@ describe("automatic config export validation phase", () => {
     expect(JSON.stringify(test.writes.at(-1))).not.toContain(encodedSecret);
   });
 
+  it.each(["wrapped", "escaped"] as const)(
+    "withholds export metadata when a comment contains %s base64 fixture-secret text (#11485)",
+    async (representation) => {
+      const encodedSecret = Buffer.from(SECRET, "utf8").toString("base64");
+      const representedSecret =
+        representation === "wrapped"
+          ? `${encodedSecret.slice(0, 12)}\n# ${encodedSecret.slice(12)}`
+          : `\\u${encodedSecret.charCodeAt(0).toString(16).padStart(4, "0")}${encodedSecret.slice(1)}`;
+      const raw = `${JSON.stringify(document())}\n# ${representedSecret}\n`;
+      expect(raw).not.toContain(SECRET);
+      expect(raw).not.toContain(encodedSecret);
+      const test = fixture({ host: successfulHost(raw), secret: SECRET });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)).toMatchObject({
+        classification: "failure",
+        failureStage: "security",
+        security: { knownSecretsAbsent: false },
+      });
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+      expect(JSON.stringify(test.writes.at(-1))).not.toContain(SECRET);
+    },
+  );
+
   it("withholds export metadata when an internal credential transport leaks (#11485)", async () => {
     const test = fixture({
       host: successfulHost(`${JSON.stringify(document())}\n# openshell:resolve:env:KEY\n`),
