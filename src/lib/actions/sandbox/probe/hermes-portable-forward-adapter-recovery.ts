@@ -110,6 +110,37 @@ function normalizeFailure(error: unknown): HermesPortableForwardRecoveryError {
     : new HermesPortableForwardRecoveryError("recovery-failed");
 }
 
+function startResultFailure(
+  forward: OpenShellForwardIdentity,
+  started: Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>,
+): HermesPortableForwardRecoveryError | null {
+  if (started.state === "started" || started.state === "reused") return null;
+  if (started.state === "refused" && started.observation.state === "foreign") {
+    return new HermesPortableForwardRecoveryError("forward-occupied", {
+      cause: "port-occupied",
+      port: forward.port,
+    });
+  }
+  if (started.state === "cleanup_uncertain") {
+    return new HermesPortableForwardRecoveryError("restoration-unproved", {
+      cause: "forward-mutation-failed",
+      operation: "start",
+      port: forward.port,
+    });
+  }
+  return new HermesPortableForwardRecoveryError("recovery-failed", {
+    cause: "forward-mutation-failed",
+    operation: "start",
+    port: forward.port,
+  });
+}
+
+function strongestConcurrentStartFailure(
+  failures: readonly HermesPortableForwardRecoveryError[],
+): HermesPortableForwardRecoveryError | undefined {
+  return failures.find((error) => error.failure === "restoration-unproved") ?? failures[0];
+}
+
 function safeTimingNow(now: () => number): number | null {
   try {
     const value = now();
@@ -312,6 +343,7 @@ export async function prepareHermesPortableLaunchForwards(
     const initial = await observeForwards(input, timing, remaining());
     const restoredPorts: number[] = [];
 
+    const pendingStarts: OpenShellForwardIdentity[] = [];
     for (const [index, observation] of initial.entries()) {
       const forward = input.forwards[index]!;
       if (observation.state === "owned") continue;
@@ -332,28 +364,41 @@ export async function prepareHermesPortableLaunchForwards(
           });
         }
       }
-      const started = await timing.measureAsync("start", () =>
-        input.deps.adapter.startForward({
-          forward,
-          timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
-          assertCurrent: async () => requireCurrent(input, false),
-        }),
-      );
+      pendingStarts.push(forward);
+    }
+
+    // Every direct forward owns a distinct loopback port and child process. Let independent
+    // starts overlap, but wait for the complete batch before examining failures or beginning
+    // rollback so a sibling can never acquire ownership while cleanup is already running.
+    const startResults = await Promise.allSettled(
+      pendingStarts.map((forward) =>
+        timing
+          .measureAsync("start", () =>
+            input.deps.adapter.startForward({
+              forward,
+              timeoutMs: deadline.remaining(input.operationTimeoutMs, "forward recovery"),
+              assertCurrent: async () => requireCurrent(input, false),
+            }),
+          )
+          .then((started) => ({ forward, started })),
+      ),
+    );
+    const startFailures: HermesPortableForwardRecoveryError[] = [];
+    for (const result of startResults) {
+      if (result.status === "rejected") {
+        startFailures.push(normalizeFailure(result.reason));
+        continue;
+      }
+      const { forward, started } = result.value;
       if (started.state === "started") {
         restoredPorts.push(forward.port);
         cleanups.push({ port: forward.port, cleanup: started.cleanup });
-      } else if (started.state !== "reused") {
-        if (started.state === "refused" && started.observation.state === "foreign") {
-          failure("forward-occupied", { cause: "port-occupied", port: forward.port });
-        }
-        if (started.state === "cleanup_uncertain") failure("restoration-unproved");
-        failure("recovery-failed", {
-          cause: "forward-mutation-failed",
-          operation: "start",
-          port: forward.port,
-        });
       }
+      const startFailure = startResultFailure(forward, started);
+      if (startFailure) startFailures.push(startFailure);
     }
+    const startFailure = strongestConcurrentStartFailure(startFailures);
+    if (startFailure) throw startFailure;
 
     const final = await timing.measureAsync("settle", () =>
       observeForwards(input, timing, remaining()),
