@@ -20,9 +20,10 @@ const baseDockerfile = fs.readFileSync(
 const a2aNeutralPatch = fs.readFileSync(path.join(root, "agents", "hermes", "a2a-neutral.patch"));
 const probeSource = fs.readFileSync(probes, "utf8");
 const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
+const hermesDownloaderMarker = "download-hermes-source-archive.sh invoked";
 const reviewedHermesReleaseIdentities = [
   {
-    label: "current 0.20.6",
+    label: "previous 0.20.6",
     environment: {
       HERMES_VERSION: "v2026.8.27",
       HERMES_SEMVER: "0.20.6",
@@ -32,7 +33,7 @@ const reviewedHermesReleaseIdentities = [
     },
   },
   {
-    label: "prerequisite 0.21.3",
+    label: "active 0.21.3",
     environment: {
       HERMES_VERSION: "v2026.9.14",
       HERMES_SEMVER: "0.21.3",
@@ -77,7 +78,6 @@ const commands = [
   "gateway-runtime-metadata",
   "googlechat-override-seams",
   "langfuse-credentials",
-  "neutral-platform-inertness",
   "profile-policy",
   "session-delete",
   "session-preview",
@@ -100,7 +100,9 @@ function runHermesReleaseIdentityGuard(environment: HermesReleaseIdentityEnviron
     .slice(guardStart + "RUN ".length, guardEnd + guardEndMarker.length)
     .replaceAll("\\", "");
 
-  return spawnSync("bash", ["-eu", "-c", guard], {
+  const guardedDownload = `${guard}\nprintf '%s\\n' '${hermesDownloaderMarker}'`;
+
+  return spawnSync("bash", ["-eu", "-c", guardedDownload], {
     encoding: "utf8",
     env: { ...process.env, ...environment },
     timeout: 5000,
@@ -109,7 +111,7 @@ function runHermesReleaseIdentityGuard(environment: HermesReleaseIdentityEnviron
 
 function runCompatibilityRetirementProbe({
   version,
-  adapter = '{"commands":["resumed_oneshot"]}\n',
+  adapter = '{"upstream_cli_version":"0.21.3","translations":{"provider_model_composition":{}}}\n',
   oneshot = "process_registry.wait_for_pending_completions(oneshot_task_id)\n",
 }: {
   version: string;
@@ -204,37 +206,9 @@ module.prepare_generated_config(
   return { hermesHome, orderLog, result, temporaryRoot };
 }
 
-function runNeutralPlatformProbe(configuration: string) {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-platform-probe-"));
-  const gatewayRoot = path.join(temporaryRoot, "gateway");
-  fs.mkdirSync(gatewayRoot);
-  fs.writeFileSync(path.join(gatewayRoot, "__init__.py"), "");
-  fs.writeFileSync(path.join(gatewayRoot, "config.py"), configuration);
-  try {
-    return spawnSync(
-      "python3",
-      [
-        "-I",
-        "-c",
-        "import importlib.util, sys; " +
-          "sys.path.insert(0, sys.argv[2]); " +
-          "spec = importlib.util.spec_from_file_location('image_build_probes', sys.argv[1]); " +
-          "module = importlib.util.module_from_spec(spec); " +
-          "spec.loader.exec_module(module); " +
-          "module.verify_neutral_platform_inertness()",
-        probes,
-        temporaryRoot,
-      ],
-      { encoding: "utf8", timeout: 5000 },
-    );
-  } finally {
-    fs.rmSync(temporaryRoot, { force: true, recursive: true });
-  }
-}
-
 describe("Hermes image build probes", () => {
-  it("keeps the active Hermes release defaults pinned to exact 0.20.6 identity", () => {
-    const currentIdentity = reviewedHermesReleaseIdentities[0].environment;
+  it("keeps the active Hermes release defaults pinned to exact 0.21.3 identity", () => {
+    const currentIdentity = reviewedHermesReleaseIdentities[1].environment;
 
     expect(baseDockerfile).toContain(`ARG HERMES_VERSION=${currentIdentity.HERMES_VERSION}`);
     expect(baseDockerfile).toContain(`ARG HERMES_SEMVER=${currentIdentity.HERMES_SEMVER}`);
@@ -246,30 +220,31 @@ describe("Hermes image build probes", () => {
     );
   });
 
-  it("accepts the exact current 0.20.6 Hermes release identity tuple", () => {
+  it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {
     const result = runHermesReleaseIdentityGuard(reviewedHermesReleaseIdentities[0].environment);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(hermesDownloaderMarker);
   });
 
-  it("recognizes but does not build 0.21.3 before its base-image migration is complete", () => {
+  it("accepts the exact active 0.21.3 Hermes release identity tuple", () => {
     const result = runHermesReleaseIdentityGuard(reviewedHermesReleaseIdentities[1].environment);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      "ERROR: reviewed Hermes 0.21.3 identity requires completed base-image migration",
-    );
-    expect(result.stderr).not.toContain("unreviewed Hermes release identity tuple");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(hermesDownloaderMarker);
   });
 
   it.each(rejectedHermesReleaseIdentities)(
     "rejects altered $field from the $label Hermes release identity tuple",
-    ({ environment }) => {
+    ({ field, environment }) => {
       const result = runHermesReleaseIdentityGuard(environment);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("ERROR: unreviewed Hermes release identity tuple");
+      expect(result.stderr).not.toContain(environment[field]);
+      expect(result.stdout).not.toContain(hermesDownloaderMarker);
     },
   );
 
@@ -358,20 +333,10 @@ describe("Hermes image build probes", () => {
     );
   });
 
-  it.each([
-    {
-      digest: "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
-      invocation:
-        "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py",
-      name: "profile policy",
-    },
-    {
-      digest: "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
-      invocation:
-        "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-      name: "neutral platform",
-    },
-  ])("keeps $name patch verification and application in one layer", ({ digest, invocation }) => {
+  it("keeps profile policy patch verification and application in one layer", () => {
+    const digest = "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256";
+    const invocation =
+      "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py";
     const verificationLayer = dockerfileInstructions(dockerfile).find(
       ({ text }) => text.startsWith("RUN ") && text.includes(digest),
     );
@@ -391,17 +356,28 @@ describe("Hermes image build probes", () => {
     expect(prerequisiteLayer?.text).toContain(`${imageProbePath} compatibility-retirement`);
   });
 
-  it("rejects an upgrade that retains the Hermes 0.20.6 adapter", () => {
-    const result = runCompatibilityRetirementProbe({ version: "hermes v0.20.0" });
+  it("rejects an adapter for a different Hermes version", () => {
+    const result = runCompatibilityRetirementProbe({ version: "hermes v0.21.2" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("installed Hermes 0.21.2 but the CLI adapter targets 0.21.3");
+  });
+
+  it("rejects the retired resumed one-shot translation", () => {
+    const result = runCompatibilityRetirementProbe({
+      version: "hermes v0.21.3",
+      adapter:
+        '{"upstream_cli_version":"0.21.3","translations":{"provider_model_composition":{},"resumed_oneshot":{}}}\n',
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "installed Hermes 0.20.0 but Hermes v0.20.6 compatibility workarounds are still installed",
+      "retired resumed one-shot compatibility translation is still installed",
     );
   });
 
   it("accepts the reviewed Hermes version and exact one-shot completion scope", () => {
-    const result = runCompatibilityRetirementProbe({ version: "hermes v0.20.6" });
+    const result = runCompatibilityRetirementProbe({ version: "hermes v0.21.3" });
 
     expect(result.status, result.stderr).toBe(0);
   });
@@ -434,57 +410,6 @@ describe("Hermes image build probes", () => {
     } finally {
       fs.rmSync(run.temporaryRoot, { force: true, recursive: true });
     }
-  });
-
-  it("keeps A2A, Buzz, Google Chat, and WhatsApp Cloud disabled under hostile build inputs", () => {
-    const result = runNeutralPlatformProbe(
-      `from enum import Enum
-from types import SimpleNamespace
-
-class Platform(Enum):
-    A2A = "a2a"
-    BUZZ = "buzz"
-    GOOGLE_CHAT = "google_chat"
-    WHATSAPP_CLOUD = "whatsapp_cloud"
-
-def load_gateway_config():
-    disabled = lambda: SimpleNamespace(enabled=False, token=None, api_key=None, extra={})
-    return SimpleNamespace(platforms={
-        Platform.A2A: disabled(),
-        Platform.BUZZ: disabled(),
-        Platform.GOOGLE_CHAT: disabled(),
-        Platform.WHATSAPP_CLOUD: disabled(),
-    })
-`,
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-  });
-
-  it("rejects an enabled platform from the neutral image probe", () => {
-    const result = runNeutralPlatformProbe(
-      `from enum import Enum
-from types import SimpleNamespace
-
-class Platform(Enum):
-    A2A = "a2a"
-    BUZZ = "buzz"
-    GOOGLE_CHAT = "google_chat"
-    WHATSAPP_CLOUD = "whatsapp_cloud"
-
-def load_gateway_config():
-    disabled = SimpleNamespace(enabled=False, token=None, api_key=None, extra={})
-    enabled = SimpleNamespace(enabled=True, token="unexpected", api_key=None, extra={})
-    return SimpleNamespace(platforms={
-        Platform.A2A: disabled,
-        Platform.BUZZ: disabled,
-        Platform.GOOGLE_CHAT: enabled,
-        Platform.WHATSAPP_CLOUD: disabled,
-    })
-`,
-    );
-
-    expect(result.status).not.toBe(0);
   });
 
   it("validates session state sidecars according to SQLite's selected journal mode", () => {

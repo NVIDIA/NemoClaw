@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -50,7 +51,7 @@ def verify_compatibility_retirement(
     adapter: Path = Path("/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"),
     oneshot: Path = Path("/opt/hermes/hermes_cli/oneshot.py"),
 ) -> None:
-    """Reject an upgrade that retains Hermes 0.20.6 compatibility behavior."""
+    """Reject a CLI adapter that does not match the installed Hermes release."""
     result = subprocess.run(
         [str(hermes), "--version"],
         capture_output=True,
@@ -67,11 +68,14 @@ def verify_compatibility_retirement(
     if match is None:
         raise RuntimeError(f"could not parse Hermes semver from: {version_output}")
     semver = match.group(1)
-    if semver != "0.20.6" and '"resumed_oneshot"' in adapter.read_text(encoding="utf-8"):
+    adapter_contract = json.loads(adapter.read_text(encoding="utf-8"))
+    if adapter_contract.get("upstream_cli_version") != semver:
         raise RuntimeError(
-            f"installed Hermes {semver} but Hermes v0.20.6 compatibility workarounds "
-            "are still installed; re-review the workaround set before upgrading Hermes"
+            f"installed Hermes {semver} but the CLI adapter targets "
+            f"{adapter_contract.get('upstream_cli_version', 'an unknown version')}"
         )
+    if "resumed_oneshot" in adapter_contract.get("translations", {}):
+        raise RuntimeError("retired resumed one-shot compatibility translation is still installed")
     if (
         "process_registry.wait_for_pending_completions(oneshot_task_id)"
         not in oneshot.read_text(encoding="utf-8")
@@ -100,12 +104,12 @@ def verify_profile_policy() -> None:
     from types import SimpleNamespace
 
     from cli import CLI_CONFIG
-    from gateway.config import SessionResetPolicy, load_gateway_config
+    from gateway.config import SessionResetPolicy
     from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
-    from hermes_cli.main import _resolve_pre_update_backup_mode
+    from hermes_cli.update_cmd_maint import _resolve_pre_update_backup_mode
     from managed_policy import load_managed_policy, profile_default_values
-    from tools.browser_tool import (
+    from tools.browser_tool_eval_policy import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
     )
@@ -121,8 +125,6 @@ def verify_profile_policy() -> None:
     assert _load_show_reasoning() == expected["display.show_reasoning"]
     _verify_session_reset_policy(SessionResetPolicy(), expected)
     _verify_session_reset_policy(SessionResetPolicy.from_dict({}), expected)
-    gateway = load_gateway_config()
-    _verify_session_reset_policy(gateway.default_reset_policy, expected)
     original_load_config = hermes_config.load_config
     try:
 
@@ -225,34 +227,6 @@ def verify_auxiliary_token_limit() -> None:
     assert external_moa.get("max_tokens") == 64, external_moa
 
 
-def verify_neutral_platform_inertness() -> None:
-    import socket
-
-    from gateway.config import Platform, load_gateway_config
-
-    original_connect = socket.socket.connect
-    original_create_connection = socket.create_connection
-
-    def reject_network(*_args, **_kwargs):
-        raise AssertionError("neutral Hermes configuration attempted a network connection")
-
-    socket.socket.connect = reject_network
-    socket.create_connection = reject_network
-    try:
-        config = load_gateway_config()
-    finally:
-        socket.socket.connect = original_connect
-        socket.create_connection = original_create_connection
-    for name in ("a2a", "buzz", "google_chat", "whatsapp_cloud"):
-        platform = Platform(name)
-        platform_config = config.platforms.get(platform)
-        assert platform_config is not None, name
-        assert platform_config.enabled is False, (name, platform_config)
-        assert platform_config.token is None, (name, platform_config.token)
-        assert platform_config.api_key is None, (name, platform_config.api_key)
-        assert platform_config.extra == {}, (name, platform_config.extra)
-
-
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE, _connect
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -332,6 +306,8 @@ def verify_session_delete() -> None:
     from hermes_state import SessionDB
 
     db = SessionDB()
+    temp_store = db._conn.execute("PRAGMA temp_store").fetchone()
+    assert temp_store and temp_store[0] == 2, temp_store
     session_id = "nemoclaw-session-delete-smoke"
     db.create_session(session_id, "cli")
     db.append_message(session_id, "user", "probe message 1")
@@ -749,7 +725,6 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "managed-runtime-capability": verify_managed_runtime_capability,
-    "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,
