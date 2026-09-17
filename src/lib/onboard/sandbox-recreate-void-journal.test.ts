@@ -30,6 +30,31 @@ const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
 const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
 const FOREIGN_ID = fingerprintSandboxRecreateValue("foreign-openshell-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({ agent: "openclaw", provider: "nvidia" });
+const LEGACY_N1X_DURABLE_ROW = Object.freeze({
+  name: "alpha",
+  createdAt: ISO,
+  compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
+  nimContainer: null,
+  gpuEnabled: false,
+  hostGpuDetected: false,
+  sandboxGpuEnabled: false,
+  sandboxGpuMode: null,
+  sandboxGpuDevice: null,
+  sandboxGpuProof: null,
+  openshellDriver: "docker",
+  openshellVersion: null,
+  webSearchProvider: null,
+  agent: "openclaw",
+  agentVersion: null,
+  nemoclawVersion: null,
+  fromDockerfile: null,
+  hermesAuthMethod: null,
+  imageTag: null,
+  deferredN1xManagedVllmAccepted: true,
+});
+const LEGACY_N1X_DURABLE_FINGERPRINT =
+  "7c96c6e2304fd21de3e4f6037683bcd1224e19b7533afce41aa8d7fc2392c51d";
 const SOURCE_ENTRY: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
@@ -347,23 +372,9 @@ describe("sandbox recreate recovery from a void journal", () => {
         deferredN1xManagedVllmAccepted: true,
       });
       const sourceEntry = registry.getSandbox("alpha") as SandboxEntry;
-      const {
-        pendingRouteReservation: _pendingRouteReservation,
-        reservationSessionId: _reservationSessionId,
-        provider: _provider,
-        model: _model,
-        endpointUrl: _endpointUrl,
-        endpointSource: _endpointSource,
-        credentialEnv: _credentialEnv,
-        preferredInferenceApi: _preferredInferenceApi,
-        hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
-        hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
-        gatewayName: _gatewayName,
-        gatewayPort: _gatewayPort,
-        messaging: _messaging,
-        ...legacyDurableEntry
-      } = sourceEntry;
-      const legacyFingerprint = fingerprintSandboxRecreateValue(legacyDurableEntry);
+      expect(fingerprintSandboxRecreateValue(LEGACY_N1X_DURABLE_ROW)).toBe(
+        LEGACY_N1X_DURABLE_FINGERPRINT,
+      );
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
           provider: "vllm-local",
@@ -383,10 +394,10 @@ describe("sandbox recreate recovery from a void journal", () => {
         ...transactionAt("deleted", sourceEntry),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        sourceRegistryFingerprint: legacyFingerprint,
+        sourceRegistryFingerprint: LEGACY_N1X_DURABLE_FINGERPRINT,
       };
 
-      expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(legacyFingerprint);
+      expect(fingerprintSandboxRegistryEntry(sourceEntry)).not.toBe(LEGACY_N1X_DURABLE_FINGERPRINT);
       expect(reservedEntry.deferredN1xManagedVllmAccepted).toBeUndefined();
       expect(
         planSandboxRecreateRecovery(legacyTransaction, ABSENT_SOURCE, reservedEntry, {
