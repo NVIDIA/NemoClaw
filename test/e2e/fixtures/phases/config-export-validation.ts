@@ -40,6 +40,7 @@ const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
 const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
 const INTERNAL_TRANSPORT_PATTERN = /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u;
+const INTERNAL_TRANSPORT_MARKERS = ["NEMOCLAW_", "openshell:resolve:env"] as const;
 
 export type ConfigExportClassification =
   | "success"
@@ -409,11 +410,11 @@ function decodedScalarsMatch(
   );
 }
 
-function encodedSecretValues(secretValues: readonly string[]): string[] {
+function encodedSensitiveValues(values: readonly string[]): string[] {
   const encoded = new Set<string>();
-  for (const secret of secretValues) {
-    if (secret.length === 0) continue;
-    const base64 = Buffer.from(secret, "utf8").toString("base64");
+  for (const value of values) {
+    if (value.length === 0) continue;
+    const base64 = Buffer.from(value, "utf8").toString("base64");
     encoded.add(base64);
     encoded.add(base64.replace(/=+$/u, ""));
     const base64url = base64.replace(/\+/gu, "-").replace(/\//gu, "_");
@@ -439,11 +440,19 @@ function normalizedSecretScanText(raw: string): string {
   return decodedEscapes.replace(/[\s#'"`>|\\]/gu, "");
 }
 
-function containsKnownSecretText(raw: string, secretValues: readonly string[]): boolean {
+function containsSensitiveText(raw: string, values: readonly string[]): boolean {
   const normalizedRaw = normalizedSecretScanText(raw);
-  return [...secretValues, ...encodedSecretValues(secretValues)].some(
+  return [...values, ...encodedSensitiveValues(values)].some(
     (value) => value.length > 0 && normalizedRaw.includes(normalizedSecretScanText(value)),
   );
+}
+
+function containsKnownSecretText(raw: string, secretValues: readonly string[]): boolean {
+  return containsSensitiveText(raw, secretValues);
+}
+
+function containsInternalTransportText(raw: string): boolean {
+  return containsSensitiveText(raw, INTERNAL_TRANSPORT_MARKERS);
 }
 
 export class ConfigExportValidationPhaseFixture {
@@ -596,7 +605,7 @@ export class ConfigExportValidationPhaseFixture {
         }
         failureStage = "security";
         const secretValues = this.secrets.redactionValues();
-        const encodedSecrets = encodedSecretValues(secretValues);
+        const encodedSecrets = encodedSensitiveValues(secretValues);
         const rawSecretsAbsent = !containsKnownSecretText(raw, secretValues);
         failureStage = "verification";
         const decoded = YAML.parse(raw) as unknown;
@@ -609,7 +618,7 @@ export class ConfigExportValidationPhaseFixture {
             ),
           );
         internalTransportsAbsent =
-          !INTERNAL_TRANSPORT_PATTERN.test(raw) &&
+          !containsInternalTransportText(raw) &&
           !decodedScalarsMatch(decoded, (value) => INTERNAL_TRANSPORT_PATTERN.test(value));
         if (!knownSecretsAbsent) throw new Error("config export exposed a known fixture secret");
         if (!internalTransportsAbsent) {

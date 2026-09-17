@@ -44,6 +44,28 @@ const DIAGNOSTIC_SECRET_REPRESENTATIONS = [
     value: `\\u${ENCODED_SECRET.charCodeAt(0).toString(16).padStart(4, "0")}${ENCODED_SECRET.slice(1)}`,
   },
 ] as const;
+const INTERNAL_TRANSPORT = "openshell:resolve:env:KEY";
+const ENCODED_INTERNAL_TRANSPORT = Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64");
+const INTERNAL_TRANSPORT_REPRESENTATIONS = [
+  {
+    name: "escaped",
+    value: [...INTERNAL_TRANSPORT]
+      .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join(""),
+  },
+  { name: "base64", value: ENCODED_INTERNAL_TRANSPORT },
+  {
+    name: "base64url",
+    value: Buffer.from("openshell:resolve:env:ÿ", "utf8")
+      .toString("base64")
+      .replace(/\+/gu, "-")
+      .replace(/\//gu, "_"),
+  },
+  {
+    name: "wrapped-base64",
+    value: `${ENCODED_INTERNAL_TRANSPORT.slice(0, 16)}\n# ${ENCODED_INTERNAL_TRANSPORT.slice(16)}`,
+  },
+] as const;
 const POLICY = {
   version: 1,
   network_policies: {
@@ -515,6 +537,24 @@ describe("automatic config export validation phase", () => {
     });
     expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
+
+  it.each(INTERNAL_TRANSPORT_REPRESENTATIONS)(
+    "withholds export metadata when a comment contains an $name internal credential transport (#11485)",
+    async ({ value }) => {
+      const raw = `${JSON.stringify(document())}\n# ${value}\n`;
+      expect(raw).not.toContain(INTERNAL_TRANSPORT);
+      const test = fixture({ host: successfulHost(raw) });
+
+      await captureFailure(test.phase.from(target("required"), instance()));
+
+      expect(test.writes.at(-1)).toMatchObject({
+        classification: "failure",
+        failureStage: "security",
+        security: { internalTransportsAbsent: false },
+      });
+      expect(test.writes.at(-1)).not.toHaveProperty("export");
+    },
+  );
 
   it("classifies invalid exported configuration as verification failure (#11485)", async () => {
     const invalid = dependencies();

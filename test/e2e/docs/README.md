@@ -76,9 +76,10 @@ harness or runner. Vitest remains the only test harness.
 
 Before it validates deployment semantics, the config export fixture scans raw
 export text for literal known fixture secrets, wrapped or YAML-escaped base64
-and base64url forms, and internal credential transport markers. It separately
-checks decoded YAML scalar keys and values, including binary scalars, for
-literal or encoded secrets and internal transport markers.
+and base64url forms, and literal, escaped, wrapped, or encoded internal
+credential transport markers. It separately checks decoded YAML scalar keys
+and values, including binary scalars, for literal or encoded secrets and
+internal transport markers.
 The fixture caps each captured stdout and stderr stream at 64 KiB. Before
 reading or retaining an export, it opens the file without following symbolic
 links.
