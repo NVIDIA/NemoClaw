@@ -133,7 +133,7 @@ export async function handleAgentSetupState<Agent>({
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
     let ready = false;
     const deadline = agentSetupRuntime.now() + 60_000;
-    for (let attempt = 0; attempt < 60 && !ready; attempt += 1) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       const remainingBeforeProbe = deadline - agentSetupRuntime.now();
       if (remainingBeforeProbe <= 0) break;
       ready = await deps.isOpenclawGatewayReady(sandboxName, Math.min(3_000, remainingBeforeProbe));
