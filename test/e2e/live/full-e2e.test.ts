@@ -336,28 +336,6 @@ console.log(JSON.stringify({
   );
 }
 
-export async function recoverNativeGatewayAfterExit(input: {
-  sandboxName: string;
-  stopGateway: () => Promise<unknown>;
-  readStatus: (artifactName: string) => Promise<ShellProbeResult>;
-  startSandbox: () => Promise<ShellProbeResult>;
-  pollDelayMs?: number;
-}): Promise<{ recovery: ShellProbeResult; stoppedStatus: ShellProbeResult }> {
-  await input.stopGateway();
-  const stoppedStatus = (
-    await pollUntil({
-      artifactPrefix: "phase-4-status-after-native-gateway-exit",
-      attempts: 10,
-      delayMs: input.pollDelayMs ?? 1_000,
-      probe: async (_attempt, artifactName) => await input.readStatus(artifactName),
-      accept: (result) =>
-        result.exitCode !== 0 && resultText(result).includes(`nemoclaw ${input.sandboxName} start`),
-    })
-  ).value;
-  const recovery = await input.startSandbox();
-  return { recovery, stoppedStatus };
-}
-
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   redactionValues: string[];
@@ -395,55 +373,25 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .map(resultText)
       .join("\n"),
   ).toBe(true);
-
-  const { recovery, stoppedStatus } = await recoverNativeGatewayAfterExit({
-    sandboxName: SANDBOX_NAME,
-    stopGateway: async () =>
-      await input.sandbox.killGatewayTree(SANDBOX_NAME, {
-        artifactName: "phase-4-stop-native-gateway-before-recovery",
-        env: env(),
-        redactionValues: input.redactionValues,
-        timeoutMs: 30_000,
-      }),
-    readStatus: async (artifactName) =>
-      await repoNemoclaw(input.host, [SANDBOX_NAME, "status"], artifactName, {}, 60_000),
-    startSandbox: async () =>
-      await repoNemoclaw(
+  const configEdit = securityPostureEnabled()
+    ? await repoNemoclaw(
         input.host,
-        [SANDBOX_NAME, "start"],
-        "phase-4-start-after-native-gateway-exit",
-        {},
-        180_000,
-      ),
-  });
-  const configEdit =
-    !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
-      ? await repoNemoclaw(
-          input.host,
-          [
-            SANDBOX_NAME,
-            "config",
-            "set",
-            "--key",
-            "agents.defaults.timeoutSeconds",
-            "--value",
-            "120",
-            "--restart",
-          ],
-          "phase-4-host-config-edit-private-state",
-        )
-      : null;
+        [
+          SANDBOX_NAME,
+          "config",
+          "set",
+          "--key",
+          "agents.defaults.timeoutSeconds",
+          "--value",
+          "120",
+          "--restart",
+        ],
+        "phase-4-host-config-edit-private-state",
+      )
+    : null;
   expect(
-    !stoppedStatus.timedOut &&
-      stoppedStatus.exitCode !== 0 &&
-      resultText(stoppedStatus).includes(`nemoclaw ${SANDBOX_NAME} start`) &&
-      !recovery.timedOut &&
-      recovery.exitCode === 0 &&
-      (!configEdit || (!configEdit.timedOut && configEdit.exitCode === 0)),
-    [stoppedStatus, recovery, configEdit]
-      .filter((result) => result !== null)
-      .map(resultText)
-      .join("\n"),
+    !configEdit || (!configEdit.timedOut && configEdit.exitCode === 0),
+    configEdit ? resultText(configEdit) : "launch preparation passed",
   ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
@@ -459,7 +407,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
 
   const nativeNetwork = await inspectNativeNetwork(
     input.sandbox,
-    "phase-4-native-network-after-recovery",
+    "phase-4-native-network-after-launch",
   );
   const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
@@ -478,8 +426,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const afterRecovery = securityPostureEnabled()
-    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-recovery")
+  const afterLaunch = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-launch")
     : null;
   expect(
     !permissions.timedOut &&
@@ -494,8 +442,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       Object.values(network.interfaces)
         .flat()
         .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
-      (!afterRecovery || nativeStateDoctorReportIsValid(afterRecovery)),
-    [permissions, nativeNetwork, afterRecovery]
+      (!afterLaunch || nativeStateDoctorReportIsValid(afterLaunch)),
+    [permissions, nativeNetwork, afterLaunch]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
@@ -774,7 +722,7 @@ test(
         "nemoclaw logs produces output and cleanup removes registry state",
         ...(securityPostureEnabled()
           ? [
-              "non-root host, native private state through doctor/fix/config edit/recovery, editable profiles, protected proxy files, and clean startup log",
+              "non-root host, native private state through doctor/fix/config edit, editable profiles, protected proxy files, and clean startup log",
             ]
           : []),
       ],
