@@ -99,6 +99,39 @@ function e2eAssertionBudget(
   });
 }
 
+function managedVllmAdmission(pullRequestNumber: number | null = 11919) {
+  const testFile = "test/e2e/live/managed-vllm-config-export.test.ts";
+  const helperFile = "test/e2e/live/managed-vllm-config-export-helpers.ts";
+  const base = JSON.parse(e2eAssertionBudget(1));
+  const head = structuredClone(base);
+  head.limits.testFileCount += 1;
+  head.limits.liveFileCount += 2;
+  head.limits.direct.nodeAssertions += 19;
+  head.limits.direct.assertionPoints += 19;
+  head.limits.unique.nodeAssertions += 51;
+  head.limits.unique.assertionPoints += 51;
+  head.limits.files[testFile] = [0, 19, 0, 51, 0];
+  const files = [
+    { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+    { filename: testFile, status: "added" },
+    { filename: helperFile, status: "added" },
+  ];
+  return {
+    base,
+    head,
+    files,
+    testFile,
+    helperFile,
+    diff: () =>
+      fixtureDiff(
+        files,
+        { "ci/e2e-assertion-budget.json": JSON.stringify(base) },
+        { "ci/e2e-assertion-budget.json": JSON.stringify(head) },
+        pullRequestNumber,
+      ),
+  };
+}
+
 /** Register synthetic cases for the growth guardrail parsers and diagnostics. */
 function defineCodebaseGrowthGuardrailTestSupport(): void {
   it("caches repeated blob reads across guardrail checks", () => {
@@ -319,6 +352,69 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     );
 
     expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+  });
+
+  it.each([11919, null])(
+    "admits only the fixed managed-vLLM qualification in PR %s (#11859)",
+    async (pullRequestNumber) => {
+      const f = managedVllmAdmission(pullRequestNumber);
+      expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toEqual([]);
+    },
+  );
+
+  it("does not grant the managed-vLLM admission to another PR (#11859)", async () => {
+    const f = managedVllmAdmission(11920);
+    expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toContain(
+      `${f.testFile} added a live E2E assertion budget`,
+    );
+  });
+
+  it.each(["test", "helper"])(
+    "requires the admitted %s file to be added (#11859)",
+    async (kind) => {
+      const f = managedVllmAdmission();
+      f.files[kind === "test" ? 1 : 2].status = "modified";
+      expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toContain(
+        `${f.testFile} added a live E2E assertion budget`,
+      );
+    },
+  );
+
+  it("rejects unrelated growth alongside the managed-vLLM admission (#11859)", async () => {
+    const f = managedVllmAdmission();
+    f.head.limits.files["test/e2e/live/example.test.ts"][1] += 1;
+    f.head.limits.files["test/e2e/live/unrelated.test.ts"] = [0, 0, 0, 0, 0];
+    expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toEqual([
+      "test/e2e/live/example.test.ts directAssertionPoints increased from 1 to 2",
+      "test/e2e/live/unrelated.test.ts added a live E2E assertion budget",
+    ]);
+  });
+
+  it("enforces the admitted file and suite ceilings (#11859)", async () => {
+    const f = managedVllmAdmission();
+    f.head.limits.testFileCount += 1;
+    f.head.limits.liveFileCount += 1;
+    f.head.limits.direct.assertionPoints += 1;
+    f.head.limits.unique.assertionPoints += 1;
+    f.head.limits.files[f.testFile][3] += 1;
+    expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toEqual([
+      "testFileCount increased from 2 to 3",
+      "liveFileCount increased from 3 to 4",
+      "direct.assertionPoints increased from 20 to 21",
+      "unique.assertionPoints increased from 52 to 53",
+      `${f.testFile} transitiveAssertionPoints increased from 51 to 52`,
+    ]);
+  });
+
+  it("does not renew the allowance after the qualification is in the base (#11859)", async () => {
+    const f = managedVllmAdmission();
+    Object.assign(f.base, structuredClone(f.head));
+    f.head.limits.unique.assertionPoints += 1;
+    f.head.limits.files[f.testFile][3] += 1;
+    expect(await e2eAssertionBudgetGrowthViolations(f.diff())).toEqual([
+      "unique.assertionPoints increased from 52 to 53",
+      `${f.testFile} transitiveAssertionPoints increased from 51 to 52`,
+    ]);
   });
 
   it("rejects a larger live E2E assertion budget and changed reference", async () => {

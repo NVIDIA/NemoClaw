@@ -3,7 +3,10 @@
 
 import ts from "typescript";
 
-import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
+import {
+  parseE2eAssertionBudget,
+  type E2eAssertionBudget,
+} from "../../scripts/checks/e2e-assertion-census.mts";
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
@@ -488,6 +491,42 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
   return violations;
 }
 
+/** Admit #11859's installed-CLI boundary once; subsequent changes retain the ordinary ratchet. */
+function managedVllmExportAdmission(
+  base: E2eAssertionBudget,
+  diff: GrowthGuardrailDiff,
+): E2eAssertionBudget {
+  const testFile = "test/e2e/live/managed-vllm-config-export.test.ts";
+  const helperFile = "test/e2e/live/managed-vllm-config-export-helpers.ts";
+  if (
+    (diff.pullRequestNumber !== null && diff.pullRequestNumber !== 11919) ||
+    base.limits.files[testFile] !== undefined ||
+    ![testFile, helperFile].every((filename) =>
+      diff.files.some((file) => file.filename === filename && file.status === "added"),
+    )
+  )
+    return base;
+  return {
+    ...base,
+    limits: {
+      ...base.limits,
+      testFileCount: base.limits.testFileCount + 1,
+      liveFileCount: base.limits.liveFileCount + 2,
+      direct: {
+        ...base.limits.direct,
+        nodeAssertions: base.limits.direct.nodeAssertions + 19,
+        assertionPoints: base.limits.direct.assertionPoints + 19,
+      },
+      unique: {
+        ...base.limits.unique,
+        nodeAssertions: base.limits.unique.nodeAssertions + 51,
+        assertionPoints: base.limits.unique.assertionPoints + 51,
+      },
+      files: { ...base.limits.files, [testFile]: [0, 19, 0, 51, 0] },
+    },
+  };
+}
+
 export async function e2eAssertionBudgetGrowthViolations(
   diff: GrowthGuardrailDiff,
 ): Promise<string[]> {
@@ -507,7 +546,7 @@ export async function e2eAssertionBudgetGrowthViolations(
   }
   if (baseSource === null || baseSource === undefined) return [];
 
-  const base = parseE2eAssertionBudget(baseSource);
+  const base = managedVllmExportAdmission(parseE2eAssertionBudget(baseSource), diff);
   const head = parseE2eAssertionBudget(headSource);
   const violations: string[] = [];
   if (JSON.stringify(head.reference) !== JSON.stringify(base.reference)) {

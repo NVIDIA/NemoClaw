@@ -76,6 +76,14 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
+PR #11919 has one bounded admission for #11859's fixed managed-vLLM installed-CLI qualification.
+It permits adding `test/e2e/live/managed-vllm-config-export.test.ts` and its
+`managed-vllm-config-export-helpers.ts` companion: one test file, two live files, 19 direct
+assertion points, and 51 transitive assertion points. The allowance applies only before that test
+has a budget in the base revision. Other PRs, existing tests, and later growth retain their limits.
+The policy must land on `main` before #11919 raises its budget because CI executes the trusted
+base's guard. This admission does not replace Linux/AMD64 live qualification evidence.
+
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
 direct global or environment mutations in the test that owns them.
