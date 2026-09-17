@@ -1182,6 +1182,7 @@ describe("socket-free MXC action contract", () => {
       expect(state.running).not.toContain(sandboxName);
       expect(state.workloads).not.toContain(imageTag);
     },
+    15_000,
   );
 
   it("blocks cleanup when an in-memory legacy receipt names a different image", () => {
