@@ -3566,9 +3566,11 @@ remove_force_fresh_docker_resources() {
   docker info >/dev/null 2>&1 \
     || error "Docker is not reachable. Start Colima, then rerun the force-fresh installer."
 
-  local container_inventory volume_inventory network_inventory image_inventory
+  local container_inventory labeled_container_ids volume_inventory network_inventory image_inventory
   container_inventory="$(docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}')" \
     || error "Could not inspect Docker containers during force-fresh cleanup."
+  labeled_container_ids="$(docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract)" \
+    || error "Could not inspect labeled NemoClaw containers during force-fresh cleanup."
   volume_inventory="$(docker volume ls --format '{{.Name}}')" \
     || error "Could not inspect Docker volumes during force-fresh cleanup."
   network_inventory="$(docker network ls --format '{{.ID}} {{.Name}}')" \
@@ -3576,20 +3578,35 @@ remove_force_fresh_docker_resources() {
   image_inventory="$(docker images --format '{{.ID}} {{.Repository}}')" \
     || error "Could not inspect Docker images during force-fresh cleanup."
 
-  local id image name
+  local id image name removed_container_ids=" "
   while read -r id image name; do
     [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || continue
+    case "$removed_container_ids" in
+      *" $id "*) continue ;;
+    esac
     case "$name" in
-      openshell-* | nemoclaw-*) docker rm -f "$id" >/dev/null ;;
+      openshell-* | nemoclaw-*)
+        docker rm -f "$id" >/dev/null
+        removed_container_ids="${removed_container_ids}${id} "
+        ;;
       *)
         case "$image" in
           nemoclaw-* | openshell/* | ghcr.io/nvidia/nemoclaw | ghcr.io/nvidia/nemoclaw/* | ghcr.io/nvidia/nemoclaw-*)
             docker rm -f "$id" >/dev/null
+            removed_container_ids="${removed_container_ids}${id} "
             ;;
         esac
         ;;
     esac
   done <<<"$container_inventory"
+  while IFS= read -r id; do
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || continue
+    case "$removed_container_ids" in
+      *" $id "*) continue ;;
+    esac
+    docker rm -f "$id" >/dev/null
+    removed_container_ids="${removed_container_ids}${id} "
+  done <<<"$labeled_container_ids"
 
   local resource
   while IFS= read -r resource; do

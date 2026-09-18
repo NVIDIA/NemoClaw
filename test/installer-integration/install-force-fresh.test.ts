@@ -140,8 +140,9 @@ it("removes only NemoClaw and OpenShell Docker resources", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
-    printf '%s\n' 'aaaaaaaaaaaa unrelated openshell-default--demo' 'bbbbbbbbbbbb unrelated keep-me'
+    printf '%s\n' 'aaaaaaaaaaaa unrelated openshell-default--demo' '999999999999 82913f8e3281 random-name' 'bbbbbbbbbbbb unrelated keep-me'
     ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") printf '%s\n' '999999999999' ;;
   "volume ls --format {{.Name}}") printf '%s\n' 'openshell-cluster-nemoclaw' 'keep-volume' ;;
   "network ls --format {{.ID}} {{.Name}}") printf '%s\n' 'cccccccccccc nemoclaw-net' 'dddddddddddd keep-net' ;;
   "images --format {{.ID}} {{.Repository}}") printf '%s\n' 'eeeeeeeeeeee ghcr.io/nvidia/nemoclaw/hermes-sandbox' 'ffffffffffff unrelated' ;;
@@ -159,6 +160,7 @@ esac
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   expect(fs.readFileSync(logPath, "utf-8").trim().split("\n")).toEqual([
     "rm -f aaaaaaaaaaaa",
+    "rm -f 999999999999",
     "volume rm -f -- openshell-cluster-nemoclaw",
     "network rm cccccccccccc",
     "rmi -f eeeeeeeeeeee",
@@ -198,7 +200,7 @@ exit 0
   expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(false);
   expect(fs.existsSync(path.join(localBin, "openshell-sandbox"))).toBe(false);
   expect(fs.existsSync(path.join(localBin, "openshell-driver-vm"))).toBe(false);
-});
+}, 30_000);
 
 it("stops when Homebrew cannot remove OpenShell", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-brew-fail-");
