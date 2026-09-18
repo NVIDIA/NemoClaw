@@ -107,15 +107,35 @@ describe("protected managed-image runtime workflow", () => {
     const steps = job.steps as Array<Record<string, unknown>>;
     const prepare = namedMultiarchStep(value, "Prepare E2E workspace");
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
     const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
 
     expect(prepare.with).toEqual({ "build-cli": "false" });
     expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
+    expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
     expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));
 
     job.steps = [...steps.filter((step) => step !== boundary), boundary];
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+  });
+
+  it("rejects Docker authentication before the candidate shared boundary build", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    job.steps = [
+      ...steps.slice(0, steps.indexOf(boundary)),
+      auth,
+      boundary,
+      ...steps.slice(steps.indexOf(boundary) + 1).filter((step) => step !== auth),
+    ];
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup Docker Hub auth must run immediately after the shared boundary build",
     );
   });
 
@@ -258,8 +278,8 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual(
       expect.arrayContaining([
-        "managed-image-multiarch-startup must preserve the reviewed step topology",
-        "managed-image-multiarch-startup must preserve the reviewed step execution surface",
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
       ]),
     );
   });
@@ -292,7 +312,21 @@ describe("protected managed-image runtime workflow", () => {
     mutate(value);
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must preserve the reviewed step execution surface",
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
+    );
+  });
+
+  it("does not extend the candidate execution receipt past the direct consumer", () => {
+    const value = workflow();
+    const evidence = namedMultiarchStep(value, "Validate protected managed-image evidence");
+    evidence.env = { REVIEW_SCOPE_PROBE: "1" };
+
+    const errors = validateManagedImageMultiarchWorkflow(value);
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
+    );
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
     );
   });
 
