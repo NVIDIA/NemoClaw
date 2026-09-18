@@ -942,6 +942,7 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
+        "test/e2e/live/cloud-experimental-check-list.ts",
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
