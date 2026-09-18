@@ -125,7 +125,7 @@ struct Fixture {
 impl Fixture {
     fn new(writable: bool) -> Self {
         let installed = installed_path().unwrap();
-        let program_files = installed.strip_suffix("\\NVIDIA\\NemoClaw").unwrap();
+        let program_files = installed.strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview").unwrap();
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

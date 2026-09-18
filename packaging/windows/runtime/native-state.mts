@@ -81,7 +81,7 @@ async function acquireStateOwner(launcher: string, purpose: string, removal: boo
                 : typeof record.created !== "boolean") ||
               typeof record.stateRoot !== "string" ||
               !record.stateRoot.endsWith(suffix) ||
-              !/^[A-Z]:\\NemoClawState-S-1-(?:\d+-)*\d+-(?:openclaw|nemocua|pi|hermes|langchain-deepagents-code|inference)$/u.test(
+              !/^[A-Z]:\\NemoClawRtxSparkPreviewState-S-1-(?:\d+-)*\d+-(?:openclaw|nemocua|pi|hermes|langchain-deepagents-code|inference)$/u.test(
                 record.stateRoot,
               )
             )

@@ -45,7 +45,7 @@ impl Fixture {
     fn new() -> Self {
         let sid = current_sid().unwrap();
         let root = format!(
-            "{}:\\NemoClawState-{}",
+            "{}:\\NemoClawRtxSparkPreviewState-{}",
             windows_drive().unwrap(),
             unique_name()
         );

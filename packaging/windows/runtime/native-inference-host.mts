@@ -180,12 +180,19 @@ export function ownerRecordPath(create = false): string {
   if (!local || !/^[A-Za-z]:\\/u.test(local))
     throw new Error("Private Windows application data is unavailable.");
   let current = path.resolve(local);
-  for (const segment of ["NVIDIA", "NemoClaw", "native-inference"]) {
+  for (const segment of ["NVIDIA", "NemoClaw RTX Spark Preview", "native-inference"]) {
     if (fs.lstatSync(current).isSymbolicLink())
       throw new Error("The inference discovery directory cannot be a reparse point.");
     current = path.join(current, segment);
     if (!fs.existsSync(current)) {
-      if (!create) return path.join(local, "NVIDIA", "NemoClaw", "native-inference", "owner.json");
+      if (!create)
+        return path.join(
+          local,
+          "NVIDIA",
+          "NemoClaw RTX Spark Preview",
+          "native-inference",
+          "owner.json",
+        );
       fs.mkdirSync(current);
     }
   }

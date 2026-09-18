@@ -140,7 +140,13 @@ function readNativeAgentConfiguration(agent: string) {
     process.env.LOCALAPPDATA ?? "",
     "Windows local application-data directory",
   );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agent);
+  const stateRoot = path.join(
+    localAppData,
+    "NVIDIA",
+    "NemoClaw RTX Spark Preview",
+    "agents",
+    agent,
+  );
   const configPath = requiredFile(
     path.join(stateRoot, "native-windows.json"),
     `${agentNamesForLaunch[agent]} configuration`,
@@ -997,7 +1003,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       path.join(
         process.env.LOCALAPPDATA ?? installRoot,
         "NVIDIA",
-        "NemoClaw",
+        "NemoClaw RTX Spark Preview",
         "evidence",
         targetAgent,
       ),
@@ -1035,7 +1041,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
             "Windows local application-data directory",
           ),
           "NVIDIA",
-          "NemoClaw",
+          "NemoClaw RTX Spark Preview",
           "agents",
           "openclaw",
         ),

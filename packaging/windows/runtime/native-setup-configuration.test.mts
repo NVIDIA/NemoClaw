@@ -50,7 +50,7 @@ test("prebuilt OpenClaw factories materialize the exported workers as valid Java
 });
 
 function heldHermesRuntime(agent: "hermes" | "pi" = "hermes") {
-  const install = "C:\\Program Files\\NVIDIA\\NemoClaw";
+  const install = "C:\\Program Files\\NVIDIA\\NemoClaw RTX Spark Preview";
   const runtimeId = "a".repeat(64);
   return {
     ...validateNativeRuntimeReceipt(
@@ -79,7 +79,7 @@ test("Hermes compatibility paths and prebuilt command bind the live sealed lease
   const compatibility = nativeHermesCompatibility(runtime);
   const root = path.win32.join(runtime.agentRoot!, "mxc-compat");
   assert.deepEqual(compatibility, {
-    installation: "C:\\Program Files\\NVIDIA\\NemoClaw",
+    installation: "C:\\Program Files\\NVIDIA\\NemoClaw RTX Spark Preview",
     root,
     launcher: path.win32.join(root, "NemoClawMsysLauncher.exe"),
     arm64Dll: path.win32.join(root, "NemoClawMsysCompat-arm64.dll"),
@@ -130,7 +130,7 @@ test("Pi avoids main-entry parent traversal without changing other agents or dep
 });
 
 test("actual gateway renderer selects only the held Hermes executor and preserves other TOML", () => {
-  const installation = "C:\\Program Files\\NVIDIA\\NemoClaw";
+  const installation = "C:\\Program Files\\NVIDIA\\NemoClaw RTX Spark Preview";
   const template =
     "# retained\r\n[openshell.drivers.mxc]\r\nwxc_exec_path = 'stock.exe' # retained path comment\r\nother = true\r\n[other]\r\nwxc_exec_path = 'unrelated.exe'\r\n";
   const runtime = heldHermesRuntime();
@@ -226,7 +226,7 @@ test("installed Hermes query modes bind both held owners and remain host or gues
   );
   for (const agentId of ["hermes", "pi"] as const) {
     const runtimeLease = heldHermesRuntime(agentId);
-    const agentRuntimeRoot = "C:\\NemoClawState-S-1-5-21-1-2-3-1001-hermes";
+    const agentRuntimeRoot = "C:\\NemoClawRtxSparkPreviewState-S-1-5-21-1-2-3-1001-hermes";
     let stateHeld = true;
     const stateSession = bindNativeRuntimeGuard(
       {

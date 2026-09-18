@@ -9,7 +9,7 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class NativeDesktopIntegration
 {
-    private const string Owner = "NVIDIA NemoClaw native desktop shortcut v1";
+    private const string Owner = "NVIDIA NemoClaw RTX Spark Preview desktop shortcut v1";
     internal static readonly string[] Agents = { "openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua" };
 
     internal static string AgentName(string agent) => agent switch
@@ -24,19 +24,19 @@ internal static class NativeDesktopIntegration
         var root = Directory.GetParent(Path.GetDirectoryName(Path.GetFullPath(launcher))!)!.FullName;
         var icons = Path.Combine(root, "desktop-icons");
         EnsureSetup(launcher);
-        Write($"NemoClaw {AgentName(agent)}", launcher, $"--configured --agent {agent}", Path.Combine(icons, $"{agent}.ico"));
+        Write($"NemoClaw RTX Spark Preview {AgentName(agent)}", launcher, $"--configured --agent {agent}", Path.Combine(icons, $"{agent}.ico"));
     }
 
     internal static void EnsureSetup(string launcher)
     {
         var root = Directory.GetParent(Path.GetDirectoryName(Path.GetFullPath(launcher))!)!.FullName;
-        Write("NemoClaw Setup", launcher, "--installer", Path.Combine(root, "desktop-icons", "NemoClaw.ico"));
+        Write("NemoClaw RTX Spark Preview Setup", launcher, "--installer", Path.Combine(root, "desktop-icons", "NemoClaw.ico"));
     }
 
     internal static void Repair(string launcher)
     {
         EnsureSetup(launcher);
-        var active = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NVIDIA", "NemoClaw", "active-agent.txt");
+        var active = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NVIDIA", "NemoClaw RTX Spark Preview", "active-agent.txt");
         if (!File.Exists(active)) return;
         AssertPlain(active);
         using var file = new FileStream(active, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -51,10 +51,10 @@ internal static class NativeDesktopIntegration
 
     internal static void RemoveOwned(string launcher)
     {
-        var names = new List<string> { "NemoClaw Setup" };
+        var names = new List<string> { "NemoClaw RTX Spark Preview Setup" };
         foreach (var agent in Agents)
         {
-            names.Add($"NemoClaw {AgentName(agent)}");
+            names.Add($"NemoClaw RTX Spark Preview {AgentName(agent)}");
         }
         foreach (var name in names)
         {

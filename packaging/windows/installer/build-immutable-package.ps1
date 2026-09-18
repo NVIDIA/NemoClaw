@@ -113,7 +113,7 @@ try {
     # Absolute generated Python metadata is bound to the fixed target on this
     # Windows builder. A package for another Program Files path must be finalized
     # separately; source paths are never rewritten at an agent launch.
-    $installedRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'NVIDIA\NemoClaw'
+    $installedRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'NVIDIA\NemoClaw RTX Spark Preview'
     if ($assembly.installTargetEqualityRequired -and
         -not [string]::Equals([string]$assembly.pythonMetadataInstallRoot, $installedRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Generated interpreter metadata differs from this fixed installation target.'

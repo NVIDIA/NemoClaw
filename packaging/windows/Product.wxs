@@ -5,17 +5,17 @@
   <?define ImmutableRuntimePackage = "false" ?>
   <?endif ?>
   <Package
-    Name="NemoClaw Runtime"
+    Name="NemoClaw RTX Spark Preview Runtime"
     Manufacturer="NVIDIA Corporation"
     Version="$(var.ProductVersion)"
-    UpgradeCode="52718EC2-AD6D-4A84-9FBF-3D73C9B11864"
+    UpgradeCode="F635B342-DCE7-4C83-9AEC-50CB714E5F00"
     Language="1033"
     Scope="perMachine"
     InstallerVersion="500"
     Compressed="yes">
 
     <SummaryInformation
-      Description="NemoClaw native Windows ARM64 preview"
+      Description="NemoClaw RTX Spark native Windows ARM64 side-by-side preview"
       Manufacturer="NVIDIA Corporation" />
     <?if $(var.NativeRuntimeMsiPrototype) = "true" OR $(var.ImmutableRuntimePackage) = "true" ?>
     <!-- Preserve active owners so the lease boundary can refuse maintenance. -->
@@ -42,12 +42,12 @@
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="NvidiaFolder" Name="NVIDIA">
-        <Directory Id="INSTALLFOLDER" Name="NemoClaw">
+        <Directory Id="INSTALLFOLDER" Name="NemoClaw RTX Spark Preview">
           <Directory Id="BinFolder" Name="bin">
-            <Component Id="MachinePathComponent" Guid="4A428913-FB6B-4710-9573-5CCF0E3E4686" Bitness="always64">
+            <Component Id="MachinePathComponent" Guid="412C4444-FD09-4864-A232-AED38B2ED231" Bitness="always64">
               <RegistryValue
                 Root="HKLM"
-                Key="Software\NVIDIA Corporation\NemoClaw Native Windows Candidate"
+                Key="Software\NVIDIA Corporation\NemoClaw RTX Spark Preview"
                 Name="InstallBin"
                 Type="string"
                 Value="[BinFolder]"
@@ -66,7 +66,7 @@
       </Directory>
     </StandardDirectory>
 
-    <Feature Id="Complete" Title="NemoClaw" Level="1">
+    <Feature Id="Complete" Title="NemoClaw RTX Spark Preview" Level="1">
       <ComponentGroupRef Id="PayloadComponents" />
       <ComponentRef Id="MachinePathComponent" />
     </Feature>

@@ -677,7 +677,7 @@ pub(crate) mod native {
             }
             let value = String::from_utf16(unsafe { std::slice::from_raw_parts(text, length) })
                 .map_err(|_| "runtime-installation")?;
-            Ok(format!("{value}\\NVIDIA\\NemoClaw"))
+            Ok(format!("{value}\\NVIDIA\\NemoClaw RTX Spark Preview"))
         })();
         unsafe { CoTaskMemFree(text.cast()) };
         result
@@ -1119,13 +1119,13 @@ pub(crate) mod native {
         pub(crate) fn open_or_create() -> Result<(Self, CreatedDirectories), &'static str> {
             let installation = installed_path()?;
             let program_files = installation
-                .strip_suffix("\\NVIDIA\\NemoClaw")
+                .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
                 .ok_or("runtime-installation")?;
             let mut handles = open_installation(program_files)?;
             let mut created = CreatedDirectories::default();
             for (name, flag) in [
                 ("NVIDIA", &mut created.vendor),
-                ("NemoClaw", &mut created.application),
+                ("NemoClaw RTX Spark Preview", &mut created.application),
             ] {
                 let handle = match open(handles.last(), name, true, DIR_ACCESS, 3) {
                     Ok(v) => v,
@@ -1157,10 +1157,10 @@ pub(crate) mod native {
         fn cleanup_empty_directories(application: bool, vendor: bool) -> Result<(), &'static str> {
             let installation = installed_path()?;
             let program_files = installation
-                .strip_suffix("\\NVIDIA\\NemoClaw")
+                .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
                 .ok_or("runtime-installation")?;
             for (selected, name, parent) in [
-                (application, "NemoClaw", format!("{program_files}\\NVIDIA")),
+                (application, "NemoClaw RTX Spark Preview", format!("{program_files}\\NVIDIA")),
                 (vendor, "NVIDIA", program_files.to_owned()),
             ] {
                 if !selected {
@@ -1477,7 +1477,7 @@ mod tests {
         ] {
             let value = readiness(
                 agent,
-                "C:\\Program Files\\NVIDIA\\NemoClaw\\runtimes\\fixture",
+                "C:\\Program Files\\NVIDIA\\NemoClaw RTX Spark Preview\\runtimes\\fixture",
                 &descriptor(),
             )
             .unwrap();

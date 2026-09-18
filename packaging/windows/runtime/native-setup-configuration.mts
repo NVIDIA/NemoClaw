@@ -158,7 +158,13 @@ export function writeNativeAgentConfiguration(configuration: NativeOnboardingCon
     process.env.LOCALAPPDATA ?? "",
     "Windows local application-data directory",
   );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
+  const stateRoot = path.join(
+    localAppData,
+    "NVIDIA",
+    "NemoClaw RTX Spark Preview",
+    "agents",
+    configuration.agent,
+  );
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   const configPath = path.join(stateRoot, "native-windows.json");
   const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
@@ -184,7 +190,12 @@ export function writeNativeAgentConfiguration(configuration: NativeOnboardingCon
     mode: 0o600,
   });
   fs.renameSync(temporaryPath, configPath);
-  const activePath = path.join(localAppData, "NVIDIA", "NemoClaw", "active-agent.txt");
+  const activePath = path.join(
+    localAppData,
+    "NVIDIA",
+    "NemoClaw RTX Spark Preview",
+    "active-agent.txt",
+  );
   const activeTemporaryPath = `${activePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
     encoding: "utf8",
@@ -312,7 +323,7 @@ export async function configureNativeFromStdin(
   const previousPath = path.join(
     requiredDirectory(process.env.LOCALAPPDATA ?? "", "Windows local application-data directory"),
     "NVIDIA",
-    "NemoClaw",
+    "NemoClaw RTX Spark Preview",
     "agents",
     normalized.agent,
     "native-windows.json",

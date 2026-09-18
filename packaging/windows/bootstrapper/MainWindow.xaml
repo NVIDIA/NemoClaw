@@ -5,7 +5,7 @@
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
   xmlns:local="clr-namespace:Nvidia.NemoClaw.Bootstrapper"
   xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-  Title="NemoClaw Setup" Width="1080" Height="740" MinWidth="860" MinHeight="600"
+  Title="NemoClaw RTX Spark Preview Setup" Width="1080" Height="740" MinWidth="860" MinHeight="600"
   WindowStyle="None" ResizeMode="CanResize" WindowStartupLocation="CenterScreen"
   Background="#101210" Foreground="#F2F4EF" FontFamily="Segoe UI Variable Text, Segoe UI"
   UseLayoutRounding="True" SnapsToDevicePixels="True" PreviewKeyDown="WindowKeyDown" SizeChanged="WindowSizeChanged">
@@ -82,7 +82,7 @@
       <Grid.RowDefinitions><RowDefinition Height="46" /><RowDefinition /></Grid.RowDefinitions>
       <Border Background="#121510" BorderBrush="#272E23" BorderThickness="0,0,0,1" MouseLeftButtonDown="HeaderMouseDown">
         <Grid Margin="18,0,5,0"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Image Source="/NemoClaw.Bootstrapper;component/Assets/NemoClawLogo.png" Width="23" Height="23" /><TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Text="NVIDIA  /  NEMOCLAW SETUP" /></StackPanel>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Image Source="/NemoClaw.Bootstrapper;component/Assets/NemoClawLogo.png" Width="23" Height="23" /><TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Text="NVIDIA  /  NEMOCLAW RTX SPARK PREVIEW" /></StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Style="{StaticResource WindowButton}" Content="&#x2212;" Click="MinimizeClicked" AutomationProperties.Name="Minimize setup" /><Button Style="{StaticResource WindowButton}" Content="&#x2715;" Click="CloseClicked" AutomationProperties.Name="Close setup" /></StackPanel>
         </Grid>
       </Border>

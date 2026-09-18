@@ -91,16 +91,16 @@ fn fail(message: &str) -> ! {
 
 fn credential_target(provider: &str, binding: Option<&str>) -> Option<String> {
     let base = match provider {
-        "nvidia" => "NVIDIA/NemoClaw/inference/nvidia",
-        "openrouter" => "NVIDIA/NemoClaw/inference/openrouter",
-        "compatible" => "NVIDIA/NemoClaw/inference/compatible",
-        "local" => "NVIDIA/NemoClaw/inference/local",
-        "brave" => "NVIDIA/NemoClaw/services/brave",
-        "tavily" => "NVIDIA/NemoClaw/services/tavily",
-        "telegram" => "NVIDIA/NemoClaw/services/telegram",
-        "discord" => "NVIDIA/NemoClaw/services/discord",
-        "slack-bot" => "NVIDIA/NemoClaw/services/slack-bot",
-        "slack-app" => "NVIDIA/NemoClaw/services/slack-app",
+        "nvidia" => "NVIDIA/NemoClawRtxSparkPreview/inference/nvidia",
+        "openrouter" => "NVIDIA/NemoClawRtxSparkPreview/inference/openrouter",
+        "compatible" => "NVIDIA/NemoClawRtxSparkPreview/inference/compatible",
+        "local" => "NVIDIA/NemoClawRtxSparkPreview/inference/local",
+        "brave" => "NVIDIA/NemoClawRtxSparkPreview/services/brave",
+        "tavily" => "NVIDIA/NemoClawRtxSparkPreview/services/tavily",
+        "telegram" => "NVIDIA/NemoClawRtxSparkPreview/services/telegram",
+        "discord" => "NVIDIA/NemoClawRtxSparkPreview/services/discord",
+        "slack-bot" => "NVIDIA/NemoClawRtxSparkPreview/services/slack-bot",
+        "slack-app" => "NVIDIA/NemoClawRtxSparkPreview/services/slack-app",
         _ => return None,
     };
     if binding.is_none()

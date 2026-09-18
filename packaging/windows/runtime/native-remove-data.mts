@@ -17,7 +17,7 @@ export async function removeNativeAgentData(launcher: string, agent: string) {
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData || !path.win32.isAbsolute(localAppData))
     throw new Error("The Windows settings directory is unavailable.");
-  const root = path.join(localAppData, "NVIDIA", "NemoClaw");
+  const root = path.join(localAppData, "NVIDIA", "NemoClaw RTX Spark Preview");
   const directory = path.join(root, "agents", agent);
   for (const candidate of [root, path.join(root, "agents"), directory]) {
     const stat = fs.lstatSync(candidate, { throwIfNoEntry: false });

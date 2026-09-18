@@ -58,7 +58,13 @@ function readNativeConfiguration() {
     process.env.LOCALAPPDATA ?? "",
     "Windows local application-data directory",
   );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", "nemocua");
+  const stateRoot = path.join(
+    localAppData,
+    "NVIDIA",
+    "NemoClaw RTX Spark Preview",
+    "agents",
+    "nemocua",
+  );
   const configPath = requiredFile(
     path.join(stateRoot, "native-windows.json"),
     "NemoCUA graphical configuration",

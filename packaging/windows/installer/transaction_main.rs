@@ -22,7 +22,7 @@ mod diagnostics {
     const KEY_WOW64_64KEY: u32 = 0x0100;
     const REG_SZ: u32 = 1;
     const ERROR_FILE_NOT_FOUND: i32 = 2;
-    const PATH: &str = "SOFTWARE\\NVIDIA\\NemoClaw\\InstallDiagnostics";
+    const PATH: &str = "SOFTWARE\\NVIDIA\\NemoClawRtxSparkPreview\\InstallDiagnostics";
     const VALUE: &str = "RuntimeMaintenancePrimary";
 
     #[link(name = "advapi32")]
@@ -147,7 +147,7 @@ fn failure_exit_code(error: &str) -> i32 {
 
 #[cfg(windows)]
 fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
-    const OWNER: &str = "{1BA739B8-B632-4A8C-BB02-95058CC3A960}";
+    const OWNER: &str = "{A329C227-9C9F-42C0-AD73-E30A2A470148}";
     let Some(action) = arguments.first().map(String::as_str) else {
         return Err("The native bundle transaction command is invalid.".into());
     };

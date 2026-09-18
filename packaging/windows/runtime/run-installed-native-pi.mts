@@ -856,7 +856,13 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
   const privateShareAcl = await createPrivateShareRoot(shareRoot, systemRoot);
   const evidenceRoot = path.resolve(
     argumentValue("--artifact-directory") ??
-      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", agentId),
+      path.join(
+        process.env.LOCALAPPDATA ?? runRoot,
+        "NVIDIA",
+        "NemoClaw RTX Spark Preview",
+        "evidence",
+        agentId,
+      ),
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
   runtimeLease.assertHeld();

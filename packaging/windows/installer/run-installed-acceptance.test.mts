@@ -412,7 +412,7 @@ if ($errors.Count) { throw 'Acceptance source does not parse.' }
 $owner = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] -and $null -ne $_.Finally })
 if ($owner.Count -ne 1) { throw 'Expected one acceptance cleanup owner.' }
 $root = 'Registry::HKEY_CURRENT_USER\Software\NemoClawAcceptanceTest-' + [guid]::NewGuid().ToString('N')
-$productionPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics'
+$productionPath = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClawRtxSparkPreview\InstallDiagnostics'
 $body = $owner[0].Finally.Statements[0].Extent.Text
 if (-not $body.Contains($productionPath)) { throw 'The diagnostic owner changed.' }
 $collect = [scriptblock]::Create($body.Replace($productionPath, $root))

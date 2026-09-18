@@ -61,7 +61,7 @@ if ($Agent -ceq 'pi' -and $ValidationScope -ceq 'full-acceptance') {
 
 $work = [IO.Path]::GetFullPath($WorkDirectory)
 $setup = "$work\package\NemoClawSetup-$ProductVersion-windows-arm64.exe"
-$installation = "$env:ProgramFiles\NVIDIA\NemoClaw"
+$installation = "$env:ProgramFiles\NVIDIA\NemoClaw RTX Spark Preview"
 if (Test-Path -LiteralPath $installation) { throw 'Fresh preview acceptance requires no preexisting NemoClaw installation.' }
 $primary = $null
 $build = Get-Content -LiteralPath "$work\package\immutable-package-build.json" -Raw | ConvertFrom-Json
@@ -141,14 +141,14 @@ try {
   if ($Agent -ceq 'openclaw') {
     & "$work\application\node\node.exe" --experimental-strip-types `
       "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
-      --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
+      --install-root "$env:ProgramFiles\NVIDIA\NemoClaw RTX Spark Preview" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
     if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
   } else { $timings['compiledRuntimeControls'] = "$Agent acceptance validated capabilities, SEA identity and held runtime tuple." }
   }
 } catch { $primary = $_ }
 finally {
   try {
-    $diagnostic = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -ErrorAction Stop
+    $diagnostic = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClawRtxSparkPreview\InstallDiagnostics' -ErrorAction Stop
     $diagnostic = $diagnostic.PSObject.Properties['RuntimeMaintenancePrimary']
     if ($null -ne $diagnostic) { $timings.nativeRuntimeFailure = @{ retainedPrimary = [string]$diagnostic.Value } }
   } catch [System.Management.Automation.ItemNotFoundException] {

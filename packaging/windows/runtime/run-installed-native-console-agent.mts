@@ -138,7 +138,13 @@ function readConfiguration(agentId) {
     process.env.LOCALAPPDATA ?? "",
     "Windows local application-data directory",
   );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agentId);
+  const stateRoot = path.join(
+    localAppData,
+    "NVIDIA",
+    "NemoClaw RTX Spark Preview",
+    "agents",
+    agentId,
+  );
   const configPath = requiredFile(
     path.join(stateRoot, "native-windows.json"),
     `${AGENT_ADAPTERS[agentId].displayName} configuration`,
@@ -1585,7 +1591,7 @@ export async function runNativeConsoleAgent(
   );
   const diagnostics = createNativeSessionDiagnostics(
     path.join(installRoot, "bin", "NemoClaw.exe"),
-    path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agent),
+    path.join(localAppData, "NVIDIA", "NemoClaw RTX Spark Preview", "agents", agent),
     agent,
   );
   let presentation;

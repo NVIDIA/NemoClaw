@@ -16,8 +16,8 @@ internal static class NativeOnboarding
 
     internal static int Run(string? initialAgent)
     {
-        using var instance = new Mutex(true, "Local\\NVIDIA.NemoClaw.NativeOnboarding", out var ownsInstance);
-        var existing = FindWindow(null, "NemoClaw Setup");
+        using var instance = new Mutex(true, "Local\\NVIDIA.NemoClaw.RtxSparkPreview.NativeOnboarding", out var ownsInstance);
+        var existing = FindWindow(null, "NemoClaw RTX Spark Preview Setup");
         if (!ownsInstance || existing != IntPtr.Zero)
         {
             if (existing != IntPtr.Zero) SetForegroundWindow(existing);

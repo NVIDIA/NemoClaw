@@ -28,7 +28,7 @@ fn state_location(drive: char, sid: &str, agent: &str) -> Result<String, String>
         return Err("The native state identity is invalid.".into());
     }
     Ok(format!(
-        "{}:\\NemoClawState-{sid}-{agent}",
+        "{}:\\NemoClawRtxSparkPreviewState-{sid}-{agent}",
         drive.to_ascii_uppercase()
     ))
 }
@@ -349,7 +349,7 @@ mod native {
         };
         // Global mutexes coordinate the same Windows account across logon/RDP
         // sessions. Creating a mutex does not need SeCreateGlobalPrivilege.
-        let name = wide(&format!("Global\\NemoClaw.NativeState.{sid}.{agent}"));
+        let name = wide(&format!("Global\\NemoClaw.RtxSparkPreview.NativeState.{sid}.{agent}"));
         let mutex =
             unsafe { CreateMutexExW(&attributes, name.as_ptr(), 0, READ_CONTROL | 0x0010_0001) };
         if mutex.is_null() {
@@ -627,7 +627,7 @@ mod tests {
     fn distinct_accounts_and_agents_keep_stable_drive_root_state() {
         assert_eq!(
             state_location('c', "S-1-5-21-100-200-300-1001", "hermes").unwrap(),
-            "C:\\NemoClawState-S-1-5-21-100-200-300-1001-hermes"
+            "C:\\NemoClawRtxSparkPreviewState-S-1-5-21-100-200-300-1001-hermes"
         );
         assert_ne!(
             state_location('C', "S-1-5-21-1001", "hermes"),
@@ -671,7 +671,7 @@ mod tests {
         let line = readiness("hermes", &root, true);
         assert_eq!(
             line,
-            "{\"schemaVersion\":1,\"kind\":\"native-state-session\",\"agent\":\"hermes\",\"stateRoot\":\"C:\\\\NemoClawState-S-1-5-21-1001-hermes\",\"created\":true,\"leaseHeld\":true}\n"
+            "{\"schemaVersion\":1,\"kind\":\"native-state-session\",\"agent\":\"hermes\",\"stateRoot\":\"C:\\\\NemoClawRtxSparkPreviewState-S-1-5-21-1001-hermes\",\"created\":true,\"leaseHeld\":true}\n"
         );
         assert_eq!(line.lines().count(), 1);
         assert!(line.len() < 1024);

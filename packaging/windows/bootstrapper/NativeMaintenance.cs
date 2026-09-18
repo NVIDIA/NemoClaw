@@ -13,8 +13,8 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class NativeMaintenance
 {
-    private const string ProductUpgradeCode = "{52718EC2-AD6D-4A84-9FBF-3D73C9B11864}";
-    private const string BundleUpgradeCode = "{1BA739B8-B632-4A8C-BB02-95058CC3A960}";
+    private const string ProductUpgradeCode = "{F635B342-DCE7-4C83-9AEC-50CB714E5F00}";
+    private const string BundleUpgradeCode = "{A329C227-9C9F-42C0-AD73-E30A2A470148}";
 
     [DllImport("msi.dll", CharSet = CharSet.Unicode)]
     private static extern uint MsiEnumRelatedProductsW(string upgradeCode, uint reserved, uint index, StringBuilder productCode);

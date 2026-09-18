@@ -447,7 +447,12 @@ async function main(runtimeLease: NativeRuntimeSession) {
   const artifactArgument = argumentValue("--artifact-directory");
   const evidenceRoot = path.resolve(
     artifactArgument ??
-      path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence"),
+      path.join(
+        process.env.LOCALAPPDATA ?? runRoot,
+        "NVIDIA",
+        "NemoClaw RTX Spark Preview",
+        "evidence",
+      ),
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const receiptPath = path.join(evidenceRoot, `native-windows-turn-${runId}.json`);
