@@ -108,6 +108,7 @@ function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
   records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+  session: Pick<onboardSession.Session, "sessionId" | "cancellationRecovery"> | null,
 ): onboardSession.RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter((record) => record.sandboxName === sandboxName);
   if (!sandbox) {
@@ -147,6 +148,18 @@ function selectRetainedSandboxRecoveryAuthority(
           record.createAttemptNonce === pending.createAttemptNonce)
       );
     }
+    const sessionOwnedUnpublishedReservation =
+      record.sandboxIdentityFingerprint !== null &&
+      session?.cancellationRecovery?.reason === record.reason &&
+      registry.isPendingReservationForSession(sandbox, session?.sessionId) &&
+      sandbox.name === record.sandboxName &&
+      sandbox.gatewayName === record.gatewayName &&
+      sandbox.gatewayPort === record.gatewayPort &&
+      sandbox.pendingCreateIdentity === undefined &&
+      sandbox.lifecycleGeneration === undefined &&
+      sandbox.lifecycleLiveIdentityFingerprint === undefined &&
+      onboardSession.retainedSandboxRecoveryMatchesSession(record, session);
+    if (sessionOwnedUnpublishedReservation) return true;
     return (
       record.gatewayName === sandbox.gatewayName &&
       record.gatewayPort === sandbox.gatewayPort &&
@@ -672,13 +685,28 @@ async function destroySandboxUnlocked(
     sandboxName,
     registeredSandbox,
     retainedRecoveryRecords,
+    destroySession,
   );
   if (
     !retainedRecoveryAuthority &&
     retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
   ) {
+    const diagnosticRecordIds = retainedRecoveryRecords
+      .filter((record) => record.sandboxName === sandboxName)
+      .map((record) => record.recordId)
+      .sort()
+      .join(", ");
     console.error(
-      `  Refusing to destroy retained sandbox '${sandboxName}': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun '${CLI_NAME} ${sandboxName} destroy'.`,
+      `  Cause: Refusing to destroy retained sandbox '${sandboxName}' because NemoClaw could not select exactly one recovery record from the current registry, onboarding session, and immutable recovery evidence.`,
+    );
+    console.error(
+      "  Retained state: No sandbox resources were removed. The registry, onboarding session, and recovery records remain unchanged.",
+    );
+    console.error(
+      "  Next action: Preserve this state and do not delete by mutable sandbox name. This build has no supported automatic repair for conflicting recovery authority.",
+    );
+    console.error(
+      `  Diagnostic reference: retained recovery record ID${diagnosticRecordIds.includes(",") ? "s" : ""} ${diagnosticRecordIds}.`,
     );
     requestSandboxDestroyExit(1);
   }

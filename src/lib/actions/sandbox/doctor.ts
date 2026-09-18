@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { createCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -398,7 +398,7 @@ async function resolveInferenceRoute(
 ): Promise<DoctorInferenceRoute> {
   let live: { provider: string; model: string } | null = null;
   if (openshellBin && openshellConnected && gatewayName) {
-    const result = await createCliOpenShellInferenceRouteObserver(
+    const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
       target: namedOpenShellGateway(gatewayName),

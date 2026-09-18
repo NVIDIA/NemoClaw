@@ -352,7 +352,11 @@ describe("live export snapshot reader", () => {
     expect(result).not.toHaveProperty("inference.credential");
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledExactlyOnceWith(
       ["inference", "get", "-g", "nemoclaw"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({
+        ignoreError: true,
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      }),
     );
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
