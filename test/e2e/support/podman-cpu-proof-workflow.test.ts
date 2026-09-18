@@ -359,6 +359,7 @@ describe("native Podman CPU proof workflow", () => {
     "src/lib/onboard/sandbox-create-step.ts",
     "src/lib/onboard/sandbox-gpu-create-flow.ts",
     "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
+    "src/lib/onboard/runtime-provider/contract.ts",
   ])("selects the proof when %s changes", (adapterPath) => {
     const selectedPath = workflow().on.pull_request.paths.find(
       (candidate) => candidate === adapterPath,

@@ -9,7 +9,9 @@ import path from "node:path";
 import { vi } from "vitest";
 import type { ContainerEngine } from "../../../src/lib/adapters/container-engine";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity";
-import { createSdkOpenShellSandboxStateLifecycle } from "../../../src/lib/adapters/openshell/sandbox-lifecycle-sdk";
+import type { OpenShellSandboxObserver } from "../../../src/lib/adapters/openshell/sandbox-observer";
+import { startSandbox } from "../../../src/lib/actions/sandbox/start";
+import { stopSandbox } from "../../../src/lib/actions/sandbox/stop";
 import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
@@ -24,7 +26,9 @@ import {
 } from "../../../src/lib/onboard/experimental/portable-demo-lifecycle";
 import { inspectPortablePodmanReadiness } from "../../../src/lib/onboard/experimental/portable-runtime-readiness";
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman";
+import { createRuntimeProviderBundleRegistry } from "../../../src/lib/onboard/runtime-provider/registry";
 import { PODMAN_SANDBOX_ID_LABEL } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
+import type { SandboxEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -71,7 +75,7 @@ const E2E_PHASES = [
   "prove cold activation and warm API readiness",
   "start the pinned OpenShell Podman gateway",
   "activate registered-agent identities through the pinned OpenShell CLI",
-  "exercise exact-container stop and start",
+  "exercise public registered-sandbox stop and start",
   "record successful final at-rest state",
 ] as const;
 
@@ -395,20 +399,38 @@ exit 1
         schemaVersion: 4,
       });
 
-      progress.phase("exercise exact-container stop and start");
+      progress.phase("exercise public registered-sandbox stop and start");
       for (const { agent, sandboxName } of AGENTS) {
         const agentEngines = engines();
-        const lifecycle = createSdkOpenShellSandboxStateLifecycle({
-          env: { ...cliEnv, NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
-        });
-        const beforeStop = vi.fn();
         const initial = inspectContainer(agentEngines.sandboxLifecycle, sandboxName);
-        const request = {
-          sandboxName,
-          sandboxIdentityFingerprint: fingerprintOpenShellSandboxId(
-            initial.Config.Labels[PODMAN_SANDBOX_ID_LABEL]!,
-          )!,
-          target: { kind: "named" as const, gatewayName: GATEWAY_NAME },
+        const immutableIdentity = fingerprintOpenShellSandboxId(
+          initial.Config.Labels[PODMAN_SANDBOX_ID_LABEL]!,
+        )!;
+        let entry: SandboxEntry = {
+          agent,
+          gatewayName: GATEWAY_NAME,
+          lifecycleLiveIdentityFingerprint: immutableIdentity,
+          name: sandboxName,
+          openshellDriver: "podman",
+        };
+        const updateSandbox = vi.fn((_name: string, updates: Partial<SandboxEntry>) => {
+          entry = { ...entry, ...updates };
+          return true;
+        });
+        const runtimeProviders = createRuntimeProviderBundleRegistry([
+          ["podman", createPodmanRuntimeProviderBundle({ engines: agentEngines })],
+        ]);
+        const environment = {
+          ...cliEnv,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+        };
+        const observer: OpenShellSandboxObserver = {
+          listSandboxes: async () => ({
+            ok: true,
+            value: {
+              sandboxes: [{ name: sandboxName, phase: "Ready", readiness: "ready" }],
+            },
+          }),
         };
         const verifyRestartedAgent = vi.fn(async () => {
           await runCommand(
@@ -433,18 +455,43 @@ exit 1
           );
         });
 
-        beforeStop();
-        await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
-        expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
+        await stopSandbox(sandboxName, {
+          environment,
+          getSandbox: () => entry,
+          runtimeProviders,
+          stopSandboxChannels: vi.fn(),
+          teardownSandboxDashboardForward: async () => true,
+          updateSandbox,
+        });
+        expect(entry.stopped).toBe(true);
         const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(stopped.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
 
-        await expect(lifecycle.startSandbox(request)).resolves.toEqual({ kind: "accepted" });
-        await verifyRestartedAgent();
+        await expect(
+          startSandbox(sandboxName, {
+            allowDockerRuntimeInspection: false,
+            environment,
+            getSandbox: () => entry,
+            observer,
+            probeGatewayProcess: async () => true,
+            runtimeProviders,
+            updateSandbox,
+            verifyGateway: verifyRestartedAgent,
+          }),
+        ).resolves.toEqual({ exitCode: 0 });
+        expect(verifyRestartedAgent).toHaveBeenCalledExactlyOnceWith(sandboxName);
+        expect(entry.lifecycleLiveIdentityFingerprint).toBe(immutableIdentity);
         const running = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(running.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
 
-        await expect(lifecycle.stopSandbox(request)).resolves.toEqual({ kind: "accepted" });
+        await stopSandbox(sandboxName, {
+          environment,
+          getSandbox: () => entry,
+          runtimeProviders,
+          stopSandboxChannels: vi.fn(),
+          teardownSandboxDashboardForward: async () => true,
+          updateSandbox,
+        });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
       }
