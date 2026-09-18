@@ -234,13 +234,13 @@ mod tests {
             .ensure(root.path(), &manifest, &cancel, &|_| {})
             .await
             .unwrap();
-        let completion = observe(root.path(), &manifest).unwrap();
+        let local = observe(root.path(), &manifest).unwrap();
         assert_eq!(
             client
                 .ensure(root.path(), &manifest, &cancel, &|_| {})
                 .await
                 .unwrap(),
-            completion
+            local
         );
         server.await.unwrap();
         let requests = requests.lock().unwrap();

@@ -21,30 +21,16 @@ pub(crate) async fn prepare(
     }
 
     let model = snapshot::directory(root, &hf::directory(service))?;
-    let marker = model.join(hf::MANIFEST_FILE);
-    let manifest = match std::fs::symlink_metadata(&marker) {
-        Ok(meta) if meta.is_file() && meta.len() <= 4 << 20 => hf::decode_manifest(
-            service,
-            &std::fs::read(&marker).map_err(|_| Error::State("cannot read retained manifest"))?,
-        )?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            report("downloading", "resolving selected immutable model", 0)?;
-            let manifest = tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=hf::resolve_manifest(service)=>m? };
-            let mut file = tempfile::NamedTempFile::new_in(&model)
-                .map_err(|_| Error::State("cannot retain manifest"))?;
-            use std::io::Write;
-            file.write_all(
-                &serde_json::to_vec(&manifest).map_err(|_| Error::State("invalid manifest"))?,
-            )
-            .map_err(|_| Error::State("cannot retain manifest"))?;
-            file.as_file()
-                .sync_all()
-                .map_err(|_| Error::State("cannot sync manifest"))?;
-            file.persist(&marker)
-                .map_err(|_| Error::State("cannot publish manifest"))?;
-            manifest
+    let manifest = match snapshot::ModelManifest::read(&model)? {
+        Some(manifest) => {
+            let expected = manifest.snapshot();
+            hf::validate_manifest(service, &expected)?;
+            expected
         }
-        _ => return Err(Error::State("retained manifest is unobservable or invalid")),
+        None => {
+            report("downloading", "resolving selected immutable model", 0)?;
+            tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), m=hf::resolve_manifest(service)=>m? }
+        }
     };
     report("downloading", "verifying selected model snapshot", 0)?;
     let client = snapshot::Client::new()?;
@@ -81,7 +67,7 @@ pub(crate) async fn prepare(
             ));
         }
         let root = root.join("prepared");
-        let completion = nemoclaw_sdk::recipes::preparation::prepare(
+        let output = nemoclaw_sdk::recipes::preparation::prepare(
             &root,
             &model,
             service,
@@ -93,7 +79,7 @@ pub(crate) async fn prepare(
             environment.insert(key.clone(), value.into());
         }
         for (key, path) in &recipe.serving.prepared_environment {
-            let directory = root.join(&completion.key);
+            let directory = root.join(&output.key);
             environment.insert(
                 key.clone(),
                 if path == "." {

@@ -69,33 +69,44 @@ async fn runtime_status_requires_complete_current_data_and_never_mutates() {
 }
 
 #[test]
-fn artifact_completion_records_require_matching_identity_and_unchanged_regular_files() {
+fn artifact_manifests_require_matching_identity_and_unchanged_regular_files() {
     let service = observed().spec.service.unwrap();
     let recipe = service.recipe.as_ref().unwrap();
     let manifest = recipe.snapshot.as_ref().unwrap().clone();
     let modified = timestamp("2026-09-14T00:00:00.123456789Z")
         .unwrap()
         .unix_timestamp_nanos() as u64;
-    let mut completion = CompletionRecord {
-        manifest: manifest.key(),
-        files: manifest
-            .files
-            .clone()
-            .into_iter()
-            .map(|file| VerifiedFile { file, modified })
-            .collect(),
-    };
-    validate_snapshot_manifest(&completion, &manifest).unwrap();
-    let original = completion.clone();
-    completion.files.swap(0, 1);
-    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
-    completion = original.clone();
-    completion.files.pop();
-    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
-    completion = original;
-    completion.manifest = "wrong".into();
-    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
-    let file = &completion.files[0];
+    let mut local = crate::snapshot::ModelManifest::new(&manifest);
+    assert!(local.verified_files().is_err());
+    for file in &mut local.files {
+        file.modified = Some(modified);
+    }
+    local.validate_for(&manifest).unwrap();
+    crate::recipes::huggingface::decode_manifest(&service, &serde_json::to_vec(&local).unwrap())
+        .unwrap();
+    let original = local.clone();
+    local.files[0].file.sha256 = "0".repeat(64);
+    assert!(
+        crate::recipes::huggingface::decode_manifest(
+            &service,
+            &serde_json::to_vec(&local).unwrap()
+        )
+        .is_err()
+    );
+    local = original.clone();
+    local.version = 2;
+    assert!(crate::snapshot::ModelManifest::decode(&serde_json::to_vec(&local).unwrap()).is_err());
+    local = original.clone();
+    local.files.swap(0, 1);
+    assert!(local.validate_for(&manifest).is_err());
+    local = original.clone();
+    local.files.pop();
+    assert!(local.validate_for(&manifest).is_err());
+    local = original;
+    local.revision = "b".repeat(40);
+    assert!(local.validate_for(&manifest).is_err());
+    let files = local.verified_files().unwrap();
+    let file = &files[0];
     let mut stat = bollard::container::PathStatResponse {
         name: file.file.name.clone(),
         size: file.file.size as i64,
@@ -115,7 +126,7 @@ fn artifact_completion_records_require_matching_identity_and_unchanged_regular_f
     stat.file_mode = 0o600;
     stat.link_target = "elsewhere".into();
     assert!(verify_stat(file, &stat).is_err());
-    let mut prep = crate::recipes::preparation::CompletionRecord {
+    let mut prep = crate::recipes::preparation::OutputManifest {
         key: recipe.key(&service),
         files: ["prepared.bin".to_owned(), "prepared.json".to_owned()]
             .into_iter()
@@ -129,17 +140,17 @@ fn artifact_completion_records_require_matching_identity_and_unchanged_regular_f
             })
             .collect(),
     };
-    crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep).unwrap();
+    crate::recipes::preparation::validate_manifest(recipe, &recipe.key(&service), &prep).unwrap();
     let original = prep.clone();
     prep.files[1] = prep.files[0].clone();
     assert!(
-        crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep)
+        crate::recipes::preparation::validate_manifest(recipe, &recipe.key(&service), &prep)
             .is_err()
     );
     prep = original;
     prep.key = "wrong".into();
     assert!(
-        crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep)
+        crate::recipes::preparation::validate_manifest(recipe, &recipe.key(&service), &prep)
             .is_err()
     );
 }

@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{RuntimeObservation, capacity::regular_stat};
-use crate::{
-    Error,
-    docker::Engine,
-    snapshot::{CompletionRecord, VerifiedFile},
-};
+use crate::{Error, docker::Engine, snapshot::VerifiedFile};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,8 +53,8 @@ impl Engine {
             _ => Err(Error::State("unknown inference runtime status")),
         }
     }
-    /// Verify retained completion records and file metadata without rehashing the model
-    /// or starting a container. Only the runtime publishes completion records.
+    /// Check model and preparation manifests against file metadata without rehashing
+    /// model data or starting a container.
     pub async fn verify_artifacts(&self, observed: &RuntimeObservation) -> Result<(), Error> {
         let work = async {
             let service = observed
@@ -79,18 +75,7 @@ impl Engine {
                 .await?
                 .ok_or(Error::State("selected model manifest is unobservable"))?;
             let manifest = crate::recipes::huggingface::decode_manifest(service, &bytes)?;
-            let bytes = self
-                .read_file(
-                    &observed.container_id,
-                    &format!("{model}/.nemoclaw-complete.json"),
-                    1 << 20,
-                )
-                .await?
-                .ok_or(Error::State("complete model snapshot is unobservable"))?;
-            let completion: CompletionRecord = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::State("invalid model completion record"))?;
-            validate_snapshot_manifest(&completion, &manifest)?;
-            for file in &completion.files {
+            for file in &manifest.verified_files()? {
                 self.verify_artifact_file(&observed.container_id, &model, file)
                     .await?;
             }
@@ -100,16 +85,16 @@ impl Engine {
                 let bytes = self
                     .read_file(
                         &observed.container_id,
-                        &format!("{prepared}/complete.json"),
+                        &format!("{prepared}/{}", crate::recipes::preparation::MANIFEST_FILE),
                         1 << 20,
                     )
                     .await?
-                    .ok_or(Error::State("recipe completion is unobservable"))?;
-                let completion: crate::recipes::preparation::CompletionRecord =
+                    .ok_or(Error::State("recipe output manifest is unobservable"))?;
+                let output: crate::recipes::preparation::OutputManifest =
                     serde_json::from_slice(&bytes)
-                        .map_err(|_| Error::State("invalid recipe completion record"))?;
-                crate::recipes::preparation::validate_completion(recipe, &key, &completion)?;
-                for file in &completion.files {
+                        .map_err(|_| Error::State("invalid recipe output manifest"))?;
+                crate::recipes::preparation::validate_manifest(recipe, &key, &output)?;
+                for file in &output.files {
                     self.verify_artifact_file(&observed.container_id, &prepared, file)
                         .await?;
                 }
@@ -136,25 +121,7 @@ impl Engine {
         verify_stat(file, &stat)
     }
 }
-fn validate_snapshot_manifest(
-    completion: &CompletionRecord,
-    manifest: &crate::snapshot::Manifest,
-) -> Result<(), Error> {
-    if completion.manifest != manifest.key()
-        || completion.files.len() != manifest.files.len()
-        || completion
-            .files
-            .iter()
-            .zip(&manifest.files)
-            .any(|(actual, expected)| &actual.file != expected)
-    {
-        return Err(Error::Conflict(
-            "model snapshot completion record conflicts with immutable pin",
-        ));
-    }
-    Ok(())
-}
-fn verify_stat(
+pub(super) fn verify_stat(
     file: &VerifiedFile,
     stat: &bollard::container::PathStatResponse,
 ) -> Result<(), Error> {

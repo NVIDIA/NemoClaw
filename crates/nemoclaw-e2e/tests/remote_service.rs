@@ -119,16 +119,13 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         let path = format!("/data/{}/{}", model, file["name"].as_str().unwrap());
         stats[path] = json!({"name":file["name"],"size":file["size"],"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
     }
-    files[format!("/data/{}/.nemoclaw-complete.json", model)] =
-        json!({"manifest":manifest.key(),"files":downloaded_files});
     let mut prepared = Vec::new();
     for name in ["prepared.bin".to_string(), "prepared.json".to_string()] {
         prepared.push(json!({"name":name,"size":1,"sha256":"a".repeat(64),"modified":1}));
         stats[format!("/data/prepared/{}/{name}", key)] = json!({"name":name,"size":1,"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
     }
-    files[format!("/data/prepared/{}/complete.json", key)] = json!({"key":key,"files":prepared});
-    files[format!("/data/{model}/{}", huggingface::MANIFEST_FILE)] =
-        serde_json::to_value(manifest).unwrap();
+    files[format!("/data/prepared/{}/manifest.json", key)] = json!({"key":key,"files":prepared});
+    files[format!("/data/{model}/{}", huggingface::MANIFEST_FILE)] = json!({"version":1,"repository":manifest.repository,"revision":manifest.revision,"files":downloaded_files});
     files["/data/status.json"] =
         json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
     let service = &value["spec"]["inferenceProviders"][0]["service"];
@@ -199,6 +196,32 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         assert_eq!(read(root, "engine.json"), stable);
     }
     save(root, "control.json", &json!({}));
+    if harness == "openclaw" && !authenticated {
+        let original = read(root, "fixture.json");
+        let artifact = format!("/data/{model}/{}", manifest.files[0].name);
+        let metadata = format!("/data/{model}/{}", huggingface::MANIFEST_FILE);
+        for change in ["missing", "modified", "legacy"] {
+            let mut changed = original.clone();
+            match change {
+                "missing" => {
+                    changed["stats"].as_object_mut().unwrap().remove(&artifact);
+                }
+                "modified" => changed["stats"][&artifact]["mtime"] = json!("2026-09-15T00:00:00Z"),
+                "legacy" => changed["files"][&metadata] = serde_json::to_value(manifest).unwrap(),
+                _ => unreachable!(),
+            }
+            save(root, "fixture.json", &changed);
+            run(root, &bundle, "plan", "config.yaml", false).await;
+            run(root, &bundle, "apply", "config.yaml", false).await;
+            run(root, &bundle, "export", "", false).await;
+            assert_eq!(
+                fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap(),
+                state
+            );
+            assert_eq!(read(root, "engine.json"), stable);
+        }
+        save(root, "fixture.json", &original);
+    }
     if authenticated {
         let original = read(root, "fixture.json");
         let mut corrupt = original.clone();

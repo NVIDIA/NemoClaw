@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Pinned model identity and snapshot resolution.
+pub use crate::snapshot::MANIFEST_FILE;
 use crate::{
     Error,
     config::{ConfigError, Service, constraints as c},
-    snapshot::Manifest,
+    snapshot::{Manifest, ModelManifest},
 };
 use sha2::{Digest, Sha256};
-pub const MANIFEST_FILE: &str = ".nemoclaw-manifest.json";
 pub fn directory(service: &Service) -> String {
     if let Some(reuse) = service.recipe.as_ref().and_then(|r| r.reuse.as_ref()) {
         return reuse.snapshot_directory.clone();
@@ -47,12 +47,21 @@ pub fn validate_manifest(service: &Service, manifest: &Manifest) -> Result<(), E
             "snapshot manifest conflicts with selected model",
         ));
     }
+    if let Some(expected) = service
+        .recipe
+        .as_ref()
+        .and_then(|recipe| recipe.snapshot.as_ref())
+        && manifest != expected
+    {
+        return Err(Error::Conflict(
+            "snapshot manifest conflicts with recipe snapshot",
+        ));
+    }
     crate::backends::validation::validate_weights(service, manifest)
 }
-pub fn decode_manifest(service: &Service, bytes: &[u8]) -> Result<Manifest, Error> {
-    let manifest: Manifest = serde_json::from_slice(bytes)
-        .map_err(|_| Error::State("invalid retained model manifest"))?;
-    validate_manifest(service, &manifest)?;
+pub fn decode_manifest(service: &Service, bytes: &[u8]) -> Result<ModelManifest, Error> {
+    let manifest = ModelManifest::decode(bytes)?;
+    validate_manifest(service, &manifest.snapshot())?;
     Ok(manifest)
 }
 pub async fn resolve_manifest(service: &Service) -> Result<Manifest, Error> {
