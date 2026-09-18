@@ -363,6 +363,9 @@ describe("Hermes MCP reload finality", () => {
       state: "committed",
     });
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[0] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "650", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 675_000 });
     expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
       "host-only-secret",
     );

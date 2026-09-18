@@ -28,7 +28,12 @@ const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
   "Hermes gateway is not running under the managed service lifecycle";
-const HERMES_MCP_RECONCILE_TIMEOUT_SECONDS = 90;
+// A relay-loss reconciliation can wait behind the original transaction's
+// apply reload and rollback reload. Preserve the mutation's complete 620s
+// remote bound, then reserve time for the read-only stability proof.
+const HERMES_MCP_RECONCILE_TIMEOUT_SECONDS = HERMES_MCP_EXEC_TIMEOUT_SECONDS + 30;
+const HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS =
+  (HERMES_MCP_RECONCILE_TIMEOUT_SECONDS + 25) * 1_000;
 const HERMES_RELOAD_RELAY_LOSS = `Error: x code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"`;
 
 export class HermesMcpReloadRelayLossError extends McpBridgeError {
@@ -155,7 +160,7 @@ function inspectHermesMcpReconcileState(
         ignoreError: true,
         runtimeSelection,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 105_000,
+        timeout: HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS,
       },
     );
   } catch (error) {
