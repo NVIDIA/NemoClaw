@@ -208,19 +208,22 @@ class AdapterPathControls(unittest.TestCase):
             )
 
     def test_prebuilt_tui_preserves_validated_main_path_without_volume_realpath(self):
-        node = self.root / "node/node.exe"
+        node = self.root.parent / (self.root.name + "-installed-node.exe")
+        node.write_bytes(b"owned")
+        self.addCleanup(node.unlink)
         entry = self.root / "hermes-agent/ui-tui/dist/entry.js"
-        for file in (node, entry):
-            file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_bytes(b"owned")
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_bytes(b"owned")
         module = ModuleType("hermes_cli.main_tui_launch")
         module._make_tui_argv = lambda _root, _dev: (
             [str(node), "--expose-gc", str(entry)],
             entry.parent.parent,
         )
         with (
-            patch.dict(os.environ, {"HERMES_NODE": str(node)}),
-            patch.object(adapter, "_regular_file", side_effect=lambda path, _root: path),
+            patch.dict(
+                os.environ,
+                {"HERMES_NODE": str(node), "NEMOCLAW_AGENT_NODE": str(node)},
+            ),
             patch.object(
                 adapter,
                 "_prebuilt_node",
@@ -236,6 +239,24 @@ class AdapterPathControls(unittest.TestCase):
         self.assertEqual(cwd, entry.parent.parent)
         with self.assertRaises(adapter.NativeStartupRefusal):
             module._make_tui_argv(entry.parent.parent, True)
+        changed = ModuleType("hermes_cli.main_tui_launch")
+        changed._make_tui_argv = module._make_tui_argv
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "HERMES_NODE": str(node),
+                    "NEMOCLAW_AGENT_NODE": str(node.with_name("other-node.exe")),
+                },
+            ),
+            patch.object(
+                adapter,
+                "_prebuilt_node",
+                return_value={"tui": entry, "web": self.root / "web/index.html"},
+            ),
+            self.assertRaises(adapter.NativeStartupRefusal),
+        ):
+            adapter._adapt_module(changed, self.root, self.bash)
 
     def test_relative_traversal_device_stream_and_unbounded_paths_refused(self):
         for value in (

@@ -398,9 +398,17 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
     elif module.__name__ == "hermes_cli.main_tui_launch":
         files = _prebuilt_node(root)
         node_value = os.environ.get("HERMES_NODE")
-        if files is None or not node_value:
+        node_authority = os.environ.get("NEMOCLAW_AGENT_NODE")
+        if files is None or not node_value or not node_authority:
             _refuse("the installed prebuilt TUI launch contract is missing.")
-        node = _regular_file(Path(node_value), root)
+        node = _absolute_path(Path(node_value))
+        if not _same_path(node, _absolute_path(Path(node_authority))):
+            _refuse("the prebuilt TUI Node differs from its host authority.")
+        try:
+            if _path_kind(node) != "file":
+                _refuse("the prebuilt TUI Node has an invalid filesystem identity.")
+        except OSError:
+            _refuse("the prebuilt TUI Node is unavailable.")
         entry = files["tui"]
         tui_root = entry.parent.parent
         original = module._make_tui_argv
