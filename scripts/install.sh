@@ -3624,7 +3624,7 @@ force_fresh_install_has_existing_state() {
   if command_exists docker; then
     docker info >/dev/null 2>&1 || return 2
     container_inventory="$(
-      docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract 2>/dev/null
+      docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1 2>/dev/null
     )" || return 2
     [[ -z "$container_inventory" ]] || managed_docker_state=1
     receipt_volume_inventory="$(

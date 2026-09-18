@@ -228,6 +228,7 @@ const OPENSHELL_COMMAND_MISSING_ERROR =
 const INTERRUPTED_ONBOARD_SESSION_MAX_BYTES = 1024 * 1024;
 export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
   /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
+const MANAGED_IMAGE_CONTRACT_CONTAINER_LABEL = "io.nvidia.nemoclaw.managed-image.contract=1";
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
@@ -2412,6 +2413,51 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
   return removedAll;
 }
 
+function dockerContainerInspectionProvesAbsence(id: string, result: RunResult): boolean {
+  if (result.status !== 1 || result.error || result.signal) return false;
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const detail = `${result.stderr} ${result.stdout}`.trim();
+  return new RegExp(
+    `^(?:(?:Error response from daemon|Error):\\s*)?(?:No such container|No such object):?\\s*${escapedId}$`,
+    "iu",
+  ).test(detail);
+}
+
+function removeForceFreshManagedImageContainers(runtime: UninstallRuntime): boolean {
+  const inventory = runtime.runDocker(
+    ["ps", "-aq", "--filter", `label=${MANAGED_IMAGE_CONTRACT_CONTAINER_LABEL}`],
+    { env: runtime.env },
+  );
+  if (inventory.status !== 0) {
+    runtime.warn("Failed to inventory managed-image Docker containers");
+    return false;
+  }
+  const ids = [...new Set(splitNonEmptyLines(inventory.stdout))];
+  let removedAll = true;
+  for (const id of ids) {
+    if (!/^[0-9a-f]{12,64}$/u.test(id)) {
+      runtime.warn("Managed-image Docker container inventory returned an invalid ID");
+      removedAll = false;
+      continue;
+    }
+    const removal = runtime.runDocker(["rm", "-f", id], {
+      env: runtime.env,
+      stdio: "ignore",
+    });
+    const inspection = runtime.runDocker(["container", "inspect", id], {
+      env: runtime.env,
+      stdio: "ignore",
+    });
+    if (removal.status === 0 && dockerContainerInspectionProvesAbsence(id, inspection)) {
+      runtime.log(`Removed managed-image Docker container ${id}`);
+      continue;
+    }
+    runtime.warn(`Failed to remove and verify managed-image Docker container ${id}`);
+    removedAll = false;
+  }
+  return removedAll;
+}
+
 function removeDockerImages(runtime: UninstallRuntime): void {
   const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], {
     env: runtime.env,
@@ -2465,7 +2511,7 @@ function dockerVolumeInspectionProvesAbsence(name: string, result: RunResult): b
   const detail = `${result.stderr} ${result.stdout}`.trim();
   return [
     new RegExp(
-      `^(?:Error response from daemon:\\s*)?(?:No such volume|No such object):?\\s*${escapedName}$`,
+      `^(?:(?:Error response from daemon|Error):\\s*)?(?:No such volume|No such object):?\\s*${escapedName}$`,
       "iu",
     ),
     new RegExp(
@@ -2521,6 +2567,10 @@ function executeDockerResourceStep(
     runtime,
     scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
   );
+  const removedManagedImageContainers =
+    !options.forceFreshReset || scopedToSelectedGateway
+      ? true
+      : removeForceFreshManagedImageContainers(runtime);
   if (scopedToSelectedGateway) {
     runtime.log("Sibling gateways remain; kept shared Docker images.");
   } else {
@@ -2531,7 +2581,7 @@ function executeDockerResourceStep(
     if (!removeDockerVolume(volumeName, runtime)) removedVolumes = false;
   }
   if (!options.forceFreshReset) return true;
-  if (!removedContainers || !removedVolumes) {
+  if (!removedContainers || !removedManagedImageContainers || !removedVolumes) {
     runtime.error("Force-fresh cleanup could not remove every required Docker resource.");
     return false;
   }

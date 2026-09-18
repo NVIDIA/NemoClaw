@@ -76,7 +76,7 @@ it("detects Docker-only state only through an authoritative managed-image label"
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
-  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") printf '0123456789ab\n' ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") printf '0123456789ab\n' ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -99,7 +99,7 @@ it("does not treat an unlabeled prefix-matching Docker container as owned state"
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
-  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -121,7 +121,7 @@ it("detects labelled Docker receipt-volume-only state", () => {
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
-  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
   "volume ls --format {{.Name}}")
     printf 'nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
     ;;
@@ -153,7 +153,7 @@ it("stops before cleanup for a pre-label receipt-volume-only state", () => {
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
-  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
   "volume ls --format {{.Name}}") printf '%s\n' "$LEGACY_VOLUME" ;;
   *)
     if [[ "$1" == "volume" && "$2" == "inspect" ]]; then

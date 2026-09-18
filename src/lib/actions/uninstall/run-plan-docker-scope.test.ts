@@ -302,4 +302,57 @@ describe("uninstall Docker resource scope", () => {
       expect(runDocker).toHaveBeenCalledWith(failureCommand, expect.any(Object));
     },
   );
+
+  it("removes and verifies a label-owned force-fresh container with unrelated name and image", async () => {
+    const ownedId = "0123456789ab";
+    const routes: Record<string, RunResult> = {
+      info: ok(),
+      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(
+        `${ownedId} registry.example.com/unrelated:latest arbitrary-name`,
+      ),
+      "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1": ok(ownedId),
+      "images --format {{.ID}} {{.Repository}}:{{.Tag}}": ok(),
+      [`rm -f ${ownedId}`]: ok(ownedId),
+      [`container inspect ${ownedId}`]: {
+        status: 1,
+        stdout: "",
+        stderr: `Error: No such object: ${ownedId}`,
+      },
+      "volume inspect openshell-cluster-nemoclaw": {
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      },
+    };
+    const runDocker = vi.fn((args: string[]): RunResult => routes[args.join(" ")] ?? ok());
+
+    const result = await runUninstallPlan(
+      {
+        assumeYes: true,
+        deleteModels: false,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-force-fresh-labelled-container" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => undefined,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok(),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runDocker).toHaveBeenCalledWith(["rm", "-f", ownedId], expect.any(Object));
+    expect(runDocker).toHaveBeenCalledWith(["container", "inspect", ownedId], expect.any(Object));
+  });
 });
