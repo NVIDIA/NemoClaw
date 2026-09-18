@@ -48,7 +48,6 @@ import {
   MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
-import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
@@ -130,6 +129,7 @@ import {
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
+  removeForceFreshReceiptVolumes,
 } from "./runtime-commands";
 import {
   buildUninstallPlan,
@@ -2382,52 +2382,44 @@ function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
   else runtime.warn(`Failed to remove Docker volume ${name}`);
 }
 
-const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
-  `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
-  "u",
-);
-
-function removeForceFreshReceiptVolumes(runtime: UninstallRuntime): boolean {
-  const inventory = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
-    env: runtime.env,
-  });
-  if (inventory.status !== 0) {
+function executeDockerResourceStep(
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  externallySupervised: boolean,
+  volumeNames: readonly string[],
+): boolean {
+  if (externallySupervised) {
+    runtime.log(
+      "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
+    );
+    return true;
+  }
+  if (!dockerIsAvailable(runtime)) {
+    if (!options.forceFreshReset || !runtime.commandExists("docker")) return true;
     runtime.error(
-      "Could not inventory managed-startup receipt volumes during force-fresh cleanup.",
+      "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent.",
     );
     return false;
   }
-  const volumes = splitNonEmptyLines(inventory.stdout).filter((name) =>
-    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
+  removeDockerContainers(
+    runtime,
+    scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
   );
-  for (const volume of volumes) {
-    const removed = runtime.runDocker(["volume", "rm", "-f", volume], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
-    if (removed.status !== 0) {
-      runtime.error(`Managed-startup receipt volume '${volume}' could not be removed.`);
-      return false;
-    }
-    runtime.log(`Removed managed-startup receipt volume ${volume}`);
+  if (scopedToSelectedGateway) {
+    runtime.log("Sibling gateways remain; kept shared Docker images.");
+  } else {
+    removeDockerImages(runtime);
   }
-  const remaining = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
-    env: runtime.env,
-  });
-  if (remaining.status !== 0) {
-    runtime.error("Could not verify managed-startup receipt volume cleanup.");
-    return false;
-  }
-  const retained = splitNonEmptyLines(remaining.stdout).find((name) =>
-    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
-  );
-  if (retained) {
+  for (const volumeName of volumeNames) removeDockerVolume(volumeName, runtime);
+  if (!options.forceFreshReset) return true;
+  if (scopedToSelectedGateway) {
     runtime.error(
-      `Managed-startup receipt volume '${retained}' remains after force-fresh cleanup.`,
+      "Force-fresh cleanup preserved receipt volumes because another gateway environment remains.",
     );
     return false;
   }
-  return true;
+  return removeForceFreshReceiptVolumes(runtime);
 }
 
 function parseOllamaModelInventory(output: string): string[] {
@@ -4166,40 +4158,17 @@ async function executePreparedPlan(
         otherGatewayPorts,
       );
     } else if (step.name === "Docker resources") {
-      if (externallySupervised) {
-        runtime.log(
-          "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
-        );
-      } else if (dockerIsAvailable(runtime)) {
-        removeDockerContainers(
+      if (
+        !executeDockerResourceStep(
+          options,
           runtime,
-          scopedToSelectedGateway
-            ? options.gatewayName || resolveGatewayName(GATEWAY_PORT)
-            : undefined,
-        );
-        if (scopedToSelectedGateway) {
-          runtime.log("Sibling gateways remain; kept shared Docker images.");
-        } else {
-          removeDockerImages(runtime);
-        }
-        step.actions.forEach((action) => {
-          if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
-        });
-        if (options.forceFreshReset) {
-          if (scopedToSelectedGateway) {
-            runtime.error(
-              "Force-fresh cleanup preserved receipt volumes because another gateway environment remains.",
-            );
-            return { ok: false, scopedToSelectedGateway };
-          }
-          if (!removeForceFreshReceiptVolumes(runtime)) {
-            return { ok: false, scopedToSelectedGateway };
-          }
-        }
-      } else if (options.forceFreshReset && runtime.commandExists("docker")) {
-        runtime.error(
-          "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent.",
-        );
+          scopedToSelectedGateway,
+          externallySupervised,
+          step.actions.flatMap((action) =>
+            action.kind === "delete-docker-volume" ? [action.name] : [],
+          ),
+        )
+      ) {
         return { ok: false, scopedToSelectedGateway };
       }
     } else if (step.name === "Model stores") {

@@ -162,23 +162,26 @@ describe("uninstall Docker resource scope", () => {
       const unrelated = "nemoclaw-managed-startup-receipt-volume-user-data";
       const calls: string[][] = [];
       let ownedPresent = true;
+      const routes: Record<string, () => RunResult> = {
+        info: () => ok(),
+        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
+        "images --format {{.ID}} {{.Repository}}:{{.Tag}}": () => ok(),
+        "volume ls --format {{.Name}}": () =>
+          ok(`${ownedPresent ? `${owned}\n` : ""}${unrelated}\n`),
+        [`volume rm -f ${owned}`]: () => {
+          ownedPresent = removalStatus === 0 ? false : ownedPresent;
+          return { status: removalStatus, stdout: removalStatus === 0 ? owned : "", stderr: "" };
+        },
+        "volume inspect openshell-cluster-nemoclaw": () => ({
+          status: 1,
+          stdout: "",
+          stderr: "Error: no such volume",
+        }),
+      };
       const runDocker = vi.fn((args: string[]) => {
         calls.push(args);
         const command = args.join(" ");
-        if (command === "info") return ok();
-        if (command === "ps -a --format {{.ID}} {{.Image}} {{.Names}}") return ok();
-        if (command === "images --format {{.ID}} {{.Repository}}:{{.Tag}}") return ok();
-        if (command === "volume ls --format {{.Name}}") {
-          return ok(`${ownedPresent ? `${owned}\n` : ""}${unrelated}\n`);
-        }
-        if (command === `volume rm -f ${owned}`) {
-          if (removalStatus === 0) ownedPresent = false;
-          return { status: removalStatus, stdout: removalStatus === 0 ? owned : "", stderr: "" };
-        }
-        if (command.startsWith("volume inspect ")) {
-          return { status: 1, stdout: "", stderr: "Error: no such volume" };
-        }
-        return ok();
+        return (routes[command] ?? (() => ok()))();
       });
 
       const result = await runUninstallPlan(
