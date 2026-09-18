@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Trusted Windows Installer Qualification
+name: CI / Trusted Windows Installer Qualification
 
 # This workflow is deliberately callable only from the same commit as its
 # caller. The caller admits only an exact, current refs/heads/main dispatch, so
@@ -178,13 +178,16 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $controllerHead -cne $env:CONTROLLER_SHA) { throw 'The trusted controller checkout is not exact.' }
           $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
           $application = "$env:RUNNER_TEMP\finished-windows-application-transfer"
-          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
+          $verifiedProduct = @(& "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST
-          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $application `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST)
+          $verifiedApplication = @(& "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $application `
             -Kind compiled-application -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:APPLICATION_MANIFEST
-          if ($LASTEXITCODE -ne 0) { throw 'A qualification transfer did not match its producer.' }
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:APPLICATION_MANIFEST)
+          if ($verifiedProduct.Count -ne 1 -or [string]$verifiedProduct[0] -cne $env:INSTALLER_MANIFEST -or
+              $verifiedApplication.Count -ne 1 -or [string]$verifiedApplication[0] -cne $env:APPLICATION_MANIFEST) {
+            throw 'A qualification transfer did not match its producer.'
+          }
           $work = "$env:RUNNER_TEMP\finished-windows"
           [void][IO.Directory]::CreateDirectory($work)
           Copy-Item -LiteralPath "$product\package" -Destination "$work\package" -Recurse
@@ -302,10 +305,12 @@ jobs:
           INSTALLER_MANIFEST: ${{ inputs.installer_manifest_sha256 }}
         run: |
           $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
-          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
+          $verifiedManifest = @(& "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST
-          if ($LASTEXITCODE -ne 0) { throw 'The migration transfer did not match its producer.' }
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST)
+          if ($verifiedManifest.Count -ne 1 -or [string]$verifiedManifest[0] -cne $env:INSTALLER_MANIFEST) {
+            throw 'The migration transfer did not match its producer.'
+          }
           [void][IO.Directory]::CreateDirectory("$env:RUNNER_TEMP\finished-windows")
           Copy-Item -LiteralPath "$product\package" -Destination "$env:RUNNER_TEMP\finished-windows\package" -Recurse
           Copy-Item -LiteralPath "$product\assembled" -Destination "$env:RUNNER_TEMP\finished-windows\assembled" -Recurse
@@ -401,12 +406,14 @@ jobs:
         run: |
           $expectedMsi = "NemoClaw-$env:PRODUCT_VERSION-windows-arm64.msi"
           $expectedSetup = "NemoClawSetup-$env:PRODUCT_VERSION-windows-arm64.exe"
-          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify `
+          $verifiedManifest = @(& "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify `
             -Root "$env:RUNNER_TEMP\finished-windows-product-transfer" -Kind finished-installer `
             -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
             -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST `
-            -ExpectedPackageRunnables @($expectedMsi, $expectedSetup)
-          if ($LASTEXITCODE -ne 0) { throw 'The publication transfer did not match the accepted bytes.' }
+            -ExpectedPackageRunnables @($expectedMsi, $expectedSetup))
+          if ($verifiedManifest.Count -ne 1 -or [string]$verifiedManifest[0] -cne $env:INSTALLER_MANIFEST) {
+            throw 'The publication transfer did not match the accepted bytes.'
+          }
       - name: Publish fully qualified runnable installer
         id: preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

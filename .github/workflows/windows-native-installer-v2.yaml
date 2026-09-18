@@ -362,10 +362,12 @@ jobs:
         run: |
           $env:GITHUB_SHA = $env:CANDIDATE_SHA
           $transfer = "$env:RUNNER_TEMP\finished-windows-application-transfer"
-          & "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $transfer `
+          $verifiedManifest = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $transfer `
             -Kind compiled-application -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:EXPECTED_MANIFEST
-          if ($LASTEXITCODE -ne 0) { throw 'The compiled application transfer is not exact.' }
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:EXPECTED_MANIFEST)
+          if ($verifiedManifest.Count -ne 1 -or [string]$verifiedManifest[0] -cne $env:EXPECTED_MANIFEST) {
+            throw 'The compiled application transfer is not exact.'
+          }
           $work = "$env:RUNNER_TEMP\finished-windows"
           [void][IO.Directory]::CreateDirectory($work)
           Copy-Item -LiteralPath "$transfer\application" -Destination "$work\application" -Recurse
@@ -540,10 +542,12 @@ jobs:
         run: |
           $env:GITHUB_SHA = $env:CANDIDATE_SHA
           $transfer = "$env:RUNNER_TEMP\finished-windows-bash-transfer"
-          & "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $transfer `
+          $verifiedManifest = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $transfer `
             -Kind bash-compatibility -SourceRevision $env:CANDIDATE_SHA -Agent hermes `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:EXPECTED_MANIFEST
-          if ($LASTEXITCODE -ne 0) { throw 'The Bash compatibility transfer is not exact.' }
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:EXPECTED_MANIFEST)
+          if ($verifiedManifest.Count -ne 1 -or [string]$verifiedManifest[0] -cne $env:EXPECTED_MANIFEST) {
+            throw 'The Bash compatibility transfer is not exact.'
+          }
           Copy-Item -LiteralPath "$transfer\native-proof" -Destination "$env:RUNNER_TEMP\finished-windows\native-proof" -Recurse
       - name: Verify the explicitly pinned Personal-passing complete Hermes candidate
         if: ${{ needs.windows-finished-request.outputs.agent == 'hermes' }}
@@ -665,11 +669,11 @@ jobs:
           Copy-Item -LiteralPath "$source\package" -Destination "$transfer\package" -Recurse
           [void][IO.Directory]::CreateDirectory("$transfer\assembled")
           Copy-Item -LiteralPath "$source\assembled\runtime-identity.json" -Destination "$transfer\assembled\runtime-identity.json"
-          $manifest = & "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Create -Root $transfer `
+          $manifest = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Create -Root $transfer `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT
-          if ($LASTEXITCODE -ne 0 -or $manifest -cnotmatch '^[a-f0-9]{64}$') { throw 'The installer transfer manifest failed.' }
-          "manifest_sha256=$manifest" >> $env:GITHUB_OUTPUT
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT)
+          if ($manifest.Count -ne 1 -or [string]$manifest[0] -cnotmatch '^[a-f0-9]{64}$') { throw 'The installer transfer manifest failed.' }
+          "manifest_sha256=$([string]$manifest[0])" >> $env:GITHUB_OUTPUT
           "cache_key=windows-finished-installer-v1-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:CANDIDATE_SHA-$env:SELECTED_AGENT" >> $env:GITHUB_OUTPUT
       - name: Save the executable installer only in the same-run cache
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -757,13 +761,16 @@ jobs:
           $env:GITHUB_SHA = $env:CANDIDATE_SHA
           $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
           $application = "$env:RUNNER_TEMP\finished-windows-application-transfer"
-          & "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
+          $verifiedProduct = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent openclaw `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST
-          & "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $application `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST)
+          $verifiedApplication = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $application `
             -Kind compiled-application -SourceRevision $env:CANDIDATE_SHA -Agent openclaw `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:APPLICATION_MANIFEST
-          if ($LASTEXITCODE -ne 0) { throw 'A startup transfer did not match its producer.' }
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:APPLICATION_MANIFEST)
+          if ($verifiedProduct.Count -ne 1 -or [string]$verifiedProduct[0] -cne $env:INSTALLER_MANIFEST -or
+              $verifiedApplication.Count -ne 1 -or [string]$verifiedApplication[0] -cne $env:APPLICATION_MANIFEST) {
+            throw 'A startup transfer did not match its producer.'
+          }
           $work = "$env:RUNNER_TEMP\finished-windows"
           [void][IO.Directory]::CreateDirectory($work)
           Copy-Item -LiteralPath "$product\package" -Destination "$work\package" -Recurse
@@ -1055,11 +1062,11 @@ jobs:
             'inputs/tools/node_modules/@esbuild/win32-arm64', 'inputs/materialization-receipt.json'
           ) | ForEach-Object { Copy-TransferInput application $_ }
           @('executable', 'workers') | ForEach-Object { Copy-TransferInput runtime $_ }
-          $manifest = & scripts/checks/windows-native-transfer.ps1 -Mode Create -Root $transfer `
+          $manifest = @(& scripts/checks/windows-native-transfer.ps1 -Mode Create -Root $transfer `
             -Kind compiled-application -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT
-          if ($LASTEXITCODE -ne 0 -or $manifest -cnotmatch '^[a-f0-9]{64}$') { throw 'The application transfer manifest failed.' }
-          "manifest_sha256=$manifest" >> $env:GITHUB_OUTPUT
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT)
+          if ($manifest.Count -ne 1 -or [string]$manifest[0] -cnotmatch '^[a-f0-9]{64}$') { throw 'The application transfer manifest failed.' }
+          "manifest_sha256=$([string]$manifest[0])" >> $env:GITHUB_OUTPUT
           "cache_key=windows-finished-application-v1-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:CANDIDATE_SHA-$env:SELECTED_AGENT" >> $env:GITHUB_OUTPUT
       - name: Save exact executable units only in the same-run cache
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -1073,13 +1080,36 @@ jobs:
         run: |
           $work = "$env:RUNNER_TEMP\compiled-windows-app"
           $inputs = @(
-            "$work\controls", "$work\gateway-control",
+            "$work\controls\installed-acceptance-controller.json",
+            "$work\controls\installed-acceptance-controller.stdout.log",
+            "$work\controls\installed-acceptance-controller.stderr.log",
+            "$work\controls\compiled-openclaw\compiled-controls.json",
+            "$work\controls\compiled-openclaw\direct-version.log",
+            "$work\controls\compiled-openclaw\worker-version.log",
+            "$work\controls\compiled-openclaw\config-validate.log",
+            "$work\gateway-control\gateway-control.json",
+            "$work\gateway-control\stdout.log", "$work\gateway-control\stderr.log",
             "$work\workers\build.json", "$work\workers\source-adaptation.json",
-            "$work\executable-tools\tools-input.json", "$work\build\diagnostics",
+            "$work\executable-tools\tools-input.json",
+            "$work\build\diagnostics\configured-choice-results.json",
+            "$work\build\diagnostics\local-model-tools\result.json",
+            "$work\build\diagnostics\local-model-tools\undici-instances.json",
+            "$work\build\diagnostics\local-model-tools\stdout.log",
+            "$work\build\diagnostics\local-model-tools\stderr.log",
             "$work\build\build-receipt.json", "$work\build\build-failure.json",
             "$work\inputs\materialization-receipt.json", "$work\node\node-input.json"
           )
-          foreach ($pattern in @("$work\executable\*.json", "$work\executable\*.log")) {
+          foreach ($choice in @('brave', 'discord', 'slack', 'tavily')) {
+            $choiceRoot = "$work\build\diagnostics\choice-$choice"
+            $inputs += @("$choiceRoot\result.json", "$choiceRoot\registered.json")
+          }
+          foreach ($pattern in @(
+            "$work\build\diagnostics\choice-*.controller.stdout.log",
+            "$work\build\diagnostics\choice-*.controller.stderr.log",
+            "$work\build\diagnostics\choice-*\*.stdout.log",
+            "$work\build\diagnostics\choice-*\*.stderr.log",
+            "$work\executable\*.json", "$work\executable\*.log"
+          )) {
             $inputs += @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
           }
           & "$env:GITHUB_WORKSPACE\scripts\checks\stage-windows-native-evidence.ps1" `
@@ -1452,11 +1482,11 @@ jobs:
           $transfer = Join-Path $env:RUNNER_TEMP 'finished-windows-bash-transfer'
           [void][IO.Directory]::CreateDirectory($transfer)
           Copy-Item -LiteralPath reused-evidence -Destination (Join-Path $transfer 'native-proof') -Recurse
-          $manifest = & current/scripts/checks/windows-native-transfer.ps1 -Mode Create -Root $transfer `
+          $manifest = @(& current/scripts/checks/windows-native-transfer.ps1 -Mode Create -Root $transfer `
             -Kind bash-compatibility -SourceRevision $env:CANDIDATE_SHA -Agent hermes `
-            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT
-          if ($LASTEXITCODE -ne 0 -or $manifest -cnotmatch '^[a-f0-9]{64}$') { throw 'The Bash transfer manifest failed.' }
-          "manifest_sha256=$manifest" >> $env:GITHUB_OUTPUT
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT)
+          if ($manifest.Count -ne 1 -or [string]$manifest[0] -cnotmatch '^[a-f0-9]{64}$') { throw 'The Bash transfer manifest failed.' }
+          "manifest_sha256=$([string]$manifest[0])" >> $env:GITHUB_OUTPUT
           "cache_key=windows-finished-bash-v1-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:CANDIDATE_SHA-hermes" >> $env:GITHUB_OUTPUT
       - name: Save executable-bearing compatibility inputs only in the same-run cache
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

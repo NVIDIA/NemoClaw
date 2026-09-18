@@ -215,6 +215,23 @@ describe("native Windows installer pull request acceptance", () => {
       expect(transferSource).toContain("workflowRunAttempt");
       expect(transferSource).toContain("ReparsePoint");
       expect(transferSource).toContain("A transfer cache entry differs from its manifest.");
+
+      const transferWorkflows = `${workflowSource}\n${trustedSource}`;
+      expect(transferWorkflows.match(/^.*windows-native-transfer\.ps1.*$/gmu)).toHaveLength(11);
+      expect(
+        transferWorkflows.match(/^.*= @\(& .*windows-native-transfer\.ps1.*$/gmu),
+      ).toHaveLength(11);
+      expect(transferWorkflows).not.toMatch(/\$LASTEXITCODE[^\n]*transfer/iu);
+
+      const evidenceRun =
+        requiredStep(compiled, "Stage only non-runnable application diagnostics").run ?? "";
+      expect(evidenceRun).toContain("$work\\controls\\compiled-openclaw\\compiled-controls.json");
+      expect(evidenceRun).toContain("$work\\gateway-control\\gateway-control.json");
+      expect(evidenceRun).toContain("$work\\build\\diagnostics\\local-model-tools\\result.json");
+      expect(evidenceRun).toContain("$choiceRoot\\result.json");
+      expect(evidenceRun).not.toContain('"$work\\controls",');
+      expect(evidenceRun).not.toContain('"$work\\gateway-control",');
+      expect(evidenceRun).not.toContain('"$work\\build\\diagnostics",');
     },
   );
 
