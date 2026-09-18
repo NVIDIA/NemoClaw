@@ -36,6 +36,14 @@ _nemoclaw_bootstrap_identity="$6"
 [ "$7" = "--" ] || fail "startup argument delimiter is missing"
 shift 7
 
+# Keep the inspected OpenShell workload command anchored to the canonical
+# image entrypoint while the hold owns the pre-start transaction. The hold
+# itself already execs that fixed path, so consume the exact marker instead of
+# forwarding it as an argument to the entrypoint.
+if [ "$#" -gt 0 ] && [ "$1" = "/usr/local/bin/nemoclaw-start" ]; then
+  shift
+fi
+
 case "$_nemoclaw_agent" in
   openclaw | hermes | langchain-deepagents-code | pi) ;;
   *) fail "agent is unsupported" ;;

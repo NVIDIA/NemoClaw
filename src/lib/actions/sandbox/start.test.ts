@@ -303,9 +303,7 @@ describe("startSandbox native lifecycle", () => {
     expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
     expect(probeGatewayProcess).toHaveBeenCalledWith("my-sandbox", "nemoclaw-19080");
     expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
-    expect(h.verifyGateway).toHaveBeenCalledExactlyOnceWith("my-sandbox", {
-      managedHermesGatewayProcessObserved: true,
-    });
+    expect(h.verifyGateway).toHaveBeenCalledExactlyOnceWith("my-sandbox");
     expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
       probeGatewayProcess.mock.invocationCallOrder[2],
     );

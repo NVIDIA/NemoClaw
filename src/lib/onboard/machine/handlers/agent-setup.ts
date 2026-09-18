@@ -49,6 +49,7 @@ export interface AgentSetupStateOptions<Agent> {
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },
     ): Promise<void>;
+    announceOpenclawSetup?(): void;
     setupOpenclaw(
       sandboxName: string,
       model: string,
@@ -130,6 +131,7 @@ export async function handleAgentSetupState<Agent>({
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   } else if (managedOpenclawStartup) {
+    deps.announceOpenclawSetup?.();
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
     let ready = false;
     const deadline = agentSetupRuntime.now() + 60_000;

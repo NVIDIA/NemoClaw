@@ -884,6 +884,24 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     );
   });
 
+  it("recreates a managed compatibility route with the complete GPU envelope", async () => {
+    const input = createInput();
+    input.managedImage = true;
+    failNativeCreate();
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        route: "compatibility",
+        externalRecreation: false,
+      }),
+    );
+  });
+
   it("runs the local-provider bridge preflight only after selecting compatibility fallback", async () => {
     const input = createInput();
     input.provider = "ollama-local";

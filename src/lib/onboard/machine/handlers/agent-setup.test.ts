@@ -30,6 +30,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
+    announceOpenclawSetup: vi.fn(),
     setupOpenclaw: vi.fn(async () => undefined),
     configureOpenclaw: vi.fn(async () => undefined),
     complete: vi.fn(async (stepName: string, updates: SessionUpdates = {}) => {
@@ -51,6 +52,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
+      announceOpenclawSetup: calls.announceOpenclawSetup,
       setupOpenclaw: calls.setupOpenclaw,
       configureOpenclawSandbox: calls.configureOpenclaw,
       recordStepComplete: calls.complete,
@@ -358,6 +360,7 @@ describe("handleAgentSetupState", () => {
 
     expect(calls.openclawGatewayReady).toHaveBeenCalledExactlyOnceWith("my-assistant", 3_000);
     expect(sleep).not.toHaveBeenCalled();
+    expect(calls.announceOpenclawSetup).toHaveBeenCalledOnce();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
       "my-assistant",

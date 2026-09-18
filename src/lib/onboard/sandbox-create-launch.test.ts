@@ -322,6 +322,7 @@ describe("prepareSandboxCreateLaunch", () => {
         "--bootstrap-identity",
         managedBootstrapIdentity,
         "--",
+        "/usr/local/bin/nemoclaw-start",
       ]);
       expect(result.managedBootstrapIdentity).toBe(managedBootstrapIdentity);
       expect(result.envArgs.join("\n")).not.toContain(request.encodedProfile);

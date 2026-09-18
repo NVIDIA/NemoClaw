@@ -591,7 +591,12 @@ export function createSandboxGpuCreateAttemptRunner(
           // keep the exact runtime OpenShell created. Legacy/custom images retain the
           // restart-safe clone used to persist commands and DCode resource limits.
           persistStartupCommand: persistRestartSafeStartup,
-          externalRecreation: input.managedImage === true,
+          // Native managed images keep the exact runtime OpenShell created.
+          // The explicit compatibility route still requires NemoClaw's
+          // Docker recreation to attach the complete legacy GPU envelope;
+          // OpenShell's compatibility create alone can expose nvidia-smi
+          // without mounting a usable libcuda.so.1.
+          externalRecreation: input.managedImage === true && !compatibility,
           sandboxName: input.sandboxName,
           gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
           openshellSandboxCommand: input.sandboxStartupCommand,

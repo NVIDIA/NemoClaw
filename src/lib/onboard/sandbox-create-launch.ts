@@ -144,6 +144,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
           "--bootstrap-identity",
           managedBootstrapIdentity,
           "--",
+          MANAGED_STARTUP_EXECUTABLE,
         ]
       : intendedSandboxStartupCommand;
   const createArgs = [...input.createArgs];

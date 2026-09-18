@@ -3209,6 +3209,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,
+          announceOpenclawSetup: () =>
+            step(7, 8, `Setting up ${agentProductName()} inside sandbox`),
           setupOpenclaw,
           configureOpenclawSandbox,
           recordStepComplete,
