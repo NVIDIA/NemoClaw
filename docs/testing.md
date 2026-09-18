@@ -93,7 +93,7 @@ It builds all ten agent images plus the proxy and exercises native adapters agai
 Rust- or documentation-only pushes skip that image build; their schema and adapter-descriptor checks remain in the Rust suite.
 It also runs OpenClaw tools, execution, search, and tracing checks.
 Native messaging belongs to OpenClaw; NemoClaw tests that its adapter preserves unrelated native configuration and rejects drift in deployment-owned settings.
-These fixtures use no live credentials, send no external messages, and do not qualify GPU inference or live OpenShell deployments.
+These fixtures use no live credentials, send no external messages, and do not test GPU inference or live OpenShell deployments.
 
 ## CLI Tests
 
@@ -154,17 +154,17 @@ cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 
 There is no coverage threshold or CI coverage job.
 
-## Integration and Live Qualification
+## Integration and Live Tests
 
 Write integration tests as input, operation, and expected result.
 For deployment tests, keep the YAML and expected plan/apply resource actions easy to find.
-Use assertions and the test runner's output for failures; do not add evidence reports, host inventories, or qualification bookkeeping to tests.
+Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
 
-- [Run fixture qualification](testing/fixtures.md) with explicit OpenTofu and bundle paths.
-- [Run live qualification](testing/live.md) only against explicitly owned resources.
-- [Inspect retained evidence](validation/README.md) for tested configurations and remaining limits.
+- [Run integration tests](testing/fixtures.md) with explicit OpenTofu and bundle paths.
+- [Run live tests](testing/live.md) only against explicitly owned resources.
+- [Inspect recorded test results](validation/README.md) for tested configurations and remaining limits.
 
 ### SSH Engine Transport
 
-Use [SSH service fixtures](testing/fixtures.md#ssh-service-fixtures) or [live SSH transport qualification](testing/live.md#ssh-engine-transport).
+Use [SSH service fixtures](testing/fixtures.md#ssh-service-fixtures) or [live SSH transport tests](testing/live.md#ssh-engine-transport).

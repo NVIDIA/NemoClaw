@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Live Qualification
+# Run Live Tests
 
 Live tests require explicit configuration and must touch only resources owned by the test.
 Use a dedicated deployment UID, state directory, and immutable bundle.
@@ -9,9 +9,9 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
-## Dependency Upgrade Gate
+## Dependency Upgrade Test
 
-Before qualifying an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.
+Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.
 It requires one OpenClaw agent and one already-running external inference provider; it rejects managed inference services, Ollama, and proxies.
 Run from the checkout that built the candidate bundle: the initial apply uses the bundled CLI, and subsequent checks use the checkout's SDK.
 Provide a dedicated deployment UID, an unused state directory whose parent exists, and an immutable candidate bundle.
@@ -36,14 +36,14 @@ It retains the workspace and persistent storage; failures retain state and resou
 CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
-The gate passed with OpenShell `1fe79f539` on Linux ARM64; see the [upgrade qualification and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
+The test passed with OpenShell `1fe79f539` on Linux ARM64; see the [recorded upgrade results and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
 The [earlier main-process failure](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) remains specific to its recorded revision.
-A failed gate must not be recorded as compatibility success because lower-level fixtures passed.
+If this test fails, passing lower-level fixture tests does not establish compatibility.
 Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
 
 ## Retained Storage Observations
 
-Read-only live storage qualification requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
+The read-only live storage test requires an explicit OpenTofu runtime state file containing the test deployment's retained inference volume binding:
 
 ```sh
 NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
@@ -53,7 +53,7 @@ NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
 
 The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist.
 Neither read-only test creates resources or establishes live agent inference.
-Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json).
+Refer to [recorded volume-retention results](../validation/rust-storage-linux-arm64.json).
 
 ## Spark and Fabric
 
@@ -89,7 +89,7 @@ Rebuilding `dist` replaces development artifacts; keep the selected bundle uncha
 The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, and `NEMOCLAW_TEST_BUNDLE` paths.
 Use a dedicated UID and state directory with an external gateway and inference endpoint.
 It applies the deployment, checks unchanged apply and export/reapply, exercises the native agent/Fabric SDK, and destroys its owned registrations and sandbox.
-The hosted Fabric runtime must keep its identity throughout native access and reconciliation.
+The hosted Fabric runtime must keep its identity throughout native access and reapply.
 This test makes a real model request and reports assertion failures through the test runner.
 The workspace remains after destroy.
 
@@ -111,7 +111,7 @@ Explicit recovery must preserve resource identities and the model manifest.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
 
-Failures retain resources for diagnosis; reconcile that state before starting another run.
+Failures retain resources for diagnosis; recover the deployment using the same configuration and state directory before starting another run.
 Retained gateway storage includes its network, so a different deployment needs a different subnet.
 
 For an established deployment whose gateway is running, select `selected_model_continues_from_retained_state` with the same environment variables.
@@ -119,7 +119,7 @@ It runs the same lifecycle assertions without the fresh-plan assertion.
 Run only one of these live tests against a given deployment at a time.
 
 After intentional destroy, apply the retained configuration first.
-A read-only plan cannot observe workspace resources through a stopped gateway and will ask for that explicit reconciliation.
+A read-only plan cannot observe workspace resources until apply has restored the gateway.
 
 ## Hosted NVIDIA OpenClaw Parity
 
@@ -144,4 +144,4 @@ The existing `fabric_live` test also accepts an external gateway with a managed 
 The live test requests an agent reply separately from apply.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
-The [two-daemon evidence](../validation/rust-dual-daemon-linux-arm64.json) records its live rootless Podman run, controlled download interruption, protection trip, engine retarget rejection, and retained model data.
+The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the live rootless Podman run, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
