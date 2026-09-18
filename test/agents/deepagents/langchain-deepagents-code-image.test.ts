@@ -220,6 +220,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "",
       "# The supplied base may end as a non-root runtime user. Reset the build user",
       "# explicitly before installing the root-owned managed-startup handoff.",
+      "# hadolint ignore=DL3066",
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";

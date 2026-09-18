@@ -211,6 +211,7 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/validate-runtime-contract.py \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \

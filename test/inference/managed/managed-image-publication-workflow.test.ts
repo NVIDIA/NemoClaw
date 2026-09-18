@@ -431,10 +431,15 @@ describe("complete managed-image publication workflow", () => {
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);
+    const stagingQa = required(
+      workflow.jobs?.["pr-staging-qa-deep-code"],
+      "managed-image workflow is missing staging QA",
+    );
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
+    const stagingOverlay = step(stagingQa, "Overlay exact PR dependency inputs on staging QA base");
     const releaseIdentity = step(prBuilder, "Resolve managed image release identity");
     const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
     const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
@@ -452,6 +457,9 @@ describe("complete managed-image publication workflow", () => {
     expect(contract.run).toContain('.[0].Config.User == "sandbox"');
     expect(contract.run).toContain(
       'verify-dcode-conversation-history-image.sh "$image_id" "$PLATFORM" 0',
+    );
+    expect(stagingOverlay.run).toContain(
+      "agents/langchain-deepagents-code/validate-runtime-contract.py",
     );
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
