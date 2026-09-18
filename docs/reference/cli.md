@@ -91,7 +91,10 @@ When stderr is a terminal, commands show deployment phases, OpenTofu resource op
 Readiness waits report elapsed time every 10 seconds; resource updates follow OpenTofu's event stream.
 Durations below one second use milliseconds; longer durations use seconds.
 Resource durations use OpenTofu event timestamps when available, falling back to its whole-second elapsed field.
-These messages do not measure download percentage or establish successful inference.
+Docker image pulls and Ollama model pulls also show download phases and per-layer byte counts when available.
+A known, nonzero layer total enables a percentage; it is not a percentage for the entire image or model.
+Download updates can be dropped if progress reporting is unavailable or slow; the command result still determines success.
+Progress messages do not establish successful inference.
 Redirected stderr contains errors only unless `--verbose` enables progress output.
 
 With `--verbose`, completed bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed time on stderr.

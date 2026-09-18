@@ -55,12 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Inspect both `changes` and `deferred` in the result.
 An empty change list with deferred checks is not a complete no-change plan.
-The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, and `Progress::Completed` events.
+The progress callback reports phase changes, `Progress::Resource`, `Progress::Waiting`, `Progress::Download`, and `Progress::Completed` events.
 Resource events adapt OpenTofu's machine-readable UI into fixed resource-kind, action, and status labels with an `elapsed` duration; raw messages, addresses, IDs, and output values are omitted.
 Resources of the same kind share a label.
 Waiting events report a fixed operation label when a timed step starts and every 10 seconds while it remains pending.
 Completed events contain a fixed `operation` label, an `elapsed` duration, and a `StepOutcome` of `Succeeded`, `Failed`, or `Cancelled`.
 They cover bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request, and contain no diagnostic payloads.
+Download events contain the backend resource kind and name, requested image or model, optional layer ID, phase, and optional completed/total byte counts.
+Each event replaces the previous counts for that resource, artifact, and layer; counts are not increments.
+Provider downloads reach the callback through a local channel; updates can be dropped and never determine the operation result.
+Direct SDK calls to image or Ollama model operations can use `with_download_progress(resource, callback, future)` to report through the same callback type.
 Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
