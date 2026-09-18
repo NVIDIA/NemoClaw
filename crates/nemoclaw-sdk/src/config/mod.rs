@@ -356,4 +356,6 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 mod service_hardware;
-pub use service_hardware::{ServiceContainer, ServiceHardware, ServiceIpc};
+pub use service_hardware::{
+    DedicatedHardware, HardwareProfile, ServiceContainer, ServiceHardware, ServiceIpc,
+};

@@ -428,8 +428,9 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     property(service, "backend", json!({"const": c::BACKEND}));
     property(service, "image", json!({"pattern": c::IMAGE}));
     service["allOf"] = json!([
+        {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
-        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
+        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware",forbid(&["profile"]),true),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
         {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
     ]);
     service["dependentRequired"] =
@@ -515,22 +516,22 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         json!({"enum":["","flashinfer"],"default":""}),
     );
     property(
-        &mut defs["ServiceHardware"],
+        &mut defs["DedicatedHardware"],
         "architecture",
         json!({"const":"amd64"}),
     );
     property(
-        &mut defs["ServiceHardware"],
+        &mut defs["DedicatedHardware"],
         "minComputeCapability",
         json!({"minimum":10,"maximum":999}),
     );
     property(
-        &mut defs["ServiceHardware"],
+        &mut defs["DedicatedHardware"],
         "minGpuMemoryBytes",
         json!({"minimum":4_u64*(1<<30),"maximum":4_u64*(1<<40)}),
     );
     property(
-        &mut defs["ServiceHardware"],
+        &mut defs["DedicatedHardware"],
         "minDriverMajor",
         json!({"minimum":1,"maximum":9999}),
     );

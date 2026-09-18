@@ -46,7 +46,21 @@ Gated repositories, custom remote-code models, GGUF, and nested checkpoint layou
 `memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
 `kvCacheGiB` is part of that budget.
 Capacity checks reject snapshots whose weights cannot fit the declared budget.
-Without `service.hardware` or an inline recipe, the host must satisfy the existing Linux ARM64 GB10 Spark contract.
+Declare exactly one of `service.hardware` or `service.recipe`; there is no implicit hardware profile.
+For ordinary models on DGX Spark, select the existing Linux ARM64 contract explicitly:
+
+```yaml
+# Under service:
+hardware:
+  profile: spark
+```
+
+This profile requires one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer.
+For Linux AMD64 with dedicated GPU memory, use the [explicit hardware requirements](#configure-nemotron-on-an-amd64-gpu-host) instead.
+An inline recipe supplies its own compatibility requirements and excludes `service.hardware`.
+
+Older YAML that omitted both fields is rejected; add the explicit Spark profile when preserving that configuration's hardware contract.
+Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
 
 Backend startup still establishes actual model compatibility.
 

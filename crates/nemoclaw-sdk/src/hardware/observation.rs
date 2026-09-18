@@ -60,7 +60,7 @@ impl HostObserver for LocalHost {
         {
             let _ = engine;
             Err(Error::Conflict(
-                "Spark capacity requires a local Linux ARM64 host",
+                "capacity requires a local Linux ARM64 or AMD64 host",
             ))
         }
     }

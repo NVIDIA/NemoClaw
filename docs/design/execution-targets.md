@@ -190,7 +190,7 @@ Fixture qualification covers read-only plan, insufficient and missing capacity, 
 Real loopback SSH qualifies the collector against this DGX Spark's Docker daemon.
 A separate-host GPU apply and an agent reply across that host boundary remain required before claiming live remote deployment qualification.
 
-The example requires preloaded pinned runtime images and a private routable IPv4 interface; the current managed model hardware profile remains Linux ARM64 DGX Spark.
+The example requires preloaded pinned runtime images and a private routable IPv4 interface; it selects the Linux ARM64 DGX Spark hardware contract.
 
 ### Volume Observation Correction
 

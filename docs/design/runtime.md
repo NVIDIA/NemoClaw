@@ -17,8 +17,9 @@ Keeping those decisions separate lets an ordinary fixture process exercise the s
 The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
-Direct hardware checks use recipe-declared compatibility or the qualified Spark defaults for ordinary models.
-Both paths retain the qualified Spark memory-policy bounds.
+Direct hardware checks use recipe-declared compatibility or an explicit `service.hardware` contract for ordinary models.
+The named `spark` profile retains its GB10 and host-memory requirements; dedicated GPU requirements select Linux AMD64.
+Both paths retain resident memory protection; see [managed models](../models.md#pin-and-serve-the-model) for configuration and qualification limits.
 
 For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
 Changing a memory threshold should not change the model snapshot's identity.

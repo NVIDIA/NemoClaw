@@ -33,6 +33,35 @@ struct State {
 }
 
 #[tokio::test]
+async fn missing_service_hardware_is_rejected_before_acquiring_an_image() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
+    spec.service.as_mut().unwrap().recipe = None;
+    let requests = Arc::new(Mutex::new(0));
+    let seen = requests.clone();
+    let fixture = Fixture::start(move |_| {
+        *seen.lock().unwrap() += 1;
+        Some((
+            200,
+            serde_json::to_vec(&json!({
+                "Id": "sha256:runtime", "Architecture": "arm64", "Os": "linux",
+                "Config": {"Labels": {"org.nemoclaw.backend": "vllm"}}
+            }))
+            .unwrap(),
+        ))
+    })
+    .await;
+    assert!(
+        fixture
+            .engine_for(spec.engine())
+            .ensure_image(&spec)
+            .await
+            .is_err()
+    );
+    assert_eq!(*requests.lock().unwrap(), 0);
+}
+
+#[tokio::test]
 async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image() {
     for service in [false, true] {
         for policy in ["default", "Always", "IfNotPresent", "Never"] {

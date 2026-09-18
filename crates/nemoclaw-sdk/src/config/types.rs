@@ -430,9 +430,10 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
-    /// Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract.
+    /// Explicit hardware contract: profile: spark for Linux ARM64 GB10, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::ServiceHardware")]
+    #[schemars(extend("x-nemoclaw-required" = "Without recipe"))]
     pub hardware: Option<super::ServiceHardware>,
     /// Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -452,7 +453,8 @@ pub struct Service {
     pub management: Option<super::ManagedManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Box<crate::recipes::inline::InlineRecipe>")]
-    /// Optional inline preparation and serving contract supplied by the pinned runtime image.
+    /// Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware.
+    #[schemars(extend("x-nemoclaw-required" = "Without hardware"))]
     pub recipe: Option<Box<crate::recipes::inline::InlineRecipe>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ServicePlacement")]
@@ -571,7 +573,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware and excludes a recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires dedicated service.hardware requirements and excludes a named profile, recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"

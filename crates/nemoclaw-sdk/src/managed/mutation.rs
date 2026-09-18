@@ -119,6 +119,11 @@ impl Engine {
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
+        let required_architecture = spec
+            .service
+            .as_ref()
+            .map(|service| service.architecture())
+            .transpose()?;
         let policy = spec.service.as_ref().map_or_else(
             || spec.gateway.image_pull_policy.unwrap_or_default(),
             |service| {
@@ -130,21 +135,8 @@ impl Engine {
         let image = self.acquire_image(spec.image(), policy).await?;
         spec.validate_image_authentication(&image)?;
         let architecture = image.architecture.as_deref();
-        let architecture_matches = if let Some(service) = &spec.service {
-            architecture
-                == Some(
-                    service
-                        .hardware
-                        .as_ref()
-                        .map(|hardware| hardware.architecture.as_str())
-                        .or_else(|| {
-                            service
-                                .recipe
-                                .as_ref()
-                                .map(|recipe| recipe.compatibility.architecture.as_str())
-                        })
-                        .unwrap_or("arm64"),
-                )
+        let architecture_matches = if let Some(required) = required_architecture {
+            architecture == Some(required)
         } else {
             let engine = self.info().await?;
             gateway_architecture_matches(architecture, engine.architecture.as_deref())

@@ -65,8 +65,7 @@ pub(crate) fn arguments(
     if total == 0
         || model.gpu_bytes > total
         || service
-            .hardware
-            .as_ref()
+            .dedicated_hardware()
             .is_some_and(|h| total < h.min_gpu_memory_bytes)
     {
         return Err(Error::Conflict("invalid total memory for inference budget"));

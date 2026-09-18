@@ -120,6 +120,9 @@ fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
 fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice() {
     let mut service = service();
     service.recipe = None;
+    service.hardware = Some(crate::config::ServiceHardware::Profile {
+        profile: crate::config::HardwareProfile::Spark,
+    });
     service.memory.gpu_memory_gib = 20;
     service.memory.kv_cache_gib = 6;
     let mut capacity = Capacity {

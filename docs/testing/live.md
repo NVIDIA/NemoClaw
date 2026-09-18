@@ -138,7 +138,8 @@ The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the f
 It writes `/tmp/ssh-transfer-test` and checks the streamed archive and unchanged identity.
 The caller owns fixture setup and cleanup; never target an unrelated container.
 
-The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 NVIDIA host without provisioning resources.
+The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 or AMD64 NVIDIA host without provisioning resources.
+It checks that the collected architecture matches the selected Docker daemon's reported architecture.
 
 The existing `fabric_live` test also accepts an external gateway with a managed SSH inference service.
 The live test requests an agent reply separately from apply.
