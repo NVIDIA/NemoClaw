@@ -263,6 +263,33 @@ it("continues force cleanup when managed uninstall rejects partial state", () =>
   expect(result.stdout.trim().split("\n")).toEqual(["force-state-reset", "openshell-reset"]);
 });
 
+it("continues force-fresh installation when Homebrew fails after the pinned runtime lands", () => {
+  const result = callPayloadFunction(`
+    warn() { printf 'warn:%s\n' "$*"; }
+    uname() { printf 'Darwin'; }
+    observed_macos_openshell_install_method() { printf 'homebrew\n'; }
+    spin_count=0
+    spin() {
+      spin_count=$((spin_count + 1))
+      printf 'spin:%s\n' "$1"
+      [ "$spin_count" -eq 2 ]
+    }
+    prefer_homebrew_openshell() { printf 'prefer:%s\n' "$1"; }
+    install_nemoclaw_openshell_gateway_user_service() { printf 'service\n'; }
+    FORCE_FRESH_INSTALL=1
+    maybe_install_openshell_during_install force
+  `);
+
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(result.stdout.trim().split("\n")).toEqual([
+    "spin:Installing OpenShell CLI",
+    "spin:Verifying the installed OpenShell CLI",
+    "warn:Homebrew reported an install failure after placing OpenShell; the pinned OpenShell verifier passed, so force-fresh installation will continue.",
+    "prefer:verified-install",
+    "service",
+  ]);
+});
+
 it("rejects force cleanup outside supported state roots", () => {
   const result = callPayloadFunction('remove_force_fresh_state_path "$HOME/Documents"', {
     HOME: os.tmpdir(),

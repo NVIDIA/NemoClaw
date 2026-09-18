@@ -2302,7 +2302,14 @@ maybe_install_openshell_during_install() {
   fi
   if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
-    return 1
+    if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
+      && truthy_env "${FORCE_FRESH_INSTALL:-}" \
+      && _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+        spin "Verifying the installed OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+      warn "Homebrew reported an install failure after placing OpenShell; the pinned OpenShell verifier passed, so force-fresh installation will continue."
+    else
+      return 1
+    fi
   fi
   if [[ "$platform" == "Darwin" ]]; then
     observed_install_method="$(observed_macos_openshell_install_method)" || return 1
