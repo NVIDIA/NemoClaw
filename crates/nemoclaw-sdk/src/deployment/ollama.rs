@@ -58,7 +58,7 @@ pub(super) fn extend_allowed(
     Ok(())
 }
 impl Deployment {
-    pub(super) async fn preflight_ollama(
+    pub(super) async fn validate_ollama_environment(
         &self,
         document: &Document,
         generations: &Generations,
@@ -70,7 +70,7 @@ impl Deployment {
             return self
                 .engines
                 .resolve(&proxy.engine)?
-                .preflight_ollama(
+                .validate_ollama_environment(
                     &spec,
                     bindings
                         .get("nemoclaw_ollama_proxy.service")
@@ -83,7 +83,7 @@ impl Deployment {
         };
         self.engines
             .resolve(&config.engine)?
-            .preflight_ollama(
+            .validate_ollama_environment(
                 &specification(document, generations)?,
                 bindings.get(SERVICE).map(|b| b.id.as_str()).unwrap_or(""),
             )

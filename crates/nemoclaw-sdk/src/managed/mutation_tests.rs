@@ -33,7 +33,7 @@ struct State {
 }
 
 #[tokio::test]
-async fn network_creation_rechecks_conflicts_that_appear_after_preflight() {
+async fn network_creation_rechecks_conflicts_that_appear_after_planning() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let networks = Arc::new(Mutex::new(json!([])));

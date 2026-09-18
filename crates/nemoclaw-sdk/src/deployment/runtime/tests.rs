@@ -25,7 +25,7 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
 }
 
 #[tokio::test]
-async fn runtime_preflight_rejects_overlapping_subnets_without_mutating_engine() {
+async fn runtime_validation_rejects_overlapping_subnets_without_mutating_engine() {
     for subnet in ["172.30.161.0/24", "172.30.0.0/16", "172.30.161.128/25"] {
         let (spec, targets) = gateway_targets();
         let fixture = absent_runtime(
@@ -34,7 +34,7 @@ async fn runtime_preflight_rejects_overlapping_subnets_without_mutating_engine()
         )
         .await;
         let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
-        let result = preflight(&engines, &targets, &BTreeMap::new()).await;
+        let result = validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await;
         assert!(
             matches!(
                 result,
@@ -49,7 +49,10 @@ async fn runtime_preflight_rejects_overlapping_subnets_without_mutating_engine()
 
 async fn absent_runtime(status: u16, networks: Value) -> Fixture {
     Fixture::start(move |request| {
-        assert_eq!(request.method, "GET", "preflight mutated the engine");
+        assert_eq!(
+            request.method, "GET",
+            "runtime validation mutated the engine"
+        );
         let (status, body) = match request.path.split('?').next().unwrap() {
             "/info" => (
                 200,
@@ -64,7 +67,7 @@ async fn absent_runtime(status: u16, networks: Value) -> Fixture {
 }
 
 #[tokio::test]
-async fn runtime_preflight_allows_disjoint_networks_and_propagates_inventory_failure() {
+async fn runtime_validation_allows_disjoint_networks_and_propagates_inventory_failure() {
     let (spec, targets) = gateway_targets();
     for networks in [
         json!([]),
@@ -77,7 +80,7 @@ async fn runtime_preflight_allows_disjoint_networks_and_propagates_inventory_fai
         let fixture = absent_runtime(200, networks).await;
         let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
         assert!(
-            preflight(&engines, &targets, &BTreeMap::new())
+            validate_runtime_environment(&engines, &targets, &BTreeMap::new())
                 .await
                 .is_ok()
         );
@@ -85,13 +88,13 @@ async fn runtime_preflight_allows_disjoint_networks_and_propagates_inventory_fai
     let fixture = absent_runtime(403, json!({"message":"denied"})).await;
     let engines = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
     assert!(matches!(
-        preflight(&engines, &targets, &BTreeMap::new()).await,
+        validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await,
         Err(Error::Observation(ObservationError::Permission))
     ));
 }
 
 #[tokio::test]
-async fn runtime_preflight_checks_the_remote_service_network_on_its_selected_engine() {
+async fn runtime_validation_checks_the_remote_service_network_on_its_selected_engine() {
     let document = Document::parse(
         include_bytes!("../../../../../examples/spark/remote-vllm.yaml").as_slice(),
     )
@@ -106,7 +109,7 @@ async fn runtime_preflight_checks_the_remote_service_network_on_its_selected_eng
     // No local engine is supplied: this must observe the SSH-selected engine.
     let engines = Connections::fixed([fixture.engine_for("ssh://gpu-box")]).unwrap();
     assert!(matches!(
-        preflight(&engines, &targets, &BTreeMap::new()).await,
+        validate_runtime_environment(&engines, &targets, &BTreeMap::new()).await,
         Err(Error::Conflict(
             "managed gateway subnet overlaps an existing Docker network"
         ))
