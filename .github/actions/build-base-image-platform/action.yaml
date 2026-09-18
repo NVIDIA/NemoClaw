@@ -136,7 +136,7 @@ runs:
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', inputs.mcporter-audit-raw-report) || '' }}
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', inputs.mcporter-audit-policy-result) || '' }}
 
-    - name: Validate Deep Agents Code dos2unix executable
+    - name: Validate Deep Agents Code base runtime
       if: ${{ inputs.agent == 'langchain-deepagents-code' }}
       shell: bash
       env:
@@ -159,6 +159,9 @@ runs:
           --entrypoint /bin/sh \
           "$reference" -eu -c \
           'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
+        node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+          --reference "$reference" \
+          --platform "$PLATFORM"
 
     - name: Export platform digest
       id: job-output

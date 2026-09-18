@@ -2126,6 +2126,13 @@ jobs:
           esac
           VALIDATE_FILESYSTEM
 
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            DOCKER_CONFIG="$anonymous_config" \
+              node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+                --reference "$reference" \
+                --platform "$PLATFORM"
+          fi
+
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \
               --platform "$PLATFORM" \

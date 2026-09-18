@@ -345,9 +345,17 @@ describe("complete managed-image publication workflow", () => {
     expect(step(builder, "Checkout", "base-image platform workflow").with).toMatchObject({
       "persist-credentials": false,
     });
-    expect(
-      step(builder, "Build and publish platform digest", "base-image platform workflow"),
-    ).toMatchObject({
+    const setupNode = step(builder, "Set up Node.js", "base-image platform workflow");
+    expect(setupNode).toMatchObject({
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "24.18.1" },
+    });
+    const platformBuild = step(
+      builder,
+      "Build and publish platform digest",
+      "base-image platform workflow",
+    );
+    expect(platformBuild).toMatchObject({
       id: "platform",
       uses: "./.github/actions/build-base-image-platform",
       with: {
@@ -362,6 +370,9 @@ describe("complete managed-image publication workflow", () => {
         "registry-username": "${{ github.actor }}",
       },
     });
+    expect(builder.steps?.indexOf(setupNode)).toBeLessThan(
+      builder.steps?.indexOf(platformBuild) ?? 0,
+    );
   });
   it("exports one architecture-specific digest from every native platform action (#9529)", () => {
     const action = readAction("build-base-image-platform");
@@ -1086,6 +1097,10 @@ fi
     expect(validation).toContain("npx --no-install tsx");
     expect(validation).toContain('metadata.version("agent-client-protocol") != "0.9.0"');
     expect(validation).toContain("/usr/local/bin/hermes acp --check");
+    expect(validation).toContain('if [ "$AGENT" = "langchain-deepagents-code" ]');
+    expect(validation).toContain("scripts/checks/validate-dcode-runtime-contract.mts");
+    expect(validation).toContain('--reference "$reference"');
+    expect(validation).toContain('--platform "$PLATFORM"');
     expect(validation).toContain('--image "$reference"');
     expect(validation).toContain("printf 'local_id=%s\\n' \"$image_id\"");
     expect(validation).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
