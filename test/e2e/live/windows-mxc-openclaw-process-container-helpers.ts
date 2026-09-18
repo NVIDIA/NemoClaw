@@ -1237,7 +1237,10 @@ gateway.once("error", () => {
 if (gateway.pid !== undefined) writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
 
 let startupReadyObserved = false;
-const deadline = Date.now() + 120000;
+// A newly extracted, uniquely named artifact has a cold Defender path. On the
+// Windows ARM64 qualification host OpenClaw can spend nearly two minutes
+// loading its dependency graph before it begins gateway initialization.
+const deadline = Date.now() + 300000;
 while (Date.now() < deadline && gateway.exitCode === null && !gatewaySpawnFailed) {
   if (
     existsSync(gatewayOutputPath) &&

@@ -701,6 +701,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain("writeFileSync(outcomePath");
     expect(agent).toContain("/\\[gateway\\] ready(?:\\r?\\n|$)/u");
     expect(agent).toContain("startupReadyObserved");
+    expect(agent).toContain("const deadline = Date.now() + 300000");
     expect(agent).not.toContain('getJson("http://127.0.0.1:" + port + "/readyz")');
     expect(agent).toContain("await Promise.race([");
     expect(agent).toContain('openSync(gatewayOutputPath, "w", 0o600)');
