@@ -133,22 +133,17 @@ docker exec --user root "$SANDBOX_CTR" chmod 660 /sandbox/.openclaw/openclaw.jso
 docker exec --user root "$SANDBOX_CTR" chmod 660 /sandbox/.openclaw/.config-hash
 ```
 
-After uploading the config, check `/tmp/gateway.log`.
-Confirm that the gateway hot-reloaded the provider or `agents.list` change:
+After uploading the config, restart the managed gateway.
+The restart verifies gateway health before it exits successfully.
+Then confirm that OpenClaw loaded the `agents.list` change:
 
 ```bash
-nemoclaw "$SANDBOX" logs --since 5m --tail 200
+nemoclaw "$SANDBOX" gateway restart
 nemoclaw "$SANDBOX" agents list --json
 ```
 
-Expected output:
-
-```text
-config change detected; evaluating reload (...)
-config hot reload applied (...)
-```
-
 The `agents list` output should include `vision-operator`.
+If the restart fails, correct the reported gateway error and rerun `nemoclaw "$SANDBOX" gateway restart` before you use the sub-agent.
 
 ## Add Sub-Agent Credentials
 

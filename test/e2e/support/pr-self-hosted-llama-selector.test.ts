@@ -35,6 +35,7 @@ type Workflow = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
+const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
@@ -207,7 +208,14 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     await expect(rejected).rejects.toThrow();
   });
 
-  it("pins the Docker-qualified GPU job to the Docker runtime provider", ({ expect }) => {
+  it("pins the Docker-qualified GPU job and captures post-request runtime diagnostics", ({
+    expect,
+  }) => {
+    assert.match(
+      readFileSync(LLAMA_LIVE_TEST_PATH, "utf8"),
+      /const agent = await host\.nemoclaw\([\s\S]*await captureManagedRuntimeLogs\([^)]*\);[\s\S]*expect\(agent\.exitCode/u,
+      "llama.cpp runtime logs must be captured after the agent request and before its exit assertion",
+    );
     expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
   });
 

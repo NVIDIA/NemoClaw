@@ -6,6 +6,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
+import { exportedAgentList } from "../../../../test/support/config-export-document";
 import { buildExportConfig } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
@@ -130,7 +131,9 @@ describe("export config builder", () => {
         credential: { env: "BRAVE_API_KEY" },
       },
     });
-    expect(document.spec.sandboxes[0]!.agents[0]!.integrationRefs).toEqual(["brave-search"]);
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
@@ -155,11 +158,14 @@ describe("export config builder", () => {
       },
     );
 
-    expect(document.spec.sandboxes[0]!.agents).toMatchObject([
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    const agents = exportedAgentList(sandbox);
+    expect(agents).toMatchObject([
       { name: "primary", integrationRefs: ["brave-search"] },
       { name: "researcher" },
     ]);
-    expect(document.spec.sandboxes[0]!.agents[1]).not.toHaveProperty("integrationRefs");
+    expect(agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -176,7 +182,9 @@ describe("export config builder", () => {
     expect(second.metadata.uid).not.toBe(first.metadata.uid);
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
-    expect(second.spec.sandboxes[0]?.agents[0]?.inference.routes[0]?.providerRef).toBe(
+    const sandbox = second.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
       "hosted-openai-api",
     );
   });
@@ -221,7 +229,9 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.agents[0]?.auth).toEqual({
+    const sandbox = result.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
       method: "api-key",
     });
   });

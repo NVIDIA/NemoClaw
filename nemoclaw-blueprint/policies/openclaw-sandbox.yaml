@@ -146,6 +146,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # OpenClaw reads model metadata from this catalog during agent turns.
+      - host: catalog.openclaw.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }

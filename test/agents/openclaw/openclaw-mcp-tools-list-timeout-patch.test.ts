@@ -20,7 +20,7 @@ import {
   TOOLS_LIST_TIMEOUT_MIN_MS,
 } from "../../../scripts/patch-openclaw-mcp-tools-list-timeout.mts";
 
-/** Mirrors the reviewed OpenClaw 2026.7.1 bundle-mcp timeout boundary. */
+/** Mirrors the reviewed OpenClaw 2026.9.1 bundle-mcp timeout boundary. */
 function bundleMcpRuntimeFixture(): string {
   return [
     'import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";',
@@ -219,7 +219,7 @@ describe("patchOpenClawMcpToolsListTimeout", () => {
   );
 
   it("keeps the exact-shape patch enabled for the supported OpenClaw version", () => {
-    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.7.1");
+    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.9.1");
   });
 
   it("fails closed for an unreviewed OpenClaw version", () => {
@@ -228,11 +228,11 @@ describe("patchOpenClawMcpToolsListTimeout", () => {
     fs.mkdirSync(distDir);
     fs.writeFileSync(
       path.join(packageRoot, "package.json"),
-      JSON.stringify({ version: "2026.8.1" }),
+      JSON.stringify({ version: "2026.10.1" }),
     );
     try {
       expect(() => patchOpenClawMcpToolsListTimeout(distDir)).toThrow(
-        "OpenClaw 2026.8.1 is not reviewed for the MCP tools/list timeout compatibility patch",
+        "OpenClaw 2026.10.1 is not reviewed for the MCP tools/list timeout compatibility patch",
       );
     } finally {
       fs.rmSync(packageRoot, { recursive: true, force: true });

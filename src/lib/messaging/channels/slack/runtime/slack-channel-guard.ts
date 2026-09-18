@@ -124,7 +124,9 @@
 
   if (process.__nemoclawSlackChannelGuardInstalled) return;
   try {
-    Object.defineProperty(process, "__nemoclawSlackChannelGuardInstalled", { value: true });
+    Object.defineProperty(process, "__nemoclawSlackChannelGuardInstalled", {
+      value: true,
+    });
   } catch (_e) {
     process.__nemoclawSlackChannelGuardInstalled = true;
   }
@@ -173,6 +175,121 @@
     return normalized.indexOf("/@openclaw/slack/") !== -1 && normalized.endsWith(".js");
   }
 
+  function hasNativeChannelDeniedMentionFeedback(source) {
+    return (
+      source.indexOf("async function authorizeSlackInboundMessage") !== -1 &&
+      source.indexOf("params.explicitBotMention") !== -1 &&
+      source.indexOf("SLACK_CHANNEL_ACCESS_DOCS_URL") !== -1 &&
+      source.indexOf("chat.postEphemeral") !== -1 &&
+      source.indexOf('return drop("channel-not-allowed")') !== -1
+    );
+  }
+
+  function collectDestructuredBindings(source, initializer) {
+    var bindings = Object.create(null);
+    var declaration = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*([A-Za-z_$][\w$]*)\s*;/g;
+    var match;
+    while ((match = declaration.exec(source)) !== null) {
+      if (match[2] !== initializer) continue;
+      var entries = match[1].split(",");
+      for (var i = 0; i < entries.length; i++) {
+        var binding = entries[i].trim().replace(/^\.\.\./, "");
+        var aliasSeparator = binding.indexOf(":");
+        if (aliasSeparator !== -1) binding = binding.slice(aliasSeparator + 1);
+        binding = binding.split("=", 1)[0].trim();
+        if (binding) bindings[binding] = true;
+      }
+    }
+    return bindings;
+  }
+
+  function collectAwaitedDestructuredBindings(source, initializer) {
+    var bindings = Object.create(null);
+    var declaration = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\s+([A-Za-z_$][\w$]*)\s*\(/g;
+    var match;
+    while ((match = declaration.exec(source)) !== null) {
+      if (match[2] !== initializer) continue;
+      var entries = match[1].split(",");
+      for (var i = 0; i < entries.length; i++) {
+        var binding = entries[i].trim().replace(/^\.\.\./, "");
+        var aliasSeparator = binding.indexOf(":");
+        if (aliasSeparator !== -1) binding = binding.slice(aliasSeparator + 1);
+        binding = binding.split("=", 1)[0].trim();
+        if (binding) bindings[binding] = true;
+      }
+    }
+    return bindings;
+  }
+
+  function missingNativeDeniedSenderBindings(source) {
+    var paramsBindings = collectDestructuredBindings(source, "params");
+    var authorizationBindings = collectDestructuredBindings(source, "authorization");
+    var mentionBindings = collectAwaitedDestructuredBindings(
+      source,
+      "resolveSlackExplicitMentionState",
+    );
+    var missing = [];
+    var requiredParamsBindings = [
+      "ctx",
+      "message",
+      "opts",
+      "explicitlyMentionedBotUser",
+      "explicitlyMentionedBotSubteam",
+    ];
+    for (var i = 0; i < requiredParamsBindings.length; i++) {
+      var binding = requiredParamsBindings[i];
+      if (!paramsBindings[binding] && !mentionBindings[binding]) missing.push(binding);
+    }
+    if (!authorizationBindings.senderId) missing.push("senderId");
+    return missing;
+  }
+
+  function patchNativeDeniedSenderGate(source, filename) {
+    if (!hasNativeChannelDeniedMentionFeedback(source)) return null;
+    var senderGate =
+      'if (isRoomish && senderGate?.allowed === false) return drop("unauthorized-sender");';
+    var senderGateCount = source.split(senderGate).length - 1;
+    if (senderGateCount !== 1) {
+      throw new Error(
+        "OpenClaw Slack sender deny gate shape not recognized in " +
+          filename +
+          "; expected exactly one gate, found " +
+          senderGateCount,
+      );
+    }
+    var prepareAnchor = /((?:export\s+)?async function prepareSlackMessage\(params\) \{)/;
+    var prepareMatch = prepareAnchor.exec(source);
+    var senderGateIndex = source.indexOf(senderGate);
+    if (!prepareMatch || senderGateIndex < prepareMatch.index) {
+      throw new Error("OpenClaw Slack prepareSlackMessage definition not found in " + filename);
+    }
+    var prepareBeforeSenderGate = source.slice(prepareMatch.index, senderGateIndex);
+    var missingBindings = missingNativeDeniedSenderBindings(prepareBeforeSenderGate);
+    if (missingBindings.length > 0) {
+      throw new Error(
+        "OpenClaw Slack denied-sender binding shape not recognized in " +
+          filename +
+          "; missing in-scope bindings before the sender gate: " +
+          missingBindings.join(", "),
+      );
+    }
+
+    var next = source.replace(
+      senderGate,
+      [
+        "if (isRoomish && senderGate?.allowed === false) {",
+        "\tawait __nemoclawNotifyDeniedSlackMention({ ctx, message, senderId, " +
+          'explicitMention: opts.source === "app_mention" || explicitlyMentionedBotUser || explicitlyMentionedBotSubteam }); ' +
+          "// " +
+          CALL_MARKER +
+          " (#4752)",
+        '\treturn drop("unauthorized-sender");',
+        "}",
+      ].join("\n"),
+    );
+    return next.replace(prepareAnchor, buildDeniedMentionFeedbackHelperSource() + "$1");
+  }
+
   function patchSlackPrepareSource(source, filename) {
     if (source.indexOf("async function prepareSlackMessage") === -1) return source;
     if (
@@ -181,6 +298,12 @@
     ) {
       return source;
     }
+    // OpenClaw 2026.9.1 provides bounded feedback when a whole channel is
+    // denied, but its later per-sender gate still drops an explicit mention
+    // silently. Patch only that sender gate and preserve the native channel
+    // denial implementation.
+    var nativePatched = patchNativeDeniedSenderGate(source, filename);
+    if (nativePatched !== null) return nativePatched;
     if (source.indexOf(DENY_LOG_SIGNATURE) === -1) {
       throw new Error(
         "OpenClaw Slack prepare module shape not recognized in " +
