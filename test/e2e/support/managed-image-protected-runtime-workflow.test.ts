@@ -143,18 +143,46 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it.each(["npm run build:cli", "npm --prefix nemoclaw run build"])(
-    "rejects additive full build command %s",
-    (command) => {
-      const value = workflow();
-      const boundary = namedMultiarchStep(value, "Build shared policy boundary");
-      boundary.run = `${String(boundary.run)}\n${command}`;
+  it.each([
+    "npm run build:cli",
+    "npm  run   build:cli",
+    "npm --prefix nemoclaw run build",
+    "npm   --prefix  nemoclaw  run   build",
+  ])("rejects additive full build command %s", (command) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = `${String(boundary.run)}\n${command}`;
 
-      expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-        "managed-image-multiarch-startup shared policy boundary step must not build the full CLI or plugin",
-      );
-    },
-  );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup shared policy boundary step must not build the full CLI or plugin",
+    );
+  });
+
+  it.each([
+    "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
+    '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
+  ])("rejects a comment-only shared boundary guard %s", (guard) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(guard, `# ${guard}`);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      `managed-image-multiarch-startup step 'Build shared policy boundary' must include ${guard}`,
+    );
+  });
+
+  it.each([
+    ["if", "false"],
+    ["continue-on-error", false],
+  ])("rejects a shared boundary step-level %s override", (property, override) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary[property] = override;
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup shared policy boundary step must not set if or continue-on-error",
+    );
+  });
 
   it("rejects duplicate shared policy boundary steps", () => {
     const value = workflow();

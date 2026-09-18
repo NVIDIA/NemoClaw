@@ -89,26 +89,56 @@ function requireFragments(
   }
 }
 
+function executableShellLines(step: WorkflowStep | undefined): string[] {
+  const lines: string[] = [];
+  let heredocDelimiter: string | undefined;
+
+  for (const line of text(step?.run).split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (heredocDelimiter) {
+      if (trimmed === heredocDelimiter) heredocDelimiter = undefined;
+      continue;
+    }
+    if (trimmed && !trimmed.startsWith("#")) lines.push(trimmed);
+    const heredoc = line.match(/<<-?\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
+    heredocDelimiter = heredoc?.[1] ?? heredoc?.[2] ?? heredoc?.[3];
+  }
+
+  return lines;
+}
+
+function normalizeShellWhitespace(value: string): string {
+  return value.replace(/\\\s+/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
+function executableShellText(step: WorkflowStep | undefined): string {
+  return normalizeShellWhitespace(executableShellLines(step).join("\n"));
+}
+
+function requireExecutableFragments(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  fragments: readonly string[],
+): void {
+  if (!step) return;
+  const run = executableShellText(step);
+  for (const fragment of fragments) {
+    if (!run.includes(normalizeShellWhitespace(fragment))) {
+      errors.push(`${JOB_ID} step '${step.name}' must include ${fragment}`);
+    }
+  }
+}
+
 function requireExecutableCommand(
   errors: string[],
   step: WorkflowStep | undefined,
   command: string,
 ): void {
   if (!step) return;
-  let heredocDelimiter: string | undefined;
-  let found = false;
-
-  for (const line of text(step.run).split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (heredocDelimiter) {
-      if (trimmed === heredocDelimiter) heredocDelimiter = undefined;
-      continue;
-    }
-    if (trimmed === command) found = true;
-    const heredoc = line.match(/<<-?\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
-    heredocDelimiter = heredoc?.[1] ?? heredoc?.[2] ?? heredoc?.[3];
-  }
-
+  const expected = normalizeShellWhitespace(command);
+  const found = executableShellLines(step).some(
+    (line) => normalizeShellWhitespace(line) === expected,
+  );
   if (!found) errors.push(`${JOB_ID} step '${step.name}' must execute ${command}`);
 }
 
@@ -280,16 +310,20 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   });
 
   const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
-  requireFragments(errors, policyBoundary, [
+  if (policyBoundary?.if !== undefined || policyBoundary?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} shared policy boundary step must not set if or continue-on-error`);
+  }
+  requireExecutableFragments(errors, policyBoundary, [
     "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
     "nemoclaw/dist/shared/openshell-policy-boundary.cjs",
     "nemoclaw/dist/shared/sandbox-name.cjs",
     '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
   ]);
   requireExecutableCommand(errors, policyBoundary, "npm run build:policy-boundary");
+  const executablePolicyBoundary = executableShellText(policyBoundary);
   if (
     ["npm run build:cli", "npm --prefix nemoclaw run build"].some((command) =>
-      text(policyBoundary?.run).includes(command),
+      executablePolicyBoundary.includes(command),
     )
   ) {
     errors.push(`${JOB_ID} shared policy boundary step must not build the full CLI or plugin`);
