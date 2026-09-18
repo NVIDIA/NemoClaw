@@ -145,6 +145,19 @@ export async function removeMcpBridge(
             2,
           );
         }
+        const provider = await inspectMcpProvider(committedEntry.providerName, runtimeSelection);
+        if (provider.exists === null) {
+          throw new McpBridgeError(
+            `Legacy MCP server '${server}' provider identity could not be inspected. Ownership and resources were preserved.`,
+            2,
+          );
+        }
+        if (provider.exists && provider.id !== committedEntry.providerId) {
+          throw new McpBridgeError(
+            `Legacy MCP server '${server}' provider identity changed. Ownership and resources were preserved.`,
+            2,
+          );
+        }
         await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
         await assertAgentMcpTeardownRuntimeCapability(
           sandboxName,

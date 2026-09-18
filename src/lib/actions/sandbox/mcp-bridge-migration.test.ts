@@ -586,7 +586,7 @@ describe("explicit MCP migration", () => {
     expect(mocks.removePolicy).not.toHaveBeenCalled();
     expect(mocks.detachProvider).not.toHaveBeenCalled();
     mocks.inspectPolicyOnly.mockResolvedValueOnce({ ...entry, source: "policy" });
-    mocks.inspectProvider.mockResolvedValueOnce({
+    mocks.inspectProvider.mockResolvedValue({
       exists: true,
       id: entry.providerId,
       resourceVersion: 1,
@@ -631,6 +631,25 @@ describe("explicit MCP migration", () => {
       providerId: "replacement",
     });
     await expect(removeMcpBridge("alpha", "github")).rejects.toThrow("no longer matches");
+    expect(mocks.writeConfig).not.toHaveBeenCalled();
+    expect(mocks.removePolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("preserves a registry-only row when the live provider identity changed", async () => {
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry } } } },
+    });
+    mocks.inspectSource.mockReturnValue({ bridges: {}, sources: { native: {}, legacy: {} } });
+    mocks.inspectProvider.mockResolvedValueOnce({
+      exists: true,
+      id: "replacement",
+      resourceVersion: 1,
+      type: "generic",
+      credentialKeys: entry.env,
+    });
+
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow("provider identity changed");
     expect(mocks.writeConfig).not.toHaveBeenCalled();
     expect(mocks.removePolicy).not.toHaveBeenCalled();
     expect(mocks.detachProvider).not.toHaveBeenCalled();

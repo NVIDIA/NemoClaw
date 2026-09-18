@@ -201,6 +201,7 @@ export async function runDeniedMcpToolCall(
   options: {
     agent: "openclaw" | "hermes" | "langchain-deepagents-code";
     artifactName: string;
+    credentialEnvName?: string;
     deniedTool?: string;
     mcpUrl?: string;
     sandbox: SandboxClient;
@@ -254,10 +255,11 @@ export async function runDeniedMcpToolCall(
     payload,
   ];
   const deniedToolName = options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME;
+  const credentialEnvName = options.credentialEnvName ?? "FAKE_MCP_SECRET";
   const command =
     options.agent === "openclaw"
       ? [
-          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny FAKE_MCP_SECRET ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
+          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny ${shellQuote(credentialEnvName)} ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
           MCP_PROVIDER_REWRITE_PROBE_SOURCE,
           "NEMOCLAW_MCP_DENIED_TOOL_PROBE",
         ].join("\n")

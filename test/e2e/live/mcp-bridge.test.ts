@@ -507,6 +507,7 @@ async function assertRealAdapterToolCall(
     resultToken: string;
     artifactName: string;
     expectedSecret?: string;
+    credentialEnvName?: string;
     serverName?: string;
     otherEndpoint?: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>;
     deniedTool?: string;
@@ -876,6 +877,8 @@ test(
         expectedSecret: ROTATED_HOST_SECRET,
         otherEndpoint: fakeMcp,
         serverName: "distinct",
+        mcpUrl: distinctTunnel.url,
+        credentialEnvName: "DISTINCT_MCP_SECRET",
         deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
         artifactName: "openclaw-dual-distinct-tool-call",
       });
