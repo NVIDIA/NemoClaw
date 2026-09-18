@@ -24,6 +24,7 @@ import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
   captureRebuildPolicyDocument,
+  bindRebuildSnapshotGpuAuthority,
   clearRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
@@ -201,7 +202,7 @@ async function rebuildSandboxUnlocked(
     rebuildAgent,
     versionCheck,
     targetConfig,
-    recreateOptions,
+    recreateOptions: stagedRecreateOptions,
     messagingPlan,
     baseImagePreflight,
     liveState,
@@ -223,6 +224,7 @@ async function rebuildSandboxUnlocked(
     credentialEnv,
     fromDockerfile,
   } = targetConfig;
+  let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
@@ -271,7 +273,8 @@ async function rebuildSandboxUnlocked(
           recoveryManifest.rebuildMcpHandoff?.retired === true ||
           recoveryManifest.hermesOperatorConfigHandoff?.retired === true
         : false;
-      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      const activeRecoverySession = onboardSession.loadSession();
+      const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
       // Older manifests and a crash immediately after marker creation can lack
       // the MCP handoff. Re-observe only while the journal remains pre-delete
       // and the journaled source identity is verified before MCP inspection.
@@ -310,6 +313,7 @@ async function rebuildSandboxUnlocked(
         assertRebuildRecoverySource(
           activeRecoveryTransaction,
           target,
+          activeRecoverySession.sessionId,
           recreateOptions.runtimeSelection,
         );
       }
@@ -491,6 +495,13 @@ async function rebuildSandboxUnlocked(
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       });
       if (!backup) return;
+      try {
+        recreateOptions = bindRebuildSnapshotGpuAuthority(recreateOptions, backup.backupManifest);
+      } catch (error) {
+        return bail(
+          `Captured sandbox GPU authority cannot be replayed safely: ${rebuildFailureDetail(error)}`,
+        );
+      }
       rebuildPolicySourcePath = backup.policySourcePath;
       rebuildPolicySourceIsEphemeral = backup.backupManifest === null;
       rebuildPolicyHandoffManifest = backup.backupManifest;

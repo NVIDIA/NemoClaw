@@ -227,7 +227,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 ### `$$nemoclaw config export <sandbox>`
 
-Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+Export a supported registered OpenClaw or Hermes sandbox as a credential-value-free `nemoclaw.nvidia.com/v1alpha1` `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
@@ -249,12 +249,17 @@ $$nemoclaw config export my-assistant --output -
 | Option | Description |
 | --- | --- |
 | `--output <path>`, `-o <path>` | Required. Write YAML to a Linux file path, or use `-` for standard output. |
-| `--name <name>` | Set `metadata.name` in the exported document. |
+| `--name <name>` | Set `metadata.name`. Use at most 40 lowercase letters, digits, or hyphens, starting with a letter. |
 | `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
 | `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
 
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
+
+Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
+Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
+
+The v0 command projects verified source state into the v1 YAML shape. The v1 Rust parser remains authoritative for accepting that document; the v0 command does not carry a copy of the v1 schema or semantic validator.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -262,22 +267,16 @@ Before manual removal, use `stat` to verify both identities and confirm that the
 If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
-Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
+Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-A managed OpenClaw sandbox can also use the verified managed local vLLM configuration.
-The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
-A managed OpenClaw sandbox can also export the verified local Ollama route on native Linux with the Docker driver.
-The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the verified selected model name and SHA-256 digest.
-It requires the managed proxy credential but never exports that credential or its value.
-It fails unless the live daemon, proxy, model, and sandbox route match the retained configuration.
+Managed vLLM, local Ollama, and Podman exports are deferred. The command reports these sources as unsupported instead of producing a partial document.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
-For a Docker-managed OpenClaw sandbox with hosted inference or fixed managed vLLM, the export can include one or more secondary agents in runtime order.
-Each secondary agent has a unique name, shares the primary inference route, and uses only `tools.allow: [read]`.
-For managed vLLM, every agent shares the verified serving identity, route tuning, and `contextWindow: 65536`.
-The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, authentication, observability, a primary-agent override, or a default subagent setting.
+For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one or more secondary agents in runtime order.
+Each secondary agent has a unique name, shares the primary hosted route, and uses only `tools.allow: [read]`.
+The export rejects the complete document when any secondary agent has a model that differs from the primary model, unsupported tools, execution, interfaces, observability, a primary-agent override, or a default subagent setting.
 For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
@@ -288,7 +287,7 @@ Hermes export fails when Hermes tool gateways are enabled.
 It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
 A disabled dashboard and default API port are omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
-The exported agent binds its API-key authentication to that provider reference.
+The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
@@ -1986,6 +1985,16 @@ By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 
+When final-sandbox gateway cleanup is enabled or you accept its prompt, `destroy` confirms through `openshell sandbox list` that no live sandbox remains on the gateway.
+A listed sandbox counts as live unless it is in the `Error` or `Failed` phase and NemoClaw confirms that no matching Docker container is running.
+With the native Podman provider, NemoClaw does not probe Docker, so every listed sandbox counts as live and gateway cleanup requires an empty list.
+If the deleted sandbox is the only listed live sandbox, `destroy` polls for up to 30 seconds until that row is gone.
+If the deleted sandbox is still listed after that wait, if a different live sandbox remains, or if the list command fails, `destroy` leaves the gateway running and names the live sandboxes or the failed command.
+When cleanup comes from the platform default, the environment, or an accepted prompt, `destroy` still exits `0` after a successful sandbox deletion.
+When you pass `--cleanup-gateway`, `destroy` exits nonzero and the message states that the flag was not applied.
+After that message, confirm that `openshell sandbox list -g <gateway-name>` reports no sandboxes.
+Then run `openshell gateway remove <gateway-name>` to remove the gateway.
+
 If the pre-delete workspace wipe exits nonzero, `destroy` continues, but the retained volume can still contain old files.
 Use a different sandbox name to avoid reusing that retained volume.
 If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result.
@@ -2928,7 +2937,26 @@ It stops before deletion if that handoff is missing or changed.
 
 </AgentOnly>
 
-Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
+Credentials are stripped from backups before storage.
+The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records.
+The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values.
+When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration.
+The target update and peer metadata migration use one registry update.
+Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild.
+Incomplete routes and invalid gateway bindings also stop the rebuild.
+NemoClaw checks the shared route again immediately before deleting the original sandbox.
+
+Rebuild starts with the recorded sandbox GPU enablement mode and the recorded device selector for an explicitly enabled sandbox.
+When a Docker runtime snapshot contains one replayable NVIDIA GPU selector, rebuild creates the replacement with that provider-observed selector.
+Device-path evidence remains restore evidence and is not used as a creation selector.
+Rebuild stops before deletion when the observed selector conflicts with a recorded GPU opt-out or cannot be represented by one selector.
+An auto-mode sandbox remains auto when its runtime snapshot has no replayable GPU selector.
+Rebuild re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
+
+A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
+A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them.
+A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it.
+A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
@@ -4337,7 +4365,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Onboarding preserves a partially created sandbox when the deadline expires. Follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery); do not delete the sandbox by mutable name. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -4347,6 +4375,14 @@ For newly created OpenClaw and Hermes sandboxes, `NEMOCLAW_SANDBOX_READY_TIMEOUT
 
 An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health.
 Post-recovery OpenShell readiness uses 120 seconds when the recovery path does not supply another budget.
+
+<AgentOnly variant="openclaw">
+
+After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the 30-second OpenClaw gateway-health budget, including probe execution and delays.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides this startup budget and preserves finite, nonnegative fractional seconds.
+If the budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 

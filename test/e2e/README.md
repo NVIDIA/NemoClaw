@@ -409,6 +409,14 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
+boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox,
+requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
@@ -814,6 +822,38 @@ lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
+
+## Device-auth health classification
+
+Issue #11946 retired the standalone `device-auth-health` target. The target
+repeated these retained contracts:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, onboard, list, status, and sandbox inference succeed. | `full-e2e` |
+| An authenticated compatible endpoint receives the sandbox request. | `openclaw-inference-switch` |
+| Gateway, dashboard, and inference HTTP 401 responses remain reachable. | `src/lib/verify-deployment.test.ts` and `src/lib/verify-deployment-agent.test.ts` |
+| Status keeps a reachable authenticated route online. | `test/cli/sandbox-status-json.test.ts` |
+| A real dashboard remains exposed through its supported host forward. | `dashboard-remote-bind` |
+
+The deleted helper tests covered only the retired target's command environment,
+retry loop, and cleanup calls. They did not own a product behavior.
+
+## Cloud inference consolidation
+
+Issue #11946 also retired the standalone `cloud-inference` target. The target's
+supported outcomes now have these owners:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
+| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
+| `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
+The deleted provider retry classifier and sandbox-layout wrapper served only the
+retired target.
 
 ## OpenShell development artifact retention
 
@@ -1413,42 +1453,6 @@ Validate phase coverage without executing test bodies with:
 ```bash
 npm run test:e2e-phases:check
 ```
-
-### Fixed Linux/AMD64 managed-vLLM export rosters
-
-Issue #11859 adds these installed-CLI qualification cases for the existing
-`vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4` deployment:
-
-| Retained roster | Required export |
-| --- | --- |
-| Primary and `researcher` | Both agents, in order, sharing the verified fixed route |
-| Primary, `researcher`, and `reviewer` | All three agents, in order, with identical route tuning |
-
-Run each case only on an already provisioned Linux/AMD64 Docker deployment with its original
-serving provenance and managed-image receipt. Use the installed candidate CLI and the existing
-qualification runner's authorization and cleanup. Export must not recreate agents or inference resources.
-
-For each sandbox, invoke `nemoclaw config export <sandbox> --output <private-directory>/roster.yaml --json`.
-Register removal of the private directory before export. Require successful command completion,
-schema validation, and the expected names, order, and `tools.allow: [read]` on every secondary.
-Compare catalog, profile, recipe, image, model revision, served name, and context window `65536`
-with the qualified deployment's independent evidence. Compare every agent's route tuning with the
-retained settings. Execution, interfaces, authentication, and observability must remain primary-owned.
-Scan for known fixture credentials before retaining any artifact; retain credential references only.
-Remove the private directory on success or failure and verify its absence.
-
-Record the installed CLI path, its `dist/build-identity.json` source revision, host platform,
-Docker runtime, scenario, command result, identity comparisons, and cleanup result.
-A checkout revision alone does not identify an installed CLI. Missing `servingProfileProvenance`
-must remain a failure: the SDK adapter cannot qualify managed serving without that record.
-Do not reconstruct provenance from the catalog or edit the registry to obtain a passing export.
-
-The automated qualification gap remains open under #11859: the checked-in Spark target below
-uses ARM64, and `managed-image-protected-runtime` uses a different vLLM model and launch contract.
-Neither establishes the fixed Linux/AMD64 export boundary. Adapter, command, and Docker-format
-fixture tests cover deterministic behavior. They do not replace the installed-CLI cases above.
-Wire these cases into the fixed-profile qualification owner when that runner is available;
-do not add them to a target that cannot provision the accepted profile.
 
 ### DGX Spark Express vLLM
 

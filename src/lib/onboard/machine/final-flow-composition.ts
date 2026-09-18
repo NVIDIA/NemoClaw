@@ -11,7 +11,7 @@ import type { OnboardFlowContext } from "./flow-context";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 
 export { runFinalOnboardFlowSlice } from "./final-flow-phases";
-export { finalizationHandlerDeps } from "./finalization-deps";
+export { finalizationHandlerDeps, restartNativeGatewayForInitialSetup } from "./finalization-deps";
 
 type FinalizationHandlerDeps = typeof finalizationHandlerDeps;
 

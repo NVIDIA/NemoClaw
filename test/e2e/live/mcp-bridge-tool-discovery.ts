@@ -203,6 +203,26 @@ function buildMcpToolDiscoveryDiagnostics(
   };
 }
 
+export function buildMcpStatusRequestEvidence(
+  requests: readonly FakeMcpRequest[],
+  expectedSecret: string,
+  controlBearer: string,
+): Record<string, unknown> {
+  return {
+    requests: requests.map((request) => ({
+      httpMethod: request.method,
+      rpcMethod: request.rpcMethod ?? null,
+      responseStatus: request.responseStatus ?? null,
+      credentialKind:
+        request.auth === `Bearer ${expectedSecret}`
+          ? "resolved"
+          : request.auth === `Bearer ${controlBearer}`
+            ? "control"
+            : "other",
+    })),
+  };
+}
+
 export async function assertAuthenticatedMcpRediscovery(
   target: AuthenticatedMcpDiscoveryTarget | undefined,
   requestOffset: number | undefined,

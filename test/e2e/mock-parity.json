@@ -76,6 +76,7 @@
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
@@ -160,9 +161,11 @@
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
-        "test/e2e/live/pr-base-comparison.ts"
+        "test/e2e/live/pr-base-comparison.ts",
+        "test/e2e/live/sandbox-credential-boundary.ts"
       ],
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
@@ -173,6 +176,7 @@
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/pr-base-comparison.test.ts",
+        "test/e2e/support/sandbox-credential-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -296,6 +300,10 @@
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+        "src/lib/actions/sandbox/start.test.ts",
+        "src/lib/actions/sandbox/process-recovery.test.ts",
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
@@ -419,15 +427,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/cloud-inference.test.ts",
-      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/retry-policy.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
         "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -472,14 +471,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/device-auth-health.test.ts",
-      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
         "test/cli/sandbox-status-text.test.ts",
@@ -509,6 +500,7 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/domain/config/export-document.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
@@ -570,13 +562,6 @@
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
-      "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -811,6 +796,7 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
@@ -959,10 +945,13 @@
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
-        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts",
+        "test/e2e/live/run-plan.ts"
       ],
       "fast": [
+        "test/e2e/support/e2e-live-registry-discovery.test.ts",
         "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-config-export-validation.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",

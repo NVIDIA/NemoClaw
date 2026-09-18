@@ -449,6 +449,45 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });
 
+  it("redacts and retains a local inference rollback failure", async () => {
+    const secret = `nvapi-${"f".repeat(60)}`;
+    const rollbackError = new Error(`Rollback failed: ${secret}`);
+    rollbackError.stack = `Rollback stack: ${secret}`;
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(async () => {
+        throw rollbackError;
+      }),
+    };
+
+    const failure = await verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      GPU_CONFIG,
+      "ollama-local",
+      {
+        ...options(),
+        deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
+      },
+      runtimePatch,
+    ).then(
+      () => {
+        throw new Error("Expected local inference verification to fail.");
+      },
+      (error: unknown) => error as Error & { managedBootstrapRollbackError?: unknown },
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toContain(
+      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+    );
+    expect(failure.message).not.toContain(secret);
+    expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
+    expect(rollbackError.stack).not.toContain(secret);
+    expect(rollbackError.stack).toContain("<REDACTED>");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
+  });
+
   it("treats a failed commit as terminal without attempting rollback", async () => {
     const runtimePatch = {
       commitAfterReady: vi.fn(
