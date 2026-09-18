@@ -529,3 +529,73 @@ Write-Output 'pass'
     assert.equal(result.stdout.trim(), "pass");
   },
 );
+
+test(
+  "migration requires tier-specific native preparation evidence",
+  { skip: process.platform !== "win32" },
+  () => {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:MIGRATION_SOURCE,[ref]$tokens,[ref]$errors)
+if ($errors.Count) { throw 'Migration controller does not parse.' }
+$function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-MigrationPreparationNoop'},$true)
+if ($null -eq $function) { throw 'Migration preparation owner is missing.' }
+. ([scriptblock]::Create($function.Extent.Text))
+$root=Join-Path ([IO.Path]::GetTempPath()) ('migration-preparation-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($root) | Out-Null
+function Reject([scriptblock]$Fixture) {
+  $failed=$false
+  try { & $Fixture } catch { $failed=$true }
+  if (-not $failed) { throw 'Invalid migration preparation evidence was accepted.' }
+}
+try {
+  $base=Join-Path $root 'base.log'
+  [IO.File]::WriteAllText($base,('prefix MXC preparation tier: base-container'+[Environment]::NewLine))
+  $baseResult=Assert-MigrationPreparationNoop $base
+  if ($baseResult.tier -cne 'base-container' -or $baseResult.helperSkipped -ne $true -or $baseResult.addedAces -ne 0 -or $baseResult.writeCalls -ne 0 -or $null -ne $baseResult.sidecarSha256) { throw 'BaseContainer preparation result is incomplete.' }
+
+  $app=Join-Path $root 'app.log'; $attempt='a' * 32
+  [IO.File]::WriteAllText($app,('prefix MXC preparation tier: appcontainer-dacl'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  $sidecar=$app + '.host-preparation-' + $attempt + '.json'
+  @{classification='nemoclaw-host-preparation-diagnostic';operation='prepare-system-drive';status='succeeded';addedAces=0;writeCalls=0;elapsedMilliseconds=7;attemptId=$attempt} | ConvertTo-Json -Compress | Set-Content -LiteralPath $sidecar -NoNewline
+  $appResult=Assert-MigrationPreparationNoop $app
+  if ($appResult.tier -cne 'appcontainer-dacl' -or $appResult.helperSkipped -ne $false -or $appResult.addedAces -ne 0 -or $appResult.writeCalls -ne 0 -or $appResult.elapsedMilliseconds -ne 7 -or $appResult.sidecarSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'AppContainer preparation result is incomplete.' }
+
+  [IO.File]::WriteAllText((Join-Path $root 'bad-tier.log'),('MXC preparation tier: unsupported'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'bad-tier.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'duplicate.log'),('MXC preparation tier: base-container'+[Environment]::NewLine+'MXC preparation tier: base-container'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'duplicate.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'base-helper.log'),('MXC preparation tier: base-container'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'base-helper.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'missing-sidecar.log'),('MXC preparation tier: appcontainer-dacl'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'missing-sidecar.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'oversized.log'),('x' * 1048577))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'oversized.log') }
+} finally {
+  Remove-Item -LiteralPath $root -Recurse -Force
+}
+Write-Output 'pass'
+`;
+    const result = spawnSync(
+      "pwsh.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      {
+        env: powershellEnvironment({
+          MIGRATION_SOURCE: fileURLToPath(new URL("run-preview-migration.ps1", import.meta.url)),
+        }),
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 30_000,
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout.trim(), "pass");
+  },
+);
