@@ -647,6 +647,16 @@ describe("CLI OpenShell direct forward start", () => {
   });
 
   it("starts only after proving the owner, bound TCP port, and same owner", async () => {
+    const events = new EventEmitter();
+    const child = {
+      exitCode: null,
+      off: events.off.bind(events),
+      on: events.on.bind(events),
+      once: events.once.bind(events),
+      pid: 4_321,
+      signalCode: null,
+      unref: vi.fn(),
+    } as unknown as ForwardChild;
     const inspect = vi
       .fn<InspectListener>()
       .mockResolvedValueOnce({ state: "unbound" })
@@ -657,7 +667,7 @@ describe("CLI OpenShell direct forward start", () => {
       .mockResolvedValueOnce({ state: "unbound" })
       .mockResolvedValueOnce({ state: "bound" })
       .mockResolvedValueOnce({ state: "unbound" });
-    const { adapter, child, spawn, terminate } = createHarness({
+    const { adapter, spawn, terminate } = createHarness({
       environment: {
         HOME: "/home/tester",
         NVIDIA_INFERENCE_API_KEY: "provider-secret",
@@ -667,6 +677,7 @@ describe("CLI OpenShell direct forward start", () => {
       },
       inspect,
       probePort,
+      spawn: () => child,
     });
 
     const started = await adapter.startForward({ forward });
@@ -695,12 +706,9 @@ describe("CLI OpenShell direct forward start", () => {
     expect(probePort).toHaveBeenNthCalledWith(1, forward, 15_000);
     expect(probePort).toHaveBeenNthCalledWith(2, forward, 30_000);
     expect(inspect).toHaveBeenNthCalledWith(3, forward, child.pid, 30_000);
-    expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
-    expect(child.once).toHaveBeenCalledWith("exit", expect.any(Function));
-    expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
-    expect(child.off).not.toHaveBeenCalledWith("error", expect.any(Function));
     expect(child.unref).toHaveBeenCalledOnce();
     expect(started.state).toBe("started");
+    expect(() => events.emit("error", new Error("late private child diagnostic"))).not.toThrow();
     const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
     const assertCurrent = vi.fn(async () => undefined);
     await expect(cleanup({ assertCurrent })).resolves.toEqual({ state: "released" });

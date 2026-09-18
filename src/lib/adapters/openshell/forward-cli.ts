@@ -93,7 +93,9 @@ const CLEANUP_ERROR = Object.freeze({
 function spawnFailure(error: unknown): OpenShellForwardStartFailure {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "ENOENT") return { stage: "spawn", reason: "executable_not_found" };
-  if (code === "EACCES") return { stage: "spawn", reason: "permission_denied" };
+  if (code === "EACCES" || code === "EPERM") {
+    return { stage: "spawn", reason: "permission_denied" };
+  }
   return { stage: "spawn", reason: "child_error" };
 }
 
@@ -134,18 +136,11 @@ function childExitFailure(
   };
 }
 
-type CliOpenShellForwardChildExit = Readonly<{
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-}>;
-
 function observedChildFailure(
   child: CliOpenShellForwardChild,
-  childError: Error | undefined,
-  childExit: CliOpenShellForwardChildExit | undefined,
+  eventFailure: OpenShellForwardStartFailure | undefined,
 ): OpenShellForwardStartFailure | undefined {
-  if (childError) return spawnFailure(childError);
-  if (childExit) return childExitFailure(childExit.exitCode, childExit.signal);
+  if (eventFailure) return eventFailure;
   if (child.signalCode !== null) return childExitFailure(child.exitCode, child.signalCode);
   if (child.exitCode !== null) return childExitFailure(child.exitCode, child.signalCode);
   return undefined;
@@ -1618,18 +1613,17 @@ export function createCliOpenShellForwardAdapter(
         failure: spawnInvocationFailure(error),
       };
     }
-    let childError: Error | undefined;
-    let childExit: CliOpenShellForwardChildExit | undefined;
+    let eventFailure: OpenShellForwardStartFailure | undefined;
     let notifyFailure: () => void = () => undefined;
     const childFailed = new Promise<void>((resolve) => {
       notifyFailure = resolve;
     });
     const onError = (error: Error) => {
-      childError ??= error;
+      eventFailure ??= spawnFailure(error);
       notifyFailure();
     };
     const onExit = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-      childExit ??= { exitCode, signal };
+      eventFailure ??= childExitFailure(exitCode, signal);
       notifyFailure();
     };
     const removeExitListener = () => {
@@ -1667,7 +1661,7 @@ export function createCliOpenShellForwardAdapter(
         () => Promise.race([new Promise<void>((resolve) => setImmediate(resolve)), childFailed]),
         remaining(deadline, now),
       );
-      const childFailure = observedChildFailure(child, childError, childExit);
+      const childFailure = observedChildFailure(child, eventFailure);
       removeExitListener();
       if (childFailure) {
         return {
@@ -1737,7 +1731,7 @@ export function createCliOpenShellForwardAdapter(
     let failure: OpenShellForwardStartFailure | undefined;
     let foreign = false;
     do {
-      const childFailure = observedChildFailure(child, childError, childExit);
+      const childFailure = observedChildFailure(child, eventFailure);
       if (childFailure) {
         failureError = TRANSPORT_ERROR;
         failure = childFailure;
@@ -1750,7 +1744,7 @@ export function createCliOpenShellForwardAdapter(
         assertCurrent,
         false,
       );
-      const proofChildFailure = observedChildFailure(child, childError, childExit);
+      const proofChildFailure = observedChildFailure(child, eventFailure);
       if (proofChildFailure) {
         failureError = TRANSPORT_ERROR;
         failure = proofChildFailure;
