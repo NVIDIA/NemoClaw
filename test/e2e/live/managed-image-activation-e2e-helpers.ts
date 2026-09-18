@@ -22,6 +22,7 @@ import {
   outputContainsSandbox,
   resultText,
   type SandboxClient,
+  type TrustedSandboxShellScript,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -34,6 +35,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
@@ -41,6 +43,9 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
+const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
+  (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
@@ -195,6 +200,34 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
   }
 }
 
+export function managedActivationPostRestartAgentTurnScript(
+  agent: ShippedManagedImageAgent,
+  phase: "before" | "boundary" | "after",
+  command: readonly string[],
+): TrustedSandboxShellScript | null {
+  if (agent !== "openclaw" || phase !== "after") return null;
+
+  return trustedSandboxShellScript(`
+deadline=$(( $(date +%s) + ${OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS} ))
+last_status=000
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  last_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:18789/health || true)"
+  case "$last_status" in
+    200|401) break ;;
+  esac
+  sleep 2
+done
+case "$last_status" in
+  200|401) ;;
+  *)
+    printf 'OpenClaw gateway did not become ready after OpenShell restart (last HTTP status: %s)\n' "$last_status" >&2
+    exit 1
+    ;;
+esac
+exec ${command.map((argument) => shellQuote(argument)).join(" ")}
+`);
+}
+
 function registryDocument(): {
   sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
 } {
@@ -224,16 +257,19 @@ async function runAgentTurn(
   phase: "before" | "boundary" | "after",
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`),
-    {
-      artifactName: `${agent}-agent-turn-${phase}-restart`,
-      env,
-      redactionValues: [API_KEY],
-      timeoutMs: AGENT_TIMEOUT_MS,
-    },
-  );
+  const command = agentTurnCommand(agent, `managed-${agent}-${phase}-${Date.now()}`);
+  const postRestartScript = managedActivationPostRestartAgentTurnScript(agent, phase, command);
+  const options = {
+    artifactName: `${agent}-agent-turn-${phase}-restart`,
+    env,
+    redactionValues: [API_KEY],
+    timeoutMs:
+      AGENT_TIMEOUT_MS + (postRestartScript === null ? 0 : OPENCLAW_POST_RESTART_READY_TIMEOUT_MS),
+  };
+  const result =
+    postRestartScript === null
+      ? await sandbox.exec(sandboxName, command, options)
+      : await sandbox.execShell(sandboxName, postRestartScript, options);
   expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
     true,
   );
@@ -293,7 +329,7 @@ export function managedActivationOpenClawPluginScript(): string {
     `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
   ].join("\n");
 }
 
@@ -412,22 +448,42 @@ async function verifyExactCleanup(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
+  const settled = await pollUntil({
+    artifactPrefix: `post-destroy-absence-${sandboxName}`,
+    deadlineMs: 60_000,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => {
+      const openshellList = await sandbox.list({
+        artifactName: `${artifactName}-openshell-list`,
+        env,
+        timeoutMs: 30_000,
+      });
+      const containers = await host.command(
+        "docker",
+        ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
+        {
+          artifactName: `${artifactName}-docker-inventory`,
+          env,
+          timeoutMs: 30_000,
+        },
+      );
+      return { containers, openshellList };
+    },
+    terminal: ({ containers, openshellList }) => {
+      if (openshellList.exitCode !== 0) {
+        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
+      }
+      if (containers.exitCode !== 0) {
+        return `inspect Docker inventory after managed activation destroy failed: ${resultText(containers)}`;
+      }
+      return undefined;
+    },
+    accept: ({ containers, openshellList }) =>
+      !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
+  const { containers, openshellList } = settled.value;
   assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
-  const containers = await host.command(
-    "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
-    {
-      artifactName: `post-destroy-docker-inventory-${sandboxName}`,
-      env,
-      timeoutMs: 30_000,
-    },
-  );
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");
 }

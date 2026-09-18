@@ -164,17 +164,24 @@ describe("sandbox base runtime tools", () => {
   it("installs the required process, filesystem, and SFTP tools", () => {
     const { calls, result } = runBaseAptLayer("nemoclaw-base-apt-");
 
-    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
     expect(calls).toContain("procps=2:4.0.4-9");
     expect(calls).toContain("util-linux=2.41-5");
     expect(calls).toContain("e2fsprogs=1.47.2-3+b12");
+    expect(calls).toContain("lsof=4.99.4+dfsg-2");
     expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
   });
 
   it("symlinks bare `python` to the tested python3 interpreter (#1452)", () => {
     const { fakePythonLink, pythonShim, result } = runBaseAptLayer("nemoclaw-base-pysymlink-");
 
-    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
     expect(fs.lstatSync(fakePythonLink).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(fakePythonLink)).toBe(pythonShim);
   });

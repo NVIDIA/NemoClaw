@@ -71,18 +71,16 @@ describe("read-only secondary-agent export", () => {
     "exports the %s manifest with the primary route and no filesystem paths (#11434)",
     async (_case, manifest) => {
       const generated = generatedAdditionalAgentConfig(manifest);
-      expect(generated.agents.list).toMatchObject([
-        { id: "main", default: true },
-        {
-          id: "researcher",
+      expect(generated.agents.entries).toMatchObject({
+        main: { default: true },
+        researcher: {
           workspace: "/sandbox/.openclaw/workspace-researcher",
           agentDir: "/sandbox/.openclaw/agents/researcher",
           tools: { allow: ["read"] },
         },
-      ]);
-      expect(
-        generated.agents.list.filter((agent: { default?: boolean }) => agent.default),
-      ).toHaveLength(1);
+      });
+      const entries = generated.agents.entries as Record<string, { default?: boolean }>;
+      expect(Object.values(entries).filter((agent) => agent.default)).toHaveLength(1);
       expect(generated.agents.defaults.model.primary).toBe("openai/gpt-5");
       const observed = additionalAgentSnapshot(manifest, {
         ...tunedEnvironment,
@@ -128,21 +126,19 @@ describe("read-only secondary-agent export", () => {
       ],
     };
     const generated = generatedAdditionalAgentConfig(manifest);
-    expect(generated.agents.list).toEqual([
-      { id: "main", default: true },
-      {
-        id: "researcher",
+    expect(generated.agents.entries).toEqual({
+      main: { default: true },
+      researcher: {
         workspace: "/sandbox/.openclaw/workspace-researcher",
         agentDir: "/sandbox/.openclaw/agents/researcher",
         tools: { allow: ["read"] },
       },
-      {
-        id: "reviewer",
+      reviewer: {
         workspace: "/sandbox/.openclaw/workspace-reviewer",
         agentDir: "/sandbox/.openclaw/agents/reviewer",
         tools: { allow: ["read"] },
       },
-    ]);
+    });
 
     const observed = additionalAgentSnapshot(manifest);
     const result = await exportSnapshots([observed, observed]);

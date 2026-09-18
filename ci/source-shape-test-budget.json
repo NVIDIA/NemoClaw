@@ -227,6 +227,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts",
+      "test": "binds npm's clean-install view to the versions shipped in reviewed bundles",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
       "test": "accepts an explicit absolute Node runtime in the reviewed production lane",
       "category": "security"
@@ -264,6 +269,11 @@
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "verifies changed Hugging Face catalog references without credentials",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "requires the real patched OpenClaw distribution proof before merge",
       "category": "security"
     },
     {

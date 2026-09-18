@@ -1440,7 +1440,7 @@ describe("dashboard settings export", () => {
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
       const outcome = await exportSnapshots([changeRetainedProfile(dashboardSnapshot(), change)]);
-      const category = ["malformed port", "URL credential"].includes(label)
+      const category = ["malformed port", "URL credential", "device auth change"].includes(label)
         ? "missing-provenance"
         : "unsupported";
       expect(outcome.outcome).toMatchObject({

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { OpenShellRuntimeSelection } from "../../src/lib/adapters/openshell/runtime-selection";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -35,6 +36,7 @@ import {
   nim,
   onboardCredentialEnv,
   onboardSession,
+  openClawLifecycle,
   openshellRuntime,
   policies,
   policyGet,
@@ -936,6 +938,47 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       overrides.executeSandboxExecCommand ??
         (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    async (sandboxName, runtimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  const runOpenClawPostRestoreDoctorSpy = vi
+    .spyOn(openClawLifecycle, "promoteOpenClawBackupQuiesceToPostRestoreDoctor")
+    .mockImplementation(async (window) => {
+      const result = await (
+        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
+      )();
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        window: {
+          sandboxName: window.sandboxName,
+          ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+        },
+      };
+    });
+  vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          kind: "backup" as const,
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    },
+  );
+  vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
+    ok: true,
+  });
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(
@@ -1063,6 +1106,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
+    runOpenClawPostRestoreDoctorSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     ensureRebuildAgentBaseImageSpy,
     ensureAgentBaseImageSpy,

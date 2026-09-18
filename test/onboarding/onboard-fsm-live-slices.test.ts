@@ -871,11 +871,16 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
         interval: 10,
       });
       await assert.rejects(probe, /slice probe exited with status null and signal SIGKILL/u);
-      assert.throws(
-        () => process.kill(closeHolderPid, 0),
-        (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+      await vi.waitFor(
+        () => {
+          assert.throws(
+            () => process.kill(closeHolderPid, 0),
+            (error: NodeJS.ErrnoException) => error.code === "ESRCH",
+          );
+          assert.deepEqual(fs.readdirSync(workspaceRoot), []);
+        },
+        { timeout: 5_000, interval: 10 },
       );
-      assert.deepEqual(fs.readdirSync(workspaceRoot), []);
     } finally {
       controller.abort();
       try {
