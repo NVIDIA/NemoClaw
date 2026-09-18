@@ -186,11 +186,12 @@ esac
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
-it("stops before cleanup when Docker is installed but unavailable", () => {
+it("stops before cleanup when local state exists but Docker is unavailable", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout(
     "nemoclaw-force-fresh-docker-unavailable-",
   );
   const cleanupMarker = path.join(tmp, "cleanup-started");
+  fs.mkdirSync(path.join(tmp, ".config", "nemoclaw"), { recursive: true });
   writeExecutable(path.join(fakeBin, "docker"), "#!/usr/bin/env bash\nexit 1\n");
 
   const result = callPayloadFunction(
@@ -329,22 +330,25 @@ exit 7
   expect(`${result.stdout}${result.stderr}`).toContain("Homebrew could not remove OpenShell");
 });
 
-it("rejects a remaining OpenShell executable outside managed and Homebrew paths", () => {
-  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-foreign-bin-");
-  const foreignBin = path.join(tmp, "foreign", "bin");
-  fs.mkdirSync(foreignBin, { recursive: true });
-  writeExecutable(path.join(foreignBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+it.each(["openshell", "openshell-gateway", "openshell-sandbox", "openshell-driver-vm"])(
+  "rejects a remaining %s executable outside managed and Homebrew paths",
+  (binary) => {
+    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-foreign-bin-");
+    const foreignBin = path.join(tmp, "foreign", "bin");
+    fs.mkdirSync(foreignBin, { recursive: true });
+    writeExecutable(path.join(foreignBin, binary), "#!/usr/bin/env bash\nexit 0\n");
 
-  const result = callPayloadFunction("remove_macos_openshell_for_force_fresh_install", {
-    HOME: tmp,
-    PATH: `${foreignBin}:${fakeBin}:${TEST_SYSTEM_PATH}`,
-  });
+    const result = callPayloadFunction("remove_macos_openshell_for_force_fresh_install", {
+      HOME: tmp,
+      PATH: `${foreignBin}:${fakeBin}:${TEST_SYSTEM_PATH}`,
+    });
 
-  expect(result.status).not.toBe(0);
-  expect(`${result.stdout}${result.stderr}`).toContain(
-    `remaining OpenShell executable at ${path.join(foreignBin, "openshell")}`,
-  );
-});
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `remaining OpenShell executable at ${path.join(foreignBin, binary)}`,
+    );
+  },
+);
 
 it("runs cleanup before selecting fresh onboarding", () => {
   const result = callPayloadFunction(`

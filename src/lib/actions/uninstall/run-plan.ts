@@ -2360,10 +2360,14 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
+function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): boolean {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
+  if (result.status !== 0) {
+    runtime.warn("Failed to inventory Docker containers");
+    return false;
+  }
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => {
       const fields = dockerInventoryFields(line, 3);
@@ -2394,13 +2398,18 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
-    return;
+    return true;
   }
+  let removedAll = true;
   for (const id of [...new Set(ids)]) {
     if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
       runtime.log(`Removed Docker container ${id}`);
-    else runtime.warn(`Failed to remove Docker container ${id}`);
+    else {
+      runtime.warn(`Failed to remove Docker container ${id}`);
+      removedAll = false;
+    }
   }
+  return removedAll;
 }
 
 function removeDockerImages(runtime: UninstallRuntime): void {
@@ -2450,18 +2459,22 @@ function isOwnedDockerImageRepository(imageRef: string): boolean {
   );
 }
 
-function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
+function removeDockerVolume(name: string, runtime: UninstallRuntime): boolean {
   if (
     runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !==
     0
   )
-    return;
+    return true;
   if (
     runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" })
       .status === 0
   )
     runtime.log(`Removed Docker volume ${name}`);
-  else runtime.warn(`Failed to remove Docker volume ${name}`);
+  else {
+    runtime.warn(`Failed to remove Docker volume ${name}`);
+    return false;
+  }
+  return true;
 }
 
 function executeDockerResourceStep(
@@ -2484,7 +2497,7 @@ function executeDockerResourceStep(
     );
     return false;
   }
-  removeDockerContainers(
+  const removedContainers = removeDockerContainers(
     runtime,
     scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
   );
@@ -2493,8 +2506,15 @@ function executeDockerResourceStep(
   } else {
     removeDockerImages(runtime);
   }
-  for (const volumeName of volumeNames) removeDockerVolume(volumeName, runtime);
+  let removedVolumes = true;
+  for (const volumeName of volumeNames) {
+    if (!removeDockerVolume(volumeName, runtime)) removedVolumes = false;
+  }
   if (!options.forceFreshReset) return true;
+  if (!removedContainers || !removedVolumes) {
+    runtime.error("Force-fresh cleanup could not remove every required Docker resource.");
+    return false;
+  }
   if (scopedToSelectedGateway) {
     runtime.error(
       "Force-fresh cleanup preserved receipt volumes because another gateway environment remains.",

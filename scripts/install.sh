@@ -3707,16 +3707,18 @@ run_force_fresh_uninstaller() {
 }
 
 remove_macos_openshell_for_force_fresh_install() {
-  local formula="nvidia/openshell/openshell" openshell_path=""
+  local formula="nvidia/openshell/openshell" binary="" openshell_path=""
   if command_exists brew && brew list --formula "$formula" >/dev/null 2>&1; then
     brew services stop "$formula" >/dev/null 2>&1 || true
     brew uninstall --force "$formula" \
       || error "Homebrew could not remove OpenShell during the force-fresh install. Rerun the same command after Homebrew is healthy."
   fi
   hash -r 2>/dev/null || true
-  openshell_path="$(command -v openshell 2>/dev/null || true)"
-  [[ -z "$openshell_path" ]] \
-    || error "The force-fresh installer found a remaining OpenShell executable at ${openshell_path}. Remove or reconcile that installation explicitly, then rerun."
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    openshell_path="$(command -v "$binary" 2>/dev/null || true)"
+    [[ -z "$openshell_path" ]] \
+      || error "The force-fresh installer found a remaining OpenShell executable at ${openshell_path}. Remove or reconcile that installation explicitly, then rerun."
+  done
 }
 
 run_force_fresh_install_reset() {

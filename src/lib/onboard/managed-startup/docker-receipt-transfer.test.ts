@@ -52,9 +52,10 @@ describe("Docker daemon receipt transfer", () => {
     });
 
     expect(calls.map((args) => args[0])).toEqual(["volume", "create", "cp", "rm"]);
-    expect(calls[0]).toEqual(
-      expect.arrayContaining(["--label", `${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`]),
-    );
+    const volumeArgs = calls[0] ?? [];
+    const labelIndex = volumeArgs.indexOf("--label");
+    expect(labelIndex).toBeGreaterThanOrEqual(0);
+    expect(volumeArgs[labelIndex + 1]).toBe(`${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`);
     const seedArgs = calls[1] ?? [];
     expect(seedArgs).toEqual(
       expect.arrayContaining([
