@@ -54,7 +54,7 @@ function harness(options: {
           workspace: "default",
         },
       }),
-      resolveSandboxDashboardPort: (name, deps) => deps.getSandbox?.(name)?.dashboardPort ?? 18_789,
+      resolveSandboxDashboardPort: (name) => current.get(name)?.dashboardPort ?? 18_789,
     });
   return { current, retireLegacyForward, summary };
 }
