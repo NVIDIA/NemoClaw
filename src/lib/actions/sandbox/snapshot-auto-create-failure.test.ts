@@ -200,6 +200,29 @@ vi.mock("../../messaging/channels", () => ({
   listMessagingProviderSuffixes: vi.fn(() => []),
   listMessagingCredentialMetadata: vi.fn(() => []),
 }));
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
+  // Clone forward-port allocation revalidates the gateway authority, which probes
+  // the host's package manager. Without this an installed OpenShell Homebrew
+  // formula answers instead of the scenario under test, so every case below fails
+  // on the host trust error before auto-create is ever reached.
+  resolveGatewayForwardAuthority: ({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    endpoint: null,
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    requiredCapabilities: [],
+    source: "standalone" as const,
+    stateDir: null,
+    supervisor: null,
+  }),
+}));
 vi.mock("../../policy", () => ({
   applyPreset: vi.fn(() => true),
   applyPresetContent: vi.fn(() => true),
