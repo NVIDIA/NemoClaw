@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   waitForDetached: vi.fn(),
   preflightTargets: vi.fn().mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
   readConfig: vi.fn(),
+  writeConfig: vi.fn(),
 }));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
@@ -57,6 +58,10 @@ vi.mock("../../state/registry", () => ({
 }));
 vi.mock("../../state/config-io", () => ({
   readConfigFile: mocks.readConfig,
+  writeConfigFile: mocks.writeConfig,
+}));
+vi.mock("../../state/registry/lock", () => ({
+  withLock: (operation: () => unknown) => operation(),
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
   assertAgentMcpTeardownRuntimeCapability: mocks.assertTeardown,
@@ -118,6 +123,9 @@ describe("explicit MCP migration", () => {
     mocks.getAdapter.mockReturnValue("openclaw-config");
     mocks.updateSandbox.mockReturnValue(true);
     mocks.readConfig.mockReturnValue({});
+    mocks.writeConfig.mockImplementation((_path: string, document: unknown) => {
+      mocks.readConfig.mockReturnValue(structuredClone(document));
+    });
     mocks.getPolicyPresence.mockResolvedValue(true);
     mocks.getPolicyState.mockResolvedValue("match");
     mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => entries);
@@ -359,7 +367,7 @@ describe("explicit MCP migration", () => {
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
   });
 
-  it("removes one owned conflicting legacy entry so the survivor can be migrated", async () => {
+  it("preserves survivor ownership for migration or a second direct removal", async () => {
     const secondEntry = {
       ...entry,
       server: "gitlab",
@@ -373,13 +381,13 @@ describe("explicit MCP migration", () => {
       bridges: {},
       sources: { native: {}, legacy },
     });
+    const retained = { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" };
+    const otherSandbox = { name: "beta", mcp: { bridges: { github: entry } } };
     mocks.readConfig.mockReturnValue({
-      sandboxes: { alpha: { mcp: { bridges: legacy } } },
+      defaultSandbox: "alpha",
+      sandboxes: { alpha: { ...retained, mcp: { bridges: legacy } }, beta: otherSandbox },
     });
-    mocks.updateSandbox.mockImplementation(() => {
-      mocks.readConfig.mockReturnValue({});
-      return true;
-    });
+    mocks.inspectSources.mockResolvedValueOnce({ native: {}, legacy: { github: entry } });
     mocks.inspectProvider.mockResolvedValueOnce({
       exists: true,
       id: secondEntry.providerId,
@@ -396,6 +404,14 @@ describe("explicit MCP migration", () => {
       { gatewayName: "nemoclaw", workspace: "default" },
     );
     expect(mocks.unregister).not.toHaveBeenCalled();
+    expect(mocks.readConfig()).toEqual({
+      defaultSandbox: "alpha",
+      sandboxes: {
+        alpha: { ...retained, mcp: { bridges: { github: entry } } },
+        beta: otherSandbox,
+      },
+    });
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
 
     const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     const committedEntry = { ...secondEntry, source: "legacy-registry", denyTools: [] };
@@ -419,7 +435,72 @@ describe("explicit MCP migration", () => {
     await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
       items: [{ server: "github", action: "migrate" }],
     });
+    mocks.inspectSource.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy: { github: entry } },
+    });
+    mocks.inspectSources.mockResolvedValueOnce({ native: {}, legacy: {} });
+    await expect(removeMcpBridge("alpha", "github")).resolves.toBeUndefined();
+    expect(mocks.readConfig()).toEqual({
+      defaultSandbox: "alpha",
+      sandboxes: { alpha: retained, beta: otherSandbox },
+    });
+    expect(mocks.removeLegacy).toHaveBeenCalledTimes(2);
+    expect(mocks.removePolicy).toHaveBeenLastCalledWith(
+      "alpha",
+      {
+        ...entry,
+        source: "legacy-registry",
+        denyTools: [],
+      },
+      { runtimeSelection },
+    );
   });
+
+  it.each([
+    [
+      "a committed row changes",
+      () =>
+        mocks.inspectSources.mockImplementationOnce(async () => {
+          mocks.readConfig.mockReturnValue({
+            sandboxes: {
+              alpha: { mcp: { bridges: { github: { ...entry, providerId: "replacement" } } } },
+            },
+          });
+          return { native: {}, legacy: {} };
+        }),
+    ],
+    [
+      "still present",
+      () => mocks.inspectSources.mockResolvedValueOnce({ native: {}, legacy: { github: entry } }),
+    ],
+    [
+      "inspection fails",
+      () => mocks.inspectSources.mockRejectedValueOnce(new Error("inspection unavailable")),
+    ],
+    [
+      "ownership changes",
+      () =>
+        mocks.inspectSources.mockImplementationOnce(async () => {
+          mocks.readConfig.mockReturnValue({ sandboxes: { alpha: {} } });
+          return { native: {}, legacy: {} };
+        }),
+    ],
+  ] as const)(
+    "preserves cleanup state when post-removal verification %s",
+    async (_outcome, arrangeInspection) => {
+      const document = { sandboxes: { alpha: { mcp: { bridges: { github: entry } } } } };
+      mocks.readConfig.mockReturnValue(document);
+      arrangeInspection();
+      await expect(removeMcpBridge("alpha", "github")).rejects.toThrow(
+        /remains in agent configuration|inspection unavailable|ownership changed/,
+      );
+      expect(mocks.writeConfig).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+      expect(mocks.removePolicy).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes a native server without changing an unrelated legacy registration", async () => {
     const nativeEntry = {

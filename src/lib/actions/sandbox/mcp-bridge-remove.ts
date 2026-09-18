@@ -4,16 +4,16 @@
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
+  readLegacyMcpRegistryProjection,
+  removeLegacyMcpRegistryEntry,
+} from "../../state/registry/legacy-mcp";
+import {
   assertAgentMcpTeardownRuntimeCapability,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
-import {
-  readCommittedLegacyRegistryEntries,
-  retireLegacyMcpRegistryProjection,
-  sameMcpRegistration,
-} from "./mcp-bridge-migration";
+import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-migration";
 import {
   detachProvider,
   getMcpProviderInspectionRuntimeSelection,
@@ -29,6 +29,7 @@ import {
 } from "./mcp-bridge-state";
 import {
   inspectPolicyOnlyMcpEntry,
+  inspectAgentMcpSources,
   inspectSourceBridgeState,
   removeLegacyAgentMcpEntry,
 } from "./mcp-bridge-source";
@@ -55,13 +56,19 @@ export async function removeMcpBridge(
     let removedLegacySource = false;
     const legacyEntry = observed.sources.legacy[server];
     if (legacyEntry) {
+      const legacyProjection = readLegacyMcpRegistryProjection(sandboxName);
       const committedEntries = readCommittedLegacyRegistryEntries(
         sandboxName,
         agent.name,
         getBridgeAdapter(agent),
+        legacyProjection,
       );
       const committedEntry = committedEntries[server];
-      if (!committedEntry || !sameMcpRegistration(legacyEntry, committedEntry)) {
+      if (
+        !legacyProjection ||
+        !committedEntry ||
+        !sameMcpRegistration(legacyEntry, committedEntry)
+      ) {
         throw new McpBridgeError(
           `Legacy MCP server '${server}' cannot be proven as registry-owned and was preserved. No source was changed.`,
           2,
@@ -91,9 +98,14 @@ export async function removeMcpBridge(
         : getBridgeAdapter(agent);
       await assertAgentMcpTeardownRuntimeCapability(sandboxName, legacyAdapter, runtimeSelection);
       await removeLegacyAgentMcpEntry(sandbox, legacyEntry, runtimeSelection);
-      // A normal serialization retires the deprecated registry projection. Any
-      // unrelated legacy agent entries remain authoritative and migratable.
-      retireLegacyMcpRegistryProjection(sandboxName);
+      const remaining = await inspectAgentMcpSources(sandbox, runtimeSelection);
+      if (remaining.legacy[server]) {
+        throw new McpBridgeError(
+          `Legacy MCP server '${server}' remains in agent configuration. Registry ownership, policy, and provider state were preserved.`,
+          2,
+        );
+      }
+      removeLegacyMcpRegistryEntry(sandboxName, server, legacyProjection);
       entry = committedEntry;
       removedLegacySource = true;
     } else {

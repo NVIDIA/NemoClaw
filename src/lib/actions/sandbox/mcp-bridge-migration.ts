@@ -4,11 +4,10 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { findAmbiguousMcpCredentialTarget } from "../../domain/mcp-credential-target";
-import { readConfigFile } from "../../state/config-io";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
 import * as policies from "../../policy";
-import { REGISTRY_FILE } from "../../state/registry/persistence";
+import { readLegacyMcpRegistryProjection } from "../../state/registry/legacy-mcp";
 import {
   registerAgentAdapter,
   reloadOpenClawGatewayAfterMcpMutation,
@@ -76,12 +75,9 @@ export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
   currentAdapter: McpSourceEntry["adapter"],
+  rawState = readLegacyMcpRegistryProjection(sandboxName),
 ): Record<string, McpSourceEntry> {
-  const document = readConfigFile<unknown>(REGISTRY_FILE, {});
-  if (!isObjectRecord(document) || !isObjectRecord(document.sandboxes)) return {};
-  const rawSandbox = document.sandboxes[sandboxName];
-  if (!isObjectRecord(rawSandbox) || !isObjectRecord(rawSandbox.mcp)) return {};
-  const rawState = rawSandbox.mcp;
+  if (!rawState) return {};
   if (rawState.destroyPreparedAt || rawState.destroyPendingAt) {
     throw new McpBridgeError(
       `Legacy MCP registry state for '${sandboxName}' contains an incomplete destroy transaction. No source was changed.`,

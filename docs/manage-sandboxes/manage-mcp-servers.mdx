@@ -204,6 +204,8 @@ Removal also requires every other committed legacy row to have an observed legac
 If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
 Run `$$nemoclaw my-sandbox mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
 When these conditions pass, you do not need to migrate the named entry before removing it.
+NemoClaw verifies that the named legacy entry is absent before retiring its ownership row and cleaning up policy and provider attachments.
+Ownership rows for remaining legacy entries are preserved so you can remove or migrate them later.
 NemoClaw preserves unproven entries and refuses removal when the same server exists in both legacy and native configuration.
 
 Remove the named registration:
