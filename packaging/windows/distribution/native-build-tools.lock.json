@@ -30,9 +30,9 @@
     },
     {
       "package": "playwright-core",
-      "version": "1.62.1",
-      "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.1.tgz",
-      "integrity": "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw=="
+      "version": "1.58.2",
+      "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz",
+      "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg=="
     }
   ],
   "lifecycleScriptsExecuted": false
