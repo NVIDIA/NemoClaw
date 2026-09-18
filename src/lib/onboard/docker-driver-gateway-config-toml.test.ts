@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { runOnboardCommand } from "./command";
 import { GatewayStateConflictError } from "./gateway-management";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
@@ -590,7 +591,7 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("suppresses the circular '--resume' hint after a cross-driver conflict (#10071)", () => {
+  it("suppresses the resume hint only after reporting a cross-driver conflict (#10071)", async () => {
     resetOnboardResumeHintForTests();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-cross-driver-hint-"));
@@ -602,11 +603,33 @@ describe("docker-driver-gateway config TOML", () => {
         OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
       });
 
-      expect(() =>
+      let conflict: unknown;
+      try {
         prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox", {
           gatewayRuntime: podmanGatewayRuntime(podmanEnv),
+        });
+      } catch (error) {
+        conflict = error;
+      }
+      expect(conflict).toBeInstanceOf(GatewayStateConflictError);
+      const unreportedHints: string[] = [];
+      printOnboardResumeHint(true, (line) => unreportedHints.push(line));
+      expect(unreportedHints.join("\n")).toContain("nemoclaw onboard --resume");
+      resetOnboardResumeHintForTests();
+      await expect(
+        runOnboardCommand({
+          flags: { "experimental-profile": "portable" },
+          env: {},
+          runOnboard: async () => {
+            throw conflict;
+          },
+          error: console.error,
+          exit: (code) => {
+            throw new Error(`exit:${String(code)}`);
+          },
         }),
-      ).toThrow(/already configures a 'docker'-driver/);
+      ).rejects.toThrow("exit:1");
+      expect(errSpy.mock.calls.flat().join("\n")).toContain("already configures a 'docker'-driver");
       printOnboardResumeHint(true, console.error);
       const joined = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
       // The generic hint repeats the exact command that just failed. Nothing

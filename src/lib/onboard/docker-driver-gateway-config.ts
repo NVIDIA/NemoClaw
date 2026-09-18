@@ -37,7 +37,6 @@ import {
   resolveConfiguredRuntimeProvider,
   resolveRegisteredRuntimeProvider,
 } from "./runtime-provider/selection";
-import { noteOnboardResumeHintShown } from "./resume-hint";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -1147,24 +1146,12 @@ export function prepareDockerDriverGatewayConfigEnv(
   } = {},
 ): Record<string, string> {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, options.gatewayRuntime);
-  let identity: DockerDriverGatewayIdentity;
-  try {
-    identity = resolveDockerDriverGatewayIdentity(
-      stateDir,
-      gatewayEnv,
-      runtime,
-      options.allowOpenShell0044PreAuthDatabase === true,
-    );
-  } catch (error) {
-    if (error instanceof CrossDriverGatewayConflictError) {
-      // The generic "onboard --resume" catch-all would repeat this exact
-      // command and hit the identical conflict again. Mark the latch only at
-      // the onboarding boundary that surfaces the tailored recovery error;
-      // ownership probes intentionally swallow config-classification errors.
-      noteOnboardResumeHintShown();
-    }
-    throw error;
-  }
+  const identity = resolveDockerDriverGatewayIdentity(
+    stateDir,
+    gatewayEnv,
+    runtime,
+    options.allowOpenShell0044PreAuthDatabase === true,
+  );
   const externalComponent =
     options.externalComponent === undefined
       ? identity.externalComponent
