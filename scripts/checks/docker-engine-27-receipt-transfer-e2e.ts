@@ -19,16 +19,26 @@ const RECEIPT_IMAGE =
   "docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc";
 const RECEIPT_VOLUME_DIRECTORY = "/run/nemoclaw/managed-startup-receipt-transfer";
 const DAEMON_OWNER_LABEL = "io.nvidia.nemoclaw.e2e.docker27-receipt";
-export const DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS = 120_000;
-export const DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS = 30_000;
+export const DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS = 30_000;
+export const DOCKER_ENGINE_27_PULL_TIMEOUT_MS = 120_000;
+export const DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS = 15_000;
 export const DOCKER_ENGINE_27_READINESS_ATTEMPTS = 45;
 export const DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS = 5_000;
 export const DOCKER_ENGINE_27_READINESS_INTERVAL_MS = 1_000;
+export const DOCKER_ENGINE_27_MAX_OPERATION_COUNT = 28;
+export const DOCKER_ENGINE_27_PULL_COUNT = 2;
+export const DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT = 3;
+export const DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS = 60_000;
 export const DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS =
   DOCKER_ENGINE_27_READINESS_ATTEMPTS *
     (DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS + DOCKER_ENGINE_27_READINESS_INTERVAL_MS) +
-  DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS +
-  DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS;
+  DOCKER_ENGINE_27_MAX_OPERATION_COUNT * DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PULL_COUNT * DOCKER_ENGINE_27_PULL_TIMEOUT_MS +
+  DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS;
+export const DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS =
+  DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS / 2;
 
 type CommandResult = {
   readonly error?: Error;
@@ -43,6 +53,21 @@ function runDocker(args: readonly string[]): CommandResult {
     killSignal: "SIGKILL",
     maxBuffer: 8 * 1024 * 1024,
     timeout: DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS,
+  });
+  return {
+    ...(result.error ? { error: result.error } : {}),
+    status: result.status,
+    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? "",
+  };
+}
+
+function runDockerPull(args: readonly string[]): CommandResult {
+  const result = spawnSync("docker", [...args], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: DOCKER_ENGINE_27_PULL_TIMEOUT_MS,
   });
   return {
     ...(result.error ? { error: result.error } : {}),
@@ -208,8 +233,14 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
 
   try {
     requireSuccess(
+      runDockerPull(["pull", DIND_IMAGE]),
+      "pull digest-pinned Docker Engine 27 image",
+    );
+    requireSuccess(
       runDocker([
         "run",
+        "--pull",
+        "never",
         "--privileged",
         "--detach",
         "--name",
@@ -233,7 +264,10 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
       `unexpected Docker Engine version ${engineVersion}`,
     );
 
-    requireSuccess(innerDocker(["pull", RECEIPT_IMAGE]), "pull digest-pinned receipt image");
+    requireSuccess(
+      runDockerPull(["exec", daemonName, "docker", "pull", RECEIPT_IMAGE]),
+      "pull digest-pinned receipt image",
+    );
     requireSuccess(
       runDocker(["cp", fixtureReceipt, `${daemonName}:${daemonReceipt}`]),
       "stage protected receipt in Docker Engine 27 client",

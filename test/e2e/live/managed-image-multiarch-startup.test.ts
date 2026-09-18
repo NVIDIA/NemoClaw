@@ -13,12 +13,8 @@ import {
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
-  DOCKER_ENGINE_27_PROBE_TIMEOUT_MS,
-  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
-  registerDockerEngine27ReceiptCleanup,
-  shouldRunDockerEngine27ReceiptProbe,
 } from "./managed-image-multiarch-startup-helpers.ts";
 import { trustedShellCommand } from "../fixtures/shell-probe.ts";
 
@@ -64,8 +60,8 @@ test(
     );
 
     progress.phase("verify Docker Engine 27 receipt transfer");
-    const docker27DaemonName = dockerEngine27ReceiptDaemonName(dispatch.runId, dispatch.runAttempt);
-    registerDockerEngine27ReceiptCleanup(cleanup, docker27DaemonName, () => {
+    const docker27DaemonName = `nemoclaw-receipt-engine27-${String(dispatch.runId)}-${String(dispatch.runAttempt)}`;
+    cleanup.trackDisposable(`remove owned Docker Engine 27 daemon ${docker27DaemonName}`, () => {
       execFileSync(
         process.execPath,
         [
@@ -80,34 +76,35 @@ test(
           cwd: dispatch.workspace,
           killSignal: "SIGKILL",
           stdio: "ignore",
-          timeout: 45_000,
+          timeout: 90_000,
         },
       );
     });
-    const docker27Result = shouldRunDockerEngine27ReceiptProbe(dispatch.platform)
-      ? await shellProbe.run(
-          trustedShellCommand({
-            command: process.execPath,
-            args: [
-              "--import",
-              "tsx",
-              "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
-              "--daemon-name",
-              docker27DaemonName,
-            ],
-            reason: "verify the Docker Engine 27 receipt archive-copy boundary",
-          }),
-          {
-            artifactName: "docker-engine-27-receipt-transfer",
-            cwd: dispatch.workspace,
-            env: {
-              ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
-              ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+    const docker27Result =
+      dispatch.platform === "linux/amd64"
+        ? await shellProbe.run(
+            trustedShellCommand({
+              command: process.execPath,
+              args: [
+                "--import",
+                "tsx",
+                "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+                "--daemon-name",
+                docker27DaemonName,
+              ],
+              reason: "verify the Docker Engine 27 receipt archive-copy boundary",
+            }),
+            {
+              artifactName: "docker-engine-27-receipt-transfer",
+              cwd: dispatch.workspace,
+              env: {
+                ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
+                ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+              },
+              timeoutMs: 30 * 60_000,
             },
-            timeoutMs: DOCKER_ENGINE_27_PROBE_TIMEOUT_MS,
-          },
-        )
-      : { exitCode: 0, timedOut: false };
+          )
+        : { exitCode: 0, timedOut: false };
 
     expect(
       docker27Result.exitCode === 0 &&
