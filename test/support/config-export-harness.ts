@@ -30,11 +30,15 @@ vi.mock("../../src/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/platform")>()),
   isWsl: vi.fn(() => false),
 }));
-vi.mock("../../src/lib/state/registry/persistence", () => ({ load: vi.fn() }));
+vi.mock("../../src/lib/state/registry/persistence", () => ({
+  load: vi.fn(),
+  REGISTRY_FILE: "/unused-export-registry.json",
+}));
 vi.mock("../../src/lib/state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
+  captureSanitizedResolvedOpenshellAsync: vi.fn(),
 }));
 vi.mock("../../src/lib/adapters/openshell/sandbox-config", async (importOriginal) => {
   const actual =

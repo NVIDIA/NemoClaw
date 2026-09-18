@@ -115,29 +115,26 @@ describe("launch-readiness gateway health scope", () => {
     ).resolves.toBeNull();
   });
 
-  it.each([
-    ["managed completion", { status: 0, stdout: "GATEWAY_PID=42", stderr: "" }, true],
-    ["SUPERVISOR_NOT_RUNNING", { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" }, false],
-    ["GATEWAY_HEALTH_TIMEOUT", { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" }, null],
-    [
-      "PRIVILEGED_CONTROL_UNAVAILABLE",
-      { status: 1, stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
-      null,
-    ],
-  ] as const)("classifies the Hermes managed probe result %s", async (_label, result, expected) => {
-    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
-
+  it("observes Hermes through its native gateway instead of the retired lifecycle controller", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    }));
     await expect(
       isSandboxGatewayRunningForStatus("alpha", "nemoclaw-19080", {
         getSessionAgent: () => loadAgent("hermes"),
-        requestGatewaySupervisorActionImpl,
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
       }),
-    ).resolves.toBe(expected);
+    ).resolves.toBe(true);
 
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledWith(
-      "alpha",
-      "probe",
-      expect.any(Number),
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+      }),
     );
   });
 
