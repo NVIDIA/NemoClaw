@@ -405,6 +405,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
   writeHarnessResult(JSON.stringify({
     attachmentInspections: providerAttachmentInspectionCount,
     attached: statuses.map((status) => status.provider.attached),
+    supported: statuses.map((status) => status.support.supported),
   }));
 `,
     );
@@ -412,6 +413,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     expect(JSON.parse(stdout)).toEqual({
       attachmentInspections: 1,
       attached: [true, true],
+      supported: [true, true],
     });
   });
 
