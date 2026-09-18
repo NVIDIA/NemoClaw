@@ -43,15 +43,18 @@ try {
     stderr = "",
     discoveryBeforeStop = false;
   let inputTimer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = setTimeout(() => child.kill(), 15_000);
+  let deadline = setTimeout(() => child.kill(), 60_000);
   child.stdin.on("error", () => {});
   child.stdout.on("data", (chunk: Buffer) => {
     stdout += chunk.toString("utf8");
-    if (stdout.includes("before-reader") && !inputTimer)
+    if (stdout.includes("before-reader") && !inputTimer) {
+      clearTimeout(deadline);
+      deadline = setTimeout(() => child.kill(), 15_000);
       inputTimer = setTimeout(() => {
         discoveryBeforeStop = stdout.includes("discovery-entered");
         child.stdin.end("stop\n");
       }, 1000);
+    }
   });
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
