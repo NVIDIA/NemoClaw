@@ -65,8 +65,10 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 
 ## Build Agent Images
 
-Use Docker with Buildx and a native Linux ARM64 builder.
-The image locks select CPython ARM64 wheels; this workflow does not qualify other platforms.
+Use Docker with Buildx on a native host that matches the selected image target.
+Agent builds default to Linux ARM64.
+Set `AGENT_PLATFORM=linux/amd64` to select the native AMD64 locks and stages for Deep Agents or OpenClaw.
+The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
 The `nooa`, `nooa-bench`, and `hermes` targets use Python 3.13.15 because their pinned upstream releases require Python below 3.14.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
@@ -87,11 +89,24 @@ The sandbox compute daemon must have access to that exact image.
 Build metadata records the exported digest separately under the target's `containerimage.digest` key.
 The commands build and load local images; they do not publish images or launch a deployment.
 
+On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
+
+```sh
+mkdir -p .build
+AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load --metadata-file .build/agent-images-amd64.json
+docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
+```
+
+Use the printed immutable reference in `sandboxes[].image.ref`.
+Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
+Run `AGENT_PLATFORM=linux/amd64 docker buildx bake agents --load` to build both.
+The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
+
 Select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `docker buildx bake agents --load`.
 `docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`.
 Set `IMAGE_PREFIX=nc-my-build` before Bake to use your own local repository name without replacing another build's tags.
 
-[The Bake file](../docker-bake.hcl) selects harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
+[The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; selected images contain only their required harness dependencies.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
 The [source notice](../image/NOTICE.md) describes the retained local patches and licenses.

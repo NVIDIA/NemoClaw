@@ -132,12 +132,16 @@ Images built for the former `inference.local` route are incompatible; rebuild be
 Follow the [agent image build prerequisites](build.md#build-agent-images), then run from the repository root:
 
 ```sh
+# On Linux ARM64:
 docker buildx bake openclaw --load
 # For Hermes:
 docker buildx bake hermes --load
+# On Linux AMD64:
+AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load
 ```
 
-These commands load `nc-fabric:openclaw` and `nc-fabric:hermes` locally.
+These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally.
+Linux AMD64 also supports the OpenClaw target through the same `AGENT_PLATFORM` selector.
 Follow [image digest selection](build.md#build-agent-images) and use the matching immutable reference in `sandboxes[].image.ref`.
 The sandbox compute daemon must have access to the built image under that digest; a build on another Docker daemon does not make it available to the gateway.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.

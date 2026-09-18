@@ -6,7 +6,7 @@
 These Fabric recipes, adapters, and fixtures use Python and TypeScript to integrate with the agents' native APIs.
 
 [The shared Dockerfile](fabric/Dockerfile) pins source archives and base images.
-[Docker Bake](../docker-bake.hcl) selects the harness and its dependency lock.
+[Docker Bake](../docker-bake.hcl) selects the target platform, harness, and matching dependency lock.
 Images retain upstream source archives and local build inputs under `/opt/nemoclaw/source/`.
 Installed wheels retain package license metadata.
 The local OpenClaw adapter is part of this Apache-2.0 repository.

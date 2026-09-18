@@ -128,23 +128,32 @@ impl Engine {
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
         spec.validate_image_authentication(&image)?;
-        if image.id.as_ref().is_none_or(String::is_empty)
-            || image.architecture.as_deref()
-                != Some(spec.service.as_ref().map_or("arm64", |s| {
-                    s.hardware
+        let architecture = image.architecture.as_deref();
+        let architecture_matches = if let Some(service) = &spec.service {
+            architecture
+                == Some(
+                    service
+                        .hardware
                         .as_ref()
-                        .map(|h| h.architecture.as_str())
+                        .map(|hardware| hardware.architecture.as_str())
                         .or_else(|| {
-                            s.recipe
+                            service
+                                .recipe
                                 .as_ref()
-                                .map(|r| r.compatibility.architecture.as_str())
+                                .map(|recipe| recipe.compatibility.architecture.as_str())
                         })
-                        .unwrap_or("arm64")
-                }))
+                        .unwrap_or("arm64"),
+                )
+        } else {
+            let engine = self.info().await?;
+            gateway_architecture_matches(architecture, engine.architecture.as_deref())
+        };
+        if image.id.as_ref().is_none_or(String::is_empty)
+            || !architecture_matches
             || image.os.as_deref() != Some("linux")
         {
             return Err(Error::Conflict(
-                "runtime image is unavailable or incompatible with Spark",
+                "runtime image is unavailable or incompatible with the execution target",
             ));
         }
         if let Some(service) = &spec.service {
@@ -275,4 +284,11 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+fn gateway_architecture_matches(image: Option<&str>, engine: Option<&str>) -> bool {
+    matches!(
+        (image, engine),
+        (Some("amd64"), Some("amd64" | "x86_64")) | (Some("arm64"), Some("arm64" | "aarch64"))
+    )
 }
