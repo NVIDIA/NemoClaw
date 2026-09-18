@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TargetDefinition } from "../registry/types.ts";
+import type { ConfigExportExpectation, TargetDefinition } from "../registry/types.ts";
 import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 
 export interface LiveTargetRunPlan {
   targetId: string;
   manifestPath: string | null;
   expectedStateId: string | undefined;
+  configExportExpectation: ConfigExportExpectation;
   suiteIds: string[];
   phases: string[];
   e2eCloudExperimentalChecks?: string[];
@@ -18,12 +19,14 @@ export function buildLiveTargetRunPlan(target: TargetDefinition): LiveTargetRunP
     targetId: target.id,
     manifestPath: target.manifestPath ?? null,
     expectedStateId: target.expectedStateId,
+    configExportExpectation: target.configExport.expectation,
     suiteIds: target.suiteIds ?? [],
     phases: [
       "environment",
       "onboarding",
       ...(target.environment?.lifecycle ? ["lifecycle"] : []),
       "state-validation",
+      "config-export-validation",
     ],
   };
   const cloudExperimentalChecks = cloudExperimentalChecksForOnboarding(

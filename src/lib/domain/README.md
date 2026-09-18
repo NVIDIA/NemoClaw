@@ -23,6 +23,12 @@ src/lib/domain/<area>/<topic>.ts
 Configuration export represents retained startup intent from a validated managed-image receipt.
 Preserve image authority and full residual profile comparison when admitting a supported setting.
 
+V1alpha1 configuration export omits corporate CA material and its digest. An otherwise supported
+managed sandbox with an imported CA remains exportable after its retained bundle and startup-profile
+digest pass workload authority validation. CA state still participates in stable observation.
+Missing, malformed, or mismatched CA state must prevent publication. Export does not change sandbox trust or transfer
+source-host trust to another deployment; configure that deployment's CA through onboarding.
+
 Managed OpenClaw exports `agents[].tools.disclosure: direct` only when the registry selection agrees with
 the validated startup profile. Absent or explicit `progressive` selection keeps
 the canonical omission. Model compatibility can still downgrade runtime tool
