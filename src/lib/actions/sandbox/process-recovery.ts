@@ -361,6 +361,23 @@ async function executeOpenClawDoctorGateCommand(
   }
 }
 
+async function executeOpenClawDoctorNetworkCommand(
+  deps: OpenClawPostRestoreDoctorDeps,
+  sandboxName: string,
+  command: string,
+  timeout: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<SandboxCommandResult | null> {
+  try {
+    return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
+      localDockerFallbackPolicy: "never",
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function collectOpenClawRuntimeFailureLogs(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
@@ -557,13 +574,18 @@ export function buildOpenClawPostUpgradeDoctorDeleteRetirementCommand(
   ].join("; ");
 }
 
-function buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName: string): string {
+function buildOpenClawPostUpgradeDoctorCompletionMarkerProbe(): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
-  const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
   return [
     `[ ! -e ${marker} ] && [ ! -L ${marker} ] || exit 40`,
     `[ ! -e ${ready} ] && [ ! -L ${ready} ] || exit 41`,
+  ].join("; ");
+}
+
+function buildOpenClawPostUpgradeDoctorCompletionHealthProbe(sandboxName: string): string {
+  const healthUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
+  return [
     `code="$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${healthUrl} 2>/dev/null || true)"`,
     'case "$code" in 200|401) exit 0 ;; *) exit 42 ;; esac',
   ].join("; ");
@@ -1053,16 +1075,43 @@ export async function finishOpenClawPostRestoreDoctor(
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(
     async () => {
-      const remainingMs = reconciliationDeadlineMs - deps.now();
-      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
-      const result = await executeOpenClawDoctorGateCommand(
+      const probeTimeout = () => {
+        const remainingMs = reconciliationDeadlineMs - deps.now();
+        if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+        return Math.max(1, Math.min(15_000, Math.floor(remainingMs)));
+      };
+      const beforeTimeout = probeTimeout();
+      if (beforeTimeout === null) return false;
+      const markersBefore = await executeOpenClawDoctorGateCommand(
         deps,
         sandboxName,
-        buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName),
-        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        buildOpenClawPostUpgradeDoctorCompletionMarkerProbe(),
+        beforeTimeout,
         runtimeSelection,
       );
-      return result?.status === 0;
+      if (markersBefore?.status !== 0) return false;
+
+      const healthTimeout = probeTimeout();
+      if (healthTimeout === null) return false;
+      const health = await executeOpenClawDoctorNetworkCommand(
+        deps,
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorCompletionHealthProbe(sandboxName),
+        healthTimeout,
+        runtimeSelection,
+      );
+      if (health?.status !== 0) return false;
+
+      const afterTimeout = probeTimeout();
+      if (afterTimeout === null) return false;
+      const markersAfter = await executeOpenClawDoctorGateCommand(
+        deps,
+        sandboxName,
+        buildOpenClawPostUpgradeDoctorCompletionMarkerProbe(),
+        afterTimeout,
+        runtimeSelection,
+      );
+      return markersAfter?.status === 0;
     },
     {
       deadlineMs: reconciliationDeadlineMs,
