@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { validateDockerEngine27SeedIsolation } from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
 import {
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
@@ -38,6 +39,35 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("requires numeric root and every receipt seed isolation control", () => {
+    const secureSeed = {
+      Config: { User: "0" },
+      HostConfig: {
+        CapDrop: ["ALL"],
+        Mounts: [
+          {
+            Type: "volume",
+            Target: "/run/nemoclaw/managed-startup-receipt-transfer",
+          },
+        ],
+        NetworkMode: "none",
+        ReadonlyRootfs: true,
+        SecurityOpt: ["no-new-privileges"],
+      },
+    };
+
+    expect(() => validateDockerEngine27SeedIsolation(secureSeed)).not.toThrow();
+    expect(() =>
+      validateDockerEngine27SeedIsolation({ ...secureSeed, Config: { User: "0:0" } }),
+    ).toThrow("receipt seed did not use numeric root");
+    expect(() =>
+      validateDockerEngine27SeedIsolation({
+        ...secureSeed,
+        HostConfig: { ...secureSeed.HostConfig, CapDrop: [] },
+      }),
+    ).toThrow("receipt seed retained capabilities");
+  });
+
   it("parses exact protected dispatch identity", () => {
     expect(protectedManagedImageDispatchEnvironment()).toMatchObject({
       baseSha: sha,
