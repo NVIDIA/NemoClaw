@@ -1305,8 +1305,9 @@ jobs:
         run: |
           set -euo pipefail
           guard_dir="$RUNNER_TEMP/nemoclaw-managed-podman-docker-guard"
+          guard_log="$guard_dir/invocations.log"
           install -d -m 0700 "$guard_dir/bin"
-          : >"$guard_dir/invocations.log"
+          : >"$guard_log"
           cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
           #!/usr/bin/env bash
           printf '%s\n' "$*" >>"${E2E_DOCKER_GUARD_LOG:?}"
@@ -1317,15 +1318,57 @@ jobs:
           sudo systemctl stop docker.service docker.socket || true
           sudo systemctl mask --runtime docker.service docker.socket || true
           sudo pkill -TERM -x dockerd 2>/dev/null || true
+          for attempt in $(seq 1 20); do
+            if ! pgrep -x dockerd >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if pgrep -x dockerd >/dev/null; then
+            echo "::error::dockerd remained active after Docker shutdown" >&2
+            exit 1
+          fi
           sudo rm -f /var/run/docker.sock /run/docker.sock
           {
-            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_dir/invocations.log"
+            printf 'DOCKER_API_VERSION=\n'
+            printf 'DOCKER_CERT_PATH=\n'
+            printf 'DOCKER_CONFIG=\n'
+            printf 'DOCKER_CONTEXT=\n'
+            printf 'DOCKER_HOST=\n'
+            printf 'DOCKER_TLS_VERIFY=\n'
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_dir/bin/docker"
+            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
             printf 'PATH=%s:%s\n' "$guard_dir/bin" "$PATH"
           } >>"$GITHUB_ENV"
-          ! systemctl is-active --quiet docker.service
-          ! systemctl is-active --quiet docker.socket
-          ! pgrep -x dockerd >/dev/null
-          test ! -S /var/run/docker.sock
+          if systemctl is-active --quiet docker.service; then
+            echo "::error::docker.service remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.socket; then
+            echo "::error::docker.socket remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after Docker shutdown" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$guard_dir/bin/docker" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            '{
+              schemaVersion: 1,
+              phase: "before-candidate",
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerDaemonActive: false,
+              dockerSocketPresent: false,
+              dockerGuardInvocationCount: 0,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-before-candidate.json"
 
       - name: Run real all-agent managed runtime activation on Podman
         shell: bash
@@ -1344,10 +1387,55 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$E2E_DOCKER_GUARD_LOG"
-          test ! -s "$E2E_DOCKER_GUARD_LOG"
-          ! systemctl is-active --quiet docker.service
-          ! systemctl is-active --quiet docker.socket
-          test ! -S /var/run/docker.sock
+          guard_bytes="$(wc -c <"$E2E_DOCKER_GUARD_LOG" | tr -d '[:space:]')"
+          docker_candidate="$(command -v docker || true)"
+          docker_service_state="$(systemctl is-active docker.service 2>/dev/null || true)"
+          docker_socket_state="$(systemctl is-active docker.socket 2>/dev/null || true)"
+          docker_daemon_active=false
+          docker_socket_present=false
+          pgrep -x dockerd >/dev/null && docker_daemon_active=true
+          [ -S /var/run/docker.sock ] && docker_socket_present=true
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            --arg dockerServiceState "$docker_service_state" \
+            --arg dockerSocketState "$docker_socket_state" \
+            --argjson dockerDaemonActive "$docker_daemon_active" \
+            --argjson dockerSocketPresent "$docker_socket_present" \
+            --argjson guardBytes "$guard_bytes" \
+            '{
+              schemaVersion: 1,
+              phase: "after-candidate",
+              dockerServiceState: $dockerServiceState,
+              dockerSocketState: $dockerSocketState,
+              dockerDaemonActive: $dockerDaemonActive,
+              dockerSocketPresent: $dockerSocketPresent,
+              dockerGuardBytes: $guardBytes,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-after-candidate.json"
+          if [ "$guard_bytes" -ne 0 ]; then
+            echo "::error::Docker invocation guard recorded candidate execution" >&2
+            exit 1
+          fi
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          if [ "$docker_service_state" = active ]; then
+            echo "::error::docker.service became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_state" = active ]; then
+            echo "::error::docker.socket became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_daemon_active" = true ]; then
+            echo "::error::dockerd became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_present" = true ]; then
+            echo "::error::Docker socket became available during managed Podman activation" >&2
+            exit 1
+          fi
 
       - name: Stop rootless Podman API service
         if: always()
