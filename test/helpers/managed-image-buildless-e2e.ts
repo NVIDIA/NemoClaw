@@ -24,6 +24,7 @@ import {
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
+  MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
 } from "../../src/lib/onboard/managed-startup/profile";
 import { nodeOptionsWithoutSourceLoader, SOURCE_REQUIRE_HOOK } from "./source-loader-options";
 
@@ -849,7 +850,7 @@ function assertManagedLaunch(
   const profile = decodeManagedStartupProfile(requiredEncodedProfile);
   expect(encodeManagedStartupProfile(profile)).toBe(requiredEncodedProfile);
   expect(profile).toMatchObject({
-    schemaVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+    schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
     agent,
     agentConfig: { agent },
     inference: {

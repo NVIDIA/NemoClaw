@@ -6,8 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
@@ -28,6 +29,19 @@ import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 
 const fixtures: string[] = [];
+
+beforeEach(() => {
+  vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "spark-box" },
+  });
+  vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+  });
+  vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+  });
+});
 
 function preparedRestoreAuthority(sandboxName: string) {
   const prepared = { name: sandboxName } as SandboxEntry;
@@ -800,6 +814,18 @@ describe("created OpenClaw sandbox finalization", () => {
 
   it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
+    vi.mocked(restoreWindow.beginUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async () => {
+        order.push("doctor-begin");
+        return { ok: true, window: { sandboxName: "openclaw" } };
+      },
+    );
+    vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async () => {
+        order.push("doctor-finish");
+        return { ok: true };
+      },
+    );
     const prepared = { name: "openclaw" } as SandboxEntry;
     const restoredTarget = { ...prepared } as SandboxEntry;
     const publishedTarget = { ...prepared } as SandboxEntry;
@@ -855,7 +881,15 @@ describe("created OpenClaw sandbox finalization", () => {
     );
 
     expect(result).toBe(publishedTarget);
-    expect(order).toEqual(["prepare", "restore", "revalidate", "revalidate", "register"]);
+    expect(order).toEqual([
+      "prepare",
+      "doctor-begin",
+      "restore",
+      "revalidate",
+      "doctor-finish",
+      "revalidate",
+      "register",
+    ]);
     expect(register).toHaveBeenCalledWith(publishedTarget);
   });
 

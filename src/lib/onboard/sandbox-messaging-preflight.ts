@@ -30,6 +30,7 @@ export interface SandboxMessagingPreflightDeps {
   resolveDisabledChannels(sandboxName: string): string[];
   gatewayName(): string;
   registry: MessagingConflictGuardDeps["registry"];
+  readonly preEnableHookRegistry?: MessagingConflictGuardDeps["preEnableHookRegistry"];
   providerExistsInGateway(name: string): boolean | Promise<boolean>;
   providerMatchesGatewayCredential(
     name: string,
@@ -138,6 +139,7 @@ async function checkMessagingPlanConflicts(
     cliName: deps.cliName,
     log: deps.log,
     error: deps.error,
+    preEnableHookRegistry: deps.preEnableHookRegistry,
     exit: deps.exitProcess,
   });
 }

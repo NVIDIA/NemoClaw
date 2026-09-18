@@ -65,7 +65,6 @@ import {
   finalizeInferenceMutation,
   type InferenceGatewayRestartDeps,
   type InferenceMutation,
-  readPreviousOpenClawInferenceApi,
   settleInferenceSetOpenClawPairing,
 } from "./inference-set-gateway-restart";
 import {
@@ -508,6 +507,21 @@ function updateAgentPrimary(config: ConfigObject, primaryModelRef: string): void
 }
 
 function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: string): void {
+  const entries = agents.entries;
+  if (isConfigObject(entries)) {
+    const main = entries.main;
+    if (isConfigObject(main) && typeof main.model === "string") {
+      main.model = primaryModelRef;
+      return;
+    }
+    for (const entry of Object.values(entries)) {
+      if (isConfigObject(entry) && entry.default === true && typeof entry.model === "string") {
+        entry.model = primaryModelRef;
+        return;
+      }
+    }
+    return;
+  }
   const list = agents.list;
   if (!Array.isArray(list)) return;
   let defaultAgent: ConfigObject | undefined;
@@ -1343,7 +1357,6 @@ async function runInferenceSetWithoutHostLock(
       );
     }
 
-    const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
     const preferredInferenceApi =
       explicitPreferredInferenceApi ??
       resolveRuntimeInferenceApi({
@@ -1494,7 +1507,6 @@ async function runInferenceSetWithoutHostLock(
       {
         agentName,
         configChanged: patched.changed,
-        nextApi: patched.route.inferenceApi,
         openClawPairingTarget:
           agentName === "openclaw"
             ? {
@@ -1504,7 +1516,6 @@ async function runInferenceSetWithoutHostLock(
                 stateDirectory: target.configDir,
               }
             : undefined,
-        previousApi: previousOpenClawInferenceApi,
         result: {
           sandboxName,
           provider,

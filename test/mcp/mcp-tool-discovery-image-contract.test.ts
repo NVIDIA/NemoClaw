@@ -183,7 +183,10 @@ describe("MCP tool discovery image contract", () => {
       );
       const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
       const matches = (
-        Object.values(lock.packages) as Array<{ integrity?: string; resolved?: string }>
+        Object.values(lock.packages) as Array<{
+          integrity?: string;
+          resolved?: string;
+        }>
       ).filter(
         (entry) =>
           entry.integrity === integrity &&
@@ -211,7 +214,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "f00a03aa854a37e94ac3d592ad75470e89530a20956c5e59473fedf6affdb775",
+      expectedHash: "b636367343f48e681eae468abaac40bab8890bfec96e8e4f566cff5e5a8a226c",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
@@ -252,7 +255,9 @@ describe("MCP tool discovery image contract", () => {
         path.join(bundleRoot, "mcp-tool-discovery/mcp-tool-discovery.bundle"),
         executablePath,
       );
-      const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
+      const discoveryResult = spawnSync(process.execPath, [executablePath], {
+        encoding: "utf8",
+      });
       expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
       expect(JSON.parse(discoveryResult.stdout)).toEqual({
         protocol: 2,
@@ -339,7 +344,9 @@ describe("MCP tool discovery image contract", () => {
         })}\n`,
         { mode: 0o444 },
       );
-      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, {
+        mode: 0o444,
+      });
       const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
       const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
       const reviewedBundle = fs.readFileSync(bundlePath, "utf8");
