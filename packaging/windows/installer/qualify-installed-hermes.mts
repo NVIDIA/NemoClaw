@@ -864,22 +864,10 @@ async function main() {
       if (new URL(request.url()).origin === origin.origin)
         sessionToken ??= request.headers()["x-hermes-session-token"];
     });
-    await page.goto(origin.origin + "/", {
+    await page.goto(origin.origin + "/chat", {
       waitUntil: "domcontentloaded",
       timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))),
     });
-    const chatLink = page.locator('a[href="/chat"]').first();
-    await chatLink.waitFor({
-      state: "visible",
-      timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))),
-    });
-    await chatLink.click({
-      timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))),
-    });
-    await page.waitForURL(
-      (url: URL) => url.origin === origin.origin && url.pathname.replace(/\/$/u, "") === "/chat",
-      { timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))) },
-    );
     const terminal = page.locator(".xterm-helper-textarea").first();
     await terminal.waitFor({
       state: "attached",
