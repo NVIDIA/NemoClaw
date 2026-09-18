@@ -399,19 +399,10 @@ test(
   "hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite",
   {
     timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare clean Hermes Discord runner",
-        "install Hermes Discord sandbox",
-        "validate Discord provider and Hermes health",
-        "validate Discord config and placeholders",
-        "exercise native Discord gateway rewrite",
-        "verify Discord token isolation and REST boundary",
-        "finalize Hermes Discord resources",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("prepare clean Hermes Discord runner");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const env = commandEnv(apiKey);
     const redactionValues = redactions(apiKey);

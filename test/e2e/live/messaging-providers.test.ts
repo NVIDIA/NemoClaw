@@ -62,20 +62,10 @@ test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   {
     ...testTimeoutOptions(LIVE_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "load messaging credentials and clear the sandbox",
-        "install the all-channel OpenClaw sandbox",
-        "add WhatsApp and prove rebuild persistence",
-        "inspect providers placeholders and credential isolation",
-        "probe Telegram and Discord policy rewrites",
-        "exercise installed Slack, Telegram, and WeChat runtimes",
-        "prove Discord websocket credential rewrite",
-        "inspect gateway health and optional live sends",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+    progress.phase("load messaging credentials and clear the sandbox");
+
     if (!process.env.NVIDIA_INFERENCE_API_KEY) {
       skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
       return;

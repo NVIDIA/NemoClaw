@@ -161,17 +161,6 @@ test(
   "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate GPU and runtime prerequisites",
-        "install Ollama runtime",
-        "perform first Ollama onboard",
-        "validate first proxy token and inference",
-        "re-onboard GPU sandbox",
-        "validate persisted proxy auth and inference",
-        "remove GPU double-onboard sandbox",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -182,6 +171,8 @@ test(
     sandbox,
     skip,
   }) => {
+    progress.phase("validate GPU and runtime prerequisites");
+
     await artifacts.target.declare({
       id: "gpu-double-onboard",
       sandboxName: SANDBOX_NAME,

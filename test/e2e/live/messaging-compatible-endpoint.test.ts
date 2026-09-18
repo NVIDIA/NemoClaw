@@ -529,19 +529,10 @@ test(
   "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and register messaging cleanup",
-        "clear prior messaging state and start the compatible endpoint",
-        "confirm host reachability to the compatible endpoint",
-        "onboard Telegram-enabled OpenClaw",
-        "inspect the provider route and OpenClaw configuration",
-        "prove inference.local and agent traffic",
-        "record authenticated traffic and proxy-header results",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm the selected runtime and register messaging cleanup");
+
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-messaging-compatible-endpoint",
       scenarioLabel: "messaging compatible endpoint",

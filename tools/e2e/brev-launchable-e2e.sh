@@ -1004,9 +1004,10 @@ test -x ./node_modules/.bin/vitest
 export CI=true GITHUB_ACTIONS=true E2E_TARGET_ID=staging-brev-launchable
 export NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable NEMOCLAW_RUN_LIVE_E2E=1
 export NEMOCLAW_E2E_COMMAND_EVIDENCE=1
+export NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1
 export NEMOCLAW_MODEL="$(node /usr/local/lib/nemoclaw/launchable-config.mjs /usr/local/share/nemoclaw/launchable-agents.json openclaw cloudModel)"
 export NEMOCLAW_SANDBOX_NAME=e2e-staging
-./node_modules/.bin/vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
+./node_modules/.bin/vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 printf 'NEMOCLAW_FULL_E2E_PASSED\n'
 REMOTE
   # The wrapper adds five minutes for remote-shell and Vitest lifecycle overhead beyond the test.

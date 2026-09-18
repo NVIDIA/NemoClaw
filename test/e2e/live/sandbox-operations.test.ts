@@ -27,17 +27,6 @@ test(
   "OpenShell preserves sandbox lifecycle and fail-closed final gateway cleanup",
   {
     timeout: testTimeout(90 * 60_000),
-    meta: {
-      e2ePhases: [
-        "prepare the sandbox operation fixture",
-        "onboard and prove native readiness",
-        "write durable sandbox state",
-        "stop and start through OpenShell",
-        "prove native readiness and state survival",
-        "preserve the gateway for an unregistered live sandbox",
-        "destroy the final sandbox and remove the gateway",
-      ],
-    },
   },
   async ({
     artifacts,

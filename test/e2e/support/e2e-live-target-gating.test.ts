@@ -14,6 +14,7 @@ import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const COLLECTION_ENV = [
@@ -66,10 +67,7 @@ function buildLiveTestEnv(
 
 function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">) {
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-test-list-"));
-  const progress = startTestProgress("nested live E2E collection", [
-    "collect live tests",
-    "clean collector artifacts",
-  ]);
+  const progress = startTestProgress("nested live E2E collection", "collect live tests");
   const probe = new ShellProbe({
     artifacts: new ArtifactSink(artifactRoot),
     progress,
@@ -166,44 +164,22 @@ describe("live E2E target gating", () => {
   );
 
   it.concurrent(
-    "collects the bootstrap install test through the trusted-main legacy path",
-    collectorTimeoutOptions(3),
+    "collects the bootstrap install contract through its current entry point",
+    collectorTimeoutOptions(),
     async (context) => {
       const listLiveTests = liveTestLister(context);
-      const legacy = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["launchable-smoke.test.ts"],
-      });
-
-      context.expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
-      context
-        .expect(linesForFile(legacy.lines, "launchable-smoke.test.ts"))
-        .toEqual([
-          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-        ]);
-
-      const renamed = await listLiveTests({
+      const collected = await listLiveTests({
         enabled: true,
         env: { E2E_TARGET_ID: "bootstrap-install-smoke" },
         files: ["bootstrap-install-smoke.test.ts"],
       });
 
-      context.expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
+      context.expect(collected.status, collected.stderr || collected.stdout).toBe(0);
       context
-        .expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts"))
+        .expect(linesForFile(collected.lines, "bootstrap-install-smoke.test.ts"))
         .toEqual([
           "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
         ]);
-
-      const inactive = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["bootstrap-install-smoke.test.ts"],
-      });
-
-      context.expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
-      context.expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
     },
   );
 
@@ -342,20 +318,29 @@ describe("live E2E target gating", () => {
   );
 
   it.concurrent(
-    "collects an executable registry target selected by TARGET_ID (#11407)",
-    collectorTimeoutOptions(),
+    "collects executable registry targets and rejects a removed placeholder",
+    collectorTimeoutOptions(2),
     async (context) => {
       const listLiveTests = liveTestLister(context);
       const file = "registry-targets.test.ts";
-
-      const result = await listLiveTests({
+      const result = await listLiveTests({ enabled: true, files: [file] });
+      context.expect(result.status, result.stderr || result.stdout).toBe(0);
+      const targetIds = linesForFile(result.lines, file).map(
+        (line) => line.split(" > ")[1]!.split(":")[0]!,
+      );
+      context.expect(new Set(targetIds).size).toBe(targetIds.length);
+      context.expect(targetIds.sort()).toEqual(
+        listTargets()
+          .map((target) => target.id)
+          .sort(),
+      );
+      const removed = await listLiveTests({
         enabled: true,
-        env: { TARGET_ID: "ubuntu-repo-cloud-openclaw" },
+        env: { TARGET_ID: "ubuntu-repo-cloud-hermes" },
         files: [file],
       });
-
-      context.expect(result.status, result.stderr || result.stdout).toBe(0);
-      context.expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
+      context.expect(removed.status).not.toBe(0);
+      context.expect(removed.stderr).toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
     },
   );
 

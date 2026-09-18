@@ -13,15 +13,6 @@ test(
   CHANNELS_STOP_START_TEST_NAME,
   {
     timeout: testTimeout(LIVE_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "prepare channel lifecycle sandbox",
-        "onboard channel lifecycle sandbox",
-        "validate configured channel state",
-        "stop and start the sandbox through OpenShell",
-        "validate channel state after native readiness",
-      ],
-    },
   },
   runChannelsStopStartTarget,
 );

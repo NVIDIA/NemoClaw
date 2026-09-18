@@ -113,6 +113,51 @@ function resolveLocalComparisonBase(baseRef: string): string {
   return selectLocalComparisonBase(mergeBase, mergeHead, mergeHeadIsBaseAncestor);
 }
 
+function readChangedFiles(
+  baseRef: string,
+  candidateRef: string | undefined,
+  repoRoot = REPO_ROOT,
+): PullRequestFile[] {
+  const read = (breakRewrites: boolean) =>
+    execFileSync(
+      "git",
+      [
+        "diff",
+        "--name-status",
+        "-z",
+        ...(breakRewrites ? ["-B"] : []),
+        "-M",
+        baseRef,
+        ...(candidateRef ? [candidateRef] : []),
+        "--",
+      ],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+  const files = parseChangedFiles(read(false));
+  const removed = new Set(
+    files.filter((file) => file.status === "removed").map((file) => file.filename),
+  );
+  const modified = new Set(
+    files.filter((file) => file.status === "modified").map((file) => file.filename),
+  );
+  const moves = new Map<string, PullRequestFile>();
+  const movedSources = new Set<string>();
+  // Carry only unchanged bodies from removed files; rewritten sources retain their own comparisons.
+  for (const match of read(true).matchAll(/(?:^|\0)R100\0([^\0]+)\0([^\0]+)(?=\0|$)/g)) {
+    const previous = match[1]!;
+    const filename = match[2]!;
+    if (removed.has(previous) && modified.has(filename)) {
+      moves.set(filename, { filename, previous_filename: previous, status: "renamed" });
+      movedSources.add(previous);
+    }
+  }
+  return files.flatMap((file) => {
+    if (movedSources.has(file.filename)) return [];
+    const move = moves.get(file.filename);
+    return move ? [file, move] : [file];
+  });
+}
+
 function loadLocalDiff(): GrowthGuardrailDiff {
   const baseRef = process.env.NEMOCLAW_GROWTH_BASE_REF ?? "origin/main";
   execFileSync("git", ["rev-parse", "--verify", baseRef], {
@@ -121,11 +166,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   });
   const comparisonBase = resolveLocalComparisonBase(baseRef);
 
-  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", comparisonBase, "--"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
-  const files = parseChangedFiles(changed);
+  const files = readChangedFiles(comparisonBase, undefined);
   const known = new Set(files.map(({ filename }) => filename));
   const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
     cwd: REPO_ROOT,
@@ -183,19 +224,12 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
   fetchPullHead(prNumber, headSha);
-  const changed = execFileSync(
-    "git",
-    ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    },
-  );
+  const files = readChangedFiles(baseSha, headSha);
   const baseCache = new Map<string, string | null>();
   const headCache = new Map<string, string | null>();
 
   return {
-    files: parseChangedFiles(changed),
+    files,
     pullRequestNumber: Number(prNumber),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
@@ -211,6 +245,7 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 }
 
 export const testOnly = {
+  readChangedFiles,
   parseAncestorProbe,
   parseChangedFiles,
   readFilesCached,

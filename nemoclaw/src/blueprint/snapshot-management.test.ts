@@ -50,6 +50,11 @@ afterEach(() => {
 });
 
 describe("snapshot retention management", () => {
+  it("returns no snapshots when the snapshots directory is absent", () => {
+    const { snapshotsDir } = temporaryHome();
+    expect(listSnapshots({ snapshotsDir })).toEqual([]);
+  });
+
   it("lists strict snapshot identities newest first", async () => {
     const { snapshotsDir } = temporaryHome();
     const older = writeSnapshot(snapshotsDir, "20990101T000000Z");

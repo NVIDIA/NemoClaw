@@ -50,16 +50,9 @@ test(
   "TC-INF-06 invalid API key fails with credential classification and cleanup",
   {
     timeout: 5 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the invalid-key sandbox",
-        "attempt onboard with an invalid NVIDIA credential",
-        "confirm credential failure and no sandbox residue",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
     await requireLivePrerequisites(host, runtimeProvider);
     const sandboxName = inferenceSandboxName("e2e-badkey");
     cleanup.add(`remove inference-routing invalid-key residue for ${sandboxName}`, () =>
@@ -102,16 +95,9 @@ test(
   "TC-INF-07 unreachable endpoint fails with transport classification and cleanup",
   {
     timeout: 5 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the unreachable-endpoint sandbox",
-        "attempt onboard against the unreachable endpoint",
-        "confirm transport failure and no sandbox residue",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm live inference prerequisites");
     await requireLivePrerequisites(host, runtimeProvider);
     const sandboxName = inferenceSandboxName("e2e-unreach");
     cleanup.add(`remove inference-routing unreachable residue for ${sandboxName}`, () =>
@@ -219,19 +205,6 @@ type RuntimeIdentityE2EContext = Pick<
 
 const RUNTIME_IDENTITY_E2E_OPTIONS = {
   timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "confirm live runtime identity prerequisites",
-      "onboard a real OpenShell sandbox",
-      "start the public OAuth issuer and protected resource",
-      "apply and attach the runtime identity through OpenShell",
-      "prove inference remains live after identity attachment",
-      "call the protected resource with the injected bearer",
-      "reject unreviewed credential delivery before bearer substitution",
-      "rotate the credential behind its placeholder",
-      "verify refused unsafe rollback preserves live resources",
-    ],
-  },
 } as const;
 
 async function runRuntimeIdentityE2EScenario(
@@ -719,16 +692,9 @@ test(
   "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm compatible-endpoint prerequisites",
-        "start the local compatible endpoint",
-        "onboard to the compatible endpoint",
-        "request sandbox chat through inference.local",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm compatible-endpoint prerequisites");
     const model = "nemoclaw-e2e-compatible";
     const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
     await requireLivePrerequisites(host, runtimeProvider);
@@ -813,17 +779,6 @@ test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the HTTPS pin sandbox",
-        "start the public HTTPS compatible endpoint",
-        "onboard with the placeholder endpoint",
-        "switch to the DNS-backed HTTPS endpoint",
-        "verify pinned route isolation and DNS rebinding",
-        "verify private redirect rejection",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     progress.phase("confirm live inference prerequisites");

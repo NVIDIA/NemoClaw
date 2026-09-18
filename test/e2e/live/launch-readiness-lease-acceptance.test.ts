@@ -15,15 +15,10 @@ test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
   "launch readiness locked-image acceptance",
   {
     timeout: OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "verify the existing locked-image sandbox",
-        "produce launch-readiness evidence",
-        "complete two PTY launch sessions with structured turn evidence",
-      ],
-    },
   },
   async ({ host, progress, secrets }) => {
+    progress.phase("verify the existing locked-image sandbox");
+
     progress.phase("verify the existing locked-image sandbox");
     const entry = readRegistrySandboxEntry(SANDBOX_NAME);
     expect(entry.agent).toBe("openclaw");

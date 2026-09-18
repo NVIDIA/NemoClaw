@@ -218,16 +218,10 @@ test(
   "DGX Spark Express option 2 materializes the fixed vLLM profile and routes sandbox inference",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "qualify the physical DGX Spark host",
-        "select Spark Express option 2 and onboard through the local-model profile",
-        "verify catalog-owned vLLM runtime configuration",
-        "prove sandbox inference and unrelated egress denial",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("qualify the physical DGX Spark host");
+
     validateSandboxName(SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
     const plan = vllmProfilePlan();

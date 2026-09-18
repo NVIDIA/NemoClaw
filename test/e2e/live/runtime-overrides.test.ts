@@ -325,19 +325,10 @@ test(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
   {
     ...testTimeoutOptions(TEST_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "confirm Docker and build the runtime image",
-        "capture the baseline OpenClaw config",
-        "apply valid runtime overrides",
-        "exercise the combined override transaction",
-        "reject invalid override values",
-        "confirm rejected overrides preserve the baseline",
-        "record runtime override evidence",
-      ],
-    },
   },
   async ({ artifacts, host, progress, secrets, skip }) => {
+    progress.phase("confirm Docker and build the runtime image");
+
     const dockerLog: string[] = [];
     const image = process.env.NEMOCLAW_TEST_IMAGE ?? `nemoclaw-runtime-overrides-${process.pid}`;
     const cleanupImage = process.env.NEMOCLAW_TEST_IMAGE === undefined;

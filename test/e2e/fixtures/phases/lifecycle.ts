@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { LifecycleProfile } from "./lifecycle-profile.ts";
+export type { LifecycleProfile } from "./lifecycle-profile.ts";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -170,8 +173,6 @@ export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
     "exit 0",
   ].join("\n");
 }
-
-export type LifecycleProfile = "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
   add(name: string, run: () => Promise<void> | void): void;

@@ -10,11 +10,7 @@ import ts from "typescript";
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
-import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
-import {
-  isReviewedOpenShellSdkInstallStep,
-  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
-} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
+import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-inventory.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -35,10 +31,7 @@ const DOWNLOAD_ARTIFACT_ACTION =
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
-const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
-  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
-const CONFIG_EXPORT_EVIDENCE_PATH =
-  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -872,6 +865,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   const live = workflow.jobs.live ?? {};
   if (
+    live.with?.openshell_sdk_artifact_name !==
+    "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
+  ) {
+    errors.push("live must consume its reviewed SDK artifact through the standard profile");
+  }
+
+  if (
     !sameMembers(needs(live), [
       "base-image-publication",
       "generate-matrix",
@@ -880,34 +880,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   ) {
     errors.push(
       "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
-    );
-  }
-  const sdkSteps = live.steps ?? [];
-  const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
-  const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
-  const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
-  const downloadIndex = sdkSteps.indexOf(sdkDownload);
-  const installIndex = sdkSteps.indexOf(sdkInstall);
-  const runIndex = sdkSteps.indexOf(findStep(live, "Run live E2E tests"));
-  if (
-    !isDeepStrictEqual(sdkDownload, {
-      name: "Download reviewed OpenShell SDK archive",
-      uses: DOWNLOAD_ARTIFACT_ACTION,
-      with: {
-        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
-        path: "${{ runner.temp }}/openshell-sdk",
-      },
-    }) ||
-    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
-    !(
-      prepareIndex >= 0 &&
-      prepareIndex < downloadIndex &&
-      downloadIndex < installIndex &&
-      installIndex < runIndex
-    )
-  ) {
-    errors.push(
-      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
     );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
@@ -934,13 +906,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("cloud-onboard must not duplicate the exact inline managed-image catalog");
   }
   if (
-    live.env?.E2E_MANAGED_IMAGE_REVISION !==
+    live.with?.managed_image_revision !==
     "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
     errors.push("live stock onboarding must use the selected managed-image revision");
   }
   if (
-    live.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+    live.with?.managed_image_catalog !==
     "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
   ) {
     errors.push("live stock onboarding must use the exact PR managed-image catalog");
@@ -995,50 +967,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
   }
   if (
-    live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
+    live.with?.dcode_base_ref !==
     "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
     errors.push("live DCode must use one selected immutable image authority");
   }
-  const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
-  const requireConfigExportEvidence = findStep(live, "Require automatic config export evidence");
-  const upload = findStep(live, "Upload E2E artifacts");
-  const uploadPaths = String(upload.with?.path ?? "")
-    .split("\n")
-    .map((path) => path.trim())
-    .filter(Boolean);
-  const liveSteps = live.steps ?? [];
   if (
-    evidence.if !==
-      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}" ||
-    evidence.env?.BASE_CONTRACT !==
-      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
-    !String(evidence.run ?? "").includes("dcode-base-image.json") ||
-    liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
-    !String(upload.with?.path ?? "").includes("dcode-base-image.json")
+    live.with?.dcode_base_contract !==
+    "${{ needs.base-image-publication.outputs.dcode_base_contract }}"
   ) {
-    errors.push(
-      "live DCode must record its immutable base contract only without a candidate catalog",
-    );
-  }
-  if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
-    errors.push("live E2E must upload cold-onboard performance evidence");
-  }
-  if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
-    errors.push("live E2E must upload automatic config export evidence");
-  }
-  if (
-    requireConfigExportEvidence.if !== "${{ success() }}" ||
-    requireConfigExportEvidence.shell !== "bash" ||
-    String(requireConfigExportEvidence.run ?? "").trim() !==
-      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
-    (requireConfigExportEvidence["continue-on-error"] !== undefined &&
-      requireConfigExportEvidence["continue-on-error"] !== false) ||
-    liveSteps.indexOf(requireConfigExportEvidence) <=
-      liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
-    liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)
-  ) {
-    errors.push("live E2E must require automatic config export evidence before upload");
+    errors.push("live DCode must receive the selected immutable base contract");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
@@ -1054,7 +992,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
 }
 
 const STOCK_ONBOARDING_JOBS = [
-  "live",
   "mcp-bridge",
   "openshell-credential-generation-window",
   "mcp-bridge-dev",
@@ -1065,6 +1002,7 @@ const STOCK_ONBOARDING_JOBS = [
 ] as const;
 
 const STOCK_ONBOARDING_CATALOGUE_JOBS = [
+  "live",
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",

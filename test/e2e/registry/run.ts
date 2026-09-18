@@ -4,6 +4,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
 import {
   type E2eGatewayRuntime,
@@ -13,14 +14,19 @@ import {
   runtimeCoverageVariant,
   runtimeExecutionId,
 } from "../../../tools/e2e/gateway-runtime.mts";
-import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+
+import {
+  listExecutionTargets,
+  listTargets,
+  requireTargets,
+} from "../../../tools/e2e/target-inventory.mts";
 import { liveTargetTestTitle, requireLiveTargetExecution } from "./execution.ts";
-import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
 import type { TargetDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
+  listInventory: boolean;
   emitLiveMatrix: boolean;
   targets: string[];
 }
@@ -37,20 +43,23 @@ export interface LiveTargetMatrixEntry extends E2eExecutionMetadata {
   runtime: string;
   onboarding: string;
   expectedStateId: string;
-  suites: string[];
   requiredSecrets: string[];
-  pendingRuntimeSuites: string[];
   timeout_minutes: number;
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     list: false,
+    listInventory: false,
     emitLiveMatrix: false,
     targets: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--list-inventory") {
+      args.listInventory = true;
+      continue;
+    }
     if (arg === "--list") {
       args.list = true;
       continue;
@@ -62,12 +71,23 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--targets") {
       const value = argv[i + 1];
       if (!value) {
-        throw new Error("--targets requires a comma-separated value");
+        throw new Error(
+          `--targets requires a comma-separated value. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
       }
       args.targets = value
         .split(",")
         .map((id) => id.trim())
         .filter(Boolean);
+      if (args.targets.length === 0) {
+        throw new Error(
+          `--targets requires at least one target ID. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
+      }
       i += 1;
       continue;
     }
@@ -101,9 +121,7 @@ function liveMatrixEntry(
     runtime: target.environment.runtime,
     onboarding: target.environment.onboarding,
     expectedStateId: target.expectedStateId,
-    suites: target.suiteIds,
     requiredSecrets: target.requiredSecrets,
-    pendingRuntimeSuites: target.suiteIds,
     timeout_minutes: liveTargetTimeoutContract(
       target.environment.lifecycle,
       target.configExport.expectation,
@@ -136,6 +154,10 @@ function emitLiveMatrix(ids: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.listInventory) {
+    process.stdout.write(`${JSON.stringify(listExecutionTargets(), null, 2)}\n`);
+    return;
+  }
   if (args.list) {
     printList();
     return;

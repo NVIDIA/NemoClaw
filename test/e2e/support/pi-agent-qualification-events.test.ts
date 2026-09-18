@@ -12,7 +12,7 @@ import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-cop
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 

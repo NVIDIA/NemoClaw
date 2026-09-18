@@ -663,18 +663,6 @@ test(
   "full e2e: install, onboard, inference, cli operations, and cleanup",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "check full E2E prerequisites",
-        "install and onboard OpenClaw sandbox",
-        "validate CLI sandbox and policy state",
-        "exercise hosted, sandbox, and launch inference",
-        "scan sandbox state for credentials",
-        "exercise native plugin package and update lifecycle",
-        "inspect runtime logs and security posture",
-        "remove full-E2E sandbox",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -686,6 +674,8 @@ test(
     secrets,
     skip,
   }) => {
+    progress.phase("check full E2E prerequisites");
+
     gateway = fullE2eGateway(USE_PREINSTALLED_LAUNCHABLE);
     const hosted = requireHostedInferenceConfig(
       secrets,

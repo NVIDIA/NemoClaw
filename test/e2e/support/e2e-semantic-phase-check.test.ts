@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
+import YAML from "yaml";
 
 import {
+  reconcileLiveTargetDiscovery,
   scanDirectChildProcessSource,
   scanLiveSourceGraph,
   semanticPhaseCoverageModules,
   validateCollectedSemanticPhaseModule,
-  validateTestScopedPhaseCalls,
   validateWindowsMxcControlBoundarySource,
 } from "../../../tools/e2e/check-semantic-phases.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -32,6 +35,64 @@ const TEST_PROGRESS_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts
 const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-compatible.ts");
 
 describe("semantic E2E phase checker", () => {
+  const liveFiles = fs
+    .globSync("**/*.test.ts", { cwd: path.join(REPO_ROOT, "test/e2e/live") })
+    .map((file) => `test/e2e/live/${file.split(path.sep).join("/")}`);
+
+  test.each([
+    { changedPath: "test/e2e/registry/run.ts", runs: true },
+    { changedPath: "test/e2e/registry/expected-states.ts", runs: true },
+    { changedPath: "test/e2e/registry/definitions/baseline.ts", runs: true },
+    { changedPath: "test/e2e/live/registry-targets.test.ts", runs: true },
+    { changedPath: "test/e2e/registry/README.md", runs: false },
+    { changedPath: "test/e2e/registry/run.ts.backup", runs: false },
+  ])("selects the semantic hook for $changedPath: $runs", ({ changedPath, runs }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-semantic-hook-"));
+    onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+    const config = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".pre-commit-config.yaml"), "utf8"),
+    ) as { repos: { hooks: { id: string; entry: string }[] }[] };
+    const hook = config.repos
+      .flatMap((repo) => repo.hooks)
+      .find((candidate) => candidate.id === "e2e-semantic-phase-plans")!;
+    // Exercise the installed hook selector while replacing the semantic workload with a receipt.
+    hook.entry = `${JSON.stringify(process.execPath)} -e "require('node:fs').writeFileSync('selected', 'yes')"`;
+    fs.writeFileSync(
+      path.join(root, ".pre-commit-config.yaml"),
+      YAML.stringify({ repos: [{ repo: "local", hooks: [hook] }] }),
+    );
+    fs.mkdirSync(path.dirname(path.join(root, changedPath)), { recursive: true });
+    fs.writeFileSync(path.join(root, changedPath), "// Hook selection fixture.\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root, timeout: 5_000 });
+    const result = spawnSync(
+      path.join(REPO_ROOT, "node_modules", ".bin", "prek"),
+      ["run", "e2e-semantic-phase-plans", "--files", changedPath],
+      { cwd: root, encoding: "utf8", timeout: 5_000 },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.existsSync(path.join(root, "selected"))).toBe(runs);
+  });
+
+  test("accounts for every discovered live module, including manual qualifications", () => {
+    expect(reconcileLiveTargetDiscovery(liveFiles)).toEqual([]);
+  });
+
+  test("rejects a discovered live module without an execution target", () => {
+    expect(
+      reconcileLiveTargetDiscovery([...liveFiles, "test/e2e/live/unregistered.test.ts"]),
+    ).toEqual([
+      "test/e2e/live/unregistered.test.ts: live E2E module has no execution target; register its execution route",
+    ]);
+  });
+
+  test("rejects a registration after its live module is removed", () => {
+    const removed = "test/e2e/live/bootstrap-install-smoke.test.ts";
+    expect(reconcileLiveTargetDiscovery(liveFiles.filter((file) => file !== removed))).toEqual([
+      `${removed}: execution target references a missing live E2E module`,
+    ]);
+  });
+
   test("accepts formatted OpenShell create-then-delete control flow for Windows MXC", () => {
     const source = `
       async function qualify(runOpenShellCommand, sandboxName) {
@@ -101,7 +162,7 @@ describe("semantic E2E phase checker", () => {
     ]);
   });
 
-  test("derives coverage from registry, free-standing, shared, and forwarding workflow paths", () => {
+  test("derives coverage from discovered files and registered workflow paths", () => {
     const modules = semanticPhaseCoverageModules(
       {
         matrix: [{}],
@@ -133,7 +194,6 @@ describe("semantic E2E phase checker", () => {
         file: "test/e2e/live/bootstrap-install-smoke.test.ts",
         project: "e2e-live",
       },
-      { file: "test/e2e/live/launchable-smoke.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/registry-targets.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/unselected-regression.test.ts", project: "e2e-live" },
       { file: "test/platform/images/vllm-docker-storage.test.ts", project: "integration" },
@@ -148,20 +208,11 @@ describe("semantic E2E phase checker", () => {
       tests: [
         {
           fullName: "covers a workflow-selected integration path",
-          phases: ["prepare integration behavior", "verify integration behavior"],
         },
       ],
       source: {
         importsDirectTest: false,
         importsSharedTest: false,
-        phaseCalls: [
-          {
-            file: "test/workflow-selected.test.ts",
-            line: 12,
-            label: "verify integration behavior",
-          },
-        ],
-        testPhaseBodies: [],
       },
     };
 
@@ -176,7 +227,7 @@ describe("semantic E2E phase checker", () => {
     ).toEqual([]);
   });
 
-  test("rejects missing metadata and invalid phase transitions from a collected module", () => {
+  test("accepts progress labels without a declared sequence", () => {
     const failures = validateCollectedSemanticPhaseModule({
       relativeModuleId: "test/e2e/live/invalid-semantic-phase.test.ts",
       errors: [],
@@ -184,98 +235,26 @@ describe("semantic E2E phase checker", () => {
         { fullName: "missing semantic phase metadata" },
         {
           fullName: "invalid semantic phase transitions",
-          phases: ["prepare fixture behavior", "exercise fixture behavior"],
         },
       ],
       source: scanLiveSourceGraph(INVALID_SOURCE_FIXTURE),
     });
 
-    expect(failures).toHaveLength(3);
-    expect(failures).toEqual(
-      expect.arrayContaining([
-        "test/e2e/live/invalid-semantic-phase.test.ts > missing semantic phase metadata: missing e2ePhases metadata",
-        expect.stringMatching(/semantic phase transitions must use literals/u),
-        expect.stringMatching(/undeclared semantic phase: undeclared fixture behavior/u),
-      ]),
-    );
+    expect(failures).toEqual([]);
   });
 
-  test.each([
-    { forwardedTestModules: [] },
-    { forwardedTestModules: ["test/e2e/live/other.test.ts"] },
-    {
-      forwardedTestModules: [
-        "test/e2e/live/launchable-smoke.test.ts",
-        "test/e2e/live/other.test.ts",
-      ],
-    },
-  ])("accepts only the exact bootstrap forwarding alias [case %#]", ({ forwardedTestModules }) => {
-    const forwardingModule = {
-      relativeModuleId: "test/e2e/live/bootstrap-install-smoke.test.ts",
-      errors: [],
-      tests: [],
-      source: {
-        importsDirectTest: false,
-        importsSharedTest: false,
-        phaseCalls: [],
-        testPhaseBodies: [],
-      },
-    };
-
+  test("rejects a module that collects no executable tests", () => {
     expect(
       validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
+        relativeModuleId: "test/e2e/live/empty.test.ts",
+        errors: [],
+        tests: [],
         source: {
-          ...forwardingModule.source,
-          forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
+          importsDirectTest: false,
+          importsSharedTest: true,
         },
       }),
-    ).toEqual([]);
-    expect(
-      validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
-        source: {
-          ...forwardingModule.source,
-          directChildProcessCalls: [
-            {
-              api: "spawnSync",
-              boundary: "forwardedSetup",
-              file: "test/e2e/live/bootstrap-install-smoke.test.ts",
-              hasBoundedTimeout: false,
-              hasHardKillSignal: true,
-              line: 8,
-              observesOutput: false,
-              outputIgnored: false,
-              tracksActivity: false,
-              tracksLifecycle: false,
-            },
-          ],
-          forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
-        },
-      }),
-    ).toEqual([
-      expect.stringMatching(
-        /blocking child-process call spawnSync must declare a positive timeout/u,
-      ),
-    ]);
-    const expectedFailure =
-      "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts";
-
-    expect(
-      validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
-        source: { ...forwardingModule.source, forwardedTestModules },
-      }),
-    ).toEqual([expectedFailure]);
-
-    const forwardingSource = scanLiveSourceGraph(
-      path.join(REPO_ROOT, "test/e2e/live/bootstrap-install-smoke.test.ts"),
-    );
-    expect(forwardingSource.phaseCalls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ file: "test/e2e/live/launchable-smoke.test.ts" }),
-      ]),
-    );
+    ).toContain("test/e2e/live/empty.test.ts: collected zero tests");
   });
 
   test("rejects each direct child-process boundary that can hide a heartbeat", () => {
@@ -286,19 +265,11 @@ describe("semantic E2E phase checker", () => {
       tests: [
         {
           fullName: "audits child processes",
-          phases: ["prepare child-process audit", "audit child processes"],
         },
       ],
       source: {
         ...source,
         importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/direct-child-process-audit.test.ts",
-            line: 10,
-            label: "audit child processes",
-          },
-        ],
       },
     });
 
@@ -423,20 +394,12 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     const failures = validateCollectedSemanticPhaseModule({
       relativeModuleId: "test/e2e/live/process-builtin-child.fixture.ts",
       errors: [],
-      tests: [{ fullName: "audits process built-ins", phases: ["prepare", "verify"] }],
+      tests: [{ fullName: "audits process built-ins" }],
       source: {
         childProcessAuditFailures: builtinScan.auditFailures,
         directChildProcessCalls: builtinScan.calls,
         importsDirectTest: false,
         importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/process-builtin-child.fixture.ts",
-            label: "verify",
-            line: 1,
-          },
-        ],
-        testPhaseBodies: [],
       },
     });
     expect(
@@ -577,19 +540,11 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     const missingLifecycleFailures = validateCollectedSemanticPhaseModule({
       relativeModuleId: "test/e2e/live/observed-child-lifecycle-contract.test.ts",
       errors: [],
-      tests: [{ fullName: "audits child lifecycle checkpoints", phases: ["prepare", "verify"] }],
+      tests: [{ fullName: "audits child lifecycle checkpoints" }],
       source: {
         directChildProcessCalls: missingLifecycleStart.calls,
         importsDirectTest: false,
         importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/observed-child-lifecycle-contract.test.ts",
-            label: "verify",
-            line: 1,
-          },
-        ],
-        testPhaseBodies: [],
       },
     });
     expect(missingLifecycleFailures).toEqual(
@@ -673,19 +628,11 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     const failures = validateCollectedSemanticPhaseModule({
       relativeModuleId: "test/e2e/live/observed-child-contract.test.ts",
       errors: [],
-      tests: [{ fullName: "audits the observed child", phases: ["prepare", "verify"] }],
+      tests: [{ fullName: "audits the observed child" }],
       source: {
         directChildProcessCalls: extraChild.calls,
         importsDirectTest: false,
         importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/observed-child-contract.test.ts",
-            label: "verify",
-            line: 1,
-          },
-        ],
-        testPhaseBodies: [],
       },
     });
     expect(failures).toEqual(
@@ -800,13 +747,13 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     expect(
       scanDirectChildProcessSource(
         TEST_PROGRESS_SOURCE,
-        progressSource.replace("descriptor.enumerable === false", "descriptor.enumerable === true"),
+        progressSource.replace("TEST_PROGRESS_INSTANCES.has(value)", "true"),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/exactly validate the private registry/u)]);
     expect(
       scanDirectChildProcessSource(
         TEST_PROGRESS_SOURCE,
-        progressSource.replace("    enumerable: false,", "    enumerable: true,"),
+        progressSource.replace("TEST_PROGRESS_INSTANCES.add(progress);", ""),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/privately brand, register, and freeze/u)]);
     expect(
@@ -886,154 +833,5 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
         ),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/must reject non-canonical progress before spawning/u)]);
-  });
-
-  test("rejects phase transitions that belong to sibling tests", () => {
-    const failures = validateTestScopedPhaseCalls(
-      [
-        { name: "GitHub download", phases: ["prepare GitHub", "download with GitHub"] },
-        { name: "curl fallback", phases: ["prepare curl", "download with curl"] },
-      ],
-      [
-        {
-          file: "test/e2e/live/example.test.ts",
-          line: 10,
-          phaseCalls: [
-            { file: "test/e2e/live/example.test.ts", line: 12, label: "download with curl" },
-          ],
-        },
-        {
-          file: "test/e2e/live/example.test.ts",
-          line: 20,
-          phaseCalls: [
-            { file: "test/e2e/live/example.test.ts", line: 22, label: "download with GitHub" },
-          ],
-        },
-      ],
-    );
-
-    expect(failures).toEqual([
-      "test/e2e/live/example.test.ts:12: semantic phase is not declared by its test (GitHub download): download with curl",
-      "test/e2e/live/example.test.ts:10: semantic phase is never entered by its test (GitHub download): download with GitHub",
-      "test/e2e/live/example.test.ts:22: semantic phase is not declared by its test (curl fallback): download with GitHub",
-      "test/e2e/live/example.test.ts:20: semantic phase is never entered by its test (curl fallback): download with curl",
-    ]);
-  });
-
-  test("rejects a same-plan sibling that omits its final phase", () => {
-    const phases = ["prepare shared fixture", "verify shared fixture"] as const;
-    const failures = validateCollectedSemanticPhaseModule({
-      relativeModuleId: "test/e2e/live/same-plan-siblings.test.ts",
-      errors: [],
-      tests: [
-        { fullName: "complete sibling", phases },
-        { fullName: "incomplete sibling", phases },
-      ],
-      source: {
-        importsDirectTest: false,
-        importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/same-plan-siblings.test.ts",
-            line: 12,
-            label: "verify shared fixture",
-          },
-        ],
-        testPhaseBodies: [
-          {
-            file: "test/e2e/live/same-plan-siblings.test.ts",
-            line: 10,
-            phaseCalls: [
-              {
-                file: "test/e2e/live/same-plan-siblings.test.ts",
-                line: 12,
-                label: "verify shared fixture",
-              },
-            ],
-          },
-          {
-            file: "test/e2e/live/same-plan-siblings.test.ts",
-            line: 20,
-            phaseCalls: [],
-          },
-        ],
-      },
-    });
-
-    expect(failures).toEqual([
-      "test/e2e/live/same-plan-siblings.test.ts:20: semantic phase is never entered by its test (incomplete sibling): verify shared fixture",
-    ]);
-  });
-
-  test("validates expanded same-plan registrations and ignores unconditional skips", () => {
-    const phases = ["prepare shared fixture", "verify shared fixture"] as const;
-    const failures = validateCollectedSemanticPhaseModule({
-      relativeModuleId: "test/e2e/live/expanded-same-plan.test.ts",
-      errors: [],
-      tests: [
-        { fullName: "skipped case", phases },
-        { fullName: "expanded case one", phases },
-        { fullName: "expanded case two", phases },
-      ],
-      source: {
-        importsDirectTest: false,
-        importsSharedTest: true,
-        phaseCalls: [
-          {
-            file: "test/e2e/live/expanded-same-plan.test.ts",
-            line: 22,
-            label: "verify shared fixture",
-          },
-        ],
-        testPhaseBodies: [
-          {
-            file: "test/e2e/live/expanded-same-plan.test.ts",
-            line: 10,
-            phaseCalls: [],
-            skipped: true,
-          },
-          {
-            file: "test/e2e/live/expanded-same-plan.test.ts",
-            line: 20,
-            phaseCalls: [
-              {
-                file: "test/e2e/live/expanded-same-plan.test.ts",
-                line: 22,
-                label: "verify shared fixture",
-              },
-            ],
-          },
-        ],
-      },
-    });
-
-    expect(failures).toEqual([]);
-  });
-
-  test("accepts transitions declared by their own tests", () => {
-    expect(
-      validateTestScopedPhaseCalls(
-        [
-          { name: "GitHub download", phases: ["prepare GitHub", "download with GitHub"] },
-          { name: "curl fallback", phases: ["prepare curl", "download with curl"] },
-        ],
-        [
-          {
-            file: "test/e2e/live/example.test.ts",
-            line: 10,
-            phaseCalls: [
-              { file: "test/e2e/live/example.test.ts", line: 12, label: "download with GitHub" },
-            ],
-          },
-          {
-            file: "test/e2e/live/example.test.ts",
-            line: 20,
-            phaseCalls: [
-              { file: "test/e2e/live/example.test.ts", line: 22, label: "download with curl" },
-            ],
-          },
-        ],
-      ),
-    ).toEqual([]);
   });
 });

@@ -18,17 +18,10 @@ test(
   "native OpenClaw scheduled work reaches inference.local",
   {
     timeout: testTimeout(30 * 60_000),
-    meta: {
-      e2ePhases: [
-        "prepare the native cron fixture",
-        "onboard hosted-inference OpenClaw",
-        "create native scheduled work",
-        "run native scheduled work through inference",
-        "remove the native cron fixture",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("prepare the native cron fixture");
+
     const hosted = requireHostedInferenceConfig(secrets, process.env, {
       model: MODEL,
     });

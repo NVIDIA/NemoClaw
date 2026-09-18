@@ -161,7 +161,6 @@ export function validateHermesGpuStartupWorkflow(
     E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
-    E2E_OBSERVABLE_OUTCOME: "Hermes GPU startup reaches the stable Ready route",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",

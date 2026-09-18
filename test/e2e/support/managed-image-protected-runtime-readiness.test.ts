@@ -95,7 +95,7 @@ exec "$@"`,
   const artifacts = new ArtifactSink(path.join(root, "artifacts"));
   const progress = startTestProgress(
     "protected managed-image readiness support",
-    ["run protected readiness command", "verify protected readiness result"],
+    "run protected readiness command",
     { logLine: () => undefined },
   );
   owned.progress = progress;

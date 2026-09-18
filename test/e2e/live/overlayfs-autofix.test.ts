@@ -134,17 +134,10 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
   "overlayfs-autofix: patched cluster image handles Docker containerd overlayfs",
   {
     timeout: TEST_TIMEOUT_MS * 3,
-    meta: {
-      e2ePhases: [
-        "confirm Docker overlayfs eligibility",
-        "enable containerd snapshotter mode",
-        "install with the overlayfs auto-fix enabled",
-        "confirm patched cluster image reuse",
-        "reproduce the failure with the auto-fix disabled",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm Docker overlayfs eligibility");
+
     assertTestOwnedSandboxName();
 
     await artifacts.writeJson("contract.json", {

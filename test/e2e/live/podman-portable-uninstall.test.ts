@@ -36,16 +36,6 @@ const UNINSTALL_ARGS = [
   "--destroy-user-data",
   "--yes",
 ] as const;
-const E2E_PHASES = [
-  "pin the current-user Podman authority",
-  "authenticate the workflow-owned pinned OpenShell gateway",
-  "create receipt-owned and unrelated resources",
-  "project portable selectors",
-  "run the exact full uninstall command",
-  "verify resource and lifecycle retirement",
-  "restart the user Podman socket",
-  "begin portable reinstall runtime selection",
-] as const;
 
 function sandboxCreateArgs(): string[] {
   return [
@@ -118,8 +108,10 @@ function writePortableUninstallSummary(artifactDir: string | undefined, uid: num
 
 test(
   "runs full portable uninstall before a clean socket restart and reinstall start (#9189)",
-  { meta: { e2ePhases: E2E_PHASES }, timeout: 300_000 },
+  { timeout: 300_000 },
   async ({ progress, shellProbe }) => {
+    progress.phase("pin the current-user Podman authority");
+
     progress.phase("pin the current-user Podman authority");
     expect(process.platform).toBe("linux");
     const uid = process.getuid?.() ?? -1;

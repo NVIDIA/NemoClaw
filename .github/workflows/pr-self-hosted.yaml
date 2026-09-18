@@ -73,7 +73,6 @@ jobs:
                   or .filename == "src/lib/onboard/setup-nim-flow.ts"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
-                  or .filename == "test/e2e/mock-parity.json"
                   or .filename == "tools/e2e/cli-artifact-workflow-boundary.mts"
                   or .filename == "tools/e2e/workflow-boundary.mts"
                   or (.filename | startswith("managed-inference/presets/llama-cpp."))
@@ -294,12 +293,15 @@ jobs:
         run: gunzip -c /tmp/isolation-image.tar.gz | docker load
 
       - name: Validate OpenClaw managed-image security boundary
+        env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate glibc probe lifecycle
         if: ${{ !cancelled() }}
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts

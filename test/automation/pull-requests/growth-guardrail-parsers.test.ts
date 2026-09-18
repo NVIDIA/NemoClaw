@@ -5,13 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   addedJavaScriptViolations,
-  conditionalGrowthViolations,
   diagnostics,
   dockerfileBudgetGrowthViolations,
-  e2eAssertionBudgetGrowthViolations,
-  loopGrowthViolations,
   onboardGrowthViolations,
-  testOnly as checkTestOnly,
   testSizeViolations,
 } from "../../helpers/growth-guardrail-checks";
 import {
@@ -48,55 +44,6 @@ function fixtureDiff(
       return new Map(paths.map((file) => [file, head[file] ?? null]));
     },
   };
-}
-
-function e2eAssertionBudget(
-  expectCalls: number,
-  referenceSha = "a".repeat(40),
-  file = "test/e2e/live/example.test.ts",
-): string {
-  const metrics = {
-    expectCalls,
-    matcherAssertions: expectCalls,
-    nodeAssertions: 0,
-    namedAssertionHelpers: 0,
-    failCalls: 0,
-    throwGuards: 0,
-    objectFieldAssertions: 0,
-    assertionPoints: expectCalls,
-    generatedProbeBlocks: 0,
-    generatedProbeConditions: 0,
-  };
-  return JSON.stringify({
-    $comment: "fixture",
-    schemaVersion: 1,
-    issue: 10934,
-    epic: 10920,
-    reference: {
-      mainSha: referenceSha,
-      currentMainCollectedTests: 1,
-      epicMainSha: "b".repeat(40),
-      epicCollectedTests: 95,
-      epicDirectExpectCalls: 2184,
-      epicLiveExpectCalls: 2677,
-    },
-    limits: {
-      testFileCount: 1,
-      liveFileCount: 1,
-      direct: metrics,
-      unique: metrics,
-      fileMetricOrder: [
-        "directExpectCalls",
-        "directAssertionPoints",
-        "transitiveExpectCalls",
-        "transitiveAssertionPoints",
-        "transitiveGeneratedProbeBlocks",
-      ],
-      files: {
-        [file]: [expectCalls, expectCalls, expectCalls, expectCalls, 0],
-      },
-    },
-  });
 }
 
 /** Register synthetic cases for the growth guardrail parsers and diagnostics. */
@@ -300,92 +247,6 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(await testSizeViolations(diff)).toContain("defaultMaxLines increased from 1500 to 2000");
   });
 
-  it("accepts the initial live E2E assertion budget", async () => {
-    const budget = e2eAssertionBudget(1);
-    const diff = fixtureDiff(
-      [{ filename: "ci/e2e-assertion-budget.json", status: "added" }],
-      {},
-      { "ci/e2e-assertion-budget.json": budget },
-    );
-
-    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
-  });
-
-  it("accepts a lower live E2E assertion budget", async () => {
-    const diff = fixtureDiff(
-      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
-    );
-
-    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
-  });
-
-  it("rejects a larger live E2E assertion budget and changed reference", async () => {
-    const diff = fixtureDiff(
-      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) },
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2, "c".repeat(40)) },
-    );
-    const violations = await e2eAssertionBudgetGrowthViolations(diff);
-
-    expect(violations).toContain("live E2E assertion reference metadata changed");
-    expect(violations).toContain("direct.expectCalls increased from 1 to 2");
-    expect(violations).toContain(
-      "test/e2e/live/example.test.ts directExpectCalls increased from 1 to 2",
-    );
-  });
-
-  it("rejects an omitted live E2E assertion budget unless its test was removed", async () => {
-    const withoutFile = JSON.parse(e2eAssertionBudget(1)) as {
-      limits: { files: Record<string, unknown> };
-    };
-    withoutFile.limits.files = {};
-    const base = { "ci/e2e-assertion-budget.json": e2eAssertionBudget(1) };
-    const head = {
-      "ci/e2e-assertion-budget.json": JSON.stringify(withoutFile),
-    };
-
-    const omitted = fixtureDiff(
-      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
-      base,
-      head,
-    );
-    expect(await e2eAssertionBudgetGrowthViolations(omitted)).toContain(
-      "test/e2e/live/example.test.ts omitted its live E2E assertion budget",
-    );
-
-    const removed = fixtureDiff(
-      [
-        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
-        { filename: "test/e2e/live/example.test.ts", status: "removed" },
-      ],
-      base,
-      head,
-    );
-    expect(await e2eAssertionBudgetGrowthViolations(removed)).toEqual([]);
-  });
-
-  it("carries a live E2E assertion budget across a test rename", async () => {
-    const renamed = "test/e2e/live/renamed.test.ts";
-    const diff = fixtureDiff(
-      [
-        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
-        {
-          filename: renamed,
-          previous_filename: "test/e2e/live/example.test.ts",
-          status: "renamed",
-        },
-      ],
-      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
-      {
-        "ci/e2e-assertion-budget.json": e2eAssertionBudget(1, "a".repeat(40), renamed),
-      },
-    );
-
-    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
-  });
-
   it("rejects a changed test that is missing from the latest PR commit", async () => {
     const diff = fixtureDiff(
       [{ filename: "test/example.test.ts", status: "modified" }],
@@ -428,121 +289,6 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(await testSizeViolations(diff)).toEqual([
       "test/legacy.test.ts has 2 lines, above its budget 1",
     ]);
-  });
-
-  it("rejects a new if statement in a changed test file", async () => {
-    const diff = fixtureDiff(
-      [{ filename: "test/example.test.ts", status: "modified" }],
-      { "test/example.test.ts": "it('works', () => expect(ok).toBe(true));" },
-      { "test/example.test.ts": "it('works', () => { if (ok) expect(ok).toBe(true); });" },
-    );
-    expect(await conditionalGrowthViolations(diff)).toEqual([
-      "test/example.test.ts: 1 if statement(s), up from 0",
-    ]);
-  });
-
-  it("rejects a new loop in a changed test callback", async () => {
-    const diff = fixtureDiff(
-      [{ filename: "test/example.test.ts", status: "modified" }],
-      { "test/example.test.ts": "it('works', () => expect(rows).toBeDefined());" },
-      {
-        "test/example.test.ts":
-          "it('works', () => { for (const row of rows) expect(row).toBeDefined(); });",
-      },
-    );
-    expect(await loopGrowthViolations(diff)).toEqual([
-      "test/example.test.ts: 1 test loop(s), up from 0",
-    ]);
-  });
-
-  it.each([
-    ["if statements", conditionalGrowthViolations, "if (ok) expect(ok).toBe(true);"],
-    [
-      "test loops",
-      loopGrowthViolations,
-      "for (const row of rows) it(row.name, () => expect(row).toBeDefined());",
-    ],
-  ])("compares %s across a renamed test", async (_name, violations, addedSyntax) => {
-    const file = {
-      filename: "test/new.test.ts",
-      previous_filename: "test/old.test.ts",
-      status: "renamed",
-    };
-    const base = "it('works', () => expect(ok).toBe(true));";
-
-    expect(
-      await violations(
-        fixtureDiff([file], { "test/old.test.ts": base }, { "test/new.test.ts": base }),
-      ),
-    ).toEqual([]);
-    expect(
-      await violations(
-        fixtureDiff(
-          [file],
-          { "test/old.test.ts": base },
-          { "test/new.test.ts": `${base}\n${addedSyntax}` },
-        ),
-      ),
-    ).toHaveLength(1);
-  });
-
-  it.each([
-    ["plain assertion", "it('works', () => expect(true).toBe(true));", 0],
-    ["conditional assertion", "it('works', () => { if (ok) expect(ok).toBe(true); });", 1],
-  ])("counts if statements in %s", (_name, source, expected) => {
-    expect(checkTestOnly.countIfStatements("test/example.test.ts", source)).toBe(expected);
-  });
-
-  it.each([
-    ["plain assertion", "it('works', () => expect(true).toBe(true));", 0],
-    [
-      "test callback loop",
-      "it('works', () => { for (const row of rows) expect(row).toBe(1); });",
-      1,
-    ],
-    [
-      "table definition loop",
-      "for (const row of rows) it(row.name, () => expect(row).toBe(1));",
-      1,
-    ],
-    [
-      "named test callback loop",
-      "function verifyRows() { for (const row of rows) expect(row).toBe(1); } it('works', verifyRows);",
-      1,
-    ],
-    [
-      "one-use loop helper",
-      "function collect(rows) { for (const row of rows) consume(row); } it('works', () => collect(rows));",
-      1,
-    ],
-    [
-      "thin callback-forwarding helper",
-      "function repeat(rows, action) { for (const row of rows) action(row); } it('works', () => repeat(rows, (row) => expect(row).toBe(1)));",
-      1,
-    ],
-    [
-      "callback-forwarding helper declared inside a test",
-      "it('works', () => { function repeat(rows, action) { for (const row of rows) action(row); } repeat(rows, (row) => expect(row).toBe(1)); });",
-      1,
-    ],
-    [
-      "reused setup helper",
-      "function collect(rows) { for (const row of rows) consume(row); } it('works', () => collect(rows)); it('also works', () => collect(moreRows));",
-      0,
-    ],
-    [
-      "same-named helpers in different lexical scopes",
-      "function collect(rows) { for (const row of rows) consume(row); } it('outer', () => collect(rows)); it('nested', () => { function collect(value) { consume(value); } collect(value); });",
-      1,
-    ],
-    [
-      "uncalled nested helper loop",
-      "it('works', () => { function collect(rows) { for (const row of rows) consume(row); } expect(ok).toBe(true); });",
-      0,
-    ],
-    ["support helper loop", "function collect(rows) { for (const row of rows) consume(row); }", 0],
-  ])("counts test loops in %s", (_name, source, expected) => {
-    expect(checkTestOnly.countTestLoops("test/example.test.ts", source)).toBe(expected);
   });
 
   it("parses renamed and added files from a zero-delimited Git diff", () => {

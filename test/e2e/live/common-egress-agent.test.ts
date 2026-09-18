@@ -598,17 +598,10 @@ describe.sequential("common-egress agent live targets", () => {
     "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
     {
       timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
-      meta: {
-        e2ePhases: [
-          "validate hosted OpenClaw prerequisites",
-          "onboard balanced-policy OpenClaw sandbox",
-          "verify balanced egress excludes weather",
-          "add weather egress policy",
-          "run verified weather agent turn",
-        ],
-      },
     },
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      progress.phase("validate hosted OpenClaw prerequisites");
+
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       const braveApiKey = secrets.required("BRAVE_API_KEY");
@@ -741,16 +734,10 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
     "C2 OpenClaw open includes public reference and agent fetches Wikidata",
     {
       timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
-      meta: {
-        e2ePhases: [
-          "validate hosted OpenClaw prerequisites",
-          "onboard open-policy OpenClaw sandbox",
-          "verify public-reference egress policy",
-          "fetch Wikidata with OpenClaw agent",
-        ],
-      },
     },
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      progress.phase("validate hosted OpenClaw prerequisites");
+
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
@@ -800,16 +787,10 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     "C3 Hermes open includes public reference plus Nous presets and agent fetches Wikidata",
     {
       timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
-      meta: {
-        e2ePhases: [
-          "validate hosted Hermes prerequisites",
-          "onboard open-policy Hermes sandbox",
-          "verify public-reference and Nous egress",
-          "fetch Wikidata with Hermes agent",
-        ],
-      },
     },
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      progress.phase("validate hosted Hermes prerequisites");
+
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -862,18 +843,10 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     "C4 Personal permits a public fetch without Brave Search or Tavily Search API keys",
     {
       timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
-      meta: {
-        e2ePhases: [
-          "validate hosted representative-agent prerequisites",
-          "onboard a representative OpenClaw sandbox with Personal and no web search",
-          "verify Personal policy and absent Brave Search or Tavily Search API keys",
-          "fetch a public website with curl",
-          "deny loopback and link-local targets",
-          "fetch a fixed public reference with OpenClaw",
-        ],
-      },
     },
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      progress.phase("validate hosted representative-agent prerequisites");
+
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({

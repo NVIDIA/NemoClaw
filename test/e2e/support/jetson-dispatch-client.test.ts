@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { externalWorkflowTargets } from "../../../tools/e2e/target-definitions/external-workflows.mts";
 import {
   createGitHubOidcTokenProvider,
   createJetsonCancellation,
@@ -276,15 +279,94 @@ describe("Jetson dispatch static HTTP contract", () => {
 });
 
 describe("Jetson dispatch GitHub controller", () => {
+  it.each([
+    ["success", 0],
+    ["failure", 1],
+  ] as const)(
+    "consumes the %s completion artifact before returning exit code %i",
+    (conclusion, exitCode) => {
+      assert(requestV2.schemaVersion === 2);
+      const receiptFile = temporaryReceiptFile();
+      const directory = path.dirname(receiptFile);
+      const preload = path.join(directory, "dispatcher.mjs");
+      const callsFile = path.join(directory, "requests.jsonl");
+      const status = { ...completedStatusV2, conclusion };
+      const artifact = { status, log: "fixture log\n", artifactArchiveBase64: "dGVzdA==" };
+      fs.writeFileSync(
+        preload,
+        `
+      import fs from "node:fs";
+      const status = ${JSON.stringify(status)};
+      const artifact = ${JSON.stringify(artifact)};
+      globalThis.fetch = async (input, options = {}) => {
+        const url = new URL(input);
+        fs.appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify({
+          url: url.href, method: options.method ?? "GET", body: options.body,
+        }) + "\\n");
+        if (url.hostname === "oidc.test") return Response.json({value: "fixture-token"});
+        if (url.hostname !== "dispatch.test") throw new Error("Unexpected network request");
+        if (url.pathname === "/v1/jobs" && options.method === "POST") {
+          return Response.json({ job: status });
+        }
+        if (url.pathname === "/v1/jobs/" + status.jobId + "/artifact") {
+          return Response.json(artifact);
+        }
+        throw new Error("Unexpected dispatcher operation");
+      };
+    `,
+      );
+      const client = path.resolve("tools/e2e/jetson-dispatch-client.mts");
+      const result = spawnSync(process.execPath, ["--import", preload, client], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          ACTIONS_ID_TOKEN_REQUEST_URL: "https://oidc.test/token",
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fixture-request-token",
+          E2E_ARTIFACT_DIR: directory,
+          GITHUB_RUN_ATTEMPT: String(requestV2.workflowRunAttempt),
+          GITHUB_RUN_ID: requestV2.workflowRunId,
+          JETSON_DISPATCH_URL: "https://dispatch.test",
+          JETSON_DISPATCH_CANDIDATE_SHA: requestV2.candidateSha,
+          JETSON_DISPATCH_MANAGED_IMAGE_REVISION: requestV2.managedImageRevision,
+        },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(readReceipt(receiptFile)).toEqual({ status, log: "fixture log\n" });
+      expect(fs.readFileSync(path.join(directory, "jetson-e2e-artifacts.tar.gz"), "utf8")).toBe(
+        "test",
+      );
+      const calls = fs
+        .readFileSync(callsFile, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(calls).toHaveLength(3);
+      expect(JSON.parse(calls[1].body)).toEqual(requestV2);
+      expect(calls[2]).toEqual({
+        url: `https://dispatch.test/v1/jobs/${status.jobId}/artifact`,
+        method: "GET",
+      });
+    },
+  );
+
   it("binds the candidate and managed-image publication commits into a v2 request (#8142)", () => {
-    expect(
-      jetsonDispatchRequestFromEnvironment({
-        GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_RUN_ID: "123456789",
-        JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
-        JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "b".repeat(40),
-      }),
-    ).toEqual(requestV2);
+    const actual = jetsonDispatchRequestFromEnvironment({
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "123456789",
+      JETSON_DISPATCH_CANDIDATE_SHA: "a".repeat(40),
+      JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "b".repeat(40),
+    });
+    expect(actual).toEqual(requestV2);
+    const inventoryTarget = externalWorkflowTargets.find(
+      ({ id }) => id === "e2e-jetson-nvmap-gpu",
+    )!;
+    expect(inventoryTarget.job).toBe(actual.target);
+    expect(inventoryTarget.tests).toEqual([
+      { file: `test/e2e/live/${actual.target}.test.ts`, project: "e2e-live" },
+    ]);
   });
 
   it("rejects a v2 request without the managed-image publication commit (#8142)", () => {

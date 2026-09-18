@@ -123,13 +123,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 `,
         { mode: 0o700 },
       );
-      const progress = startTestProgress(
-        "ACP adapter launch",
-        ["launch adapter", "verify result"],
-        {
-          logLine: () => undefined,
-        },
-      );
+      const progress = startTestProgress("ACP adapter launch", "launch adapter", {
+        logLine: () => undefined,
+      });
       onTestFinished(() => {
         progress.stop();
         fs.rmSync(artifactDir, { force: true, recursive: true });
@@ -165,7 +161,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 
   it("records a failed scenario when the adapter executable is missing", async () => {
     const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-missing-"));
-    const progress = startTestProgress("missing ACP adapter", ["launch adapter", "verify result"], {
+    const progress = startTestProgress("missing ACP adapter", "launch adapter", {
       logLine: () => undefined,
     });
     onTestFinished(() => {

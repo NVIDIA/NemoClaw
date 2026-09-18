@@ -18,10 +18,11 @@ test.runIf(process.env.NEMOCLAW_E2E_ARTIFACT_ROOT_FIXTURE === "stable-target-id"
   {
     meta: {
       e2eArtifactRootId: DCODE_BASE_IMAGE_TARGET_ID,
-      e2ePhases: ["load base image publication evidence", "verify stable target ID artifact root"],
     },
   },
   ({ artifacts, progress }) => {
+    progress.phase("load base image publication evidence");
+
     expect(
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,

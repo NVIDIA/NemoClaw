@@ -920,20 +920,10 @@ test(
   "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and choose the baseline provider",
-        "clear existing inference-switch state",
-        "install and onboard baseline OpenClaw",
-        "prepare the switched provider and endpoint",
-        "switch the route and verify restart semantics",
-        "inspect route configuration and recorded state",
-        "prove inference.local and OpenClaw gateway inference",
-        "apply sandbox retention and record the result",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm the selected runtime and choose the baseline provider");
+
     await artifacts.target.declare({
       id: "openclaw-inference-switch",
       boundary: "install-sh-openclaw-inference-set-and-live-gateway-model-run",

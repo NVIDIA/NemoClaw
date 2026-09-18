@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   E2E_CATALOGUE_RUNNER_KEYS,
   E2E_TARGET_CATALOGUE,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { requireFixture } from "./require-fixture";

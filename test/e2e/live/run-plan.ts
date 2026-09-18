@@ -6,7 +6,7 @@ import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check
 
 export interface LiveTargetRunPlan {
   targetId: string;
-  manifestPath: string | null;
+  manifestPath: string;
   expectedStateId: string | undefined;
   configExportExpectation: ConfigExportExpectation;
   suiteIds: string[];
@@ -42,11 +42,11 @@ export function liveTargetProgressPhases(plan: LiveTargetRunPlan): readonly stri
 export function buildLiveTargetRunPlan(target: TargetDefinition): LiveTargetRunPlan {
   const plan: LiveTargetRunPlan = {
     targetId: target.id,
-    manifestPath: target.manifestPath ?? null,
     expectedStateId: target.expectedStateId,
+    manifestPath: target.manifestPath,
     configExportExpectation: target.configExport.expectation,
-    suiteIds: target.suiteIds ?? [],
-    phases: ["environment", "onboarding", ...(target.environment?.lifecycle ? ["lifecycle"] : [])],
+    suiteIds: target.suiteIds,
+    phases: ["environment", "onboarding", ...(target.environment.lifecycle ? ["lifecycle"] : [])],
   };
   const cloudExperimentalChecks = cloudExperimentalChecksForOnboarding(
     target.environment?.onboarding,

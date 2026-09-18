@@ -20,15 +20,6 @@ test(
   "rebuild-hermes restores durable state and native readiness",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: {
-      e2ePhases: [
-        "prepare the Hermes rebuild fixture",
-        "onboard the exact managed image",
-        "write durable Hermes state",
-        "rebuild the sandbox",
-        "verify restored state and native readiness",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -41,6 +32,8 @@ test(
     secrets,
     skip,
   }) => {
+    progress.phase("prepare the Hermes rebuild fixture");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const env = phase6Env({
       agent: "hermes",

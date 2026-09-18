@@ -191,6 +191,43 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     },
   );
 
+  it.each([
+    ["userinfo", "https://user:secret@public-endpoint.example/v1"],
+    ["query", "https://public-endpoint.example/v1?api_key=secret"],
+    ["fragment", "https://public-endpoint.example/v1#secret"],
+  ])("preserves exact registry state after rejecting endpoint %s", async (_kind, endpointUrl) => {
+    const deps = createDeps({
+      config: {},
+      entries: [
+        { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "prior-model" },
+        { name: "other", agent: "hermes", provider: "unrelated-provider", model: "other-model" },
+      ],
+      session: baseSession({ provider: "nvidia-prod", model: "prior-model" }),
+    });
+    const registryBefore = JSON.stringify(deps.listSandboxes());
+    const sessionBefore = JSON.stringify(deps.getSession());
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("without userinfo, query, or fragment components");
+
+    expect(JSON.stringify(deps.listSandboxes())).toBe(registryBefore);
+    expect(JSON.stringify(deps.getSession())).toBe(sessionBefore);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+  });
+
   it("uses the OpenAI provider surface for a Hermes compatible-Anthropic route", async () => {
     vi.stubEnv("COMPATIBLE_ANTHROPIC_API_KEY", "real-hermes-upstream-secret");
     const adapter = mockAdapter();

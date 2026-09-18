@@ -25,15 +25,10 @@ describe("managed image buildless onboarding orchestration contract", () => {
     "renders every shipped agent's immutable launch without entering Dockerfile orchestration (#7744)",
     {
       timeout: 240_000,
-      meta: {
-        e2ePhases: [
-          "validate managed-image fail-closed documentation",
-          "validate mocked all-agent buildless orchestration boundaries",
-          "release managed onboarding fixtures",
-        ],
-      },
     },
     ({ progress }) => {
+      progress.phase("validate managed-image fail-closed documentation");
+
       progress.phase("validate managed-image fail-closed documentation");
       const commands = readFileSync(
         path.join(import.meta.dirname, "../..", "docs", "reference", "commands.mdx"),

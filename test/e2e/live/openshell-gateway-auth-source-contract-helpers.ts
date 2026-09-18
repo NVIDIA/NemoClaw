@@ -635,6 +635,7 @@ export async function runOpenShellGatewayAuthSourceContractScenario(
   { artifacts, cleanup, host, progress, skip }: ScenarioFixtures,
   dependencies: GatewayAuthSourceContractDependencies,
 ): Promise<void> {
+  progress.phase("confirm gateway and Docker prerequisites");
   await withOpenShellGatewayAuthArtifactSafety(artifacts.rootDir, () =>
     runOpenShellGatewayAuthSourceContractScenarioUnchecked(
       { artifacts, cleanup, host, progress, skip },

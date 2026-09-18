@@ -23,7 +23,7 @@ const secrets = new SecretStore(process.env, (message) => {
   throw new Error(message ?? "required cleanup secret is missing");
 });
 const signal = new AbortController().signal;
-const progress = startTestProgress("Brev workspace cleanup", ["remove the owned Brev workspace"]);
+const progress = startTestProgress("Brev workspace cleanup", "remove the owned Brev workspace");
 progress.phase("remove the owned Brev workspace");
 const shellProbe = new ShellProbe({
   artifacts,

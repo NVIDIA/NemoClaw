@@ -1118,17 +1118,10 @@ test(
   "bedrock runtime compatible Anthropic endpoint routes through managed inference.local",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate prerequisites and start fake Bedrock endpoint",
-        "onboard agent through Bedrock adapter",
-        "validate managed adapter route and config",
-        "exercise agent inference through Bedrock",
-        "audit Bedrock traffic and secret isolation",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("validate prerequisites and start fake Bedrock endpoint");
+
     assertAgent(AGENT);
     const shard =
       process.env.GITHUB_ACTIONS === "true"

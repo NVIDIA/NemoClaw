@@ -81,17 +81,6 @@ test(
   "OpenShell stop/start preserves native agent state",
   {
     timeout: testTimeout(30 * 60_000),
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime prerequisite",
-        "install and register the OpenClaw sandbox",
-        "write persistent OpenClaw markers",
-        "stop the sandbox through OpenShell",
-        "start the sandbox through OpenShell",
-        "recheck native agent readiness and state",
-        "destroy the sandbox",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -105,6 +94,8 @@ test(
     skip,
     stateValidation,
   }) => {
+    progress.phase("confirm the selected runtime prerequisite");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 

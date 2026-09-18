@@ -24,6 +24,18 @@ function detectedCaseNames(source: string): string[] {
 }
 
 describe("source-shape scanner", () => {
+  it("detects raw workflow selection assertions through the inventory accessor", () => {
+    expect(
+      detectedCaseNames(`
+      import { expect, it } from "vitest";
+      import { workflowExecutionSelection } from "../tools/e2e/target-inventory.mts";
+      it("mirrors workflow selection", () => {
+        expect(workflowExecutionSelection().workflowJobs).toEqual(["shared-e2e"]);
+      });
+    `),
+    ).toEqual(["mirrors workflow selection"]);
+  });
+
   it("skips the local nested worktree checkout container", () => {
     const repoRoot = path.resolve(".");
 
@@ -455,7 +467,7 @@ describe("source-shape scanner", () => {
     const cases = detectedCaseNames(`
       import { expect, it } from "vitest";
       import { readWorkflow } from "./helpers/e2e-workflow-contract";
-      import { listTargets } from "./e2e/registry/registry";
+      import { listTargets } from "../tools/e2e/target-inventory";
 
       it("mirrors workflow jobs through a selector", () => {
         const workflow = readWorkflow();
@@ -513,7 +525,7 @@ describe("source-shape scanner", () => {
     const cases = detectedCaseNames(`
       import { expect, it } from "vitest";
       import * as workflows from "./helpers/e2e-workflow-contract";
-      import * as registry from "./e2e/registry/registry";
+      import * as registry from "../tools/e2e/target-inventory";
       import { probesForState } from "./e2e/registry/expected-states";
       import { loadManifest, loadManifestsFromDir } from "./e2e/registry/manifests";
 

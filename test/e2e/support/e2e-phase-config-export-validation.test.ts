@@ -23,7 +23,7 @@ import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, type ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 import type { NemoClawInstanceManifest, TargetDefinition } from "../registry/types.ts";
 
 const IMAGE_REF = `nvcr.io/nvidia/nemoclaw@sha256:${"a".repeat(64)}`;
@@ -477,11 +477,9 @@ if (process.argv.includes("--output")) {
         { mode: 0o700 },
       );
       const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
-      const progress = startTestProgress(
-        "runtime environment",
-        ["validate export", "verify evidence"],
-        { logLine: () => undefined },
-      );
+      const progress = startTestProgress("runtime environment", "validate export", {
+        logLine: () => undefined,
+      });
       const host = new HostCliClient(
         new ShellProbe({
           artifacts,
@@ -653,7 +651,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
 `,
       { mode: 0o700 },
     );
-    const progress = startTestProgress("policy capture", ["observe policy", "validate export"], {
+    const progress = startTestProgress("policy capture", "observe policy", {
       logLine: () => undefined,
     });
     try {
@@ -1162,13 +1160,9 @@ process.exitCode = 1;
         { mode: 0o700 },
       );
       const artifacts = new ArtifactSink(directory);
-      const progress = startTestProgress(
-        "config export capture",
-        ["run export", "verify evidence"],
-        {
-          logLine: () => undefined,
-        },
-      );
+      const progress = startTestProgress("config export capture", "run export", {
+        logLine: () => undefined,
+      });
       try {
         const probe = new ShellProbe({
           artifacts,

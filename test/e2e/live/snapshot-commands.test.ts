@@ -198,20 +198,10 @@ test(
   "snapshot commands restore source state without credential leaks and verify clone behavior for the selected workload source",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and start hermetic inference",
-        "onboard the snapshot sandbox",
-        "create one snapshot",
-        "destroy, freshly onboard, and restore workspace state",
-        "restore the snapshot into a clone",
-        "verify the restored clone state and gateway pairing",
-        "back up credential state without secret leaks",
-        "record snapshot lifecycle evidence",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm the selected runtime and start hermetic inference");
+
     await artifacts.target.declare({
       id: "snapshot-commands",
       boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",

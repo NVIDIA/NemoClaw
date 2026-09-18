@@ -50,6 +50,7 @@ export function fixture(
     diagnosticResolverMissing?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
+    e2eSkipped?: boolean;
     gatewayChildJournal?: string;
     gatewayExecStart?: string;
     imageRepositorySha?: string;
@@ -98,6 +99,10 @@ export function fixture(
   if (options.realCommandEvidence) {
     fs.mkdirSync(path.join(bakedRoot, "node_modules", ".bin"), { recursive: true });
     fs.mkdirSync(path.join(bakedRoot, "test", "e2e", "live"), { recursive: true });
+    fs.symlinkSync(
+      path.join(REPO_ROOT, "test/e2e/risk-signal-reporter.ts"),
+      path.join(bakedRoot, "test/e2e/risk-signal-reporter.ts"),
+    );
     fs.writeFileSync(
       path.join(bakedRoot, "vitest.config.mts"),
       `export default { test: { projects: [{ test: { name: "e2e-live", include: ["test/e2e/live/full-e2e.test.ts"], maxWorkers: 1 } }] } };`,
@@ -113,8 +118,8 @@ import { ArtifactSink } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fix
 import { startTestProgress } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts"))};
 import { redactString } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/redaction.ts"))};
 import { ShellProbe, trustedShellCommand } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/shell-probe.ts"))};
-it("emits evidence from a completed guest command", async () => {
-  const progress = startTestProgress("guest command", ["execute command", "verify result"], { logLine: () => undefined });
+it${options.e2eSkipped ? ".skip" : ""}("emits evidence from a completed guest command", async () => {
+  const progress = startTestProgress("guest command", "execute command", { logLine: () => undefined });
   try {
     const probe = new ShellProbe({
       artifacts: new ArtifactSink(${JSON.stringify(path.join(bakedRoot, "artifacts"))}, [process.env.NVIDIA_INFERENCE_API_KEY]),

@@ -284,10 +284,11 @@ jobs:
         id: hermes-secret-boundary
         timeout-minutes: 45
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
           NEMOCLAW_RUN_LIVE_E2E: "1"
-        run: npx vitest run --project e2e-live test/e2e/live/hermes-sandbox-secret-boundary.test.ts --silent=false --reporter=default
+        run: npx vitest run --project e2e-live test/e2e/live/hermes-sandbox-secret-boundary.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes sandbox secret boundary artifacts
         if: always()
@@ -305,6 +306,7 @@ jobs:
         if: ${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}
         timeout-minutes: 30
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
           NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -312,7 +314,7 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-root-entrypoint-smoke.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload Hermes root entrypoint smoke artifacts
         if: always()
@@ -473,10 +475,12 @@ jobs:
 
       - name: Run runtime overrides test against production image
         timeout-minutes: 45
+        env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
         run: |
           npx vitest run --project e2e-live \
             test/e2e/live/runtime-overrides.test.ts \
-            --silent=false --reporter=default
+            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload runtime overrides artifacts
         if: always()
@@ -519,6 +523,8 @@ jobs:
       - *load-isolation-image
 
       - name: Validate OpenClaw managed-image security boundary
+        env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts
           --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
@@ -526,6 +532,7 @@ jobs:
       - name: Validate glibc probe lifecycle
         if: ${{ !cancelled() }}
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts

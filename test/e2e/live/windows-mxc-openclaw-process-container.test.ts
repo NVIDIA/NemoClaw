@@ -33,17 +33,10 @@ qualificationTest(
   "repeats forwarded chat and cleanup for the inactive native OpenClaw process_container candidate (#8178)",
   {
     timeout: 18 * 60_000,
-    meta: {
-      e2ePhases: [
-        "qualify the Windows host and validate exact artifact identities",
-        "start OpenClaw and verify in-sandbox readiness plus filesystem enforcement",
-        "forward authenticated traffic and require the exact mock-backed chat reply",
-        "delete the sandbox and verify registry plus OpenClaw process cleanup",
-        "repeat sandbox creation, chat, and cleanup without stale state",
-      ],
-    },
   },
   async ({ progress }) => {
+    progress.phase("qualify the Windows host and validate exact artifact identities");
+
     progress.phase("qualify the Windows host and validate exact artifact identities");
     const inputs = parseWindowsMxcOpenClawQualificationEnvironment(process.env);
     const expectedConfiguration = {

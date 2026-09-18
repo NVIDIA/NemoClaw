@@ -47,17 +47,10 @@ test(
   "rebuild-openclaw restores durable state and native readiness",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: {
-      e2ePhases: [
-        "prepare the OpenClaw rebuild fixture",
-        "onboard the exact managed image",
-        "write durable OpenClaw state",
-        "rebuild the sandbox",
-        "verify restored state and native readiness",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("prepare the OpenClaw rebuild fixture");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const env = {
       ...buildAvailabilityProbeEnv(),

@@ -9,11 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
-import {
-  startTestProgress,
-  type TestProgressOptions,
-  validateE2EPhasePlan,
-} from "../fixtures/progress.ts";
+import { startTestProgress, type TestProgressOptions } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
@@ -156,11 +152,7 @@ describe("live test progress", () => {
 
   it("reports semantic transitions and adds command-safe evidence only after a stall", () => {
     const { options, state } = progressHarness();
-    const progress = startTestProgress(
-      "agent-turn-latency",
-      ["install OpenClaw sandbox", "install Hermes sandbox"],
-      options,
-    );
+    const progress = startTestProgress("agent-turn-latency", "install OpenClaw sandbox", options);
 
     progress.onOutput({ stream: "stderr", atMs: 61_000 });
     state.clockMs = 250_000;
@@ -174,12 +166,65 @@ describe("live test progress", () => {
 
     expect(state.clearCalls).toBe(2);
     expect(state.scheduledDelays).toEqual([300_000, 600_000, 300_000]);
-    expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] started: install OpenClaw sandbox (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] still running: install OpenClaw sandbox (total 5m; phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1/2] completed: install OpenClaw sandbox — passed in 6m (total 6m)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] started: install Hermes sandbox (total 6m; phase 0s)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2/2] completed: install Hermes sandbox — passed in 0s (total 6m)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "start",
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "stall",
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 300000,
+        activityElapsedMs: 300000,
+        outputAgeMs: 240000,
+        activeCommands: ["command: install-openclaw"],
+        resources: {
+          availableMemoryBytes: 8589934592,
+          processRssBytes: 536870912,
+          totalMemoryBytes: 17179869184,
+          workspaceFreeBytes: 6442450944,
+          loadAverage1m: 2.5,
+        },
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 360000,
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 360000,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "start",
+        activity: "install Hermes sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 0,
+        activity: "install Hermes sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 0,
+      },
     ]);
     expect(progress.summary()).toEqual({
       version: 1,
@@ -214,16 +259,34 @@ describe("live test progress", () => {
     const { options, state } = progressHarness();
     const progress = startTestProgress(
       "visible-agent-turn-scenario",
-      ["prepare hosted inference", "send OpenClaw agent turn"],
+      "prepare hosted inference",
       options,
     );
 
     state.clockMs = 61_000;
     progress.stop("failed");
 
-    expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1/2] started: prepare hosted inference (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1/2] completed: prepare hosted inference — failed in 1m (total 1m)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "visible-agent-turn-scenario",
+        event: "start",
+        activity: "prepare hosted inference",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "visible-agent-turn-scenario",
+        event: "complete",
+        outcome: "failed",
+        durationMs: 60000,
+        activity: "prepare hosted inference",
+        elapsedMs: 60000,
+        activityElapsedMs: 60000,
+      },
     ]);
     expect(state.lines.join("\n")).toContain("visible-agent-turn-scenario");
     expect(progress.summary().phases).toEqual([
@@ -235,38 +298,32 @@ describe("live test progress", () => {
     ]);
   });
 
-  it("rejects generic plans and undeclared or backward transitions", () => {
-    expect(() => validateE2EPhasePlan(["setup", "validate inference response"])).toThrow(
-      "phase label must describe test behavior",
-    );
-    expect(() =>
-      validateE2EPhasePlan(["prepare inference endpoint", "prepare inference endpoint"]),
-    ).toThrow("duplicate live E2E phase label");
-    expect(() =>
-      validateE2EPhasePlan(["prepare inference endpoint\n::error::forged", "validate response"]),
-    ).toThrow("invalid live E2E phase label");
-    expect(() => validateE2EPhasePlan(["p".repeat(161), "validate response"])).toThrow(
-      "invalid live E2E phase label",
-    );
-
+  it("records observed steps in execution order without a declared plan", () => {
     const { options } = progressHarness();
-    const progress = startTestProgress(
-      "phase-contract",
-      ["prepare inference endpoint", "onboard OpenClaw sandbox", "validate agent turn"],
-      options,
-    );
+    const progress = startTestProgress("observed steps", "prepare inference endpoint", options);
     progress.phase("validate agent turn");
-
-    expect(() => progress.phase("undeclared phase")).toThrow("undeclared live E2E phase");
-    expect(() => progress.phase("prepare inference endpoint")).toThrow(
-      "live E2E phase moved backwards",
-    );
-    expect(progress.summary().phases).toEqual([
-      expect.objectContaining({ label: "prepare inference endpoint", outcome: "passed" }),
-      expect.objectContaining({ label: "onboard OpenClaw sandbox", outcome: "skipped" }),
-    ]);
+    progress.phase("prepare inference endpoint");
     progress.stop();
+    expect(progress.summary().phases.map(({ label }) => label)).toEqual([
+      "prepare inference endpoint",
+      "validate agent turn",
+      "prepare inference endpoint",
+    ]);
+    expect(progress.summary().phases.every(({ outcome }) => outcome === "passed")).toBe(true);
   });
+
+  it.each(["bad\n::error::forged", "p".repeat(161), ""])(
+    "rejects unsafe progress labels: %s",
+    (label) => {
+      const { options } = progressHarness();
+      expect(() => startTestProgress("label validation", label, options)).toThrow(
+        "invalid live E2E progress event label",
+      );
+      const progress = startTestProgress("label validation", "execute test", options);
+      expect(() => progress.phase(label)).toThrow("invalid live E2E progress event label");
+      progress.stop();
+    },
+  );
 
   it("connects install output to the timestamp-only observer", async () => {
     const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());

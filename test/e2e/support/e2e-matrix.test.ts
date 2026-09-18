@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { resolveRunnerForTarget } from "../registry/runner-routing.ts";
 

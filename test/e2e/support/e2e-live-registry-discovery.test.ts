@@ -5,8 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import { buildLiveTargetRunPlan, liveTargetProgressPhases } from "../live/run-plan.ts";
-import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import { buildExecutionInventory, listTargets } from "../../../tools/e2e/target-inventory.mts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
+
+function buildTargetRegistry(targets: TargetDefinition[]) {
+  return buildExecutionInventory(
+    targets.map((definition) => ({ id: definition.id, route: "typed" as const, definition })),
+  );
+}
 
 function syntheticTarget(environment: TargetEnvironment): TargetDefinition {
   return {
@@ -69,7 +75,7 @@ describe("live target registry discovery", () => {
       targetId: target.id,
       manifestPath: target.manifestPath,
       expectedStateId: target.expectedStateId,
-      configExportExpectation: "required",
+      configExportExpectation: "expected-refusal",
       suiteIds: target.suiteIds,
       phases: [
         "environment",

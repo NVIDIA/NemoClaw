@@ -305,18 +305,10 @@ test(
   "sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm CLI, selected runtime, and OpenShell prerequisites",
-        "onboard the sessions and agents sandbox",
-        "exercise main-agent session JSON and reset",
-        "add and list the secondary agent",
-        "seed and delete the secondary-agent session",
-        "delete the secondary agent and confirm absence",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm CLI, selected runtime, and OpenShell prerequisites");
+
     expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
     expect(
       fs.existsSync(CLI_DIST_ENTRYPOINT),

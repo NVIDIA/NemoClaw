@@ -126,7 +126,7 @@ function candidateScore(message: string): number {
     return 0;
   }
   if (
-    /(?:Release qualification did not pass|FAILED: producer run|\[e2e target=.*\]\s+\[phase|AssertionError:\s*\[non-interactive\] Agent|AssertionError:\s*✓ Active gateway|Error:.*failed:\s*[█▓]|Error:.*failed:\s*\[non-interactive\] Agent)/iu.test(
+    /(?:Release qualification did not pass|FAILED: producer run|\[e2e target=.*\]\s+\[phase|^\{"kind":"e2e-progress"|AssertionError:\s*\[non-interactive\] Agent|AssertionError:\s*✓ Active gateway|Error:.*failed:\s*[█▓]|Error:.*failed:\s*\[non-interactive\] Agent)/iu.test(
       message,
     )
   ) {

@@ -3,26 +3,27 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { loadManifest } from "../registry/manifests.ts";
-import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import * as expectedStates from "../registry/expected-states.ts";
 import type { TargetDefinition } from "../registry/types.ts";
+import { validateE2eExecutionRows } from "../../../tools/e2e/execution-coverage.mts";
+import {
+  buildExecutionInventory,
+  listTargets,
+  type E2eInventoryTarget,
+  reconcileWorkflowExecutionDiscovery,
+} from "../../../tools/e2e/target-inventory.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
 const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
 
-const CONFIG_EXPORT_TARGET: TargetDefinition = {
-  id: "export-coverage",
-  description: "Config export coverage validation fixture",
-  executionCoverage: {
-    agentRuntime: "openclaw",
-    observableOutcome: "Config export preserves the deployed configuration",
-    environmentOrInferenceEndpoint: "Ubuntu managed runtime",
-    unresolvedReason: "",
-  },
+const TYPED_FIXTURE: TargetDefinition = {
+  id: "typed-proof",
   manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
+  configExport: { expectation: "required" },
+  description: "Executable typed target fixture",
   environment: {
     platform: "ubuntu-local",
     install: "repo-current",
@@ -30,10 +31,42 @@ const CONFIG_EXPORT_TARGET: TargetDefinition = {
     onboarding: "cloud-openclaw",
   },
   expectedStateId: "cloud-openclaw-ready",
-  configExport: { expectation: "required" },
-  suiteIds: [],
+  executionCoverage: {
+    agentRuntime: "openclaw",
+    observableOutcome: "The fixture completes",
+    environmentOrInferenceEndpoint: "Ubuntu managed runtime host",
+    unresolvedReason: "",
+  },
   requiredSecrets: [],
   gatewayRuntimes: ["docker"],
+};
+
+const WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "workflow" }> = {
+  id: "proof",
+  route: "workflow",
+  definition: {
+    id: "proof",
+    workflow: ".github/workflows/e2e.yaml",
+    targetId: "proof",
+    defaultEnabled: true,
+    gatewayRuntimes: ["docker"],
+    testFiles: ["test/e2e/live/proof.test.ts"],
+    owningPaths: [],
+    coverage: [
+      {
+        gatewayRuntimes: ["docker"],
+        row: {
+          id: "proof",
+          variant: "",
+          source: "retained-workflow",
+          agentRuntime: "none",
+          observableOutcome: "The proof completes",
+          environmentOrInferenceEndpoint: "Linux Docker host",
+          unresolvedReason: "",
+        },
+      },
+    ],
+  },
 };
 
 function runTargetCli(args: string[]) {
@@ -44,21 +77,249 @@ function runTargetCli(args: string[]) {
   });
 }
 
-describe("deterministic target registry", () => {
-  // source-shape-contract: compatibility -- Duplicate IDs would make workflow selectors and artifact ownership ambiguous
-  it("should reject duplicate target IDs", () => {
-    const registered = listTargets()[0]!;
-    const first = { ...registered, id: "duplicate-id" };
-    const second = { ...registered, id: "duplicate-id" };
+const EXTERNAL_WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "external-workflow" }> = {
+  id: "external-proof",
+  route: "external-workflow",
+  definition: {
+    id: "external-proof",
+    workflow: ".github/workflows/proof.yaml",
+    job: "prove",
+    tests: [{ file: "test/e2e-runtime/proof.test.ts", project: "integration" }],
+  },
+};
 
-    expect(() => buildTargetRegistry([first, second])).toThrow(/duplicate-id/);
+const MANUAL_FIXTURE: Extract<E2eInventoryTarget, { route: "manual" }> = {
+  id: "manual-proof",
+  route: "manual",
+  definition: {
+    id: "manual-proof",
+    tests: [{ file: "test/e2e/live/manual-proof.test.ts", project: "e2e-live" }],
+    instructions: "test/e2e/README.md#manual-proof",
+  },
+};
+
+describe("deterministic target registry", () => {
+  it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
+    const registered = TYPED_FIXTURE;
+    expect(
+      buildExecutionInventory([{ id: registered.id, route: "typed", definition: registered }]).get(
+        registered.id,
+      )?.definition,
+    ).toBe(registered);
+    const targetWithoutExpectation = {
+      ...registered,
+      configExport: undefined,
+    } as unknown as typeof registered;
+
+    expect(() =>
+      buildExecutionInventory([
+        { id: targetWithoutExpectation.id, route: "typed", definition: targetWithoutExpectation },
+      ]),
+    ).toThrow(/config export coverage gap/);
   });
 
-  // source-shape-contract: security -- Target IDs cross workflow regex and artifact-path boundaries and must remain path-safe
-  it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
-    const unsafe = { ...listTargets()[0]!, id: "bad.id" };
+  it.each(["cloud-openclaw-ready", "cloud-deepagents-code-ready"])(
+    "rejects no-usable-sandbox when %s does not require absence (#11485)",
+    (expectedStateId) => {
+      const target: TargetDefinition = {
+        ...TYPED_FIXTURE,
+        expectedStateId,
+        configExport: { expectation: "no-usable-sandbox" },
+      };
 
-    expect(() => buildTargetRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
+      expect(() =>
+        buildExecutionInventory([{ id: target.id, route: "typed", definition: target }]),
+      ).toThrow(/no-usable-sandbox config export requires an absent sandbox expected state/);
+
+      const absentTarget = { ...target, expectedStateId: "fixture-absent-sandbox" };
+      const lookup = vi.spyOn(expectedStates, "requireExpectedState").mockReturnValueOnce({
+        id: absentTarget.expectedStateId,
+        sandbox: { expected: "absent" },
+      });
+      try {
+        expect(
+          buildExecutionInventory([
+            { id: absentTarget.id, route: "typed", definition: absentTarget },
+          ]).get(absentTarget.id)?.definition,
+        ).toBe(absentTarget);
+        expect(lookup).toHaveBeenCalledWith(absentTarget.expectedStateId);
+      } finally {
+        lookup.mockRestore();
+      }
+    },
+  );
+
+  it("distinguishes execution identities even when their descriptions match", () => {
+    const first = WORKFLOW_FIXTURE.definition.coverage[0]!.row;
+    const second = { ...first, id: "another-proof" };
+    expect(validateE2eExecutionRows([first, second])).toEqual([first, second]);
+    expect(() => validateE2eExecutionRows([first, first])).toThrow("duplicate row");
+  });
+
+  it("rejects a manual declaration without an executable test file", () => {
+    const entry = MANUAL_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: { ...entry.definition, tests: [] },
+        },
+      ]),
+    ).toThrow("requires test files");
+  });
+
+  it("retains the workflow owner and Vitest project of an external test", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect([...buildExecutionInventory([entry]).values()]).toEqual([entry]);
+  });
+
+  it.each([
+    { workflow: "../outside.yaml", job: "prove" },
+    { workflow: ".github/workflows/proof.yaml", job: "" },
+  ])("rejects an external target without a repository workflow job: %j", (owner) => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, ...owner } }]),
+    ).toThrow("requires a workflow job owner");
+  });
+
+  it.each(["../dispatch.mts", "/tmp/dispatch.mts", "tools/../dispatch.mts"])(
+    "rejects a delegated entry point outside repository scripts: %s",
+    (entrypoint) => {
+      const entry = EXTERNAL_WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([{ ...entry, definition: { ...entry.definition, entrypoint } }]),
+      ).toThrow("invalid script entry point");
+      const workflowEntry = WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([
+          { ...workflowEntry, definition: { ...workflowEntry.definition, entrypoint } },
+        ]),
+      ).toThrow("invalid script entry point");
+    },
+  );
+
+  it("requires an executable script when a workflow route has no Vitest files", () => {
+    const entry = {
+      ...WORKFLOW_FIXTURE,
+      definition: { ...WORKFLOW_FIXTURE.definition, testFiles: [] },
+    };
+    expect(() => buildExecutionInventory([entry])).toThrow(
+      "requires a test file or script entry point",
+    );
+    const scripted = {
+      ...entry,
+      definition: { ...entry.definition, entrypoint: "tools/e2e/launchable.sh" },
+    };
+    expect([...buildExecutionInventory([scripted]).values()]).toEqual([scripted]);
+  });
+
+  it("rejects an external target without tests", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, tests: [] } }]),
+    ).toThrow("requires test files");
+  });
+
+  it("rejects an external test path outside the test directory", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: {
+            ...entry.definition,
+            tests: [{ file: "../outside.test.ts", project: "integration" }],
+          },
+        },
+      ]),
+    ).toThrow("has an invalid test path");
+  });
+
+  it("rejects a typed target with a dangling expected state", () => {
+    const definition = { ...TYPED_FIXTURE, expectedStateId: "missing-state" };
+    expect(() =>
+      buildExecutionInventory([{ id: definition.id, route: "typed", definition }]),
+    ).toThrow("Unknown expected_state id 'missing-state'");
+  });
+
+  it("should reject duplicate target IDs", () => {
+    const first = { ...TYPED_FIXTURE, id: "duplicate-id" };
+    const second = { ...TYPED_FIXTURE, id: "duplicate-id" };
+
+    expect(() =>
+      buildExecutionInventory(
+        [first, second].map((definition) => ({
+          id: definition.id,
+          route: "typed" as const,
+          definition,
+        })),
+      ),
+    ).toThrow(/duplicate-id/);
+  });
+
+  it("rejects a typed target that reuses a workflow target ID", () => {
+    const workflow = WORKFLOW_FIXTURE;
+    const typed = { ...TYPED_FIXTURE, id: workflow.id };
+    expect(() =>
+      buildExecutionInventory([workflow, { id: typed.id, route: "typed", definition: typed }]),
+    ).toThrow("Duplicate target IDs: proof");
+  });
+
+  it("rejects coverage attached to another workflow target", () => {
+    const entry = WORKFLOW_FIXTURE;
+    const definition = {
+      ...entry.definition,
+      coverage: entry.definition.coverage.map((coverage) => ({
+        ...coverage,
+        row: { ...coverage.row, id: "another-job" },
+      })),
+    };
+    expect(() => buildExecutionInventory([{ ...entry, definition }])).toThrow(
+      "Workflow coverage identity differs from target",
+    );
+  });
+
+  it("rejects a workflow target without execution coverage", () => {
+    const entry = WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, coverage: [] } }]),
+    ).toThrow("requires execution coverage");
+  });
+
+  it("rejects an undisposed workflow job and a missing registered job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        { workflowJobs: ["unexpected"], liveTestToJobs: new Map() },
+        { workflowJobs: ["required"], liveTestToJobs: new Map() },
+      ),
+    ).toEqual([
+      "Discovered workflow job unexpected has no inventory disposition",
+      "Registered workflow job required is missing",
+    ]);
+  });
+
+  it("rejects a workflow that dispatches a registered test through another job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["other"]]]),
+        },
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["owner"]]]),
+        },
+      ),
+    ).toEqual(["Workflow test route differs from the inventory: test/e2e/live/proof.test.ts"]);
+  });
+
+  it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
+    const unsafe = { ...TYPED_FIXTURE, id: "bad.id" };
+
+    expect(() =>
+      buildExecutionInventory([{ id: unsafe.id, route: "typed", definition: unsafe }]),
+    ).toThrow(/not safe for workflow regex filters/);
 
     const result = runTargetCli(["--emit-live-matrix", "--targets", "../escape"]);
     expect(result.status).not.toBe(0);
@@ -66,61 +327,6 @@ describe("deterministic target registry", () => {
       /Selected target ID '\.\.\/escape' is not safe/,
     );
   });
-
-  // source-shape-contract: compatibility -- The registry inventory must contain only targets that the live runner can execute
-  it("contains only the three executable typed targets (#11407)", () => {
-    expect(listTargets().map((target) => target.id)).toEqual([
-      "ubuntu-policy-custom-missing-presets-negative",
-      "ubuntu-repo-cloud-langchain-deepagents-code",
-      "ubuntu-repo-cloud-openclaw",
-    ]);
-  });
-
-  // source-shape-contract: compatibility -- A registered target must resolve to an expected-state contract before live execution
-  it("rejects dangling expected-state references (#11407)", () => {
-    const registered = listTargets()[0]!;
-    expect(() =>
-      buildTargetRegistry([{ ...registered, expectedStateId: "missing-expected-state" }]),
-    ).toThrow("Unknown expected_state id 'missing-expected-state'");
-  });
-
-  it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
-    const registered = CONFIG_EXPORT_TARGET;
-    expect(buildTargetRegistry([registered]).byId.get(registered.id)).toBe(registered);
-    const targetWithoutExpectation = {
-      ...registered,
-      configExport: undefined,
-    } as unknown as typeof registered;
-
-    expect(() => buildTargetRegistry([targetWithoutExpectation])).toThrow(
-      /config export coverage gap/,
-    );
-  });
-
-  it.each(["cloud-openclaw-ready", "macos-cli-ready-docker-optional"])(
-    "rejects no-usable-sandbox when %s does not require absence (#11485)",
-    (expectedStateId) => {
-      const target: TargetDefinition = {
-        ...CONFIG_EXPORT_TARGET,
-        expectedStateId,
-        configExport: { expectation: "no-usable-sandbox" },
-      };
-
-      expect(() => buildTargetRegistry([target])).toThrow(
-        /no-usable-sandbox config export requires an absent sandbox expected state/,
-      );
-
-      const absentTarget = { ...target, expectedStateId: "preflight-failure-no-sandbox" };
-      expect(buildTargetRegistry([absentTarget]).byId.get(absentTarget.id)).toBe(absentTarget);
-    },
-  );
-
-  it.each(listTargets())(
-    "resolves $id to a valid repository manifest (#11407)",
-    ({ manifestPath }) => {
-      loadManifest(path.join(REPO_ROOT, manifestPath));
-    },
-  );
 
   // source-shape-contract: compatibility -- The target CLI must reject unknown selectors with actionable registered choices
   it("should return actionable unknown target error", () => {

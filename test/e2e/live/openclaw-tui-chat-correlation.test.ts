@@ -558,19 +558,10 @@ test(
     // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
     // warmup, the 120-second wait-for-replies window, and retry.
     timeout: 75 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm checkout fidelity and hosted credential",
-        "onboard the current OpenClaw sandbox",
-        "verify the pinned OpenClaw runtime",
-        "drive the post-idle TUI chat and status flow",
-        "approve a blocked request in the OpenShell terminal",
-        "replay rapid websocket chat sends",
-        "analyze reply correlation and ordering",
-      ],
-    },
   },
   async ({ artifacts, environment, host, onboard, progress, sandbox, secrets }) => {
+    progress.phase("confirm checkout fidelity and hosted credential");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.target.declare({

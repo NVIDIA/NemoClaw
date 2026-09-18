@@ -113,7 +113,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
         const job = record(value);
         return (
           !PREINSTALLED_E2E_JOBS.has(jobName) &&
-          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
+          (jobName === "generate-matrix" || record(job.env).E2E_JOB === "1")
         );
       })
       .map(([jobName]) => jobName),
@@ -136,6 +136,15 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     const jobSteps = steps(record(value).steps);
     if (jobSteps.some((step) => step.uses === CHECKOUT_LOCAL_PREPARE_E2E_ACTION)) {
       errors.push(`${jobName} must not load prepare-e2e from the target checkout`);
+    }
+    if (jobName === "live") {
+      if (
+        record(value).uses !== "./.github/workflows/e2e-standard-profile.yaml" ||
+        jobSteps.length !== 0
+      ) {
+        errors.push("live must delegate workspace preparation to the standard E2E profile");
+      }
+      continue;
     }
     const expectedAction =
       jobName === CLI_ARTIFACT_PRODUCER_JOB ? PREPARE_COMPILED_ARTIFACT_ACTION : PREPARE_E2E_ACTION;

@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { normalizeE2eSelectorCsv } from "./selector-aliases.mts";
-
 export type ReportApiJob = {
   completed_at?: string | null;
   conclusion?: string | null;
@@ -183,10 +181,24 @@ export function renderE2eReport(input: {
   const rawRequestedTestIds = env.JOBS || "";
   const selectorValidationPassed = needs["generate-matrix"]?.result === "success";
   const requestedTargets = selectorValidationPassed
-    ? normalizeE2eSelectorCsv(rawRequestedTargets)
+    ? [
+        ...new Set(
+          rawRequestedTargets
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ].join(",")
     : "";
   const requestedTestIdsCsv = selectorValidationPassed
-    ? normalizeE2eSelectorCsv(rawRequestedTestIds)
+    ? [
+        ...new Set(
+          rawRequestedTestIds
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ].join(",")
     : "";
   const targetsRejected = Boolean(rawRequestedTargets) && !selectorValidationPassed;
   const testIdsRejected = Boolean(rawRequestedTestIds) && !selectorValidationPassed;

@@ -267,18 +267,10 @@ test(
   "network-policy: a live policy update does not restart the sandbox during host-gateway allow and deny probes",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm built CLI selected runtime provider OpenShell and credential",
-        "clear the sandbox and onboard restricted policy",
-        "export live configuration and reject identity drift",
-        "deny default egress and hot-reload one host-gateway port",
-        "allow the approved host-gateway port and deny another port",
-        "prove the installed OpenClaw web_fetch path obeys the host-gateway policy",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm built CLI selected runtime provider OpenShell and credential");
+
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
@@ -507,16 +499,10 @@ test(
   "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm built CLI selected runtime provider OpenShell and credential",
-        "clear the restricted-policy sandbox",
-        "onboard default restricted OpenClaw",
-        "confirm the restricted tier has zero active presets",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm built CLI selected runtime provider OpenShell and credential");
+
     await artifacts.writeJson("scenario.json", {
       id: "restricted-openclaw-policy-suppression",
       runner: "vitest",

@@ -250,14 +250,10 @@ proof(
   "records portable CPU delegation evidence for the configured hierarchy (#9188)",
   {
     timeout: 30_000,
-    meta: {
-      e2ePhases: [
-        "inspect the configured CPU delegation hierarchy",
-        "record CPU delegation admission evidence",
-      ],
-    },
   },
   async ({ artifacts, progress }) => {
+    progress.phase("inspect the configured CPU delegation hierarchy");
+
     assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
     const uid = expectedUid();
     assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");

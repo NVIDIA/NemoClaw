@@ -15,7 +15,7 @@ import {
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
 import { liveTargetTestTitle } from "../registry/execution.ts";
-import { listTargets, requireTargets } from "../registry/registry.ts";
+import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -99,7 +99,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
       await artifacts.target.declare({
         id: target.id,
         boundary: "typed-registry",
-        pendingRuntimeSuites: target.suiteIds,
       });
 
       await artifacts.writeJson("run-plan.json", runPlan);
@@ -188,7 +187,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
           contract: configExport.contract,
           elapsedMs: configExport.elapsedMs,
         },
-        pendingRuntimeSuites: target.suiteIds,
         dcodeBaseImage,
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }

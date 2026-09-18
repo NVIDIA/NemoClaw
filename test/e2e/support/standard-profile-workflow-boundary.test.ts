@@ -16,12 +16,211 @@ import {
   FULL_E2E_TEST_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
-import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
+import { catalogueTarget } from "../../../tools/e2e/target-inventory.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
+function recordDcodeEvidence(directory: string, candidateSha: string, reference: string) {
+  const profile = YAML.parse(
+    fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+  ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+  const script = profile.jobs.run.steps.find(
+    (step) => step.name === "Record immutable Deep Agents Code base evidence",
+  )!.run!;
+  return spawnSync("bash", ["-c", script], {
+    cwd: directory,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BASE_CONTRACT: JSON.stringify({ reference }),
+      CANDIDATE_SHA: candidateSha,
+      E2E_ARTIFACT_DIR: directory,
+      RUNNER_TEMP: directory,
+      TARGET_ID: "dcode-target",
+      TARGET_LABEL: "DCode: installed agent",
+    },
+  });
+}
+
 describe("standard E2E execution profile", () => {
+  it.each([
+    { mode: "removed check", run: "true" },
+    {
+      mode: "ignored shell failure",
+      run: 'test -f "e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json" || true',
+    },
+    {
+      mode: "printed check",
+      run: "echo 'test -f \"e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json\"'",
+    },
+    { mode: "ignored step failure", "continue-on-error": true },
+    { mode: "disabled check", if: "${{ false }}" },
+  ])("rejects $mode in the config export evidence requirement", ({ mode: _mode, ...mutation }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    const requirement = profile.jobs.run.steps.find(
+      (step) => step.name === "Require automatic config export evidence",
+    )!;
+    Object.assign(requirement, mutation);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed targets must require automatic config export evidence after tests and before upload",
+    );
+  });
+
+  it("uploads typed artifacts only after successful execution planning", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    );
+    const upload = profile.jobs.run.steps.find(
+      (step: { name?: string }) => step.name === "Upload typed target artifacts",
+    );
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    upload.if = "${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}";
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed target artifacts must preserve the reviewed allowlist and execution identity",
+    );
+  });
+
+  it.for([
+    { candidateSha: "invalid", reference: `registry/base@sha256:${"b".repeat(64)}` },
+    { candidateSha: "a".repeat(40), reference: "registry/base:mutable" },
+  ])("does not publish rejected DCode base evidence: %j", (input, { onTestFinished }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const result = recordDcodeEvidence(directory, input.candidateSha, input.reference);
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(path.join(directory, "dcode-target", "dcode-base-image.json"))).toBe(
+      false,
+    );
+    expect(
+      fs.existsSync(path.join(directory, "dcode-installed-agent", "dcode-base-image.json")),
+    ).toBe(false);
+  });
+
+  it.for(["dcode-target", "dcode-installed-agent"])(
+    "publishes validated DCode base evidence with private permissions in %s",
+    (name, { onTestFinished }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-dcode-evidence-"));
+      onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const candidateSha = "a".repeat(40);
+      const reference = `registry/base@sha256:${"b".repeat(64)}`;
+      const result = recordDcodeEvidence(directory, candidateSha, reference);
+      expect(result.status, result.stderr).toBe(0);
+      const filename = path.join(directory, name, "dcode-base-image.json");
+      expect(JSON.parse(fs.readFileSync(filename, "utf8"))).toEqual({
+        contractVersion: 1,
+        candidateSha,
+        base: { reference },
+      });
+      expect(fs.statSync(filename).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it("requires the resolved candidate SHA for typed and catalogue execution evidence", () => {
+    const workflow = readWorkflow();
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    );
+    expect(validateStandardProfileWorkflowBoundary(workflow, profile)).toEqual([]);
+    profile.jobs.run.env.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha }}";
+    expect(validateStandardProfileWorkflowBoundary(workflow, profile)).toContain(
+      "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
+    );
+  });
+
+  it.each([undefined, "${{ false }}"])(
+    "rejects a reviewed SDK install with condition %s instead of artifact presence",
+    (condition) => {
+      const workflow = readWorkflow();
+      const profile = YAML.parse(
+        fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+      );
+      expect(validateStandardProfileWorkflowBoundary(workflow, profile)).toEqual([]);
+      const install = profile.jobs.run.steps.find(
+        (step: { name?: string }) =>
+          step.name === "Install reviewed OpenShell SDK archive without package credentials",
+      );
+      install.if = condition;
+      expect(validateStandardProfileWorkflowBoundary(workflow, profile)).toContain(
+        "standard E2E profile must install the reviewed SDK only when its archive was requested",
+      );
+    },
+  );
+
+  it.each([
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK archive without package credentials",
+  ])("rejects missing or late SDK preparation: %s", (name) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    );
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    const steps = profile.jobs.run.steps;
+    const index = steps.findIndex((step: { name?: string }) => step.name === name);
+    const [removed] = steps.splice(index, 1);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).not.toEqual([]);
+    steps.push(removed);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).not.toEqual([]);
+  });
+
+  it.each(["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"])(
+    "rejects %s on a non-execution step",
+    (key) => {
+      const profile = YAML.parse(
+        fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+      );
+      const summary = profile.jobs.run.steps.find(
+        (step: { name?: string }) => step.name === "Summarize artifacts",
+      );
+      summary.env[key] = "${{ secrets." + key + " }}";
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+        "standard E2E profile must expose inference credentials only to test execution",
+      );
+    },
+  );
+
+  it.each([
+    "onboard-progress-budget.json",
+    "dcode-base-image.json",
+    "config-export-evidence.v1.json",
+    "raw-traces/",
+  ])("rejects changes to the typed artifact allowlist: %s", (artifact) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as {
+      jobs: { run: { steps: Array<{ name?: string; with?: { path: string } }> } };
+    };
+    const upload = profile.jobs.run.steps.find(
+      (step) => step.name === "Upload typed target artifacts",
+    )!;
+    upload.with!.path =
+      artifact === "raw-traces/"
+        ? `${upload.with!.path}e2e-artifacts/live/raw-traces/\n`
+        : upload.with!.path.replace(artifact, `${artifact}.backup`);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed target artifacts must preserve the reviewed allowlist and execution identity",
+    );
+  });
+
+  it("rejects DCode base evidence recorded after execution", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as {
+      jobs: { run: { steps: Array<{ name?: string }> } };
+    };
+    const steps = profile.jobs.run.steps;
+    const index = steps.findIndex(
+      (step) => step.name === "Record immutable Deep Agents Code base evidence",
+    );
+    steps.push(...steps.splice(index, 1));
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed DCode must record its immutable base contract only without a candidate catalog",
+    );
+  });
+
   it("accepts the catalogue callers and reusable profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
@@ -48,16 +247,9 @@ describe("standard E2E execution profile", () => {
       (candidate) => candidate.name === "Install reviewed cloudflared",
     )!;
     step.run = `${step.run}\ncommand -v cloudflared`;
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
-    const profilePath = path.join(directory, "profile.yaml");
-    try {
-      fs.writeFileSync(profilePath, YAML.stringify(profile));
-      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
-        "standard E2E profile must install only the reviewed cloudflared package",
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "standard E2E profile must install only the reviewed cloudflared package",
+    );
   });
 
   it("rejects secret crossover between catalogue profiles", () => {
@@ -220,26 +412,19 @@ describe("standard E2E execution profile", () => {
     steps.find((step) => step.name === "Upload skill-agent artifacts")!.with!.path =
       "/tmp/unreviewed-skill-output";
 
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
-    const profilePath = path.join(directory, "profile.yaml");
-    try {
-      fs.writeFileSync(profilePath, YAML.stringify(profile));
-      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toEqual(
-        expect.arrayContaining([
-          "standard E2E profile must derive validated execution paths before candidate checkout",
-          "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
-          "standard E2E profile must install only the reviewed cloudflared package",
-          "standard E2E profile must download the run-scoped reviewed SDK archive",
-          "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
-          "standard E2E profile must initialize only planned trusted-main runner telemetry",
-          "standard E2E profile must run the planned catalogue target with guarded secrets",
-          "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",
-          "standard E2E profile must upload only its validated artifact path with the reviewed action",
-        ]),
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual(
+      expect.arrayContaining([
+        "standard E2E profile must derive validated execution paths before candidate checkout",
+        "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
+        "standard E2E profile must install only the reviewed cloudflared package",
+        "standard E2E profile must download the run-scoped reviewed SDK archive",
+        "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
+        "standard E2E profile must initialize only planned trusted-main runner telemetry",
+        "standard E2E profile must run the planned catalogue target with guarded secrets",
+        "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",
+        "standard E2E profile must upload only its validated artifact path with the reviewed action",
+      ]),
+    );
   });
 
   it("derives artifact paths before checkout and rejects unsafe plan values", () => {
@@ -293,6 +478,34 @@ describe("standard E2E execution profile", () => {
         `E2E_ARTIFACT_DIR=${directory}/e2e-artifacts/live/hermes-inference-switch/anthropic\n` +
           "NEMOCLAW_E2E_SHARD=anthropic\n" +
           "NEMOCLAW_GATEWAY_RUNTIME=podman\n",
+      );
+
+      fs.writeFileSync(githubOutput, "");
+      fs.writeFileSync(githubEnvironment, "");
+      const typed = spawnSync("bash", [...shellArguments, planScript], {
+        encoding: "utf8",
+        env: {
+          ...environment,
+          CATALOGUE_ID: "ubuntu-repo-cloud-openclaw",
+          COVERAGE_VARIANT: "docker",
+          EXECUTION_ID: "ubuntu-repo-cloud-openclaw-docker",
+          HOST_PREPARATION: "none",
+          INSTALL_MODE: "none",
+          RUNTIME_PROVIDER: "docker",
+          SHARD: "default",
+          TARGET_ID: "ubuntu-repo-cloud-openclaw",
+          TEST_FILE: "test/e2e/live/registry-targets.test.ts",
+        },
+      });
+      expect(typed.status, typed.stderr).toBe(0);
+      expect(fs.readFileSync(githubOutput, "utf8")).toBe(
+        "artifact_directory=e2e-artifacts/live/ubuntu-repo-cloud-openclaw\n" +
+          "upload_name=e2e-ubuntu-repo-cloud-openclaw-docker\n",
+      );
+      expect(fs.readFileSync(githubEnvironment, "utf8")).toBe(
+        `E2E_ARTIFACT_DIR=${directory}/e2e-artifacts/live\n` +
+          "NEMOCLAW_E2E_SHARD=default\n" +
+          "NEMOCLAW_GATEWAY_RUNTIME=docker\n",
       );
 
       const unsafe = spawnSync("bash", [...shellArguments, planScript], {
@@ -382,8 +595,6 @@ describe("standard E2E execution profile", () => {
   });
 
   it("keeps checkout, credential cleanup, target execution, and artifact upload in order", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
-    const profilePath = path.join(tmp, "profile.yaml");
     const profile = YAML.parse(
       fs.readFileSync(
         path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
@@ -439,30 +650,25 @@ describe("standard E2E execution profile", () => {
     const cleanup = steps.pop()!;
     steps.unshift(cleanup);
     steps.splice(3, 0, { name: "Run unreviewed helper", run: "bash scripts/helper.sh" });
-    fs.writeFileSync(profilePath, YAML.stringify(profile));
 
-    try {
-      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toEqual(
-        expect.arrayContaining([
-          "standard E2E profile checkout action must use a full commit SHA",
-          "standard E2E profile must check out checkout_sha without credentials",
-          "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
-          "standard E2E profile must install only the planned host packages with the reviewed action",
-          "standard E2E profile must install host dependencies before workspace prep",
-          "standard E2E profile must run the planned catalogue target with guarded secrets",
-          "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
-          "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
-          "standard E2E profile must set NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA",
-          "standard E2E profile must derive validated execution paths before candidate checkout",
-          "standard E2E profile must expose only its reviewed job environment",
-          "standard E2E profile must show the planned credential boundary",
-          "standard E2E profile must keep its reviewed step set and order",
-          "standard E2E profile must upload only its validated artifact path with the reviewed action",
-          "standard E2E profile must always clean up Docker authentication last",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual(
+      expect.arrayContaining([
+        "standard E2E profile checkout action must use a full commit SHA",
+        "standard E2E profile must check out checkout_sha without credentials",
+        "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
+        "standard E2E profile must install only the planned host packages with the reviewed action",
+        "standard E2E profile must install host dependencies before workspace prep",
+        "standard E2E profile must run the planned catalogue target with guarded secrets",
+        "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
+        "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
+        "standard E2E profile must set NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA",
+        "standard E2E profile must derive validated execution paths before candidate checkout",
+        "standard E2E profile must expose only its reviewed job environment",
+        "standard E2E profile must show the planned credential boundary",
+        "standard E2E profile must keep its reviewed step set and order",
+        "standard E2E profile must upload only its validated artifact path with the reviewed action",
+        "standard E2E profile must always clean up Docker authentication last",
+      ]),
+    );
   });
 });

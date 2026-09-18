@@ -185,30 +185,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "live",
-    {
-      name: "e2e-${{ matrix.execution_id }}",
-      path: [
-        "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
-        "e2e-artifacts/live/${{ matrix.id }}/target.json",
-        "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
-        "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
-        "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
-        "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
-        "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
-        "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
-        "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
-        "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
-        "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json",
-        "e2e-artifacts/live/risk-signal.json",
-        "e2e-artifacts/live/${{ matrix.id }}/actions/",
-        "e2e-artifacts/live/${{ matrix.id }}/logs/",
-        "e2e-artifacts/live/${{ matrix.id }}/shell/",
-        "",
-      ].join("\n"),
-    },
-  ],
-  [
     "managed-image-multiarch-startup",
     {
       name: "e2e-managed-image-multiarch-startup-${{ matrix.shard }}",
@@ -452,7 +428,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "staging-brev-launchable" ||
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
-          jobName === "live" ||
           jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
           env.E2E_JOB === "1" ||

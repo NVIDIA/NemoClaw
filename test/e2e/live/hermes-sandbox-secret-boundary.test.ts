@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 import { shellQuote } from "../fixtures/clients/command.ts";
 import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/docker-probe.ts";
@@ -671,19 +672,10 @@ async function expectRuntimeApiServerKeyPerSandbox(
 
 test(
   "hermes sandbox secret boundary keeps raw secrets out of images and startup",
-  {
-    meta: {
-      e2ePhases: [
-        "check Docker and Hermes image inputs",
-        "build base and managed Hermes images",
-        "inspect image secret and runtime boundaries",
-        "verify unique per-sandbox API keys",
-        "reject raw secrets from Hermes env files",
-        "reject raw secrets from Hermes process env",
-      ],
-    },
-  },
+  testTimeoutOptions(60 * 60_000),
   async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    progress.phase("check Docker and Hermes image inputs");
+
     const probe = new DockerProbe(
       artifacts,
       (text, extraValues) => secrets.redact(text, extraValues),

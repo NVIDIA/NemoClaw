@@ -202,8 +202,9 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
 }
 
 // Env keys the fixture layer guarantees children may always see. Anything
-// outside this set, outside FIXTURE_ENV_PREFIXES, and not declared by the
-// calling fixture is dropped before the child spawns.
+// outside this set, outside FIXTURE_ENV_PREFIXES, and not declared
+// through the child process secretEnv option is dropped before
+// the child spawns.
 const FIXTURE_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",

@@ -24,10 +24,18 @@ type WorkflowStep = Record<string, unknown> & {
 };
 
 type Workflow = {
-  jobs: Record<string, { env?: Record<string, unknown>; steps?: WorkflowStep[] }>;
+  jobs: Record<string, { env?: Record<string, unknown>; steps?: WorkflowStep[]; uses?: string }>;
 };
 
 describe("prepare-e2e workflow boundary", () => {
+  it("rejects redirecting typed preparation outside the reviewed reusable profile", () => {
+    const workflow = readWorkflow() as Workflow;
+    workflow.jobs.live.uses = "./.github/workflows/unreviewed.yaml";
+    expect(validatePrepareE2eInvocations(workflow)).toContain(
+      "live must delegate workspace preparation to the standard E2E profile",
+    );
+  });
+
   it("requires one workspace preparation step per E2E job and one candidate CLI build in generate-matrix", () => {
     expect(validatePrepareE2eAction()).toEqual([]);
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);

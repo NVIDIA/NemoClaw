@@ -62,32 +62,35 @@ function runFixture(
 vi.setConfig({ maxConcurrency: 7, testTimeout: 30_000 });
 
 describe.concurrent("automatic E2E phase outcomes", () => {
-  it("redacts target identities and explicit progress events before console output", async (context) => {
-    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-redaction-"));
-    const secret = "progress-event-secret-value";
-    try {
-      const result = await runFixture(
-        {
-          ...process.env,
-          E2E_ARTIFACT_DIR: artifactDir,
-          E2E_TARGET_ID: `redaction-target-${secret}`,
-          NEMOCLAW_E2E_PROGRESS_EVENT_SECRET: secret,
-          NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "redacted-event",
-          NEMOCLAW_RUN_LIVE_E2E: "1",
-        },
-        context,
-      );
+  it.for(["progress-event-secret-value", 'progress-"quoted"-secret\\value'])(
+    "redacts target identities and explicit progress events before console output: %s",
+    async (secret, context) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-redaction-"));
+      try {
+        const result = await runFixture(
+          {
+            ...process.env,
+            E2E_ARTIFACT_DIR: artifactDir,
+            E2E_TARGET_ID: `redaction-target-${secret}`,
+            NEMOCLAW_E2E_PROGRESS_EVENT_SECRET: secret,
+            NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "redacted-event",
+            NEMOCLAW_RUN_LIVE_E2E: "1",
+          },
+          context,
+        );
 
-      const output = `${result.stdout}\n${result.stderr}`;
-      const { expect } = context;
-      expect(result.status, output).toBe(0);
-      expect(output).not.toContain(secret);
-      expect(output).toContain('target="redaction-target-[REDACTED]"');
-      expect(output).toContain("event: retry cleanup for [REDACTED]");
-    } finally {
-      fs.rmSync(artifactDir, { recursive: true, force: true });
-    }
-  });
+        const output = `${result.stdout}\n${result.stderr}`;
+        const { expect } = context;
+        expect(result.status, output).toBe(0);
+        expect(output).not.toContain(secret);
+        expect(output).not.toContain(JSON.stringify(secret).slice(1, -1));
+        expect(output).toContain('"target":"redaction-target-[REDACTED]"');
+        expect(output).toContain('"message":"retry cleanup for [REDACTED]"');
+      } finally {
+        fs.rmSync(artifactDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it(
     "reports the signal when a nested fixture exceeds its deadline",
@@ -154,7 +157,42 @@ describe.concurrent("automatic E2E phase outcomes", () => {
       "failed",
       20,
     ],
-    ["incomplete", 1, "rejects-incomplete-phase-plan", E2E_TEARDOWN_PHASE, "failed", "failed", 0],
+    [
+      "body-and-cleanup-failed",
+      1,
+      "keeps-body-and-cleanup-failures-distinct",
+      "raise primary body failure",
+      "failed",
+      "failed",
+      0,
+    ],
+    [
+      "incomplete",
+      0,
+      "accepts-a-test-without-a-final-phase-declaration",
+      E2E_TEARDOWN_PHASE,
+      "passed",
+      "passed",
+      0,
+    ],
+    [
+      "no-phase-passed",
+      0,
+      "checks-a-real-file-without-declaring-progress",
+      "execute E2E test",
+      "passed",
+      "passed",
+      0,
+    ],
+    [
+      "no-phase-failed",
+      1,
+      "checks-a-real-file-without-declaring-progress",
+      "execute E2E test",
+      "failed",
+      "passed",
+      0,
+    ],
     [
       "soft-failed",
       1,
@@ -190,14 +228,37 @@ describe.concurrent("automatic E2E phase outcomes", () => {
         ) as ProgressSummary;
         const phase = summary.phases.find((candidate) => candidate.label === phaseLabel);
         expect(phase).toMatchObject({ outcome: expectedOutcome });
-        expect(`${result.stdout}\n${result.stderr}`).toContain(
-          `${phaseLabel} — ${expectedOutcome} in`,
+        expect(
+          `${result.stdout}\n${result.stderr}`
+            .split("\n")
+            .filter((line) => line.startsWith('{"kind":"e2e-progress"'))
+            .map((line) => JSON.parse(line)),
+        ).toContainEqual(
+          expect.objectContaining({
+            event: "complete",
+            activity: phaseLabel,
+            outcome: expectedOutcome,
+          }),
         );
         expect(summary.phases.at(-1)).toMatchObject({
           label: E2E_TEARDOWN_PHASE,
           outcome: expectedTeardownOutcome,
         });
         expect(phase?.durationMs).toBeGreaterThanOrEqual(minimumDurationMs);
+        if (mode === "body-and-cleanup-failed") {
+          const output = `${result.stdout}\n${result.stderr}`;
+          expect(output).toContain("primary body failure");
+          expect(output).toContain("distinct owned cleanup failure");
+          const cleanup = JSON.parse(
+            fs.readFileSync(path.join(artifactDir, slug, "cleanup.json"), "utf8"),
+          );
+          expect(cleanup.failures).toEqual([
+            {
+              name: "owned cleanup after body failure",
+              message: "distinct owned cleanup failure",
+            },
+          ]);
+        }
       } finally {
         fs.rmSync(artifactDir, { recursive: true, force: true });
       }

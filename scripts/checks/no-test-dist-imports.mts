@@ -647,6 +647,13 @@ function analyzeSource(file: string, source: string): SourceAnalysis {
     }
 
     function checkSpecifier(node: ts.Node, specifier: string): void {
+      // This embedded probe runs inside the managed image, where /opt/nemoclaw is the plugin.
+      if (
+        !recordReferences &&
+        file === "test/e2e-runtime/managed-image-openclaw-security.test.ts" &&
+        specifier === "/opt/nemoclaw/dist/commands/migration-state.js"
+      )
+        return;
       if (recordReferences) {
         const position = scannedFile.getLineAndCharacterOfPosition(node.getStart(scannedFile));
         references.push({ file, line: position.line + lineOffset + 1, specifier });

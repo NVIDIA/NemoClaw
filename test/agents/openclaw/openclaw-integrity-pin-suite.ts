@@ -460,7 +460,12 @@ function runInstallBlock(
         `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json`,
       )
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
-      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
+      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile)
+      .replaceAll("/tmp/mcporter-npm-audit.json", path.join(tmp, "mcporter-npm-audit.json"))
+      .replaceAll(
+        "/tmp/mcporter-npm-audit-policy.json",
+        path.join(tmp, "mcporter-npm-audit-policy.json"),
+      ),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -1437,7 +1442,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           );
           expect(rejected.calls).not.toContain("npm install -g");
         }
-        expect(fixtureBase.result.status).toBe(0);
+        expect(
+          fixtureBase.result.status,
+          `${fixtureBase.result.stdout}\n${fixtureBase.result.stderr}`,
+        ).toBe(0);
         expect(fixtureBase.calls).toContain(
           `npm view openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} version`,
         );
@@ -1457,7 +1465,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           /npm install -g --ignore-scripts \S+\/openclaw-remediated\.tgz/u,
         );
         expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
-        expect(gatewayFixtureBase.result.status).toBe(0);
+        expect(
+          gatewayFixtureBase.result.status,
+          `${gatewayFixtureBase.result.stdout}\n${gatewayFixtureBase.result.stderr}`,
+        ).toBe(0);
         expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");
         expect(gatewayFixtureBase.calls).toContain("postinstall-bundled-plugins.mjs");
       });

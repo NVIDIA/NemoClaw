@@ -19,10 +19,6 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
-const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
-  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
-const CONFIG_EXPORT_EVIDENCE_PATH =
-  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -42,66 +38,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "relevant-e2e must check out only the trusted evaluator",
     );
   });
-  it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
-    upload.with!.path = String(upload.with!.path)
-      .split("\n")
-      .map((line) =>
-        line.trim() === COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH
-          ? `${COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH}.backup`
-          : line,
-      )
-      .join("\n");
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "live E2E must upload cold-onboard performance evidence",
-    );
-  });
-  it("requires automatic config export evidence in retained live artifacts (#11485)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
-    upload.with!.path = String(upload.with!.path)
-      .split("\n")
-      .filter((line) => line.trim() !== CONFIG_EXPORT_EVIDENCE_PATH)
-      .join("\n");
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "live E2E must upload automatic config export evidence",
-    );
-  });
-  it.each([
-    { mode: "removed check", run: "true", continueOnError: false },
-    {
-      mode: "ignored shell failure",
-      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,
-      continueOnError: false,
-    },
-    {
-      mode: "printed check",
-      run: `echo 'test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"'`,
-      continueOnError: false,
-    },
-    {
-      mode: "ignored step failure",
-      run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"`,
-      continueOnError: true,
-    },
-  ])(
-    "rejects $mode in the automatic config export evidence requirement (#11485)",
-    ({ run, continueOnError }) => {
-      const workflow = readE2eOperationsWorkflow();
-      const requirement = workflow.jobs.live.steps!.find(
-        (step) => step.name === "Require automatic config export evidence",
-      )!;
-      requirement.run = run;
-      requirement["continue-on-error"] = continueOnError;
-
-      expect(validateE2eOperationsWorkflow(workflow)).toContain(
-        "live E2E must require automatic config export evidence before upload",
-      );
-    },
-  );
   it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];

@@ -15,15 +15,6 @@ test(
   `OpenShell ${OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION} Docker-driver gateway auth uses NemoClaw mTLS plus sandbox JWT`,
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm gateway and Docker prerequisites",
-        "verify the exact OpenShell TLS server-name source boundary",
-        "launch the mTLS and JWT-protected gateway",
-        "probe unauthenticated and mTLS-only access",
-        "probe sandbox JWT authorization boundaries",
-      ],
-    },
   },
   ({ artifacts, cleanup, host, progress, skip }) =>
     runOpenShellGatewayAuthSourceContractScenario(

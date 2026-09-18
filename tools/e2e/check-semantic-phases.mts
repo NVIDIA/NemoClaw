@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listExecutionTargets, workflowExecutionSelection } from "./target-inventory.mts";
+import { checkWorkflowConsumers } from "./workflow-execution-discovery.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -11,39 +13,16 @@ import type {} from "vitest";
 import { createVitest } from "vitest/node";
 
 import { REPO_ROOT } from "../../test/e2e/fixtures/paths.ts";
-import { validateE2EPhasePlan } from "../../test/e2e/fixtures/progress.ts";
 import {
   type CredentialFreeTestMatrixRow,
   type CredentialFreeTestProject,
 } from "./credential-free-tests.mts";
-import {
-  type FreeStandingJobsInventory,
-  readFreeStandingJobsInventory,
-} from "./workflow-boundary.mts";
+import { type FreeStandingJobsInventory } from "./workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "./workflow-plan.mts";
-
-declare module "vitest" {
-  interface TaskMeta {
-    e2ePhases?: readonly string[];
-  }
-}
 
 export interface SemanticPhaseCoverage {
   files: number;
   tests: number;
-}
-
-export interface PhaseCall {
-  file: string;
-  label: string | null;
-  line: number;
-}
-
-export interface TestPhaseBody {
-  file: string;
-  line: number;
-  phaseCalls: PhaseCall[];
-  skipped?: boolean;
 }
 
 export interface DirectChildProcessCall {
@@ -59,20 +38,12 @@ export interface DirectChildProcessCall {
   tracksLifecycle: boolean;
 }
 
-export interface ScopedPhasePlan {
-  name: string;
-  phases: readonly string[];
-}
-
 export interface SemanticPhaseSourceGraph {
   childProcessAuditFailures?: string[];
   directChildProcessCalls?: DirectChildProcessCall[];
-  forwardedTestModules?: string[];
   importsDirectTest: boolean;
   importsSharedTest: boolean;
   importsWorkflowTest?: boolean;
-  phaseCalls: PhaseCall[];
-  testPhaseBodies: TestPhaseBody[];
 }
 
 export interface CollectedSemanticPhaseModule {
@@ -81,7 +52,6 @@ export interface CollectedSemanticPhaseModule {
   errors: readonly string[];
   tests: readonly {
     fullName: string;
-    phases?: readonly string[];
   }[];
   source: SemanticPhaseSourceGraph;
 }
@@ -98,9 +68,6 @@ const E2E_RUNTIME_OBSERVABILITY_FILES = [path.join(E2E_ROOT, "risk-signal-report
 const REGISTRY_TARGET_TEST = "test/e2e/live/registry-targets.test.ts";
 const WINDOWS_MXC_OPENCLAW_HELPER =
   "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts";
-const LIVE_TEST_FORWARDERS = new Map([
-  ["test/e2e/live/bootstrap-install-smoke.test.ts", "test/e2e/live/launchable-smoke.test.ts"],
-]);
 const LIVE_TEST_FIXTURE_SUFFIX = "/fixtures/e2e-test.ts";
 const WORKFLOW_TEST_FIXTURE_SUFFIX = "/e2e/fixtures/workflow-e2e-test.ts";
 
@@ -233,7 +200,7 @@ function credentialFreeProjectForWorkflowFile(
  */
 export function semanticPhaseCoverageModules(
   plan: SemanticPhaseWorkflowPlan = buildE2eWorkflowPlan(),
-  inventory: SemanticPhaseWorkflowInventory = readFreeStandingJobsInventory(),
+  inventory: SemanticPhaseWorkflowInventory = workflowExecutionSelection(),
   liveTestFiles: readonly string[] = fs
     .globSync("**/*.test.ts", { cwd: LIVE_ROOT })
     .map((file) => path.join("test/e2e/live", file).split(path.sep).join("/")),
@@ -257,10 +224,6 @@ export function semanticPhaseCoverageModules(
   }
   if (plan.matrix.length > 0) add(REGISTRY_TARGET_TEST, "e2e-live");
 
-  for (const [forwarder, target] of LIVE_TEST_FORWARDERS) {
-    if (selected.has(forwarder)) add(target, "e2e-live");
-  }
-
   return [...selected]
     .map(([file, project]) => ({ file, project }))
     .sort((left, right) => left.file.localeCompare(right.file));
@@ -279,10 +242,6 @@ function resolveImportWithin(root: string, fromFile: string, specifier: string):
         fs.statSync(candidate).isFile(),
     ) ?? null
   );
-}
-
-function resolveLiveImport(fromFile: string, specifier: string): string | null {
-  return resolveImportWithin(LIVE_ROOT, fromFile, specifier);
 }
 
 function resolveE2EImport(fromFile: string, specifier: string): string | null {
@@ -1894,14 +1853,14 @@ function auditTestProgressCapabilityContract(
         ts.isFunctionDeclaration(statement) && statement.name?.text === "isTestProgressCapability",
     );
     const expectedValidatorBody =
-      '{if(typeofvalue!=="object"||value===null||!TEST_PROGRESS_INSTANCES.has(value)){returnfalse;}constdescriptor=Object.getOwnPropertyDescriptor(value,TEST_PROGRESS_CAPABILITY);return(Object.isFrozen(value)&&descriptor?.value===true&&descriptor.enumerable===false&&descriptor.configurable===false&&descriptor.writable===false);}';
+      '{returntypeofvalue==="object"&&value!==null&&TEST_PROGRESS_INSTANCES.has(value);}';
     if (
       !capabilityValidator?.body ||
       compactSource(capabilityValidator.body, sourceFile) !== expectedValidatorBody
     ) {
       reportUnsupported(
         capabilityValidator ?? sourceFile,
-        "isTestProgressCapability must exactly validate the private registry, own brand, and frozen object",
+        "isTestProgressCapability must exactly validate the private registry",
       );
     }
 
@@ -2015,10 +1974,9 @@ function auditTestProgressCapabilityContract(
     }
     const factoryStatements = factory?.body?.statements ?? [];
     const factoryTail = factoryStatements
-      .slice(-3)
+      .slice(-2)
       .map((statement) => compactSource(statement, sourceFile));
     const expectedFactoryTail = [
-      "Object.defineProperty(progress,TEST_PROGRESS_CAPABILITY,{configurable:false,enumerable:false,value:true,writable:false,});",
       "TEST_PROGRESS_INSTANCES.add(progress);",
       "returnObject.freeze(progress);",
     ];
@@ -2049,10 +2007,8 @@ function auditTestProgressCapabilityContract(
         }
         if (
           ts.isCallExpression(node) &&
-          expressionPath(node.expression) === "logChildLifecycleBestEffort" &&
-          node.arguments.length === 2 &&
-          ts.isStringLiteralLike(node.arguments[1] as ts.Expression) &&
-          (node.arguments[1] as ts.StringLiteralLike).text === "started"
+          compactSource(node, sourceFile) ===
+            'writeLog("child",now(),{child:ordinal,outcome:"started"})'
         ) {
           logsSynchronousLifecycleStart = true;
         }
@@ -2472,58 +2428,6 @@ function propertyNameText(name: ts.PropertyName | undefined): string | undefined
   return undefined;
 }
 
-function hasE2EPhaseMetadata(node: ts.CallExpression): boolean {
-  return node.arguments.some(
-    (argument) =>
-      ts.isObjectLiteralExpression(argument) &&
-      argument.properties.some(
-        (property) =>
-          ts.isPropertyAssignment(property) &&
-          propertyNameText(property.name) === "meta" &&
-          ts.isObjectLiteralExpression(property.initializer) &&
-          property.initializer.properties.some(
-            (metaProperty) =>
-              ts.isPropertyAssignment(metaProperty) &&
-              propertyNameText(metaProperty.name) === "e2ePhases",
-          ),
-      ),
-  );
-}
-
-function phaseCallFromNode(
-  node: ts.Node,
-  file: string,
-  sourceFile: ts.SourceFile,
-): PhaseCall | null {
-  if (
-    !ts.isCallExpression(node) ||
-    !ts.isPropertyAccessExpression(node.expression) ||
-    node.expression.name.text !== "phase"
-  ) {
-    return null;
-  }
-  const argument = node.arguments[0];
-  const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-  return {
-    file: path.relative(REPO_ROOT, file),
-    label: argument && ts.isStringLiteralLike(argument) ? argument.text : null,
-    line: location.line + 1,
-  };
-}
-
-function dynamicLiveImportFromNode(node: ts.Node, file: string): string | null {
-  const specifier = ts.isCallExpression(node) ? node.arguments[0] : undefined;
-  if (
-    !ts.isCallExpression(node) ||
-    node.expression.kind !== ts.SyntaxKind.ImportKeyword ||
-    !specifier ||
-    !ts.isStringLiteral(specifier)
-  ) {
-    return null;
-  }
-  return resolveLiveImport(file, specifier.text);
-}
-
 function dynamicE2EImportFromNode(node: ts.Node, file: string): string | null {
   const specifier = ts.isCallExpression(node) ? node.arguments[0] : undefined;
   if (
@@ -2537,89 +2441,10 @@ function dynamicE2EImportFromNode(node: ts.Node, file: string): string | null {
   return resolveE2EImport(file, specifier.text);
 }
 
-function forwardedLiveTestFromNode(node: ts.Node, file: string): string | null {
-  const resolved = dynamicLiveImportFromNode(node, file);
-  if (!resolved?.endsWith(".test.ts")) return null;
-  return path.relative(REPO_ROOT, resolved).split(path.sep).join("/");
-}
-
-function collectTestPhaseBodies(file: string, sourceFile: ts.SourceFile): TestPhaseBody[] {
-  const bodies: TestPhaseBody[] = [];
-
-  function inspect(node: ts.Node): void {
-    if (ts.isCallExpression(node) && hasE2EPhaseMetadata(node)) {
-      const callback = [...node.arguments]
-        .reverse()
-        .find((argument) => ts.isArrowFunction(argument) || ts.isFunctionExpression(argument));
-      const phaseCalls: PhaseCall[] = [];
-      if (callback) {
-        function inspectCallback(callbackNode: ts.Node): void {
-          const call = phaseCallFromNode(callbackNode, file, sourceFile);
-          if (call) phaseCalls.push(call);
-          ts.forEachChild(callbackNode, inspectCallback);
-        }
-        inspectCallback(callback);
-      }
-      const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      bodies.push({
-        file: path.relative(REPO_ROOT, file),
-        line: location.line + 1,
-        phaseCalls,
-        skipped:
-          ts.isPropertyAccessExpression(node.expression) &&
-          ["skip", "todo"].includes(node.expression.name.text),
-      });
-      return;
-    }
-    ts.forEachChild(node, inspect);
-  }
-
-  inspect(sourceFile);
-  return bodies;
-}
-
-export function validateTestScopedPhaseCalls(
-  plans: readonly ScopedPhasePlan[],
-  bodies: readonly TestPhaseBody[],
-): string[] {
-  if (plans.length !== bodies.length) {
-    return [
-      `cannot pair ${plans.length} collected tests with ${bodies.length} source test bodies for per-test phase validation`,
-    ];
-  }
-
-  const failures: string[] = [];
-  for (const [index, plan] of plans.entries()) {
-    const body = bodies[index];
-    const declaredLabels = new Set(plan.phases);
-    const calledLabels = new Set<string>();
-    for (const call of body.phaseCalls) {
-      if (call.label !== null && !declaredLabels.has(call.label)) {
-        failures.push(
-          `${call.file}:${call.line}: semantic phase is not declared by its test (${plan.name}): ${call.label}`,
-        );
-      }
-      if (call.label !== null) calledLabels.add(call.label);
-    }
-    for (const label of plan.phases.slice(1)) {
-      if (!calledLabels.has(label)) {
-        failures.push(
-          `${body.file}:${body.line}: semantic phase is never entered by its test (${plan.name}): ${label}`,
-        );
-      }
-    }
-  }
-  return failures;
-}
-
 export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph {
-  const visited = new Set<string>();
   const processVisited = new Set<string>();
-  const forwardedTestModules: string[] = [];
-  const phaseCalls: PhaseCall[] = [];
   const directChildProcessCalls: DirectChildProcessCall[] = [];
   const childProcessAuditFailures: string[] = [];
-  let testPhaseBodies: TestPhaseBody[] = [];
   let importsDirectTest = false;
   let importsSharedTest = false;
   let importsWorkflowTest = false;
@@ -2628,43 +2453,6 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
     childProcessAuditFailures.push(
       `${WINDOWS_MXC_OPENCLAW_HELPER}: required Windows MXC control-boundary source is missing`,
     );
-  }
-
-  function visit(file: string): void {
-    if (visited.has(file)) return;
-    visited.add(file);
-    const sourceFile = ts.createSourceFile(
-      file,
-      fs.readFileSync(file, "utf8"),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-    if (file === entryFile) {
-      importsDirectTest = importsDirectVitestTest(sourceFile);
-      importsSharedTest = importsSharedE2ETest(sourceFile);
-      importsWorkflowTest = importsWorkflowE2ETest(sourceFile);
-      testPhaseBodies = collectTestPhaseBodies(file, sourceFile);
-    }
-    for (const statement of sourceFile.statements) {
-      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-        const importedFile = resolveLiveImport(file, statement.moduleSpecifier.text);
-        if (importedFile) visit(importedFile);
-      }
-    }
-
-    function inspect(node: ts.Node): void {
-      const dynamicImport = dynamicLiveImportFromNode(node, file);
-      if (dynamicImport) visit(dynamicImport);
-      if (file === entryFile) {
-        const forwardedTest = forwardedLiveTestFromNode(node, file);
-        if (forwardedTest) forwardedTestModules.push(forwardedTest);
-      }
-      const call = phaseCallFromNode(node, file, sourceFile);
-      if (call) phaseCalls.push(call);
-      ts.forEachChild(node, inspect);
-    }
-    inspect(sourceFile);
   }
 
   function visitProcessBoundaries(file: string): void {
@@ -2677,6 +2465,11 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
       true,
       ts.ScriptKind.TS,
     );
+    if (file === entryFile) {
+      importsDirectTest = importsDirectVitestTest(sourceFile);
+      importsSharedTest = importsSharedE2ETest(sourceFile);
+      importsWorkflowTest = importsWorkflowE2ETest(sourceFile);
+    }
     const relativeFile = path.relative(REPO_ROOT, file).split(path.sep).join("/");
     if (relativeFile === WINDOWS_MXC_OPENCLAW_HELPER) {
       childProcessAuditFailures.push(
@@ -2709,7 +2502,6 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
     inspect(sourceFile);
   }
 
-  visit(entryFile);
   visitProcessBoundaries(entryFile);
   for (const runtimeFile of E2E_RUNTIME_OBSERVABILITY_FILES) {
     visitProcessBoundaries(runtimeFile);
@@ -2717,12 +2509,9 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
   return {
     childProcessAuditFailures,
     directChildProcessCalls,
-    forwardedTestModules,
     importsDirectTest,
     importsSharedTest,
     importsWorkflowTest,
-    phaseCalls,
-    testPhaseBodies,
   };
 }
 
@@ -2780,10 +2569,7 @@ export function validateCollectedSemanticPhaseModule(
   const failures = collectedModule.errors.map(
     (error) => `${collectedModule.relativeModuleId}: ${error}`,
   );
-  const phasePlans: string[][] = [];
-  const scopedPhasePlans: ScopedPhasePlan[] = [];
   const moduleTests = collectedModule.tests.length;
-  const forwardingTarget = LIVE_TEST_FORWARDERS.get(collectedModule.relativeModuleId);
   const project =
     collectedModule.project ??
     (collectedModule.relativeModuleId.startsWith("test/e2e/live/") ? "e2e-live" : "integration");
@@ -2792,39 +2578,6 @@ export function validateCollectedSemanticPhaseModule(
     ...validateDirectChildProcessCalls(collectedModule.source.directChildProcessCalls ?? []),
   );
 
-  if (forwardingTarget) {
-    if (moduleTests !== 0) {
-      failures.push(
-        `${collectedModule.relativeModuleId}: forwarding module must collect zero tests`,
-      );
-    }
-    const forwardedTestModules = collectedModule.source.forwardedTestModules ?? [];
-    if (forwardedTestModules.length !== 1 || forwardedTestModules[0] !== forwardingTarget) {
-      failures.push(
-        `${collectedModule.relativeModuleId}: forwarding module must import exactly ${forwardingTarget}`,
-      );
-    }
-    return failures;
-  }
-
-  for (const test of collectedModule.tests) {
-    const phasePlan = test.phases;
-    if (!phasePlan) {
-      failures.push(
-        `${collectedModule.relativeModuleId} > ${test.fullName}: missing e2ePhases metadata`,
-      );
-      continue;
-    }
-    try {
-      validateE2EPhasePlan(phasePlan);
-      phasePlans.push([...phasePlan]);
-      scopedPhasePlans.push({ name: test.fullName, phases: [...phasePlan] });
-    } catch (error) {
-      failures.push(
-        `${collectedModule.relativeModuleId} > ${test.fullName}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
   if (moduleTests === 0) {
     failures.push(`${collectedModule.relativeModuleId}: collected zero tests`);
   }
@@ -2846,65 +2599,6 @@ export function validateCollectedSemanticPhaseModule(
       `${collectedModule.relativeModuleId}: workflow-selected E2E tests must not import test or it directly from Vitest`,
     );
   }
-  const declaredLabels = new Set(phasePlans.flat());
-  const calledLabels = new Set<string>();
-  for (const call of source.phaseCalls) {
-    if (call.label === null) {
-      failures.push(`${call.file}:${call.line}: semantic phase transitions must use literals`);
-    } else if (!declaredLabels.has(call.label)) {
-      failures.push(`${call.file}:${call.line}: undeclared semantic phase: ${call.label}`);
-    } else {
-      calledLabels.add(call.label);
-    }
-  }
-  const uniquePlans = new Map(phasePlans.map((plan) => [JSON.stringify(plan), plan]));
-  if (moduleTests > 1 && scopedPhasePlans.length === moduleTests) {
-    if (uniquePlans.size === 1) {
-      const sharedPlan = [...uniquePlans.values()][0] as string[];
-      const sourcePairs = source.testPhaseBodies.flatMap((body, index) =>
-        body.skipped
-          ? []
-          : [
-              {
-                body,
-                plan: {
-                  name:
-                    source.testPhaseBodies.length === moduleTests
-                      ? (collectedModule.tests[index]?.fullName ??
-                        `source test at line ${body.line}`)
-                      : `source test at line ${body.line}`,
-                  phases: sharedPlan,
-                },
-              },
-            ],
-      );
-      failures.push(
-        ...validateTestScopedPhaseCalls(
-          sourcePairs.map(({ plan }) => plan),
-          sourcePairs.map(({ body }) => body),
-        ),
-      );
-    } else if (source.testPhaseBodies.length === moduleTests) {
-      const sourcePairs = source.testPhaseBodies.flatMap((body, index) =>
-        body.skipped ? [] : [{ body, plan: scopedPhasePlans[index] as ScopedPhasePlan }],
-      );
-      failures.push(
-        ...validateTestScopedPhaseCalls(
-          sourcePairs.map(({ plan }) => plan),
-          sourcePairs.map(({ body }) => body),
-        ),
-      );
-    }
-  }
-  for (const phasePlan of uniquePlans.values()) {
-    for (const label of phasePlan.slice(1)) {
-      if (!calledLabels.has(label)) {
-        failures.push(
-          `${collectedModule.relativeModuleId}: semantic phase is never entered: ${label}`,
-        );
-      }
-    }
-  }
   return failures;
 }
 
@@ -2916,9 +2610,47 @@ function quietStream(): Writable {
   });
 }
 
+export function reconcileLiveTargetDiscovery(liveFiles: readonly string[]): string[] {
+  const registered = new Set<string>();
+  for (const entry of listExecutionTargets()) {
+    const files =
+      entry.route === "profile"
+        ? [entry.definition.testFile]
+        : entry.route === "typed"
+          ? [REGISTRY_TARGET_TEST]
+          : entry.route === "shared"
+            ? [entry.definition.file]
+            : entry.route === "workflow"
+              ? entry.definition.testFiles
+              : entry.definition.tests.map(({ file }) => file);
+    for (const file of files) {
+      if (file.startsWith("test/e2e/live/")) registered.add(file);
+    }
+  }
+  const discovered = new Set(liveFiles);
+  return [
+    ...liveFiles
+      .filter((file) => !registered.has(file))
+      .map(
+        (file) => `${file}: live E2E module has no execution target; register its execution route`,
+      ),
+    ...[...registered]
+      .filter((file) => !discovered.has(file))
+      .map((file) => `${file}: execution target references a missing live E2E module`),
+  ];
+}
+
 export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverage> {
   process.env.NEMOCLAW_RUN_LIVE_E2E = "1";
   process.env.NEMOCLAW_E2E_PHASE_COLLECTION = "1";
+  const liveFiles = fs
+    .globSync("**/*.test.ts", { cwd: LIVE_ROOT })
+    .map((file) => path.join("test/e2e/live", file).split(path.sep).join("/"));
+  const registrationFailures = [
+    ...reconcileLiveTargetDiscovery(liveFiles),
+    ...checkWorkflowConsumers(REPO_ROOT),
+  ];
+  if (registrationFailures.length) throw new Error(registrationFailures.join("\n"));
   const workflowModules = semanticPhaseCoverageModules();
   const expectedProjects = [...new Set(workflowModules.map(({ project }) => project))];
   const projectByFile = new Map(workflowModules.map(({ file, project }) => [file, project]));
@@ -2968,7 +2700,6 @@ export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverag
       const relativeModuleId = module.relativeModuleId.split(path.sep).join("/");
       const collectedTests = [...module.children.allTests()].map((test) => ({
         fullName: test.fullName,
-        phases: test.meta().e2ePhases,
       }));
       tests += collectedTests.length;
       failures.push(
@@ -2984,7 +2715,7 @@ export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverag
 
     const uniqueFailures = [...new Set(failures)];
     if (uniqueFailures.length > 0) {
-      throw new Error(`semantic E2E phase coverage failed:\n${uniqueFailures.join("\n")}`);
+      throw new Error(`E2E execution checks failed:\n${uniqueFailures.join("\n")}`);
     }
     return { files: result.testModules.length, tests };
   } finally {
@@ -2996,7 +2727,7 @@ const invokedPath = process.argv[1];
 if (invokedPath && fileURLToPath(import.meta.url) === path.resolve(invokedPath)) {
   checkSemanticPhaseCoverage()
     .then(({ files, tests }) => {
-      process.stdout.write(`semantic E2E phase coverage: ${tests} tests across ${files} files\n`);
+      process.stdout.write(`E2E execution checks: ${tests} tests across ${files} files\n`);
     })
     .catch((error: unknown) => {
       process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);

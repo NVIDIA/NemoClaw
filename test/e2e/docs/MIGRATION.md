@@ -23,8 +23,8 @@ The target runner cutover is complete:
   live target entrypoint.
 - `test/e2e/fixtures/` owns phase fixtures, clients, artifact
   capture, redaction, cleanup, and shell-probe bridges.
-- `test/e2e/registry/run.ts` only lists targets and emits the live
-  matrix.
+- `test/e2e/registry/run.ts` lists typed targets, lists every registered
+  execution route with `--list-inventory`, and emits the typed live matrix.
 - The typed-shell target runner, shell validation-suite tree, and retiring
   target workflows are removed. See `RETIREMENT.md`.
 
@@ -56,8 +56,9 @@ The durable E2E system has one execution path:
   or runner.
 - Typed target definitions and matrix helpers describe stable target IDs
   and supported combinations without becoming a second runner.
-- Product-facing manifests describe desired setup/onboarding state, not test
-  execution logic.
+- `registry/definitions/baseline.ts` owns executable typed target definitions.
+  `tools/e2e/target-definitions/` owns the other execution routes, and
+  `tools/e2e/target-inventory.mts` combines their identities and ownership.
 - Shell and system-boundary behavior should be exercised from the E2E test
   when it is the contract or lowest-risk adapter.
 
@@ -81,7 +82,7 @@ When moving behavior from a former E2E script:
 
 1. Identify the actual contract: CLI behavior, installer behavior, full user
    journey, process boundary, platform boundary, or another observable behavior.
-2. Add or update manifests only when product setup/onboarding state changes.
+2. Update the owning executable target definition when setup or onboarding changes.
 3. Add typed target registry coverage when the live matrix needs a stable
    target ID.
 4. Add only the fixture or helper needed for the migration.
@@ -96,6 +97,7 @@ When moving behavior from a former E2E script:
 ```bash
 # Target registry and matrix
 npx tsx test/e2e/registry/run.ts --list
+npx tsx test/e2e/registry/run.ts --list-inventory
 npx tsx test/e2e/registry/run.ts --emit-live-matrix
 npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-openclaw
 

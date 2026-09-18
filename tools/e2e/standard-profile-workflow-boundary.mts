@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
-import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
+import { E2E_EXECUTION_PROFILES } from "./target-inventory.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
 import {
   isReviewedOpenShellSdkInstallStep,
@@ -266,7 +266,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     trusted_main: "boolean",
   };
   if (
-    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
+    Object.keys(inputs).sort().join(",") !==
+      [...Object.keys(requiredInputs), "dcode_base_ref", "dcode_base_contract", "target_label"]
+        .sort()
+        .join(",") ||
+    ["dcode_base_ref", "dcode_base_contract", "target_label"].some(
+      (name) => !isDeepStrictEqual(inputs[name], { required: false, default: "", type: "string" }),
+    ) ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
@@ -319,6 +325,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_WORKLOAD_SOURCE: "${{ inputs.workload_source }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: "${{ inputs.dcode_base_ref }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
     NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
@@ -337,9 +344,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     undefined,
     "Authenticate to Docker Hub",
     "Install target host dependencies",
+    "Configure live E2E trace directory",
     "Prepare E2E workspace",
     "Download reviewed OpenShell SDK archive",
     "Install reviewed OpenShell SDK archive without package credentials",
+    "Record immutable Deep Agents Code base evidence",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
@@ -347,9 +356,15 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Initialize runner comparison telemetry",
     "Install OpenShell CLI",
     "Install OpenShell CLI without workflow credentials",
+    "Verify DCode profile import gate rejects missing base dependencies",
     "Run catalogue E2E target",
     "Finalize runner comparison telemetry",
+    "Build trusted live E2E timing summary",
+    "Delete raw live E2E traces",
+    "Summarize artifacts",
     "Write E2E evidence manifest",
+    "Require automatic config export evidence",
+    "Upload typed target artifacts",
     "Upload skill-agent artifacts",
     "Upload E2E artifacts",
     "Restore Docker CLI after native Podman E2E",
@@ -496,6 +511,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (
     !isDeepStrictEqual(sdkDownload, {
       name: "Download reviewed OpenShell SDK archive",
+      if: "${{ inputs.openshell_sdk_artifact_name != '' }}",
       uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       with: {
         name: "${{ inputs.openshell_sdk_artifact_name }}",
@@ -506,7 +522,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
   const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
-  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+  const { if: sdkInstallCondition, ...sdkInstallAction } = sdkInstall ?? {};
+  if (sdkInstallCondition !== "${{ inputs.openshell_sdk_artifact_name != '' }}") {
+    errors.push(
+      "standard E2E profile must install the reviewed SDK only when its archive was requested",
+    );
+  }
+  if (!isReviewedOpenShellSdkInstallStep(sdkInstallAction)) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
@@ -656,7 +678,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
   if (
     upload?.if !==
-      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}" ||
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' && inputs.test_file != 'test/e2e/live/registry-targets.test.ts' }}" ||
     upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
     !isDeepStrictEqual(record(upload.with), {
       name: "${{ steps.execution_plan.outputs.upload_name }}",
@@ -700,7 +722,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const evidenceEnv = record(evidence?.env);
   const evidenceRun = String(evidence?.run ?? "");
   if (
-    evidence?.if !== "${{ always() && steps.execution_plan.outcome == 'success' }}" ||
+    evidence?.if !==
+      "${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file != 'test/e2e/live/registry-targets.test.ts' }}" ||
     evidenceEnv.ARTIFACT_DIRECTORY !== "${{ steps.execution_plan.outputs.artifact_directory }}" ||
     evidenceEnv.CANDIDATE_SHA !== "${{ inputs.candidate_sha }}" ||
     evidenceEnv.COVERAGE_VARIANT !== "${{ inputs.coverage_variant }}" ||
@@ -731,12 +754,189 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 }
 
+function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): void {
+  const job = record(record(profile.jobs).run);
+  const workflowSteps = steps(job.steps);
+  const typed = "inputs.test_file == 'test/e2e/live/registry-targets.test.ts'";
+  const alwaysTyped = `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`;
+  const configure = requireStep(errors, workflowSteps, "Configure live E2E trace directory");
+  const prepare = namedStep(workflowSteps, "Prepare E2E workspace");
+  const execute = namedStep(workflowSteps, "Run catalogue E2E target");
+  const sanitize = requireStep(errors, workflowSteps, "Build trusted live E2E timing summary");
+  const summary = requireStep(errors, workflowSteps, "Summarize artifacts");
+  if (summary?.if !== `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`) {
+    errors.push("typed artifact summary must always run after successful execution planning");
+  }
+  const cleanup = requireStep(errors, workflowSteps, "Delete raw live E2E traces");
+  const upload = requireStep(errors, workflowSteps, "Upload typed target artifacts");
+  const configExport = requireStep(
+    errors,
+    workflowSteps,
+    "Require automatic config export evidence",
+  );
+  if (
+    !isDeepStrictEqual(configExport, {
+      name: "Require automatic config export evidence",
+      if: `\${{ success() && ${typed} }}`,
+      shell: "bash",
+      env: { TARGET_ID: "${{ inputs.target_id }}" },
+      run: 'test -f "e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json"',
+    }) ||
+    workflowSteps.indexOf(configExport ?? {}) <= workflowSteps.indexOf(execute ?? {}) ||
+    workflowSteps.indexOf(configExport ?? {}) >= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push(
+      "typed targets must require automatic config export evidence after tests and before upload",
+    );
+  }
+  const order = [configure, prepare, execute, sanitize, cleanup, upload].map((step) =>
+    workflowSteps.indexOf(step ?? {}),
+  );
+  if (order.some((index, i) => index < 0 || (i > 0 && index <= order[i - 1]!))) {
+    errors.push(
+      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  }
+  for (const step of [configure, sanitize, cleanup]) {
+    if (record(step?.env).TARGET_ID !== "${{ inputs.target_id }}") {
+      errors.push("typed trace steps must use the selected target ID");
+    }
+  }
+  if (
+    configure?.if !== `\${{ ${typed} }}` ||
+    !String(configure?.run).includes("${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}") ||
+    !String(configure?.run).includes('>> "${GITHUB_ENV}"')
+  ) {
+    errors.push("typed trace setup must use the workflow-owned temporary directory");
+  }
+  for (const [step, label, operation] of [
+    [sanitize, "sanitizer", "python3 scripts/e2e/sanitize-trace-timing.py"],
+    [cleanup, "raw trace cleanup", 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"'],
+  ] as const) {
+    if (step?.if !== `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`)
+      errors.push(`live trace ${label} must always run after successful execution planning`);
+    const run = String(step?.run ?? "");
+    const operationIndex = run.indexOf(operation);
+    const assignment = 'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"';
+    const guard = '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]';
+    if (
+      operationIndex < 0 ||
+      ![assignment, guard, "exit 1"].every(
+        (part) => run.indexOf(part) >= 0 && run.indexOf(part) < operationIndex,
+      )
+    ) {
+      errors.push(`typed trace ${label} must reject a foreign trace directory before accessing it`);
+    }
+  }
+  if (!String(sanitize?.run).includes('"${E2E_ARTIFACT_DIR}/${TARGET_ID}"')) {
+    errors.push("typed trace sanitizer must write into the selected target artifact directory");
+  }
+  const allowedPaths = [
+    "run-plan.json",
+    "target.json",
+    "target-result.json",
+    "test-progress.json",
+    "environment.result.json",
+    "onboarding.result.json",
+    "state-validation.result.json",
+    "config-export-evidence.v1.json",
+    "dcode-base-image.json",
+    "cloud-onboard-trace-timing-summary.json",
+    "onboard-progress-budget.json",
+    "actions/",
+    "logs/",
+    "shell/",
+  ].map((file) => `e2e-artifacts/live/\${{ inputs.target_id }}/${file}`);
+  allowedPaths.push("e2e-artifacts/live/risk-signal.json");
+  if (
+    upload?.if !== alwaysTyped ||
+    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
+    record(upload.with).name !== "e2e-${{ inputs.execution_id }}" ||
+    !isDeepStrictEqual(
+      String(record(upload.with).path).trim().split("\n").sort(),
+      allowedPaths.sort(),
+    )
+  ) {
+    errors.push(
+      "typed target artifacts must preserve the reviewed allowlist and execution identity",
+    );
+  }
+  const gate = requireStep(
+    errors,
+    workflowSteps,
+    "Verify DCode profile import gate rejects missing base dependencies",
+  );
+  const baseEvidence = requireStep(
+    errors,
+    workflowSteps,
+    "Record immutable Deep Agents Code base evidence",
+  );
+  if (
+    baseEvidence?.if !==
+      `\${{ ${typed} && (inputs.target_id == 'ubuntu-repo-cloud-langchain-deepagents-code' && inputs.workload_source == 'managed-image' && inputs.managed_image_catalog == '') }}` ||
+    record(baseEvidence?.env).BASE_CONTRACT !== "${{ inputs.dcode_base_contract }}" ||
+    record(baseEvidence?.env).CANDIDATE_SHA !== "${{ inputs.candidate_sha }}" ||
+    !String(baseEvidence?.run).includes("dcode-base-image.json") ||
+    workflowSteps.indexOf(baseEvidence ?? {}) >= workflowSteps.indexOf(execute ?? {})
+  ) {
+    errors.push(
+      "typed DCode must record its immutable base contract only without a candidate catalog",
+    );
+  }
+  if (
+    gate?.if !==
+    `\${{ ${typed} && (inputs.target_id == 'ubuntu-repo-cloud-langchain-deepagents-code' && inputs.runtime_provider == 'docker') }}`
+  ) {
+    errors.push("live DCode profile import gate must be scoped to the typed DCode target");
+  }
+  if (gate?.shell !== "bash") errors.push("live DCode profile import gate must use bash");
+  if (String(gate?.run).trim() !== "bash scripts/check-dcode-profile-import-gate.sh") {
+    errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
+  if (Object.hasOwn(record(gate?.env), "NEMOCLAW_DCODE_PROFILE_GATE_BASE_IMAGE")) {
+    errors.push(
+      "live DCode profile import gate must build the reviewed repository base without an override",
+    );
+  }
+  const gateIndex = workflowSteps.indexOf(gate ?? {});
+  if (gateIndex <= workflowSteps.indexOf(prepare ?? {}))
+    errors.push("live DCode profile import gate must run after workspace prep");
+  if (gateIndex >= workflowSteps.indexOf(execute ?? {}))
+    errors.push("live DCode profile import gate must run before live E2E tests");
+  if (
+    Object.hasOwn(record(job.env), "BUILDX_BUILDER") ||
+    Object.hasOwn(record(gate?.env), "BUILDX_BUILDER") ||
+    workflowSteps
+      .slice(0, gateIndex)
+      .some(
+        (step) =>
+          String(step.uses).startsWith("docker/setup-buildx-action@") ||
+          /BUILDX_BUILDER(?:=|<<)|docker\s+buildx\s+use(?:\s|$)/u.test(String(step.run)),
+      )
+  ) {
+    errors.push(
+      "live DCode profile import gate must keep its local image chain on the Docker engine",
+    );
+  }
+  for (const step of workflowSteps) {
+    if (
+      step !== execute &&
+      ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"].some((key) =>
+        String(record(step.env)[key]).includes("secrets."),
+      )
+    ) {
+      errors.push("standard E2E profile must expose inference credentials only to test execution");
+    }
+  }
+}
+
 export function validateStandardProfileWorkflowBoundary(
   workflow: WorkflowRecord,
-  profilePath = DEFAULT_PROFILE_PATH,
+  profile: WorkflowRecord = record(YAML.parse(readFileSync(DEFAULT_PROFILE_PATH, "utf8"))),
 ): string[] {
   const errors: string[] = [];
   validateProfileCallers(errors, workflow);
-  validateProfileWorkflow(errors, record(YAML.parse(readFileSync(profilePath, "utf8"))));
+  validateProfileWorkflow(errors, profile);
+  validateTypedTargetSteps(errors, profile);
   return errors;
 }

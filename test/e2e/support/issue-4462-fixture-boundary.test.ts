@@ -9,10 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
-import {
-  adminApprovalConnectScript,
-  ISSUE_4462_SCOPE_UPGRADE_PHASES,
-} from "../live/issue-4462-admin-approval-helper.ts";
+import { adminApprovalConnectScript } from "../live/issue-4462-admin-approval-helper.ts";
 
 const BEHAVIOR_HARNESS_PY = String.raw`
 import base64
@@ -209,8 +206,5 @@ describe("scope-upgrade approval live fixture", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout.trim()).toBe("ISSUE_4462_FIXTURE_BEHAVIOR_OK");
-    expect(ISSUE_4462_SCOPE_UPGRADE_PHASES[0]).toBe(
-      "confirm configured runtime availability and clear the scope-upgrade sandbox",
-    );
   });
 });

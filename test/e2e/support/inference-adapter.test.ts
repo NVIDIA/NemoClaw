@@ -22,11 +22,9 @@ import {
 import { startTestProgress } from "../fixtures/progress.ts";
 
 const adapters: E2EInferenceAdapter[] = [];
-const NOOP_PROGRESS = startTestProgress(
-  "inference adapter support",
-  ["serve inference endpoint", "verify inference adapter"],
-  { logLine: () => undefined },
-);
+const NOOP_PROGRESS = startTestProgress("inference adapter support", "serve inference endpoint", {
+  logLine: () => undefined,
+});
 
 function artifacts(): ArtifactSink {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-adapter-test-"));

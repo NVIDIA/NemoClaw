@@ -32,18 +32,10 @@ test(
   "TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and filesystem",
   {
     timeout: 15 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm NVIDIA credential prerequisites",
-        "recreate the credential-isolation sandbox",
-        "onboard with the real NVIDIA credential",
-        "inspect sandbox environment and processes",
-        "scan the sandbox filesystem for the credential",
-        "confirm placeholder credential injection",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm NVIDIA credential prerequisites");
+
     const apiKey =
       secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
       skipLive(skip, "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation");
@@ -217,16 +209,10 @@ test(
   "TC-INF-02 OpenAI provider responds through inference.local",
   {
     timeout: 15 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm OpenAI provider prerequisites",
-        "recreate the OpenAI sandbox",
-        "onboard the OpenAI provider",
-        "request OpenAI chat through inference.local",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm OpenAI provider prerequisites");
+
     requireProviderSmokeSelected("openai", skip);
     const apiKey = secrets.optional("OPENAI_API_KEY") ?? skipLive(skip, "OPENAI_API_KEY not set");
     await requireLivePrerequisites(host, runtimeProvider);
@@ -272,16 +258,10 @@ test(
   "TC-INF-03 Anthropic provider responds through inference.local",
   {
     timeout: 15 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm Anthropic provider prerequisites",
-        "recreate the Anthropic sandbox",
-        "onboard the Anthropic provider",
-        "request Anthropic messages through inference.local",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm Anthropic provider prerequisites");
+
     requireProviderSmokeSelected("anthropic", skip);
     const apiKey =
       secrets.optional("ANTHROPIC_API_KEY") ?? skipLive(skip, "ANTHROPIC_API_KEY not set");

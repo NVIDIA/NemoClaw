@@ -21,6 +21,7 @@ import {
   runPortableCpuDelegationProofMode,
 } from "../../../scripts/checks/run-portable-cpu-delegation-proof.mts";
 import { PORTABLE_HOST_GATEWAY_IP } from "../../../src/lib/onboard/experimental/portable-profile.ts";
+import { externalWorkflowTargets } from "../../../tools/e2e/target-definitions/external-workflows.mts";
 import {
   readRepoText,
   readYaml,
@@ -72,6 +73,7 @@ class ProofFixtureRunner implements HostCommandRunner {
   failRemovalPrefix = "";
   failTestFor = "";
   failTee = false;
+  proofExitCode = 0;
   failUserLookup = false;
   failWorkspaceModeRestore = false;
   managerStartDiagnostic = "";
@@ -222,7 +224,11 @@ class ProofFixtureRunner implements HostCommandRunner {
     this.calls.push({ executable, argv: [...argv], options });
     switch (executable) {
       case "sudo":
-        return argv[0] === "--user" ? this.ok() : this.sudo(argv, options);
+        return argv.includes("./node_modules/.bin/vitest")
+          ? { status: this.proofExitCode, stdout: "", stderr: "proof test failure" }
+          : argv[0] === "--user"
+            ? this.ok()
+            : this.sudo(argv, options);
       case "id":
         return argv[0] === "-u" ? this.ok("1001\n") : this.userCreated ? this.ok() : this.failed();
       case "getent":
@@ -378,6 +384,21 @@ describe("native Podman CPU proof workflow", () => {
       const proofStates = fixture.runner.calls
         .flatMap((call) => call.argv)
         .filter((argument) => argument.startsWith("E2E_CPU_DELEGATION_STATE="));
+      const proofCalls = fixture.runner.calls.filter((call) =>
+        call.argv.includes("./node_modules/.bin/vitest"),
+      );
+      const requiredExecution = expect.arrayContaining([
+        "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1",
+        "--reporter=default",
+        "--reporter=test/e2e/risk-signal-reporter.ts",
+      ]);
+      expect(proofCalls.map((call) => call.argv)).toEqual([requiredExecution, requiredExecution]);
+      const declaredTests = externalWorkflowTargets
+        .find(({ id }) => id === "podman-cpu-proof-portable-cpu-delegation")!
+        .tests.map(({ file }) => file);
+      expect(
+        proofCalls.map(({ argv }) => argv.filter((argument) => argument.endsWith(".test.ts"))),
+      ).toEqual([declaredTests, declaredTests]);
       expect(proofStates).toEqual([
         "E2E_CPU_DELEGATION_STATE=missing",
         "E2E_CPU_DELEGATION_STATE=delegated",
@@ -420,6 +441,32 @@ describe("native Podman CPU proof workflow", () => {
       ).toBe(true);
     });
   });
+  it.each(["reject", "admit"] as const)(
+    "propagates a failed live test from the %s proof and preserves cleanup receipts",
+    (mode) => {
+      withProofFixture((fixture) => {
+        runPortableCpuDelegationProofMode("prepare", fixture);
+        loadGithubEnv(fixture);
+        fixture.runner.proofExitCode = 7;
+
+        expect(() => runPortableCpuDelegationProofMode(mode, fixture)).toThrow(
+          /failed \(7\): proof test failure/u,
+        );
+        expect(fixture.runner.calls.at(-1)?.argv).toEqual(
+          expect.arrayContaining([
+            "./node_modules/.bin/vitest",
+            "test/e2e/live/portable-cpu-delegation-proof.test.ts",
+          ]),
+        );
+        runPortableCpuDelegationProofMode("cleanup", fixture);
+        expect(fixture.runner.files.has(DELEGATION_DROP_IN)).toBe(false);
+        expect(fixture.runner.files.has(APP_DROP_IN)).toBe(false);
+        expect(fixture.runner.files.has(USER_SLICE_DROP_IN)).toBe(false);
+        expect(fixture.runner.userCreated).toBe(false);
+      });
+    },
+  );
+
   it.each([
     ["219/CGROUP", false, 1],
     ["status=1/FAILURE", true, 0],

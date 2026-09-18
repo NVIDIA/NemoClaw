@@ -88,7 +88,7 @@ class LocalGuardChainRunner implements CommandRunner {
   ) {
     this.progress = startTestProgress(
       "Guard-chain extraction support",
-      ["run guard-chain marker check", "verify guard-chain sentinel"],
+      "run guard-chain marker check",
       { logLine: () => undefined },
     );
     this.probe = new ShellProbe({
