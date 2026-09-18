@@ -256,6 +256,19 @@ describe("inactive MXC native-artifact bootstrap", () => {
     expect(verifyAndCreate).not.toHaveBeenCalled();
   });
 
+  it("rejects a sandbox name above the OpenShell limit before create (#12051)", async () => {
+    const verifyAndCreate = vi.fn();
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate,
+      verifyReadiness: vi.fn(),
+    });
+
+    await expect(
+      bootstrap.run({ ...bootstrapInput(), sandboxName: "a".repeat(20) }),
+    ).rejects.toThrow(/sandbox name/u);
+    expect(verifyAndCreate).not.toHaveBeenCalled();
+  });
+
   it("reports an absent resource when the provider rejects artifact substitution (#8178)", async () => {
     const verifyReadiness = vi.fn();
     const verifyAndCreate = vi.fn(async () => ({
