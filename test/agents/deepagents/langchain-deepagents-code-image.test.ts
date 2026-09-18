@@ -840,7 +840,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       'append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"',
       "choose a recommended model",
       "terminate_failed_tui $markers $sandbox 24",
-      'send -- "\\003"\nafter 250\ncatch {send -- "\\003"}',
+      'send -- "\\004"\n\nset timeout 20',
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"',
+      'catch {send -- "\\004"}',
       'append_marker $markers "$expect_out(0,string)"',
       'append_marker $markers "NEMOCLAW_TUI_READY"',
       'append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"',
@@ -909,9 +911,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
     ]);
   }
 

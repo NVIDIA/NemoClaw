@@ -4355,6 +4355,9 @@ jobs:
             [registry."localhost:5000"]
               http = true
 
+      - name: Build protected direct-harness source boundary
+        run: npm run build:policy-boundary
+
       - name: Validate candidate activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}

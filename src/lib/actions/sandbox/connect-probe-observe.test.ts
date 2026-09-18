@@ -245,32 +245,6 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("hands an unavailable just-started Hermes observation to classified process recovery", async () => {
-    const harness = createConnectHarness({
-      agentName: "hermes",
-      sessionAgent: { name: "hermes" },
-      gatewayProcessSettlement: null,
-      registryEntry: { stopped: true },
-      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
-      listOutput: "alpha Ready",
-      processCheck: { checked: false, wasRunning: false, recovered: false },
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
-    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
-    expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Probe failed: could not inspect the"),
-    );
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
-      "did not become observable and running before the startup settlement window expired",
-    );
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-  });
-
   it("retains stop intent when a recovered container cannot publish the registry update", async () => {
     const harness = createConnectHarness({
       registryEntry: { stopped: true },

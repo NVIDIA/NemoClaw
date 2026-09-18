@@ -287,6 +287,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-tui-ref-fidelity.ts"],
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
         "test/e2e/support/openclaw-tui-run-classification.test.ts",
@@ -500,6 +501,7 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/adapters/config/live-export-source-ollama.test.ts",
         "src/lib/domain/config/export-document.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
@@ -942,6 +944,7 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
+        "test/e2e/live/cloud-experimental-check-list.ts",
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
@@ -966,6 +969,7 @@
     {
       "live": "test/e2e/live/runtime-overrides.test.ts",
       "fast": [
+        "test/generation/generate-openclaw-config.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",

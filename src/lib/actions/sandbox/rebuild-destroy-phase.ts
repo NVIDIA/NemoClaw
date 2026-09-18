@@ -56,6 +56,7 @@ export interface RebuildDestroyPhaseInput {
   validateAtDeleteEdge?: (
     runtimeSelection?: OpenShellRuntimeSelection,
   ) => RebuildDeleteValidationResult | Promise<RebuildDeleteValidationResult>;
+  prepareSourceForDelete?: () => Promise<RebuildDeleteValidationResult>;
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -192,6 +193,7 @@ export async function runRebuildDestroyPhase(
     bail,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
+    prepareSourceForDelete,
     cleanupDockerOrphanAfterDelete,
     onDeleted,
   } = input;
@@ -405,6 +407,30 @@ export async function runRebuildDestroyPhase(
         : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
     );
     return null;
+  }
+  if (sourcePresence !== "missing" && prepareSourceForDelete) {
+    let preparation: RebuildDeleteValidationResult;
+    try {
+      preparation = await prepareSourceForDelete();
+    } catch (error) {
+      log(`Unexpected source delete preparation failure: ${redactFull(String(error))}`);
+      preparation = { ok: false, message: "Source sandbox could not be prepared for deletion." };
+    }
+    if (!preparation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
+      );
+      bail(
+        mcpRecoveryFailure
+          ? `${preparation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : preparation.message,
+        preparation.code,
+      );
+      return null;
+    }
   }
   if (sourcePresence === "missing") {
     log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);

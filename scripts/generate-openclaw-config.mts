@@ -40,7 +40,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildAgentsList, validateExtraAgents } from "../src/lib/extra-agents-validation.ts";
+import { buildAgentEntries, validateExtraAgents } from "../src/lib/extra-agents-validation.ts";
 import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
@@ -70,30 +70,6 @@ function readBooleanBuildFlag(env: Env, name: string): boolean {
   return readOptionalEnumEnv(env, name, BOOLEAN_BUILD_FLAG_VALUES) === "1";
 }
 
-// Local Ollama small-context compaction policy (NemoClaw #5468).
-//
-// OpenClaw 2026.5.x auto-compaction reserves `reserveTokensFloor` tokens at the
-// tail of the context window for reply generation (default 20_000, see the
-// pinned openclaw package's pi-settings), then clamps that reserve so at least
-// OPENCLAW_MIN_PROMPT_BUDGET_TOKENS (8_000) of the window stays available for
-// prompt content. NemoClaw floors a Local Ollama runtime window to 16_384
-// (ollama-runtime-context.ts), so the default 20k reserve is clamped down and
-// the prompt budget is pinned at ~8k — too small for OpenClaw's base prompt +
-// tool catalogue (~7.4k tokens). The first user turn overflows and preemptive
-// compaction, with no prior history to compact, fails with
-// "Auto-compaction could not recover this turn".
-//
-// Below SMALL_OLLAMA_CONTEXT_THRESHOLD we lower both reserveTokens and
-// reserveTokensFloor to the model's own reply budget (maxTokens) so the prompt
-// budget becomes `contextWindow - reserve` and the first turn fits. Above the
-// threshold OpenClaw's default reserve already leaves an ample prompt budget, so
-// its safeguard is left untouched. Both keys must be set: OpenClaw applies
-// max(reserveTokens, reserveTokensFloor), so lowering the floor alone would let
-// the 20k default pull the reserve back up.
-const OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR = 20_000;
-const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
-const SMALL_OLLAMA_CONTEXT_THRESHOLD =
-  OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
 const LOCAL_VLLM_UPSTREAM_PROVIDER = "vllm-local";
 const N1X_MANAGED_VLLM_SERVING_PRESET = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
@@ -115,11 +91,9 @@ const MANAGED_INFERENCE_HOSTNAME = "inference.local";
 const MANAGED_INFERENCE_SAFEGUARD_COMPACTION: JsonObject = {
   mode: "safeguard",
   timeoutSeconds: 120,
-  maxHistoryShare: 0.35,
   recentTurnsPreserve: 1,
   qualityGuard: { enabled: true, maxRetries: 0 },
   notifyUser: true,
-  truncateAfterCompaction: true,
 };
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const WEB_SEARCH_PROVIDERS = {
@@ -146,7 +120,8 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
 // messaging manifests. Keep those bundled entrypoints explicitly inert without
 // representing them as activatable managed-image capabilities.
 export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "imessage", pluginId: "imessage" },
+  { channelId: "a2a", pluginId: "a2a" },
+  { channelId: "reef", pluginId: "reef" },
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
@@ -742,31 +717,6 @@ function decodeJsonEnv(env: Env, name: string, defaultValue: string): any {
   return JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
 }
 
-// Build the agents.defaults.compaction override for a Local Ollama small-context
-// window, or undefined when it does not apply. See the policy constants above.
-export function buildLocalOllamaSmallContextCompaction(
-  upstreamProvider: string | undefined,
-  contextWindow: number,
-  maxTokens: number,
-): JsonObject | undefined {
-  if ((upstreamProvider || "").trim() !== LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
-    return undefined;
-  }
-  if (!Number.isFinite(contextWindow) || contextWindow > SMALL_OLLAMA_CONTEXT_THRESHOLD) {
-    return undefined;
-  }
-  return buildReplyBudgetCompactionReserve(contextWindow, maxTokens);
-}
-
-function buildReplyBudgetCompactionReserve(contextWindow: number, maxTokens: number): JsonObject {
-  // Reserve the model's reply budget, but never so much that the remaining
-  // prompt budget drops below OpenClaw's own minimum — mirrors OpenClaw's clamp
-  // so a pathological maxTokens cannot make the window worse than the default.
-  const maxReserve = Math.max(0, contextWindow - OPENCLAW_MIN_PROMPT_BUDGET_TOKENS);
-  const reserveTokens = Math.max(0, Math.min(maxTokens, maxReserve));
-  return { reserveTokens, reserveTokensFloor: reserveTokens };
-}
-
 function isManagedInferenceLocalRoute(
   providerKey: string | undefined,
   inferenceBaseUrl: string,
@@ -780,10 +730,10 @@ function isManagedInferenceLocalRoute(
 // Managed inference sessions other than Local Ollama use OpenClaw's safeguard
 // compaction rather than its plain runtime compactor. A two-minute timeout
 // bounds each standard attempt. The N1x managed-vLLM profile needs five minutes
-// because its compaction request can exceed two minutes (#11805). That 32k
-// profile also reserves its 4k reply budget instead of OpenClaw's 20k default,
-// which otherwise leaves only 12,768 prompt tokens. Lifecycle notices expose
-// compaction progress, and successful compaction rotates the active transcript.
+// because its compaction request can exceed two minutes (#11805). OpenClaw
+// 2026.9.1 retired the configurable reserve fields, so its runtime owns prompt
+// headroom while NemoClaw retains the profile-specific timeout. Lifecycle notices
+// expose compaction progress, and successful compaction rotates the active transcript.
 // These safeguards do not guarantee that summarization succeeds or that the
 // resulting context is smaller.
 export function buildManagedInferenceSafeguardCompaction(
@@ -791,8 +741,8 @@ export function buildManagedInferenceSafeguardCompaction(
   upstreamProvider: string | undefined,
   inferenceBaseUrl: string,
   servingPreset: string | undefined,
-  contextWindow: number,
-  maxTokens: number,
+  _contextWindow: number,
+  _maxTokens: number,
 ): JsonObject | undefined {
   if (!isManagedInferenceLocalRoute(providerKey, inferenceBaseUrl)) {
     return undefined;
@@ -808,7 +758,6 @@ export function buildManagedInferenceSafeguardCompaction(
     ...(isN1xManagedVllm
       ? {
           timeoutSeconds: N1X_COMPACTION_TIMEOUT_SECONDS,
-          ...buildReplyBudgetCompactionReserve(contextWindow, maxTokens),
         }
       : {}),
     qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
@@ -908,22 +857,36 @@ export function buildConfig(env: Env = process.env): JsonObject {
     searchDefaultLimit: 8,
     maxSearchLimit: 20,
   };
+  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
     alsoAllow: ["bundle-mcp"],
     // An explicit direct request is authoritative. Compatibility manifests may
     // downgrade progressive mode to false, but may never re-enable search over
-    // a user's direct selection.
+    // a user's direct selection. OpenClaw 2026.9.1 otherwise expands that false
+    // fallback into the full direct catalog. llama.cpp rejects the resulting
+    // request schema, so keep its progressive route on the compact structured
+    // search/describe/call surface even for models whose hosted route still
+    // needs the legacy direct-tool compatibility override.
     toolSearch:
       toolDisclosure === "direct"
         ? false
-        : "toolSearch" in openclawToolOverrides
-          ? openclawToolOverrides.toolSearch
-          : structuredToolSearch,
+        : upstreamProvider === "llama-cpp-local"
+          ? structuredToolSearch
+          : "toolSearch" in openclawToolOverrides
+            ? openclawToolOverrides.toolSearch
+            : structuredToolSearch,
   };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
     inferenceCompat.supportsUsageInStreaming ??= true;
+  }
+  // NemoClaw exposes managed llama.cpp through the custom `inference`
+  // provider ID, so OpenClaw cannot infer its built-in llama.cpp schema
+  // projection from the provider name. Select the upstream compatibility
+  // profile explicitly before tool schemas reach llama-server's GBNF parser.
+  if (upstreamProvider === "llama-cpp-local") {
+    inferenceCompat.toolSchemaProfile ??= "llamacpp";
   }
 
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
@@ -943,42 +906,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     REMOTE_DASHBOARD_BIND_VALUES,
   );
   const remoteBindOptIn = dashboardBind === "0.0.0.0";
-  const wslDashboardExposure = readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
-  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn || wslDashboardExposure;
-  const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
-  const deviceAuthOptOutSource = readOptionalEnumEnv(
-    env,
-    "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
-    DEVICE_AUTH_OPT_OUT_SOURCES,
-  );
-  const managedDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
-  const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
-  const allowInsecure = parsed.scheme === "http";
-  const securityAuditSuppressions: JsonObject[] = [];
-  if (allowInsecure && !hasRemoteDashboardExposure) {
-    const reason =
-      "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
-    securityAuditSuppressions.push(
-      { checkId: "gateway.control_ui.insecure_auth", reason },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
-        reason,
-      },
-    );
-  }
-  if (managedDeviceAuthOptOut && !hasRemoteDashboardExposure) {
-    const reason =
-      "NemoClaw onboarding disables device authentication for immediate dashboard access (managed compatibility behavior; see #1217).";
-    securityAuditSuppressions.push(
-      { checkId: "gateway.control_ui.device_auth_disabled", reason },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
-        reason,
-      },
-    );
-  }
+  readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
+  // OpenClaw 2026.9.1 retired and ignores the Control UI device-auth bypass.
+  // Keep validating the historical provenance input while managed builders
+  // transition, but do not emit the dead upstream configuration key.
+  readOptionalEnumEnv(env, "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", DEVICE_AUTH_OPT_OUT_SOURCES);
 
   const providerModels: JsonObject[] = [
     {
@@ -1088,14 +1020,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     agentDefaults.subagents = extraAgentsPayload.defaults.subagents;
   }
 
-  const smallOllamaCompaction = buildLocalOllamaSmallContextCompaction(
-    env.NEMOCLAW_UPSTREAM_PROVIDER,
-    contextWindow,
-    maxTokens,
-  );
-  if (smallOllamaCompaction) {
-    agentDefaults.compaction = smallOllamaCompaction;
-  }
+  // OpenClaw 2026.9.1 retired the configurable reserveTokens and
+  // reserveTokensFloor fields. Its agent runtime now clamps the effective
+  // reserve against the selected model's context budget, preserving at least
+  // half the window (up to 8k tokens) for prompts. Do not emit the old Local
+  // Ollama override: the pinned runtime owns the same small-context safeguard.
   const managedInferenceCompaction = buildManagedInferenceSafeguardCompaction(
     providerKey,
     env.NEMOCLAW_UPSTREAM_PROVIDER,
@@ -1118,21 +1047,16 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const config: JsonObject = {
     agents: {
       defaults: agentDefaults,
-      list: buildAgentsList(extraAgents, extraAgentsPayload.main),
+      entries: buildAgentEntries(extraAgents, extraAgentsPayload.main),
     },
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,
-    ...(securityAuditSuppressions.length > 0
-      ? { security: { audit: { suppressions: securityAuditSuppressions } } }
-      : {}),
     plugins,
     gateway: {
       mode: "local",
       port: gatewayPort,
       controlUi: {
-        allowInsecureAuth: allowInsecure,
-        dangerouslyDisableDeviceAuth: disableDeviceAuth,
         allowedOrigins: origins,
         ...(remoteBindOptIn && !isRemote ? { dangerouslyAllowHostHeaderOriginFallback: true } : {}),
       },
@@ -1142,15 +1066,15 @@ export function buildConfig(env: Env = process.env): JsonObject {
       // unrecognized keys, ...) must not let the gateway SIGUSR1-restart
       // itself: in containers the in-process restart path can fail and park
       // the process alive with no HTTP listener, which the PID-wait respawn
-      // loop in nemoclaw-start.sh cannot observe (#4710). Hot mode makes the
-      // gateway ignore plan-driven restarts; NemoClaw applies restart-class
+      // loop in nemoclaw-start.sh cannot observe (#4710). Off mode makes the
+      // gateway ignore plan-driven reloads; NemoClaw applies restart-class
       // changes through sandbox rebuild or `nemoclaw <name> recover` instead.
       // Removal condition (also for the serving watchdog in
       // nemoclaw-start.sh): once the pinned OpenClaw release exits non-zero
       // when a failed in-process restart cannot re-bind its listener — so the
       // respawn loop sees the death — this pin can revert to the default
       // reload mode after a wedge drill proves no regression.
-      reload: { mode: "hot" },
+      reload: { mode: "off" },
     },
   };
 
@@ -1183,7 +1107,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {
       enabled: true,
-      config: { webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` } },
+      config: {
+        webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` },
+      },
     };
   }
 
@@ -1211,16 +1137,11 @@ function readExistingOpenClawConfig(configPath: string): JsonObject | null {
 }
 
 function openClawContinuityMetadata(value: unknown): JsonObject | null {
-  if (
-    !isObject(value) ||
-    !boundedOpenClawMetadataText(value.lastTouchedVersion) ||
-    !boundedOpenClawMetadataText(value.lastTouchedAt)
-  ) {
+  if (!isObject(value) || !boundedOpenClawMetadataText(value.lastTouchedVersion)) {
     return null;
   }
   return {
     lastTouchedVersion: value.lastTouchedVersion,
-    lastTouchedAt: value.lastTouchedAt,
   };
 }
 
@@ -1231,8 +1152,9 @@ function preserveExistingOpenClawState(config: JsonObject, configPath: string): 
   // metadata carried by its last-known-good snapshot, then restores the old
   // config with `missing-meta-vs-last-good`. The final image-generation pass
   // can leave the active file without metadata while its exact OpenClaw-owned
-  // `.bak` retains it, so prefer the active pair and otherwise inspect only
-  // that one fixed backup path. Copy only the two bounded continuity fields;
+  // `.bak` retains it, so prefer the active value and otherwise inspect only
+  // that one fixed backup path. OpenClaw 2026.9.1 rejects the legacy
+  // `lastTouchedAt` key, so carry forward only the bounded version field;
   // every NemoClaw-owned routing field still comes from the managed profile.
   const continuityMeta =
     openClawContinuityMetadata(existing?.meta) ??

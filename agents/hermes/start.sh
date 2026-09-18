@@ -223,7 +223,7 @@ else
   _dashboard_port="$(printf '%s' "$_dashboard_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _dashboard_port_valid=1
   case "$_dashboard_port" in
-    *[!0-9]* | '') _dashboard_port_valid=0 ;;
+    0* | *[!0-9]* | '') _dashboard_port_valid=0 ;;
   esac
   if [ "$_dashboard_port_valid" -eq 1 ] && { [ "$_dashboard_port" -lt 1024 ] || [ "$_dashboard_port" -gt 65535 ]; }; then
     _dashboard_port_valid=0
@@ -248,7 +248,7 @@ else
   PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _api_port_valid=1
   case "$PUBLIC_PORT" in
-    *[!0-9]* | '') _api_port_valid=0 ;;
+    0* | *[!0-9]* | '') _api_port_valid=0 ;;
   esac
   if [ "$_api_port_valid" -eq 1 ] && { [ "$PUBLIC_PORT" -lt "$HERMES_DEFAULT_API_PORT" ] || [ "$PUBLIC_PORT" -gt "$HERMES_API_PORT_RANGE_END" ]; }; then
     _api_port_valid=0
@@ -375,7 +375,7 @@ validate_tcp_port() {
   local name="$1"
   local value="$2"
   case "$value" in
-    '' | *[!0-9]*)
+    '' | 0* | *[!0-9]*)
       echo "[gateway] ERROR: ${name} must be an integer TCP port, got '${value}'" >&2
       exit 1
       ;;

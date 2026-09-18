@@ -13,7 +13,8 @@ import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
  * Versioned, bounded schema for managed-image startup intent.
  * Runtime-specific construction and activation stay outside this module.
  */
-export const MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 1 as const;
+const LEGACY_MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 1 as const;
+export const MANAGED_STARTUP_PROFILE_SCHEMA_VERSION = 2 as const;
 
 /** Profiles are configuration, not a general-purpose transport. */
 export const MANAGED_STARTUP_PROFILE_MAX_BYTES = 64 * 1024;
@@ -122,8 +123,6 @@ export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
 export type ManagedStartupHermesToolGateway = (typeof MANAGED_STARTUP_HERMES_TOOL_GATEWAYS)[number];
 export type ManagedStartupInputModality = "text" | "image";
 export type ManagedStartupWebSearchProvider = "brave" | "tavily";
-export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard";
-
 export const MANAGED_STARTUP_AGENTS = [
   "openclaw",
   "hermes",
@@ -291,11 +290,6 @@ export interface ManagedStartupOpenClawOtel {
   readonly sampleRate: number;
 }
 
-export interface ManagedStartupDeviceAuth {
-  readonly disabled: boolean;
-  readonly optOutSource: ManagedStartupDeviceAuthOptOutSource;
-}
-
 export interface ManagedStartupOpenClawConfig {
   readonly agent: "openclaw";
   readonly webSearch: ManagedStartupWebSearch;
@@ -303,7 +297,6 @@ export interface ManagedStartupOpenClawConfig {
   readonly agentTimeoutSeconds: number;
   readonly heartbeatEvery: string | null;
   readonly extraAgents: ManagedStartupExtraAgents;
-  readonly deviceAuth: ManagedStartupDeviceAuth;
   readonly minimalBootstrap: boolean;
 }
 
@@ -403,7 +396,7 @@ const PROFILE_CAPABILITIES = {
     supportsAgentTimeout: true,
     supportsHeartbeat: true,
     supportsExtraAgents: true,
-    supportsDeviceAuth: true,
+    supportsDeviceAuth: false,
     observability: "openclaw-otel",
     supportsMinimalBootstrap: true,
   },
@@ -528,8 +521,6 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_AGENT_TIMEOUT", "agentConfig.agentTimeoutSeconds"),
     affordance("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "agentConfig.heartbeatEvery"),
     affordance("NEMOCLAW_EXTRA_AGENTS_JSON_B64", "agentConfig.extraAgents"),
-    affordance("NEMOCLAW_DISABLE_DEVICE_AUTH", "agentConfig.deviceAuth.disabled"),
-    affordance("NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", "agentConfig.deviceAuth.optOutSource"),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_OPENCLAW_OTEL", "agentConfig.otel.enabled"),
@@ -816,77 +807,179 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
   openclaw: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "OPENCLAW_VERSION", reason: "release-composition" },
-    { input: "OPENCLAW_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_2026_7_1_TARBALL", reason: "release-composition" },
-    { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    { input: "OPENCLAW_2026_9_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "OPENCLAW_2026_9_1_TARBALL", reason: "release-composition" },
+    {
+      input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "OPENCLAW_2026_3_11_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_3_11_TARBALL", reason: "release-composition" },
     { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    {
+      input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
     { input: "MCPORTER_VERSION", reason: "release-composition" },
     { input: "MCPORTER_0_7_3_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   hermes: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "SSL_CERT_FILE", reason: "fixed-image-contract" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
-    { input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_WRAPPER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_VALIDATOR_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   "langchain-deepagents-code": [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   pi: [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "PI_VERSION", reason: "integrity-pin" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
 
@@ -963,16 +1056,17 @@ const OPENCLAW_CONFIG_KEYS = new Set([
   "agentTimeoutSeconds",
   "heartbeatEvery",
   "extraAgents",
-  "deviceAuth",
   "minimalBootstrap",
 ]);
+const LEGACY_OPENCLAW_CONFIG_KEYS = new Set([...OPENCLAW_CONFIG_KEYS, "deviceAuth"]);
+const LEGACY_DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
+const LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
 const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
-const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
@@ -1437,7 +1531,9 @@ function cloneJsonValue(
 function requireJsonObjectOrNull(value: unknown, where: string): ManagedStartupJsonObject | null {
   if (value === null) return null;
   if (!isPlainObject(value)) invalid(`${where} must be null or a plain JSON object`);
-  return cloneJsonValue(value, where, { nullPrototypeObjects: true }) as ManagedStartupJsonObject;
+  return cloneJsonValue(value, where, {
+    nullPrototypeObjects: true,
+  }) as ManagedStartupJsonObject;
 }
 
 function requireJsonObject(value: unknown, where: string): ManagedStartupJsonObject {
@@ -1760,19 +1856,6 @@ function validateExtraAgents(value: unknown): ManagedStartupExtraAgents {
   };
 }
 
-function validateDeviceAuth(value: unknown): ManagedStartupDeviceAuth {
-  const deviceAuth = requireRecord(value, "agentConfig.deviceAuth");
-  rejectUnknownKeys(deviceAuth, DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
-  return {
-    disabled: requireBoolean(deviceAuth.disabled, "agentConfig.deviceAuth.disabled"),
-    optOutSource: requireStringEnum<ManagedStartupDeviceAuthOptOutSource>(
-      deviceAuth.optOutSource,
-      new Set(["operator", "managed-onboard"]),
-      "agentConfig.deviceAuth.optOutSource",
-    ),
-  };
-}
-
 function validateAgentConfig(
   value: unknown,
   expectedAgent: ManagedStartupAgent,
@@ -1808,7 +1891,6 @@ function validateAgentConfig(
       ),
       heartbeatEvery,
       extraAgents: validateExtraAgents(config.extraAgents),
-      deviceAuth: validateDeviceAuth(config.deviceAuth),
       minimalBootstrap: requireBoolean(config.minimalBootstrap, "agentConfig.minimalBootstrap"),
     };
   }
@@ -2153,7 +2235,9 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
  */
 export function validateManagedStartupProfile(value: unknown): ManagedStartupProfile {
   assertPayloadStructureAndCredentialShapes(value);
-  const ownedValue = cloneJsonValue(value, "profile", { nullPrototypeObjects: true });
+  const ownedValue = cloneJsonValue(value, "profile", {
+    nullPrototypeObjects: true,
+  });
   assertPayloadWithinByteLimit(ownedValue);
   const profile = requireRecord(ownedValue, "profile");
   rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
@@ -2193,14 +2277,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 
   const agentConfig = validateAgentConfig(profile.agentConfig, agent);
   const dashboard = validateDashboard(profile.dashboard, agent);
-  if (
-    agentConfig.agent === "openclaw" &&
-    dashboard.agent === "openclaw" &&
-    dashboard.mode === "remote" &&
-    !agentConfig.deviceAuth.disabled
-  ) {
-    invalid("remote OpenClaw dashboard exposure requires device auth to be disabled");
-  }
 
   return {
     schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
@@ -2215,6 +2291,54 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
     },
     tuning: validateTuning(profile.tuning, agent),
     corporateCa: { bundleSha256 },
+  };
+}
+
+interface ManagedStartupProfileDecodeMigration {
+  readonly value: unknown;
+  readonly migratedLegacyProfile: boolean;
+}
+
+function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProfileDecodeMigration {
+  const profile = requireRecord(value, "profile");
+  if (profile.schemaVersion !== LEGACY_MANAGED_STARTUP_PROFILE_SCHEMA_VERSION) {
+    return {
+      value,
+      migratedLegacyProfile: false,
+    };
+  }
+
+  rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
+  if (profile.agent !== "openclaw") {
+    return {
+      value: {
+        ...profile,
+        schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+      },
+      migratedLegacyProfile: true,
+    };
+  }
+
+  const agentConfig = requireRecord(profile.agentConfig, "agentConfig");
+  rejectUnknownKeys(agentConfig, LEGACY_OPENCLAW_CONFIG_KEYS, "agentConfig");
+  const deviceAuth = requireRecord(agentConfig.deviceAuth, "agentConfig.deviceAuth");
+  rejectUnknownKeys(deviceAuth, LEGACY_DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
+  requireBoolean(deviceAuth.disabled, "agentConfig.deviceAuth.disabled");
+  requireStringEnum(
+    deviceAuth.optOutSource,
+    LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES,
+    "agentConfig.deviceAuth.optOutSource",
+  );
+
+  const migratedAgentConfig = { ...agentConfig };
+  Reflect.deleteProperty(migratedAgentConfig, "deviceAuth");
+  return {
+    value: {
+      ...profile,
+      schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+      agentConfig: migratedAgentConfig,
+    },
+    migratedLegacyProfile: true,
   };
 }
 
@@ -2250,7 +2374,7 @@ export function encodeManagedStartupProfile(profile: ManagedStartupProfile): str
   return Buffer.from(serializeManagedStartupProfile(profile), "utf8").toString("base64url");
 }
 
-/** Decode only the canonical representation produced by encodeManagedStartupProfile. */
+/** Decode the current canonical representation or migrate one canonical prior-version profile. */
 export function decodeManagedStartupProfile(encoded: string): ManagedStartupProfile {
   if (
     typeof encoded !== "string" ||
@@ -2282,8 +2406,12 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
   } catch {
     invalid("payload is not valid JSON");
   }
-  const profile = validateManagedStartupProfile(parsed);
-  if (serializeManagedStartupProfile(profile) !== raw) {
+  const migration = migrateDecodedManagedStartupProfile(parsed);
+  const profile = validateManagedStartupProfile(migration.value);
+  const canonicalPayload = migration.migratedLegacyProfile
+    ? JSON.stringify(canonicalizeJson(parsed))
+    : serializeManagedStartupProfile(profile);
+  if (canonicalPayload !== raw) {
     invalid("payload is not in canonical form");
   }
   return profile;

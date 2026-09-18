@@ -29,7 +29,10 @@ import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import type { V1Alpha1Export } from "../../config/v1alpha1-export";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -48,7 +51,8 @@ function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
 function primaryOpenClawAgent(config: V1Alpha1Export) {
   const sandbox = config.spec.sandboxes[0]!;
   expect(sandbox.harness.kind).toBe("openclaw");
-  return { ...sandbox.agents[0]!, ...sandbox.harness };
+  const agents = exportedAgentList(sandbox);
+  return { ...agents[0]!, ...sandbox.harness };
 }
 
 describe("config export source verification (#10938)", () => {
@@ -266,7 +270,7 @@ describe("config export source verification (#10938)", () => {
     expect(explicit.outcome.ok).toBe(true);
     expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
     const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
-    expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+    expect(primaryOpenClawAgent(config).inference.routes[0]!.overrides).toEqual({
       model: "gpt-5",
     });
     expect(config.spec.sandboxes[0]!.harness).not.toHaveProperty("execution");
@@ -313,8 +317,9 @@ describe("config export source verification (#10938)", () => {
     );
     const result = await exportSnapshots([observed]);
     expect(result.outcome.ok).toBe(true);
-    const route = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
-      .sandboxes[0]!.agents[0]!.inference.routes[0]!;
+    const route = primaryOpenClawAgent(
+      asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])),
+    ).inference.routes[0]!;
     expect(route.overrides).toEqual(
       reasoning === "true"
         ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
@@ -624,7 +629,7 @@ describe("config export source verification (#10938)", () => {
       expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
       const sandbox = config.spec.sandboxes[0]!;
       expect(sandbox.harness.kind).toBe("hermes");
-      expect(sandbox.agents[0]).not.toHaveProperty("tools");
+      expect(exportedAgentList(sandbox)[0]).not.toHaveProperty("tools");
       expect(sandbox.network.policy.explicit).toMatchObject({
         process: { run_as_user: "1000", run_as_group: "1000" },
         filesystem_policy: {
@@ -691,7 +696,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]!.auth).toEqual({
       method: "api-key",
     });
     expect(document.spec.inferenceProviders[0]).toMatchObject({
@@ -786,7 +791,7 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].observability",
         "spec.sandboxes[].integrations.webSearch",
         "spec.sandboxes[].integrations.messaging",
-        "spec.sandboxes[].agents[0].type",
+        "spec.sandboxes[].harness.kind",
         "spec.inferenceProviders",
       ]),
     );
@@ -1243,7 +1248,7 @@ describe("dashboard settings export", () => {
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
-    expect(document.spec.sandboxes[0]!.agents[0]).toEqual({
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toEqual({
       name: "primary",
       inference: {
         routes: [
@@ -1337,7 +1342,7 @@ describe("dashboard settings export", () => {
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
       execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
     });
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
       inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
     });
   });
@@ -1435,7 +1440,7 @@ describe("dashboard settings export", () => {
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
       const outcome = await exportSnapshots([changeRetainedProfile(dashboardSnapshot(), change)]);
-      const category = ["malformed port", "URL credential"].includes(label)
+      const category = ["malformed port", "URL credential", "device auth change"].includes(label)
         ? "missing-provenance"
         : "unsupported";
       expect(outcome.outcome).toMatchObject({

@@ -409,6 +409,14 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+The fixture compares the registry before and after export, and state validation confirms that the
+sandbox remains ready after the read-only command.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
@@ -503,22 +511,20 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
 A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs, selected model name and digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
-definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
-managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
-before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
-scenario. It retries read-only daemon readiness checks on connection refusal or curl
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
+It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
+The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
+The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
+Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
+The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
+Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
-models through the saved endpoint. It destroys the sandbox before stopping that daemon.
+Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

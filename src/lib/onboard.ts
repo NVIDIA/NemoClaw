@@ -1394,7 +1394,7 @@ const gatewayStart = createGatewayStart({
   isGatewayHttpReady,
   isLinuxDockerDriverGatewayEnabled,
   selectNamedGatewayForReuseIfNeeded,
-  startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
+  ...dockerDriverGatewayStart,
   step,
 });
 
@@ -2914,7 +2914,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           note,
           startRecordedStep,
-          startGateway,
+          ...gatewayStart,
           recordStepComplete,
           exitProcess: (code) => process.exit(code),
         },
@@ -3079,11 +3079,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentSupportsWebSearch,
             agentSupportsWebSearchProvider,
             ...{ note, cliName },
-            ...{
-              loadSession: onboardSession.loadSession,
-              updateSession: onboardSession.updateSession,
-              compareAndSwapSession: onboardSession.compareAndSwapSession,
-            },
+            loadSession: onboardSession.loadSession,
+            updateSession: onboardSession.updateSession,
+            compareAndSwapSession: onboardSession.compareAndSwapSession,
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
@@ -3144,6 +3142,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
             finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
+            reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>
