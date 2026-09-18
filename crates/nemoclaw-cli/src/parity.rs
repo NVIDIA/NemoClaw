@@ -13,17 +13,6 @@ mod tests {
     const V0_SOURCE_REVISION: &str = "d9c33770772f06264b3a45b52fe9efc6d83aa34f";
     const V0_SOURCE_DATE: &str = "2026-09-17";
     const UID: &str = "12345678-1234-4234-9234-123456789abc";
-    const ISSUE_12022: &str = "https://github.com/NVIDIA/NemoClaw/issues/12022";
-    const ISSUE_12029: &str = "https://github.com/NVIDIA/NemoClaw/issues/12029";
-    const ISSUE_12032: &str = "https://github.com/NVIDIA/NemoClaw/issues/12032";
-    const ISSUE_12034: &str = "https://github.com/NVIDIA/NemoClaw/issues/12034";
-    const ISSUE_12035: &str = "https://github.com/NVIDIA/NemoClaw/issues/12035";
-    const ISSUE_12036: &str = "https://github.com/NVIDIA/NemoClaw/issues/12036";
-    const ISSUE_12037: &str = "https://github.com/NVIDIA/NemoClaw/issues/12037";
-    const ISSUE_12038: &str = "https://github.com/NVIDIA/NemoClaw/issues/12038";
-    const ISSUE_12040: &str = "https://github.com/NVIDIA/NemoClaw/issues/12040";
-    const ISSUE_12042: &str = "https://github.com/NVIDIA/NemoClaw/issues/12042";
-
     // Independent source catalogs keep the coverage assertion from merely
     // comparing the scenario table with itself. Public flags come from
     // src/lib/onboard/command-support.ts at V0_SOURCE_REVISION. Environment
@@ -206,7 +195,6 @@ mod tests {
     struct Gap {
         id: &'static str,
         boundary: Boundary,
-        owner: &'static str,
         reason: &'static str,
     }
 
@@ -285,16 +273,10 @@ mod tests {
         check: Check,
     }
 
-    fn gap(
-        id: &'static str,
-        boundary: Boundary,
-        owner: &'static str,
-        reason: &'static str,
-    ) -> Option<Gap> {
+    fn gap(id: &'static str, boundary: Boundary, reason: &'static str) -> Option<Gap> {
         Some(Gap {
             id,
             boundary,
-            owner,
             reason,
         })
     }
@@ -328,7 +310,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-NAMING-IDENTITY",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "V1 separates deployment and sandbox names and defaults the authored sandbox to assistant, so the V0 name cannot be projected without a product mapping decision",
                 ),
                 check: Check::None,
@@ -344,7 +325,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-NAMING-VALIDATION",
                     Boundary::DocumentParse,
-                    ISSUE_12034,
                     "the V1 parser correctly rejects the same invalid sandbox-name class; an accepted identity mapping remains separately owned",
                 ),
                 check: Check::Mutation(Mutation::InvalidSandboxName),
@@ -367,7 +347,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-UNATTENDED",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "V1 authoring is non-mutating and the composed apply workflow must define confirmation and notice ownership",
                 ),
                 check: Check::None,
@@ -405,7 +384,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-AGENT-DEEPAGENTS",
                     Boundary::Authoring,
-                    ISSUE_12034,
                     "V1 parses Deep Agents intent but onboarding does not author this harness or V0 agent-manifest workflow",
                 ),
                 check: Check::Fixture(FixtureCase::DeepAgents),
@@ -421,7 +399,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-OPENCLAW-AGENT-MANIFEST",
                     Boundary::Authoring,
-                    ISSUE_12034,
                     "V1 deploys each OpenClaw agent in a separate sandbox; onboarding does not author the V0 manifest workflow",
                 ),
                 check: Check::Fixture(FixtureCase::FullFeatured),
@@ -437,7 +414,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-AGENT-PI",
                     Boundary::Authoring,
-                    ISSUE_12034,
                     "V1 parses Pi intent but onboarding does not author its native model shape",
                 ),
                 check: Check::Fixture(FixtureCase::Pi),
@@ -453,7 +429,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-ANTHROPIC",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the shape parses but standalone generated lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::Anthropic),
@@ -469,7 +444,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-ANTHROPIC-COMPATIBLE",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the credential-bearing compatible shape parses but generated lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::AnthropicCompatible),
@@ -498,7 +472,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-COMPATIBLE",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the generic external-provider shape parses but generated lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::Compatible),
@@ -514,7 +487,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-INPUT-MODALITIES",
                     Boundary::DocumentParse,
-                    ISSUE_12035,
                     "the illustrative OpenClaw input-modality override is not accepted by the V1 route schema",
                 ),
                 check: Check::Mutation(Mutation::InferenceInputs),
@@ -530,7 +502,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-OPENAI",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the credential-bearing OpenAI shape parses but generated lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::OpenAi),
@@ -546,7 +517,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-OPENROUTER",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the credential-bearing OpenRouter shape parses but generated lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::OpenRouter),
@@ -567,7 +537,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-OLLAMA",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "managed Ollama parses but generated standalone lifecycle qualification is pending",
                 ),
                 check: Check::Fixture(FixtureCase::ManagedOllama),
@@ -596,7 +565,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-VLLM",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "the service graph parses but generated profile selection and live qualification are pending",
                 ),
                 check: Check::Fixture(FixtureCase::ManagedVllm),
@@ -612,7 +580,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-LLAMACPP",
                     Boundary::DocumentParse,
-                    ISSUE_12035,
                     "the illustrative llama.cpp service backend is not accepted by the V1 provider schema",
                 ),
                 check: Check::Mutation(Mutation::LlamaCppService),
@@ -628,7 +595,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-CREDENTIALS",
                     Boundary::CredentialFulfillment,
-                    ISSUE_12029,
                     "V1 authors credential references but standalone commands do not yet fulfill them",
                 ),
                 check: Check::Authoring(AuthoringCase::OpenClawCompletions),
@@ -644,7 +610,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-GEMINI",
                     Boundary::DocumentParse,
-                    ISSUE_12035,
                     "the illustrative Gemini provider shape is a proposal and is rejected by the V1 parser",
                 ),
                 check: Check::Mutation(Mutation::GeminiProvider),
@@ -660,7 +625,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-PROFILE-PROVENANCE",
                     Boundary::DocumentParse,
-                    ISSUE_12035,
                     "the proposed servingProfile field is not accepted V1 schema",
                 ),
                 check: Check::Mutation(Mutation::ServingProfileProvenance),
@@ -676,7 +640,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-MODEL-ROUTER",
                     Boundary::DocumentParse,
-                    ISSUE_12035,
                     "the illustrative modelRouter declaration is not an accepted V1 schema shape",
                 ),
                 check: Check::Mutation(Mutation::ModelRouter),
@@ -711,7 +674,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-RUNTIME-GPU-CONTROLS",
                     Boundary::DocumentParse,
-                    ISSUE_12036,
                     "the illustrative sandbox runtime GPU declaration is not accepted V1 schema; managed inference-service hardware is not equivalent",
                 ),
                 check: Check::Mutation(Mutation::GpuIntent),
@@ -727,7 +689,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-RUNTIME-RESOURCE-SIZING",
                     Boundary::DocumentParse,
-                    ISSUE_12036,
                     "the illustrative sandbox resource declaration is not accepted V1 schema",
                 ),
                 check: Check::Mutation(Mutation::SandboxResources),
@@ -743,7 +704,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INFERENCE-OLLAMA-PROXY-PORT",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12038,
                     "V1 parses the selected port in ollamaProxy.endpoint but V0-to-V1 authoring and generated lifecycle qualification are pending",
                 ),
                 check: Check::Fixture(FixtureCase::OllamaProxy),
@@ -773,7 +733,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-HOST-MOUNTS",
                     Boundary::DocumentParse,
-                    ISSUE_12036,
                     "the proposed runtime.hostMounts field is not accepted V1 schema",
                 ),
                 check: Check::Mutation(Mutation::HostMounts),
@@ -825,7 +784,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-HERMES-PROVIDER-TOOLS",
                     Boundary::DocumentParse,
-                    ISSUE_12042,
                     "the illustrative Hermes authentication, tool-gateway, and placeholder intent is not accepted V1 schema",
                 ),
                 check: Check::Mutation(Mutation::HermesProviderTools),
@@ -890,7 +848,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-NETWORK-TRUSTED-PRIVATE-HOSTS",
                     Boundary::DocumentParse,
-                    ISSUE_12036,
                     "the illustrative trusted-private-host allowlist is not accepted V1 network schema and cannot be reduced to an ordinary public endpoint rule",
                 ),
                 check: Check::Mutation(Mutation::TrustedPrivateHosts),
@@ -920,7 +877,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INTEGRATION-TAVILY",
                     Boundary::DocumentParse,
-                    ISSUE_12040,
                     "the illustrative Tavily integration is rejected because the accepted V1 provider enum contains only Brave",
                 ),
                 check: Check::Mutation(Mutation::TavilyWebSearch),
@@ -952,7 +908,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INTEGRATION-MESSAGING",
                     Boundary::DocumentParse,
-                    ISSUE_12037,
                     "the proposed sandbox.channels field is not accepted V1 schema",
                 ),
                 check: Check::Mutation(Mutation::MessagingChannels),
@@ -979,7 +934,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-RECOVERY",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "the complete V1 onboarding workflow must decide how desired-state apply recovery surfaces in onboarding",
                 ),
                 check: Check::None,
@@ -995,7 +949,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-DEFER-ONBOARDING",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "the composed V1 installation and onboarding workflow must decide whether deferred authoring is a supported workflow",
                 ),
                 check: Check::None,
@@ -1011,7 +964,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-EXPRESS-OPT-OUT",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "V1 onboarding must decide whether installer admission profiles belong in desired-state authoring",
                 ),
                 check: Check::None,
@@ -1027,7 +979,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-DEFAULTS-POLICY-TOOLS-OBSERVABILITY",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "V1 explicit policy and authoring defaults do not currently define a lossless mapping for the V0 balanced and suggested defaults",
                 ),
                 check: Check::None,
@@ -1043,7 +994,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-FIREWALL-REPAIR",
                     Boundary::ProductScope,
-                    ISSUE_12022,
                     "V1 desired-state authoring is host-read-only and does not own mutation of host firewall policy",
                 ),
                 check: Check::None,
@@ -1059,7 +1009,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-EVENTS",
                     Boundary::ProductScope,
-                    ISSUE_12032,
                     "the composed V1 workflow has not accepted an onboarding event protocol",
                 ),
                 check: Check::None,
@@ -1075,7 +1024,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-WORKFLOW-EXTERNAL-COMPONENT",
                     Boundary::ProductScope,
-                    ISSUE_12022,
                     "external component enrollment is an imperative gateway workflow rather than deployment authoring intent",
                 ),
                 check: Check::None,
@@ -1091,7 +1039,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-CUSTOM-IMAGE",
                     Boundary::ProductScope,
-                    ISSUE_12022,
                     "V1 authors desired state and consumes qualified immutable images; onboarding does not own arbitrary image builds",
                 ),
                 check: Check::None,
@@ -1107,7 +1054,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-APF-INTERCEPTOR",
                     Boundary::ProductScope,
-                    ISSUE_12022,
                     "V1 desired state requires declared policy intent and does not claim external policy provenance",
                 ),
                 check: Check::None,
@@ -1123,7 +1069,6 @@ mod tests {
                 gap: gap(
                     "GAP-V0-AGENT-NEMOCUA",
                     Boundary::ProductScope,
-                    ISSUE_12022,
                     "candidate Computer Use support requires a separate accepted V1 scope decision",
                 ),
                 check: Check::None,
@@ -1719,10 +1664,6 @@ mod tests {
                 }
                 (_, Some(gap)) => {
                     assert!(gaps.insert(gap.id), "duplicate gap {}", gap.id);
-                    assert!(
-                        gap.owner
-                            .starts_with("https://github.com/NVIDIA/NemoClaw/issues/")
-                    );
                     assert!(!gap.reason.is_empty());
                     match scenario.disposition {
                         DispositionKind::ParseRejected | DispositionKind::ProposedShapeRejected => {
