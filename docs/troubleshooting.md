@@ -21,14 +21,14 @@ When ordinary planning is appropriate, collect a read-only runtime preview from 
 
 ```sh
 diagnostic_dir=$(mktemp -d)
-nemoclaw plan --state-dir .local/deployment deployment.yaml > "$diagnostic_dir/plan.json" 2> "$diagnostic_dir/plan.stderr"
+nemoclaw plan -o json --state-dir .local/deployment deployment.yaml > "$diagnostic_dir/plan.json" 2> "$diagnostic_dir/plan.stderr"
 diagnostic_status=$?
 printf 'Exit status: %s\nDiagnostics: %s\n' "$diagnostic_status" "$diagnostic_dir"
 ```
 
 Replace the YAML and state paths with the ones from the failed operation.
 Planning can write local planning files, but does not mutate runtime resources.
-For an unfinished destroy, use `plan --destroy` with the same state instead of the YAML command.
+For an unfinished destroy, use `plan --destroy -o json` with the same state instead of the YAML command.
 On nonzero exit, read `plan.stderr`; empty stdout does not mean the deployment has no changes.
 Review diagnostics before sharing them: endpoints, resource identities, and agent output may be private even when credential values are redacted.
 Do not attach environment dumps, TLS private keys, interface tokens, or the entire state directory to a public report.

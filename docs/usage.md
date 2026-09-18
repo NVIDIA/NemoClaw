@@ -35,7 +35,9 @@ Keep the selected bundle unchanged while an operation runs.
 Export and destroy accept no YAML.
 Errors go to stderr with a nonzero exit code.
 
-Successful operations emit JSON, except export, which emits YAML.
+Plan prints a text preview; use `nemoclaw plan -o json deployment.yaml` for scripts.
+Apply and destroy emit JSON; export emits YAML.
+See [CLI output](reference/cli.md#output-and-failure) for formats and exit codes.
 
 Plan observes resources without creating containers, downloading models, preparing data, or invoking inference.
 A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
@@ -259,8 +261,9 @@ nemoclaw plan --state-dir .local/deployment exported-new.yaml
 nemoclaw apply --state-dir .local/deployment exported-new.yaml
 ```
 
-For a fully observed unchanged deployment, expect an empty `changes` list.
-A nonempty `deferred` list means the plan is incomplete, even if the current changes list is empty.
+For a fully observed unchanged deployment, expect `No resource changes planned.` with no deferred work.
+With `-o json`, this is an empty `changes` list and no `deferred` field.
+Deferred work means the plan is incomplete, even if the current changes list is empty.
 Unchanged apply still performs configuration and readiness checks; it can fail if a required service is unavailable.
 It does not send generation requests.
 Keep the original YAML until verification succeeds.

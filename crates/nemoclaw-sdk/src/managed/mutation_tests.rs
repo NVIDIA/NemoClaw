@@ -33,6 +33,69 @@ struct State {
 }
 
 #[tokio::test]
+async fn network_creation_rechecks_conflicts_that_appear_after_preflight() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let networks = Arc::new(Mutex::new(json!([])));
+    let shared = networks.clone();
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(
+            request.method, "GET",
+            "conflict must prevent network creation"
+        );
+        let (status, body) = if request.path.split('?').next() == Some("/networks") {
+            (200, shared.lock().unwrap().clone())
+        } else {
+            (404, json!({"message":"missing"}))
+        };
+        Some((status, serde_json::to_vec(&body).unwrap()))
+    })
+    .await;
+    let engine = fixture.engine_for(spec.engine());
+    assert!(engine.checked_network(&spec).await.unwrap().is_none());
+    *networks.lock().unwrap() = json!([{"IPAM":{"Config":[{"Subnet":spec.network_cidr()}]}}]);
+    assert!(matches!(
+        engine.ensure_network(&spec).await,
+        Err(Error::Conflict(
+            "managed gateway subnet overlaps an existing Docker network"
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn existing_network_is_reused_only_with_matching_ownership_and_configuration() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge().unwrap()}]}});
+    let shared = Arc::new(Mutex::new(network.clone()));
+    let state = shared.clone();
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(request.method, "GET");
+        assert!(
+            request.path.starts_with("/networks/"),
+            "owned network needs no inventory or mutation"
+        );
+        Some((200, serde_json::to_vec(&*state.lock().unwrap()).unwrap()))
+    })
+    .await;
+    let engine = fixture.engine_for(spec.engine());
+    assert!(engine.checked_network(&spec).await.unwrap().is_some());
+    engine.ensure_network(&spec).await.unwrap();
+    for drift in [
+        json!({"Labels":{super::super::OWNER_LABEL:"foreign"}}),
+        json!({"IPAM":{"Driver":"default","Config":[{"Subnet":"10.99.0.0/24","Gateway":"10.99.0.1"}]}}),
+    ] {
+        let mut changed = network.clone();
+        for (key, value) in drift.as_object().unwrap() {
+            changed[key] = value.clone();
+        }
+        *shared.lock().unwrap() = changed;
+        assert!(engine.checked_network(&spec).await.is_err());
+        assert!(engine.ensure_network(&spec).await.is_err());
+    }
+}
+
+#[tokio::test]
 async fn managed_gateway_accepts_a_native_linux_amd64_image() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();

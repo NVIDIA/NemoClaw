@@ -13,7 +13,7 @@ use crate::{
     docker::{Engine, remote},
 };
 use bollard::{
-    models::{NetworkCreateRequest, VolumeCreateRequest},
+    models::{NetworkCreateRequest, NetworkInspect, VolumeCreateRequest},
     query_parameters::{CreateContainerOptions, CreateImageOptions, StopContainerOptions},
 };
 use futures_util::StreamExt;
@@ -166,9 +166,15 @@ impl Engine {
         }
         Ok(())
     }
-    pub(crate) async fn ensure_network(&self, spec: &Spec) -> Result<(), Error> {
+    /// Observe an owned network, or check that its subnet is available for creation.
+    /// This performs no mutations and must be repeated immediately before creation.
+    pub(crate) async fn checked_network(
+        &self,
+        spec: &Spec,
+    ) -> Result<Option<NetworkInspect>, Error> {
         if let Some(network) = self.network(&spec.network()).await? {
-            return verify_network(spec, &network);
+            verify_network(spec, &network)?;
+            return Ok(Some(network));
         }
         if spec.kind != GATEWAY_KIND
             && spec
@@ -203,6 +209,12 @@ impl Engine {
                     ));
                 }
             }
+        }
+        Ok(None)
+    }
+    pub(crate) async fn ensure_network(&self, spec: &Spec) -> Result<(), Error> {
+        if self.checked_network(spec).await?.is_some() {
+            return Ok(());
         }
         let request:NetworkCreateRequest=serde_json::from_value(json!({"Name":spec.network(),"Driver":"bridge","Labels":spec.labels()?,"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge()?}]}})).map_err(|_|Error::State("invalid compiled gateway network"))?;
         self.api

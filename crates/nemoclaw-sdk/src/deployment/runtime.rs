@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod teardown;
+#[cfg(all(test, unix))]
+mod tests;
 
 use super::*;
 use crate::{
@@ -165,6 +167,14 @@ async fn preflight(
             Err(Error::PartialRuntime) if id.is_empty() => None,
             other => other?,
         };
+        if want.kind == GATEWAY_KIND
+            || want
+                .process
+                .as_ref()
+                .is_some_and(|process| process.create_network)
+        {
+            engine.checked_network(&want).await?;
+        }
         if want.kind == GATEWAY_KIND {
             result.gateway_running = observed.as_ref().is_some_and(|o| o.running);
         }
