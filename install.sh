@@ -262,9 +262,7 @@ exec_installer_from_ref() {
   clone_nemoclaw_ref "$ref" "$source_root"
   selected_commit="$(git -C "$source_root" rev-parse HEAD)"
 
-  if ! bootstrap_force_fresh_install_requested "$@"; then
-    guard_implicit_maintained_downgrade "$source_root" "$ref"
-  fi
+  guard_implicit_maintained_downgrade "$source_root" "$ref"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"

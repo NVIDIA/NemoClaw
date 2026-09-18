@@ -286,6 +286,34 @@ it("stops before package removal when managed uninstall rejects partial state", 
   );
 });
 
+it("bounds staged uninstaller preparation before destructive cleanup", () => {
+  const { root: tmp } = installerCheckout("nemoclaw-force-fresh-timeout-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  const startedAt = performance.now();
+  const result = callPayloadFunction(
+    `
+        NEMOCLAW_AGENT=hermes
+        FORCE_FRESH_PREPARE_TIMEOUT_SECONDS=1
+        force_fresh_install_has_existing_state() { return 0; }
+        force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
+        bash() { trap '' TERM; while :; do sleep 1; done; }
+        run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+        remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+        run_force_fresh_install_reset
+      `,
+    { CLEANUP_MARKER: cleanupMarker, HOME: tmp },
+  );
+  const elapsedMs = performance.now() - startedAt;
+
+  expect(result.status).not.toBe(0);
+  expect(elapsedMs).toBeGreaterThanOrEqual(900);
+  expect(elapsedMs).toBeLessThan(10_000);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "Force-fresh uninstaller preparation timed out before cleanup",
+  );
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+}, 15_000);
+
 it("routes the public force-fresh flag through reset before CLI installation", () => {
   const run = runInstallerSourcedBody(`
     set -e

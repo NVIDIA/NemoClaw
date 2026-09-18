@@ -1354,6 +1354,80 @@ spin() {
   return $status
 }
 
+FORCE_FRESH_PREPARE_TIMEOUT_SECONDS=900
+
+installer_command_group_is_alive() {
+  local command_pid="$1"
+  kill -0 -- "-$command_pid" 2>/dev/null || kill -0 "$command_pid" 2>/dev/null
+}
+
+terminate_installer_command_group() {
+  local command_pid="$1" grace_ticks
+  installer_command_group_is_alive "$command_pid" || {
+    wait "$command_pid" 2>/dev/null || true
+    return
+  }
+  kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
+  for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
+    installer_command_group_is_alive "$command_pid" || break
+    sleep 0.1
+  done
+  if installer_command_group_is_alive "$command_pid"; then
+    kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+  fi
+  wait "$command_pid" 2>/dev/null || true
+}
+
+run_bounded_installer_command() (
+  local label="$1" timeout_seconds="$2" log command_pid="" status=0 ticks=0 pending_signal=0
+  shift 2
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || error "Installer command timeout must be a positive integer."
+  log="$(mktemp)"
+  # Invoked indirectly by the signal and exit traps below.
+  # shellcheck disable=SC2329
+  cleanup_bounded_installer_command() {
+    local cleanup_status="$1"
+    trap 'cleanup_status=130' INT
+    trap 'cleanup_status=143' TERM
+    trap - EXIT
+    [[ -z "$command_pid" ]] || terminate_installer_command_group "$command_pid"
+    rm -f "$log"
+    exit "$cleanup_status"
+  }
+  trap 'pending_signal=130' INT
+  trap 'pending_signal=143' TERM
+  trap 'cleanup_bounded_installer_command "$?"' EXIT
+  info "$label"
+  set -m
+  "$@" >"$log" 2>&1 &
+  command_pid=$!
+  set +m
+  trap 'cleanup_bounded_installer_command 130' INT
+  trap 'cleanup_bounded_installer_command 143' TERM
+  ((pending_signal == 0)) || cleanup_bounded_installer_command "$pending_signal"
+  while installer_command_group_is_alive "$command_pid"; do
+    if ((ticks >= timeout_seconds * 10)); then
+      printf '[ERROR] Timed out during %s after %s seconds. Existing state was preserved; force-fresh cleanup did not start. Retry when package installation is healthy.\n' "$label" "$timeout_seconds" >&2
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if wait "$command_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  command_pid=""
+  if ((status != 0)); then
+    cat "$log" >&2
+  fi
+  rm -f "$log"
+  trap - EXIT
+  return "$status"
+)
+
 command_exists() { command -v "$1" &>/dev/null; }
 
 # Apply the gateway's Unix-socket constraints before Node or CLI modules are available.
@@ -3543,13 +3617,19 @@ force_fresh_install_source_root() {
 }
 
 prepare_force_fresh_uninstaller() {
-  local source_root="$1"
+  local source_root="$1" prepare_status=0
   if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
-    spin "Preparing OpenClaw package for force-fresh cleanup" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$source_root" \
+    run_bounded_installer_command "Preparing OpenClaw package for force-fresh cleanup" "$FORCE_FRESH_PREPARE_TIMEOUT_SECONDS" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$source_root" \
       || warn "Pre-extraction failed — npm install may fail if the OpenClaw tarball is broken"
   fi
-  spin "Preparing the force-fresh uninstaller" bash -c \
-    "cd \"$source_root\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check && npm run --if-present build:cli"
+  run_bounded_installer_command "Preparing the force-fresh uninstaller" "$FORCE_FRESH_PREPARE_TIMEOUT_SECONDS" bash -c \
+    "cd \"$source_root\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check && npm run --if-present build:cli" \
+    || prepare_status=$?
+  if ((prepare_status == 124)); then
+    error "Force-fresh uninstaller preparation timed out before cleanup. Existing state was preserved; rerun when package installation is healthy."
+  elif ((prepare_status != 0)); then
+    error "The staged force-fresh uninstaller could not be prepared. Existing state was preserved; cleanup did not start."
+  fi
   [[ -s "${source_root}/dist/lib/actions/uninstall/run-plan.js" ]] \
     || error "The staged force-fresh uninstaller did not build."
 }
