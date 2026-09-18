@@ -24,6 +24,7 @@ import {
   applyHermesSocketObservations,
   hermesPromptLines,
   hermesPromptFrames,
+  sanitizeHermesBrowserDiagnostic,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -317,6 +318,23 @@ test("multiline Hermes prompts preserve exact bytes without an asynchronous past
   assert.throws(() => hermesPromptLines("windows\r\nlines"), /canonical newlines/u);
 });
 
+test("Hermes browser diagnostics redact WebSocket credentials", () => {
+  assert.equal(
+    sanitizeHermesBrowserDiagnostic(
+      "WebSocket ws://127.0.0.1/api/pty?channel=visible&token=secret-token failed",
+      ["separate-secret"],
+    ),
+    "WebSocket ws://127.0.0.1/api/pty?channel=visible&token=<redacted> failed",
+  );
+  assert.equal(
+    sanitizeHermesBrowserDiagnostic(
+      "ticket URL ?ticket=one-use-value and X-Hermes-Session-Token: separate-secret",
+      ["separate-secret"],
+    ),
+    "ticket URL ?ticket=<redacted> and X-Hermes-Session-Token: <redacted>",
+  );
+});
+
 test("in-page Hermes socket observations preserve real PTY lifecycle evidence", () => {
   const state = createHermesPtyState();
   const channel = "actual-pty";
@@ -420,6 +438,14 @@ test("pre-session PTY reconnect still requires replacement live feeds", () => {
   state.bindPty("actual-pty");
   state.eventsClosed("actual-pty");
   state.ptyClosed("actual-pty");
+  assert.deepEqual(state.snapshot().connections, [
+    { endpoint: "events", action: "open", channel: "actual-pty" },
+    { endpoint: "pty", action: "open", channel: "actual-pty" },
+    { endpoint: "events", action: "close", channel: "actual-pty" },
+    { endpoint: "pty", action: "close", channel: "actual-pty" },
+  ]);
+  assert.equal(state.snapshot().eventFeedOpen, false);
+  assert.equal(state.snapshot().ptyFeedOpen, false);
   assert.throws(() => state.assertHealthy(), /not live/u);
   state.bindEvents("actual-pty");
   state.bindPty("actual-pty");

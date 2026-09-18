@@ -181,6 +181,16 @@ export function hermesPromptFrames(prompt: string) {
   return frames;
 }
 
+export function sanitizeHermesBrowserDiagnostic(value: unknown, secrets: string[] = []) {
+  let text = String(value).slice(0, 4096);
+  for (const secret of secrets) {
+    if (secret) text = text.replaceAll(secret, "<redacted>");
+  }
+  return text
+    .replace(/([?&](?:token|ticket)=)[^&\s"'<>]+/giu, "$1<redacted>")
+    .replace(/(X-Hermes-Session-Token\s*[:=]\s*)[^\s,"'<>]+/giu, "$1<redacted>");
+}
+
 export function applyHermesSocketObservations(pty: any, origin: string, batch: any) {
   assert.equal(batch?.overflow, false, "The in-page Hermes socket observation exceeded its bound");
   assert(Array.isArray(batch?.records) && batch.records.length <= 512);
@@ -234,6 +244,19 @@ export function createHermesPtyState() {
   const ptyFeedOpen = () => channel !== null && (openPtyFeeds.get(channel) ?? 0) > 0;
   const pending: { channel: string; value: any }[] = [];
   const events: { type: string; seq: number; sessionId: string }[] = [];
+  const connections: { endpoint: "pty" | "events"; action: "open" | "close"; channel: string }[] =
+    [];
+  const noteConnection = (
+    endpoint: "pty" | "events",
+    action: "open" | "close",
+    connectionChannel: string,
+  ) => {
+    if (connections.length === 128) {
+      failure = "The actual PTY connection lifecycle log exceeded its bound";
+      return;
+    }
+    connections.push({ endpoint, action, channel: connectionChannel });
+  };
   const receive = (eventChannel: string, value: any) => {
     if (!channel) {
       if (pending.length < 128) pending.push({ channel: eventChannel, value });
@@ -348,6 +371,7 @@ export function createHermesPtyState() {
       }
       channel = value;
       openPtyFeeds.set(value, (openPtyFeeds.get(value) ?? 0) + 1);
+      noteConnection("pty", "open", value);
       for (const item of pending.splice(0)) receive(item.channel, item.value);
     },
     receive,
@@ -355,9 +379,11 @@ export function createHermesPtyState() {
       assert.match(value, /^[A-Za-z0-9_-]{1,128}$/u);
       assert(openEventFeeds.has(value) || openEventFeeds.size < 8);
       openEventFeeds.set(value, (openEventFeeds.get(value) ?? 0) + 1);
+      noteConnection("events", "open", value);
     },
     eventsClosed(value: string) {
       openEventFeeds.set(value, Math.max(0, (openEventFeeds.get(value) ?? 0) - 1));
+      noteConnection("events", "close", value);
       if (observing && sessionId !== null && value === channel && !eventFeedOpen())
         failure = "The actual PTY event feed closed";
     },
@@ -366,6 +392,7 @@ export function createHermesPtyState() {
     },
     ptyClosed(value: string) {
       openPtyFeeds.set(value, Math.max(0, (openPtyFeeds.get(value) ?? 0) - 1));
+      noteConnection("pty", "close", value);
       if (observing && sessionId !== null && value === channel && !ptyFeedOpen())
         failure = "The actual PTY socket closed";
     },
@@ -415,6 +442,9 @@ export function createHermesPtyState() {
       return {
         channel,
         eventFeedOpen: eventFeedOpen(),
+        ptyFeedOpen: ptyFeedOpen(),
+        openEventFeedCount: [...openEventFeeds.values()].reduce((sum, value) => sum + value, 0),
+        openPtyFeedCount: [...openPtyFeeds.values()].reduce((sum, value) => sum + value, 0),
         runtimeSessionId: sessionId,
         storedSessionId,
         profileName,
@@ -425,6 +455,7 @@ export function createHermesPtyState() {
         readyInfo,
         failure,
         events: [...events],
+        connections: [...connections],
       };
     },
   };
@@ -785,6 +816,40 @@ async function main() {
       timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))),
     });
     const page = await browser.newPage();
+    const browserEvents: { kind: string; route?: string; status?: number; text?: string }[] = [];
+    const noteBrowserEvent = (event: (typeof browserEvents)[number]) => {
+      if (browserEvents.length < 128) browserEvents.push(event);
+    };
+    const localRoute = (value: string) => {
+      try {
+        const url = new URL(value);
+        return url.origin === origin.origin ? url.pathname : "different-origin";
+      } catch {
+        return "invalid-url";
+      }
+    };
+    page.on("console", (message: any) => {
+      const text = message.text();
+      if (/chat|pty|websocket|error|fail|disconnect|reconnect/iu.test(text))
+        noteBrowserEvent({ kind: "console-" + message.type(), text: text.slice(0, 4096) });
+    });
+    page.on("pageerror", (error: Error) =>
+      noteBrowserEvent({ kind: "page-error", text: String(error).slice(0, 4096) }),
+    );
+    page.on("requestfailed", (request: any) => {
+      const route = localRoute(request.url());
+      if (route !== "different-origin")
+        noteBrowserEvent({
+          kind: "request-failed",
+          route,
+          text: String(request.failure()?.errorText ?? "unknown failure").slice(0, 4096),
+        });
+    });
+    page.on("response", (response: any) => {
+      const route = localRoute(response.url());
+      if (route !== "different-origin" && response.status() >= 400)
+        noteBrowserEvent({ kind: "http-error", route, status: response.status() });
+    });
     await page.addInitScript(() => {
       const target = globalThis as any;
       const observation = {
@@ -879,6 +944,60 @@ async function main() {
       await sleep(100);
     }
     await pumpHermesSockets();
+    results.startup.pty = pty.snapshot();
+    try {
+      results.startup.browser = await page.evaluate(() => {
+        const target = globalThis as any;
+        const observation = target.__nemoclawSocketObservation;
+        const socketStates = observation
+          ? [...observation.sockets.values()].slice(0, 16).map(({ socket, url }: any) => {
+              const parsed = new URL(url);
+              return {
+                path: parsed.pathname,
+                channel: parsed.searchParams.get("channel"),
+                queryNames: [...parsed.searchParams.keys()].sort(),
+                readyState: socket.readyState,
+              };
+            })
+          : [];
+        const bodyText = target.document.body?.innerText ?? "";
+        const indicators = [
+          "Session token unavailable.",
+          "Chat is reconnecting.",
+          "Chat disconnected.",
+          "Session ended.",
+        ].filter((value) => bodyText.includes(value));
+        return {
+          path: target.location.pathname,
+          documentReadyState: target.document.readyState,
+          title: target.document.title.slice(0, 256),
+          authRequired: Boolean(target.__HERMES_AUTH_REQUIRED__),
+          sessionTokenPresent: Boolean(target.__HERMES_SESSION_TOKEN__),
+          socketObserverPresent: Boolean(observation),
+          socketStates,
+          terminalCount: target.document.querySelectorAll(".xterm-helper-textarea").length,
+          reconnectControlCount: target.document.querySelectorAll('[aria-label="Reconnect chat"]')
+            .length,
+          indicators,
+        };
+      });
+      results.startup.browser.events = browserEvents.map((event) => ({
+        ...event,
+        ...(event.text === undefined
+          ? {}
+          : {
+              text: sanitizeHermesBrowserDiagnostic(event.text, [secret, sessionToken ?? ""]),
+            }),
+      }));
+    } catch (error) {
+      results.startup.browserCaptureError = sanitizedFailure(error, secret);
+    }
+    if (!pty.usable())
+      await page
+        .screenshot({ path: path.join(output, "dashboard-startup-failure.png"), fullPage: true })
+        .catch((error: unknown) => {
+          results.startup.screenshotError = sanitizedFailure(error, secret);
+        });
     pty.assertHealthy();
     assert(
       pty.usable() && performance.now() - started < 120_000,
