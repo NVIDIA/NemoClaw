@@ -76,7 +76,7 @@ Each explanation includes diagrams and links to the commits that established its
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
-| Artifact ownership, preparation verification, and completion record publication | [Recipe design](design/recipes.md) |
+| Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
 | Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 

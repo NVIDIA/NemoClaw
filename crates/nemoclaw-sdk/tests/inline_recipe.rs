@@ -47,7 +47,7 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
 }
 
 #[tokio::test]
-async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data() {
+async fn preparation_recovers_staging_reuses_output_and_rejects_changed_data() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
         services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
@@ -93,17 +93,28 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
             .await
             .is_err()
     );
-    let completion = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
+    let output = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
         .await
         .unwrap();
     assert_eq!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
             .unwrap(),
-        completion
+        output
     );
     assert_eq!(runner.calls.load(Ordering::SeqCst), 3);
-    std::fs::write(root.path().join(completion.key).join("packed"), b"changed").unwrap();
+    let published = root.path().join(&output.key);
+    let mut names: Vec<_> = std::fs::read_dir(&published)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["manifest.json", "packed"]);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(published.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved["key"], output.key);
+    assert_eq!(saved["files"][0]["name"], "packed");
+    std::fs::write(published.join("packed"), b"changed").unwrap();
     assert!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
@@ -126,7 +137,7 @@ fn preparation_keys_track_model_and_tool_identity() {
 }
 
 #[tokio::test]
-async fn failed_verification_never_publishes_a_completion_record() {
+async fn failed_verification_never_publishes_an_output_manifest() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
         services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
@@ -188,7 +199,7 @@ async fn failed_verification_never_publishes_a_completion_record() {
             std::fs::read(staging.join("packed")).unwrap(),
             b"packed bytes"
         );
-        assert!(!staging.join("complete.json").exists());
+        assert!(!staging.join("manifest.json").exists());
     }
 }
 
@@ -206,7 +217,7 @@ fn model_specific_backend_names_are_rejected() {
 }
 
 #[tokio::test]
-async fn published_directory_without_a_completion_record_is_not_rebuilt() {
+async fn published_directory_without_an_output_manifest_is_not_rebuilt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
         services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
@@ -243,5 +254,23 @@ async fn published_directory_without_a_completion_record_is_not_rebuilt() {
         .is_err()
     );
     assert_eq!(std::fs::read(published.join("retained")).unwrap(), b"keep");
-    assert!(!published.join("complete.json").exists());
+    assert!(!published.join("manifest.json").exists());
+    // A legacy completion file cannot silently become a new output manifest.
+    std::fs::write(published.join("complete.json"), b"legacy").unwrap();
+    assert!(
+        preparation::prepare(
+            root.path(),
+            root.path(),
+            service,
+            &NoTools,
+            &CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read(published.join("complete.json")).unwrap(),
+        b"legacy"
+    );
+    assert!(!published.join("manifest.json").exists());
 }

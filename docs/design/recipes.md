@@ -25,8 +25,9 @@ Both checks are necessary: a matching file hash alone cannot prove that a model-
 ## Verify Before Publishing Prepared Data
 
 Preparation can take hours or leave partial output after interruption.
-The runtime therefore uses a staging directory and publishes a completion record only after verification.
-The completion record contains the preparation identity and verified files so later observations can check retained data without rerunning the tools.
+The runtime therefore prepares files in a staging directory, writes one output manifest after verification, and atomically renames the directory into place.
+The manifest contains the preparation identity and verified files so later observations can check retained data without rerunning the tools.
+The final directory and its manifest are the prepared result; no separate completion flag or file is needed.
 
 The diagram shows where candidate files become a published preparation:
 
@@ -34,13 +35,13 @@ The diagram shows where candidate files become a published preparation:
 flowchart TD
     Contract[Validate declaration and pinned image tools] --> Snapshot[Resolve or reuse pinned snapshot]
     Snapshot --> Existing{Published preparation exists?}
-    Existing -->|yes| Observe[Check completion record and file metadata]
+    Existing -->|yes| Observe[Check output manifest and file metadata]
     Observe -->|valid| Serve[Start backend with verified paths]
     Observe -->|invalid| Stop[Stop; retain data for diagnosis]
     Existing -->|no| Stage[Prepare candidate files in staging]
     Stage --> Verify[Run artifact verifier]
     Verify --> Check[Check paths, sizes, hashes, and byte budget]
-    Check --> Publish[Write completion record and rename staging directory]
+    Check --> Publish[Write output manifest and rename staging directory]
     Publish --> Serve
     Stage -. failure or cancellation .-> Retain[Retain unpublished staging data]
     Verify -. failure or cancellation .-> Retain
@@ -53,7 +54,7 @@ The [verification failure tests](https://github.com/NVIDIA/NemoClaw/commit/d14bd
 The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/preparation.rs) performs the final checks and directory rename.
 
 An explicit cache import follows the same rule.
-It offers old files to the new verifier as candidates; it does not transfer trust from an old completion record.
+It offers old files to the new verifier as candidates; it does not transfer trust from an old output manifest.
 The complete declaration participates in the preparation key, so a serving-only edit currently selects a different preparation identity too.
 This favors a single auditable identity over independently versioned preparation and serving contracts.
 
@@ -84,7 +85,7 @@ Image labels declare required capabilities and protocol support.
 Executable invocation uses structured input without shell interpolation or a dynamic library.
 A future file or reference form could resolve into the same inline structure; it is not implemented by this contract.
 
-Recipe completion records and image capabilities use the existing engine-scoped Docker observation boundary.
+Recipe output manifests and image capabilities use the existing engine-scoped Docker observation boundary.
 OpenShell refresh and export retain the shared API readers; execution, downloads, and active probes remain direct.
 Adding a collector at the same engine boundary would duplicate that responsibility without moving observations to a new host.
 

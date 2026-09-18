@@ -11,9 +11,9 @@ The CLI does not load recipe code.
 Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
 
 See [the inline Qwen example](../examples/spark/spark-inline.yaml).
-Use [the Qwen3.8 image build](build.md#build-a-runtime-image); the example pins an OCI manifest from the recorded validation run.
-Build the pinned images from `sourceRevision` in [the validation evidence](validation/rust-recipe-removal-linux-arm64.json).
-Later revisions can produce different digests.
+Use [the Qwen3.8 image build](build.md#build-a-runtime-image) and CLI bundle from this checkout, and replace the example's runtime image reference with your build's digest.
+The example's existing image pin belongs to an earlier [validation run](validation/rust-recipe-removal-linux-arm64.json).
+Model storage must use the [current manifest format](models.md#retained-model-files); `reuse` does not migrate an older model manifest.
 
 The build loads the image locally without publishing it.
 Its model-specific adapters, model manifest, and semantic verifier live in `runtimes/qwen38`, outside the generic execution path.
@@ -83,14 +83,16 @@ Verification independently checks those candidates and returns JSON on stdout:
 
 Names are relative to the staging directory.
 Duplicate names, traversal, symlinked output paths, incomplete hashes, and output beyond the declared byte budget fail verification.
-The runtime independently hashes the listed files, records their metadata, and publishes a completion record through a directory rename.
+The runtime independently hashes the listed files and writes `manifest.json` with the preparation key, file names, sizes, hashes, and modification times.
+It then atomically renames the staging directory into place.
+`manifest.json` is reserved for the runtime and cannot be a recipe output path.
 
 It limits protocol output to 1 MiB and each tool invocation to eight hours.
 Tool logs belong on stderr.
 Cancellation terminates the owned process group and retains staged data.
 
 The preparation key includes the pinned model identity and inline recipe contract.
-Unchanged apply checks the existing completion record and file metadata without invoking the tools.
+Unchanged apply checks the existing output manifest and file metadata without invoking the tools.
 Changed or incomplete published data fails observation; it is not treated as absent or silently rebuilt.
 
 ## Plan, Apply and Retention
@@ -99,7 +101,7 @@ Plan validates declarations and observes hardware, state, and retained files.
 It never runs preparation or verification executables.
 Apply checks the pinned image capabilities and packaged files, downloads or reuses the snapshot, prepares and verifies data, then starts vLLM through the shared supervisor.
 
-The Qwen adapter can hard-link earlier packed data into staging for verification before the runtime saves a new completion record.
+The Qwen adapter can hard-link earlier packed data into staging for verification before the runtime saves a new output manifest.
 This avoids repacking while preserving the old published files.
 The model-specific orphan-recovery rule remains in that adapter, not the shared preparation lifecycle.
 

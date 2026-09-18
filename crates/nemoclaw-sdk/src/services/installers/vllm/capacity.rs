@@ -37,8 +37,12 @@ impl Engine {
                 } else {
                     None
                 };
-                let manifest = match cached {
-                    Some(bytes) => super::recipes::huggingface::decode_manifest(&service, &bytes)?,
+                let cached = cached
+                    .as_deref()
+                    .map(|bytes| super::recipes::huggingface::decode_manifest(&service, bytes))
+                    .transpose()?;
+                let manifest = match &cached {
+                    Some(local) => local.snapshot(),
                     None => super::recipes::huggingface::resolve_manifest(&service).await?,
                 };
                 let mut download = manifest.bytes()?;
@@ -47,8 +51,27 @@ impl Engine {
                     .as_ref()
                     .map_or(0, |r| r.resources.prepared_bytes);
                 if let Some(observed) = observed {
-                    for file in manifest.files {
+                    for (index, file) in manifest.files.into_iter().enumerate() {
                         let base = format!("/data/{directory}/{}", file.name);
+                        if let Some(modified) = cached
+                            .as_ref()
+                            .and_then(|local| local.files[index].modified)
+                        {
+                            let stat = self.stat_file(&observed.container_id, &base).await?.ok_or(
+                                Error::Conflict(
+                                    "verified model file is missing; retained for inspection",
+                                ),
+                            )?;
+                            super::artifacts::verify_stat(
+                                &crate::snapshot::VerifiedFile {
+                                    file: file.clone(),
+                                    modified,
+                                },
+                                &stat,
+                            )?;
+                            download -= file.size;
+                            continue;
+                        }
                         for suffix in ["", ".nemoclaw-partial"] {
                             if let Some(stat) = self
                                 .stat_file(&observed.container_id, &format!("{base}{suffix}"))

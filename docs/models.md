@@ -57,9 +57,25 @@ Unsupported names are rejected.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
+### Retained Model Files
+
 Snapshot directories include both repository and revision in their identity.
-The runtime retains the manifest, resumable partial files and completion record.
-Unchanged apply and export verify local completion records and file metadata without fetching the inventory or weights again.
+Each directory stores one `.nemoclaw-manifest.json` with format `version: 1`, repository, revision, and expected files.
+Each file entry contains its name, size, SHA-256, and a `modified` timestamp after verification; `null` means unfinished.
+Download progress does not change the model's identity.
+
+The runtime saves the manifest atomically after each file passes checksum verification.
+Interrupted downloads retain partial files for explicit apply to resume.
+If a file was renamed before its manifest update was saved, apply verifies its checksum again without downloading it.
+There are no separate per-file verification records or completion files.
+
+Unchanged apply and export check the manifest and file metadata without fetching the inventory or weights again.
+These size and timestamp checks reuse earlier verification; they do not rehash all model data.
+A missing or changed verified file stops the operation without downloading a replacement or rewriting its manifest entry.
+
+The model and recipe metadata formats require a matching CLI/provider bundle and runtime image built from this checkout.
+Use a fresh deployment for these formats; older model manifests without a version and recipe `complete.json` files are not migrated automatically.
+Keep the original bundle, runtime image, and state for existing deployments; do not delete metadata to bypass a format error.
 
 Model changes replace the inference process while preserving its storage volume and previous snapshots.
 Failed observation stops planning; failed startup retains the established container and model data.
@@ -116,7 +132,7 @@ An unfinished apply must first reconcile that exact intent; do not change its ti
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
 Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
-No recovery step requires deleting completion records, keys, volumes, or ownership bindings.
+No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
 The [runtime reporter](../crates/nemoclaw-runtime/src/services/installers/vllm/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK artifact reader](../crates/nemoclaw-sdk/src/services/installers/vllm/artifacts.rs) define these diagnostics and failure boundaries.
 

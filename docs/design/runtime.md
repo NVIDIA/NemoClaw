@@ -142,7 +142,8 @@ The served model name follows the repository, and model storage identity include
 
 The model resolver discovers a checksummed inference snapshot.
 Plan may read remote metadata but cannot download weights into runtime storage or prepare a model.
-Apply retains the manifest and resumable downloads; subsequent observation uses that retained manifest and completion records.
+Apply retains resumable downloads and one model manifest containing expected files and their verification metadata.
+Subsequent observation uses that manifest; [retained model files](../models.md#retained-model-files) describes recovery and format compatibility.
 
 Authentication, transport, partial inventories and changed artifacts are errors, never resource absence.
 

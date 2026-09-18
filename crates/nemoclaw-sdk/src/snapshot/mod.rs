@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod hub;
+mod manifest;
+pub use manifest::{MANIFEST_FILE, ModelFile, ModelManifest};
 #[cfg(test)]
 mod tests;
 
 use crate::{CancellationToken, Error, state::save_json};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -43,13 +45,6 @@ pub struct VerifiedFile {
     #[serde(flatten)]
     pub file: File,
     pub modified: u64,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-/// Manifest identity and verified file metadata saved in `.nemoclaw-complete.json`.
-pub struct CompletionRecord {
-    pub manifest: String,
-    pub files: Vec<VerifiedFile>,
 }
 fn hex(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
@@ -156,28 +151,22 @@ fn safe_path(root: &Path, relative: &str, create: bool) -> Result<PathBuf, Error
     }
     Ok(directory.join(file))
 }
-pub fn observe(directory: &Path, manifest: &Manifest) -> Result<CompletionRecord, Error> {
-    manifest.validate()?;
-    let marker = safe_path(directory, ".nemoclaw-complete.json", false)?;
-    if !fs::symlink_metadata(&marker).is_ok_and(|m| m.is_file()) {
-        return Err(failure("snapshot completion record unavailable"));
+pub fn observe(directory: &Path, manifest: &Manifest) -> Result<ModelManifest, Error> {
+    let local = ModelManifest::read(directory)?.ok_or(failure("model manifest unavailable"))?;
+    local.validate_for(manifest)?;
+    for verified in local.verified_files()? {
+        check_verified(directory, &verified.file, verified.modified)?;
     }
-    let completion: CompletionRecord = serde_json::from_slice(
-        &fs::read(marker).map_err(|_| failure("snapshot completion record unavailable"))?,
-    )
-    .map_err(|_| failure("invalid snapshot completion record"))?;
-    if completion.manifest != manifest.key() || completion.files.len() != manifest.files.len() {
+    Ok(local)
+}
+fn check_verified(directory: &Path, file: &File, expected_modified: u64) -> Result<(), Error> {
+    let path = safe_path(directory, &file.name, false)?;
+    if modified(&path, file.size)? != expected_modified {
         return Err(failure(
-            "snapshot completion conflicts with pinned manifest",
+            "verified model file changed; retained for inspection",
         ));
     }
-    for (verified, file) in completion.files.iter().zip(&manifest.files) {
-        let path = safe_path(directory, &file.name, false)?;
-        if verified.file != *file || modified(&path, file.size)? != verified.modified {
-            return Err(failure("verified model snapshot changed or is incomplete"));
-        }
-    }
-    Ok(completion)
+    Ok(())
 }
 
 pub struct Client {
@@ -229,16 +218,43 @@ impl Client {
         manifest: &Manifest,
         cancel: &CancellationToken,
         progress: &(dyn Fn(&str) + Sync),
-    ) -> Result<CompletionRecord, Error> {
+    ) -> Result<ModelManifest, Error> {
         manifest.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        if let Ok(completion) = observe(directory, manifest) {
-            return Ok(completion);
+        let saved = ModelManifest::read(directory)?;
+        let is_new = saved.is_none();
+        let mut local = saved.unwrap_or_else(|| ModelManifest::new(manifest));
+        local.validate_for(manifest)?;
+        // Check established files before starting any remaining downloads.
+        for entry in &local.files {
+            if let Some(modified) = entry.modified {
+                check_verified(directory, &entry.file, modified)?;
+            }
         }
-        let work = futures_util::stream::iter(manifest.files.iter().enumerate())
-            .map(|(index, file)| async move {
+        let pending: Vec<_> = local
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.modified.is_none())
+            .map(|(index, _)| index)
+            .collect();
+        if pending.is_empty() {
+            return Ok(local);
+        }
+        if is_new {
+            if fs::symlink_metadata(directory.join(".nemoclaw-complete.json")).is_ok() {
+                return Err(failure(
+                    "unsupported legacy model metadata; retained for inspection",
+                ));
+            }
+            let path = safe_path(directory, MANIFEST_FILE, true)?;
+            save_json(&path, &local)?;
+        }
+        let work = futures_util::stream::iter(pending)
+            .map(|index| async move {
+                let file = &manifest.files[index];
                 progress(&file.name);
                 let mut result = Err(failure(
                     "model stream incomplete; partial download retained",
@@ -250,7 +266,7 @@ impl Client {
                     }
                     match self.ensure_file(directory, manifest, file, cancel).await {
                         Ok(file) => {
-                            result = Ok((index, file));
+                            result = Ok(file);
                             break;
                         }
                         Err(AttemptFailure::Other(error)) => {
@@ -260,18 +276,20 @@ impl Client {
                         Err(AttemptFailure::Interrupted) => {}
                     }
                 }
-                result
+                (index, result)
             })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>();
-        let mut files = tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=work=>result? };
-        files.sort_by_key(|(index, _)| *index);
-        let completion = CompletionRecord {
-            manifest: manifest.key(),
-            files: files.into_iter().map(|(_, file)| file).collect(),
-        };
-        save_json(&directory.join(".nemoclaw-complete.json"), &completion)?;
-        Ok(completion)
+            .buffer_unordered(4);
+        tokio::pin!(work);
+        // One writer saves each completed file, including during a partial download.
+        // Concurrent transfers never overwrite each other's manifest updates.
+        while let Some((index, result)) = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            result = work.next() => result,
+        } {
+            local.files[index].modified = Some(result?.modified);
+            save_json(&directory.join(MANIFEST_FILE), &local)?;
+        }
+        observe(directory, manifest)
     }
     async fn ensure_file(
         &self,
@@ -281,24 +299,16 @@ impl Client {
         cancel: &CancellationToken,
     ) -> Result<VerifiedFile, AttemptFailure> {
         let path = safe_path(directory, &want.name, true)?;
-        let marker = path.with_file_name(format!(
-            "{}.nemoclaw-verified.json",
-            path.file_name().unwrap().to_string_lossy()
-        ));
-        if let Ok(bytes) = fs::read(&marker)
-            && let Ok(verified) = serde_json::from_slice::<VerifiedFile>(&bytes)
-            && verified.file == *want
-            && modified(&path, want.size).is_ok_and(|m| m == verified.modified)
-        {
-            return Ok(verified);
-        }
         match fs::symlink_metadata(&path) {
             Ok(metadata) => {
                 if !metadata.is_file() {
                     return Err(failure("snapshot path is not a regular file").into());
                 }
-                verify(&path, want, cancel).await?;
-                return record(&path, &marker, want).map_err(Into::into);
+                let modified = verify(&path, want, cancel).await?;
+                return Ok(VerifiedFile {
+                    file: want.clone(),
+                    modified,
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(failure("cannot inspect snapshot file").into()),
@@ -392,15 +402,29 @@ impl Client {
                 .map_err(|_| failure("cannot sync model data"))?;
         }
         drop(file);
-        verify(&partial, want, cancel).await?;
+        let verified_modified = verify(&partial, want, cancel).await?;
         tokio::fs::rename(&partial, &path)
             .await
             .map_err(|_| failure("cannot commit verified model file"))?;
-        record(&path, &marker, want).map_err(Into::into)
+        #[cfg(unix)]
+        fs::File::open(path.parent().ok_or(failure("invalid model file path"))?)
+            .and_then(|parent| parent.sync_all())
+            .map_err(|_| failure("cannot sync model file directory"))?;
+        check_verified(directory, want, verified_modified)?;
+        Ok(VerifiedFile {
+            file: want.clone(),
+            modified: verified_modified,
+        })
     }
 }
-async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<(), Error> {
-    let mut file = tokio::fs::File::open(path)
+async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<u64, Error> {
+    let before = modified(path, want.size)?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    options.write(true);
+    let mut file = options
+        .open(path)
         .await
         .map_err(|_| failure("cannot verify model file"))?;
     let mut digest = Sha256::new();
@@ -425,15 +449,13 @@ async fn verify(path: &Path, want: &File, cancel: &CancellationToken) -> Result<
             "model file does not match pinned size and SHA-256; retained for inspection",
         ));
     }
-    Ok(())
-}
-fn record(path: &Path, marker: &Path, want: &File) -> Result<VerifiedFile, Error> {
-    let verified = VerifiedFile {
-        file: want.clone(),
-        modified: modified(path, want.size)?,
-    };
-    save_json(marker, &verified)?;
-    Ok(verified)
+    if modified(path, want.size)? != before {
+        return Err(failure("model file changed during verification"));
+    }
+    file.sync_all()
+        .await
+        .map_err(|_| failure("cannot sync verified model file"))?;
+    Ok(before)
 }
 
 /// Create only real directories under the owned storage root.
