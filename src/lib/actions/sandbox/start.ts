@@ -4,6 +4,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { retryUntilAsync } from "../../core/retry";
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
@@ -22,6 +23,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { isTransientInferenceInvocationFailure } from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
@@ -77,18 +79,18 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
-  delayInferenceProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
   recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
   requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
+  delayInferenceInvocationProbe?: (delayMs: number) => Promise<void>;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
-const INFERENCE_INVOCATION_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
@@ -149,7 +151,6 @@ async function checkStartedSandboxInference(
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  const probe = deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation;
   const input = {
     sandboxName,
     gatewayName,
@@ -158,15 +159,27 @@ async function checkStartedSandboxInference(
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
   };
-  for (let attempt = 0; ; attempt += 1) {
-    const result = await probe(input, {}, READINESS_INFERENCE_INVOCATION_TIMEOUT_MS);
-    const delayMs = INFERENCE_INVOCATION_SETTLEMENT_DELAYS_MS[attempt];
-    if (result.ok || result.httpStatus !== 503 || delayMs === undefined) return result;
-    log(
-      `  Inference route is still settling after start; checking again in ${delayMs / 1_000} seconds…`,
+  const probe = () =>
+    (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+      input,
+      {},
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
     );
-    await (deps.delayInferenceProbe ?? sleep)(delayMs);
-  }
+  if (sandbox.agent !== "hermes" && sandbox.agent !== "pi") return await probe();
+  return await retryUntilAsync(probe, {
+    accept: (result) =>
+      sandbox.agent === "pi"
+        ? result.ok || result.httpStatus !== 503
+        : !isTransientInferenceInvocationFailure(result),
+    retryDelaysMs: START_INFERENCE_SETTLEMENT_DELAYS_MS,
+    onRetry: (result, delayMs, attempt) =>
+      log(
+        `  Inference request returned HTTP ${result.ok ? "unknown" : result.httpStatus}; ` +
+          `checking again in ${delayMs / 1_000} seconds ` +
+          `(attempt ${attempt + 1}/${START_INFERENCE_SETTLEMENT_DELAYS_MS.length + 1})…`,
+      ),
+    sleep: deps.delayInferenceInvocationProbe ?? sleep,
+  });
 }
 
 /**
