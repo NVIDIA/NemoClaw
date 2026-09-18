@@ -476,9 +476,12 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it.each(["hermes", "openclaw"])(
+  it.each([
+    ["hermes", 3, [[2_000], [2_000]]],
+    ["openclaw", 1, []],
+  ] as const)(
     "passes an unavailable %s observation to gateway verification",
-    async (agent) => {
+    async (agent, expectedAttempts, expectedDelays) => {
       const probeGatewayProcess = vi.fn(async () => null);
       const delayGatewayProcessProbe = vi.fn(async () => {});
       const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
@@ -489,8 +492,8 @@ describe("startSandbox native lifecycle", () => {
         "native gateway route unavailable",
       );
 
-      expect(probeGatewayProcess).toHaveBeenCalledOnce();
-      expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(expectedAttempts);
+      expect(delayGatewayProcessProbe.mock.calls).toEqual(expectedDelays);
       expect(h.verifyGateway).toHaveBeenCalledOnce();
     },
   );
