@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -160,6 +160,37 @@ describe("checkAgentVersion", async () => {
     const updated = registry.getSandbox("test-sb");
     expect(updated?.agentVersion).toBe("2026.5.27");
   });
+
+  it.each(["test-sb", "other-sb"])(
+    "preserves %s legacy ownership while reporting the live version",
+    async (legacySandbox) => {
+      const document = {
+        sandboxes: {
+          "test-sb": { name: "test-sb", agent: "openclaw" },
+          [legacySandbox]: {
+            name: legacySandbox,
+            agent: "openclaw",
+            mcp: { bridges: { github: { providerId: "owned" } } },
+          },
+        },
+        defaultSandbox: "test-sb",
+      };
+      writeFileSync(TEST_REGISTRY_FILE, JSON.stringify(document));
+      runSsh.mockResolvedValue({
+        kind: "completed",
+        exitCode: 0,
+        stdout: "OpenClaw 2026.5.27",
+        stderr: "",
+      });
+      expect(await checkAgentVersion("test-sb")).toMatchObject({
+        sandboxVersion: "2026.5.27",
+        detectionMethod: "ssh-exec",
+        verificationFailed: false,
+      });
+      expect(JSON.parse(readFileSync(TEST_REGISTRY_FILE, "utf8"))).toMatchObject(document);
+      expect(registry.getSandbox("test-sb")?.agentVersion).toBe("2026.5.27");
+    },
+  );
 
   it("probes the sandbox's own recorded gateway, not OpenShell's ambient selection (#7429)", async () => {
     // A sandbox onboarded under a non-default NEMOCLAW_GATEWAY_PORT is

@@ -126,7 +126,6 @@ let saveCredentialSpy: MockInstance;
 let deleteCredentialSpy: MockInstance;
 let updateSandboxSpy: MockInstance;
 let applyPresetSpy: MockInstance;
-let removePresetSpy: MockInstance;
 let loadPresetForSandboxSpy: MockInstance;
 let providerSpy: MockInstance;
 let rebuildSpy: MockInstance;
@@ -237,12 +236,10 @@ beforeEach(() => {
       callOrder.push(`applyPreset:${presetName}`);
       return applyPresetResult;
     });
-  removePresetSpy = vi
-    .spyOn(policies, "removePreset")
-    .mockImplementation(async (_name, presetName) => {
-      callOrder.push(`removePreset:${presetName}`);
-      return true;
-    });
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_name, presetName) => {
+    callOrder.push(`removePreset:${presetName}`);
+    return true;
+  });
   vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => appliedPresets);
 
   getCredentialSpy = vi
@@ -276,9 +273,10 @@ beforeEach(() => {
     .mockImplementation(() => successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,

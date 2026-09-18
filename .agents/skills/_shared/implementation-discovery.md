@@ -7,14 +7,14 @@ Use the current checkout as the source of truth. A skill defines process and pri
 not maintain an inventory of paths, identifiers, commands, registrations, versions, schemas, or
 test mappings that the checkout already defines.
 
-Apply the shared [Code Change Considerations](code-change-considerations.md) at the current
-lifecycle stage.
+Use [Code Change Considerations](code-change-considerations.md) when the task needs design decisions.
+A focused documentation correction does not need a code-design review.
 
 ## Before implementation
 
 - Read the active `AGENTS.md` files for every area the task can change.
 - Apply the product scope gate before adding a supported surface.
-- Identify affected trust boundaries. Apply the [Security Rubric](security-rubric.md) to the plan:
+- When a trust boundary or security control changes, use the [Security Rubric](security-rubric.md):
   name applicable risks, intended controls, and the positive and negative evidence the change needs.
 - During implementation and self-review, record the controls changed and negative evidence for each
   changed control that proves forbidden behavior remains denied.

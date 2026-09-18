@@ -50,22 +50,6 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("runs portable lifecycle recovery before the live sandbox lookup (#8441)", async () => {
-    const harness = createConnectHarness();
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
-
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ agent: "openclaw" }),
-      "nemoclaw",
-    );
-    expect(harness.recoverPortableDemoLifecycleSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]!,
-    );
-  });
-
   it("prints classified Portable recovery and rollback results without nested diagnostics (#11248)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
@@ -188,32 +172,77 @@ describe("connectSandbox probe-only observe mode", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
-    expect(harness.dockerStartSpy).toHaveBeenCalledWith(
-      "openshell-alpha",
-      expect.objectContaining({ ignoreError: true }),
-    );
-    const listInvocations = harness.captureOpenshellSpy.mock.calls
-      .map((call, index) => ({
-        call,
-        order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]!,
-      }))
-      .filter(
-        ({ call }) =>
-          Array.isArray(call?.[0]) &&
-          (call[0] as string[])[0] === "sandbox" &&
-          (call[0] as string[])[1] === "list",
-      );
+    const sandboxSubcommandInvocations = (subcommand: string) =>
+      harness.captureOpenshellSpy.mock.calls
+        .map((call, index) => ({
+          call,
+          order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]!,
+        }))
+        .filter(
+          ({ call }) =>
+            Array.isArray(call?.[0]) &&
+            (call[0] as string[])[0] === "sandbox" &&
+            (call[0] as string[])[1] === subcommand,
+        );
+    // A bare `docker start` would leave the sandbox phase at Stopped, so the
+    // start has to go through OpenShell (#11790).
+    const startInvocations = sandboxSubcommandInvocations("start");
+    expect(startInvocations).toHaveLength(1);
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    const listInvocations = sandboxSubcommandInvocations("list");
     expect(listInvocations.length).toBeGreaterThan(0);
-    // The container must be started before recovery starts polling for readiness,
-    // otherwise the wait loop observes a stopped container until it times out.
-    expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-      listInvocations[0]!.order,
-    );
+    // The sandbox must be started before recovery starts polling for readiness,
+    // otherwise the wait loop observes a stopped sandbox until it times out.
+    expect(startInvocations[0]!.order).toBeLessThan(listInvocations[0]!.order);
     expect(listInvocations).toHaveLength(4);
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(harness.registryEntries[0]?.stopped).toBe(false);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("waits for a just-started Hermes gateway before process recovery", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      { log: console.log },
+    );
+    expect(harness.waitForStartedHermesGatewayProcessSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("stops before recovery when a just-started Hermes gateway stays stopped", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      gatewayProcessSettlement: false,
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "did not become observable and running before the startup settlement window expired",
+      ),
+    );
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("retains stop intent when a recovered container cannot publish the registry update", async () => {
@@ -257,36 +286,44 @@ describe("connectSandbox probe-only observe mode", () => {
       condition: "Docker reports a failed start",
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
-      expectedStartCalls: 1,
+      sandboxLifecycleStartStatus: 1,
+      expectedDockerStartCalls: 1,
     },
     {
       condition: "Docker reports no start status",
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: null,
-      expectedStartCalls: 1,
+      sandboxLifecycleStartStatus: 1,
+      expectedDockerStartCalls: 1,
     },
     {
       condition: "the container is already running",
       dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
       dockerStartStatus: 0,
-      expectedStartCalls: 0,
+      sandboxLifecycleStartStatus: 0,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "the container is paused",
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: true },
       dockerStartStatus: 0,
-      expectedStartCalls: 0,
+      sandboxLifecycleStartStatus: 0,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "Docker cannot resolve a container",
       dockerRuntime: { containerName: null, running: false, paused: false },
       dockerStartStatus: 0,
-      expectedStartCalls: 0,
+      sandboxLifecycleStartStatus: 0,
+      expectedDockerStartCalls: 0,
     },
   ])("keeps Error terminal when $condition (#10466)", async (testCase) => {
     const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
       dockerRuntime: testCase.dockerRuntime,
       dockerStartStatus: testCase.dockerStartStatus,
+      sandboxLifecycleStartStatus: testCase.sandboxLifecycleStartStatus,
       listOutput: "alpha Error",
     });
 
@@ -294,13 +331,19 @@ describe("connectSandbox probe-only observe mode", () => {
       "process.exit(1)",
     );
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledTimes(testCase.expectedStartCalls);
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(1);
+    expect(harness.dockerStartSpy).toHaveBeenCalledTimes(testCase.expectedDockerStartCalls);
+    // A terminal Error is observed once and never polled again.
+    expect(
+      harness.captureOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "list",
+      ),
+    ).toHaveLength(1);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.waitForStartedHermesGatewayProcessSpy).not.toHaveBeenCalled();
   });
 
-  it("fails before recovery when the initial Error persists after Docker starts (#10466)", async () => {
+  it("fails before recovery when the initial Error persists after the start (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
@@ -310,16 +353,25 @@ describe("connectSandbox probe-only observe mode", () => {
       "process.exit(1)",
     );
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(21);
+    expect(
+      harness.captureOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
+      ),
+    ).toHaveLength(1);
+    expect(
+      harness.captureOpenshellSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "list",
+      ),
+    ).toHaveLength(21);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("continues readiness polling when Docker cannot start a stopped container (#8967)", async () => {
+  it("continues readiness polling when neither start recovers the container (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
+      sandboxLifecycleStartStatus: 1,
       listOutput: "alpha Ready",
     });
 
@@ -337,14 +389,75 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("falls back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      sandboxLifecycleStartStatus: null,
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    const lifecycleStartIndices = harness.captureOpenshellSpy.mock.calls.flatMap(([args], index) =>
+      Array.isArray(args) && args[0] === "sandbox" && args[1] === "start" ? [index] : [],
+    );
+    expect(lifecycleStartIndices).toHaveLength(1);
+    expect(
+      harness.captureOpenshellSpy.mock.invocationCallOrder[lifecycleStartIndices[0]!],
+    ).toBeLessThan(harness.dockerStartSpy.mock.invocationCallOrder[0]!);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("leaves a running container untouched on probe-only recovery (#8967)", async () => {
     const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
       dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
+      sandboxGetPhase: "Ready",
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(
+      harness.captureOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "start",
+      ),
+    ).toBe(false);
+    expect(harness.waitForStartedHermesGatewayProcessSpy).not.toHaveBeenCalled();
+  });
+
+  it("starts a running container whose sandbox is still Stopped (#11790)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
+      sandboxGetPhase: "Stopped",
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    // Without this, recover exhausts its readiness timeout on a sandbox that a
+    // single lifecycle start would have returned to Ready.
+    const sandboxInvocations = (subcommand: string) =>
+      harness.captureOpenshellSpy.mock.calls
+        .map((call, index) => ({
+          call,
+          order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]!,
+        }))
+        .filter(
+          ({ call }) =>
+            Array.isArray(call?.[0]) &&
+            (call[0] as string[])[0] === "sandbox" &&
+            (call[0] as string[])[1] === subcommand,
+        );
+    const startInvocations = sandboxInvocations("start");
+    const listInvocations = sandboxInvocations("list");
+    expect(startInvocations).toHaveLength(1);
+    expect(listInvocations.length).toBeGreaterThan(0);
+    expect(startInvocations[0]!.order).toBeLessThan(listInvocations[0]!.order);
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("suggests a longer equivalent retry when probe-only readiness times out", async () => {

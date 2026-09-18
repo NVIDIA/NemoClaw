@@ -194,6 +194,10 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
+  );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
@@ -245,10 +249,12 @@ function stageOptimizedSandboxBuildContext(
   normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceBlueprintDir, "blueprint.yaml"),
-    path.join(stagedBlueprintDir, "blueprint.yaml"),
-  );
+  for (const fileName of ["blueprint.yaml", "private-networks.yaml"]) {
+    fs.copyFileSync(
+      path.join(sourceBlueprintDir, fileName),
+      path.join(stagedBlueprintDir, fileName),
+    );
+  }
   fs.cpSync(path.join(sourceBlueprintDir, "policies"), path.join(stagedBlueprintDir, "policies"), {
     recursive: true,
   });
@@ -269,6 +275,16 @@ function stageOptimizedSandboxBuildContext(
       recursive: true,
     },
   );
+  fs.cpSync(
+    path.join(sourceBlueprintDir, "provider-profiles"),
+    path.join(stagedBlueprintDir, "provider-profiles"),
+    { recursive: true },
+  );
+  fs.mkdirSync(path.join(stagedBlueprintDir, "router"), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceBlueprintDir, "router", "pool-config.yaml"),
+    path.join(stagedBlueprintDir, "router", "pool-config.yaml"),
+  );
   normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
@@ -280,6 +296,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
     path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "verify-managed-messaging-offline-install.mts"),
+    path.join(stagedScriptsDir, "checks", "verify-managed-messaging-offline-install.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
@@ -298,16 +318,12 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "gateway-control.sh"),
-    path.join(stagedScriptsDir, "gateway-control.sh"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-gateway-control.py"),
-    path.join(stagedScriptsDir, "managed-gateway-control.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-cli-wrapper.sh"),
+    path.join(stagedScriptsDir, "openclaw-cli-wrapper.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
@@ -336,16 +352,16 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
-    path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-rlimits.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw_pairing_state.py"),
+    path.join(stagedScriptsDir, "lib", "openclaw_pairing_state.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
@@ -365,11 +381,19 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
+  );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
@@ -400,10 +424,9 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
-  fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
-    path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-secondary-main-session-delete.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),
@@ -437,6 +460,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-identity.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-identity.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "bundled-npm-package.mts"),

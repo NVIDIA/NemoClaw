@@ -617,3 +617,55 @@ Real content.
     expect(renderEveryPublishedVariant).not.toThrow();
   });
 });
+
+/**
+ * `scripts/nemoclaw-start.sh` is the only writer of the default OpenClaw
+ * workspace templates, so it is the authority the workspace docs must match.
+ */
+function seededWorkspaceFiles(): readonly string[] {
+  const startScript = readFileSync(path.join(repoRoot, "scripts/nemoclaw-start.sh"), "utf8");
+  const seedLoop = /for file in ((?:[A-Z_]+\.md\s*)+); do/.exec(startScript);
+
+  return (seedLoop?.[1] ?? "").trim().split(/\s+/);
+}
+
+describe("workspace file documentation", () => {
+  const seeded = seededWorkspaceFiles();
+  const transfer = readFileSync(
+    path.join(repoRoot, "docs/manage-sandboxes/transfer-state-manually.mdx"),
+    "utf8",
+  );
+  const reference = readFileSync(
+    path.join(repoRoot, "docs/manage-sandboxes/workspace-files.mdx"),
+    "utf8",
+  );
+
+  it("covers every seeded workspace file in the manual transfer guide (#10481)", () => {
+    expect(seeded).toEqual([
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+    ]);
+    expect(
+      seeded.filter(
+        (file) =>
+          !transfer.includes(`download /sandbox/.openclaw/workspace/${file} "$BACKUP_DIR/"`),
+      ),
+    ).toEqual([]);
+    expect(
+      seeded.filter(
+        (file) => !transfer.includes(`upload "$BACKUP_DIR/${file}" /sandbox/.openclaw/workspace/`),
+      ),
+    ).toEqual([]);
+    expect(seeded.filter((file) => !reference.includes(`| \`${file}\` |`))).toEqual([]);
+  });
+
+  it("documents POLICY.md as generated state that nobody uploads (#10481)", () => {
+    expect(reference).toContain("| `POLICY.md` |");
+    expect(transfer).toContain("The same directory also holds `POLICY.md`");
+    expect(transfer).not.toContain('upload "$BACKUP_DIR/POLICY.md"');
+  });
+});

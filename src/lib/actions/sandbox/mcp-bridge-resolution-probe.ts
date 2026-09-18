@@ -50,7 +50,7 @@
  */
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
@@ -67,7 +67,7 @@ import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
-import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -182,8 +182,14 @@ function curlCommand(url: string, authorization: string, httpMarker: string): st
   ];
 }
 
+/**
+ * Build the in-sandbox wire probe that checks whether the gateway resolves the
+ * recorded credential placeholder for a persisted MCP entry. Returns null when
+ * the entry has no credential binding or its stored URL fails the current
+ * authenticated-endpoint boundary under the entry's recorded trust.
+ */
 export function buildCredentialResolutionProbeCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,
   credentialRevision: McpAttachedCredentialRevision,
 ): CredentialResolutionProbeCommand | null {
@@ -193,7 +199,9 @@ export function buildCredentialResolutionProbeCommand(
   // authenticated-endpoint boundary: the gateway could rewrite the placeholder
   // header into a live credential bound for a legacy or private endpoint.
   try {
-    if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
+    if (normalizeRecordedMcpServerUrl(entry) !== entry.url) {
+      return null;
+    }
   } catch {
     return null;
   }
@@ -230,7 +238,7 @@ export function buildCredentialResolutionProbeCommand(
   };
 }
 
-function redactedProbeText(text: string, entry: Pick<McpBridgeEntry, "env">): string {
+function redactedProbeText(text: string, entry: Pick<McpSourceEntry, "env">): string {
   return redactBridgeSecretsForDisplay(text, entry).trim();
 }
 
@@ -262,7 +270,7 @@ function transportDetail(curlExit: number, stderr: string): string | undefined {
 
 export function classifyCredentialResolutionProbe(
   result: SandboxCommandResult | null,
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   resultMarker?: string,
 ): CredentialResolutionProbe {
   if (result === null) return { ok: null, detail: "sandbox unreachable" };
@@ -384,22 +392,26 @@ export function credentialResolutionWarning(
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
+/**
+ * Run the credential-resolution probe for one persisted MCP entry and classify
+ * the framed result. Readiness gates and the stored-URL boundary check run
+ * before any credential observation or sandbox traffic.
+ */
 export async function probeCredentialResolution(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
 ): Promise<CredentialResolutionProbe> {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
-  if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return { ok: null, detail: readinessSkipDetail };
   // Reject the entry before the fresh credential observation so an unsafe
   // persisted URL cannot trigger either sandbox or endpoint traffic.
   try {
-    if (!entry.env[0] || normalizeMcpServerUrl(entry.url) !== entry.url) {
+    if (!entry.env[0] || normalizeRecordedMcpServerUrl(entry) !== entry.url) {
       return { ok: null, detail: "no credential binding or safe endpoint to probe" };
     }
   } catch {

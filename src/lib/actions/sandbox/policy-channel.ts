@@ -35,6 +35,7 @@ import {
   MessagingWorkflowPlanner,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   runMessagingHook,
+  type MessagingHookRegistry,
   type MessagingOpenShellRunner,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
@@ -193,6 +194,7 @@ function withSandboxMutationLockUnlessPreview<T>(
  */
 export interface AddSandboxChannelDependencies {
   readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
+  readonly preEnableHookRegistry?: MessagingHookRegistry;
   readonly upsertMessagingProviders?: typeof policyChannelDependencies.upsertMessagingProviders;
 }
 
@@ -759,6 +761,7 @@ async function checkMessagingPreEnableHooks(
   channelName: string,
   plan: SandboxMessagingPlan,
   force: boolean,
+  injectedHookRegistry?: MessagingHookRegistry,
 ): Promise<boolean> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
@@ -780,7 +783,9 @@ async function checkMessagingPreEnableHooks(
     return true;
   }
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const hookRegistry =
+    injectedHookRegistry ??
+    policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry();
   const currentGatewayName = getSandboxTargetGatewayName(sandboxName);
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: sandboxName,
@@ -993,17 +998,30 @@ export function revalidateMessagingProviderAttachmentTarget(
   sandboxName: string,
   gatewayName: string,
 ): void {
-  const expected = registry.getSandbox(sandboxName);
-  const lifecycleGeneration = expected?.lifecycleGeneration;
-  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
+  let expected = registry.getSandbox(sandboxName);
   if (
-    !expected ||
-    typeof lifecycleGeneration !== "string" ||
-    typeof expectedFingerprint !== "string" ||
-    (expected.gatewayName && expected.gatewayName !== gatewayName)
+    expected &&
+    (expected.lifecycleGeneration === undefined ||
+      expected.lifecycleLiveIdentityFingerprint === undefined)
   ) {
+    expected =
+      policyChannelDependencies.recoverMessagingProviderAttachmentIdentity(
+        expected,
+        gatewayName,
+        onboardSession,
+      ) ?? expected;
+  }
+  if (!expected || (expected.gatewayName && expected.gatewayName !== gatewayName)) {
     throw new Error(
       `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const lifecycleGeneration = expected.lifecycleGeneration;
+  const expectedFingerprint = expected.lifecycleLiveIdentityFingerprint;
+  if (typeof lifecycleGeneration !== "string" || typeof expectedFingerprint !== "string") {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment. ` +
+        `Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
     );
   }
   const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
@@ -1429,7 +1447,15 @@ async function addSandboxChannelUnlocked(
   }
   // Credential axis passed; now channel-owned pre-enable hooks can catch
   // channel-specific conflicts before provider/policy mutation.
-  if (!(await checkMessagingPreEnableHooks(sandboxName, canonical, plan, force))) {
+  if (
+    !(await checkMessagingPreEnableHooks(
+      sandboxName,
+      canonical,
+      plan,
+      force,
+      dependencies.preEnableHookRegistry,
+    ))
+  ) {
     return; // user aborted; nothing registered or widened
   }
   assertAddChannelPlanActive(sandboxName, manifest, plan);
@@ -1473,7 +1499,11 @@ async function addSandboxChannelUnlocked(
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
     if (rebuilt) {
-      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+        throw new Error(
+          `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+        );
+      }
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     }
     return;
@@ -1551,7 +1581,11 @@ async function addSandboxChannelUnlocked(
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
   }
 }
@@ -2113,7 +2147,11 @@ async function sandboxChannelsSetEnabled(
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
   if (rebuilt && !disabled) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
   }
 }
 

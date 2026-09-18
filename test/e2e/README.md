@@ -26,7 +26,7 @@ before those targets run; local runners must provide it themselves.
   It does not run onboarding or inference and does not satisfy release
   qualification.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility` for Ubuntu 26.04, macOS, and WSL.
-  On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
+  Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
@@ -55,7 +55,7 @@ the sandbox can resolve their paths.
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job prepares it once through the shared `ci-compile-artifacts` action.
 Main CI and PR CI use that action too. It always produces the CLI and full plugin,
-with Node.js 22.23.2, and verifies the embedded source revision and source maps.
+with Node.js 24.18.1, and verifies the embedded source revision and source maps.
 E2E loads the action from a separate checkout of the trusted workflow revision.
 The existing E2E artifact handoff retains the CLI and shared-module payload during this migration.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
@@ -117,7 +117,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
-- The restore action uses a Node.js 22 process to stream each file as binary data when it verifies SHA-256 digests.
+- The restore action uses the pinned Node.js 24.18.1 process to stream each file as binary data when it verifies SHA-256 digests.
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
@@ -163,7 +163,7 @@ These are two required acceptance executions, not retries; either failure remain
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report either the exact portable
 host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must reject the committed duplicate as already present.
+command artifact, and must succeed idempotently from the verified committed source.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -183,6 +183,10 @@ Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release
 managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
 the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
 cohort.
+
+The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
+A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
+Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
 #### Timing Baseline
 
@@ -280,12 +284,11 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 150-minute job timeout. Its live E2E has a
-70-minute timeout, and every other step shares the remaining job time. The
-other shards have 30 minutes.
+Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
+job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
-On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -384,9 +387,9 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
-After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
-It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
+After restricted OpenClaw onboarding with two read-only agents, it invokes the candidate `config export` command through the real SDK connection.
+It compares the ordered agent roster, sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
@@ -406,6 +409,22 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+The fixture compares the registry before and after export, and state validation confirms that the
+sandbox remains ready after the read-only command.
+
+The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
+boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+`destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
+sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
+sandbox,
+requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
@@ -423,7 +442,7 @@ Each entry owns these target properties:
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
-`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+`hermes-swap` provisions swap for the remaining measured Hermes execution lanes.
 Targets that require cloudflared set `cloudflared: true` in the catalogue.
 The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
 The installation step does not receive a catalogue profile credential.
@@ -436,9 +455,10 @@ Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
 
 The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
-onboarding scenarios with Hermes and API port 8643. They retain sandbox identity,
-registered dashboard and API ports, and direct forward listener evidence before
-and after reuse or resume. The original entries retain OpenClaw coverage.
+onboarding scenarios with Hermes and API port 8643. `double-onboard-hermes`
+retains one sandbox identity check and proves dashboard and API forward ownership
+after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
+The original entries retain OpenClaw coverage.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
@@ -491,15 +511,20 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
-A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
-11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
-the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
-removed through the cleanup registry; retained evidence contains only the selected model, ports,
-managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. Daemon readiness polls only connection refusal, for at most 20 reads,
-and records each attempt; onboarding and export mutations are not retried.
+The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
+A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
+managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
+daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
+It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
+The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
+The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
+Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
+The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
+Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The fixture retries read-only daemon readiness checks on connection refusal or curl
+timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
+preparation, onboarding, and export mutations are not retried.
+Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -581,13 +606,14 @@ snake-case include entries and use `coverage_variant` when one job contributes
 multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
 Do not add a separate hand-maintained execution list.
 
-The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately and inventories every typed declaration,
-including declarations that have no executable matrix cell.
-Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
-Inert declarations report unresolved coverage fields and the missing executable ownership.
-
-The inert declarations are combinatorial gaps, not supported matrix cells. #8285 owns the decision on the inert cross-runtime foundation. #8286 owns executable-only registry cleanup after that decision. Do not schedule other Cartesian-product cells without an accepted supported combination. This migration removes no execution, so it requires no duplicate-to-retained-evidence mapping. A documented gap does not schedule a new combination or change release judgment.
+The typed registry contains executable matrix cells only. Each cell must name
+executable platform, install, runtime, and onboarding routes plus resolved
+coverage metadata. A declared lifecycle route must also be executable. Registry
+construction rejects invalid cells. Selecting a removed or unknown target ID
+fails and lists the available IDs. Proposed platform, agent, or runtime
+combinations stay in their owned planning issue until fixtures and execution
+ownership exist. Explicit-only workflow rows keep their coverage dimensions but
+do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
@@ -787,44 +813,53 @@ contains only the numeric port and TUI boolean. The fixture retains identity-dri
 registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
 disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
-## Current OpenClaw plugin EXDEV lifecycle
+## Native plugin and package lifecycle
 
-The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
+Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job
+and its custom-image prebuild/recreation fixtures. That removes one default E2E
+job and the image-ownership contract it existed to verify.
 
-1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
-2. Install v1-exdev with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1-exdev.
-4. Recreate the sandbox with the plugin changed to v2 and verify v2.
+The standard `full-e2e` target now owns native OpenClaw installation,
+invocation, update command access, local-source replacement, self-update dry
+run, restart survival, credential non-exposure, and removal in one sandbox.
+`rebuild-openclaw` proves a user-installed native plugin survives rebuild with
+no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+lazy-package state survive rebuild. Managed-image activation exercises native
+OpenClaw and Hermes discovery before and after gateway restart. Deterministic
+state-restore tests prove complete native directories are archived without
+image-plugin exclusions.
 
-The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If onboarding or recreation reports missing canonical
-CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
-record structured diagnostics, attempts to write bounded `failed-no-retry`
-evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence
-write failure propagates, so that retry artifact may be absent. `tools.invoke`
-assertions prove the plugin version after onboarding, restart, and recreation.
-The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
-across the proven filesystem boundary before restart. `e2e-support` tests own
-sandbox-create interception and wrapper argument rewriting. Onboarding and
-recreation load the test-only interceptor; all other OpenShell commands use the
-canonical binary so dashboard forward ownership remains verifiable. Deterministic
-tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
-permutations are outside this live contract. Workspace preservation and policy
-selection retain their focused coverage instead of another assertion in this
-target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
+## Device-auth health classification
 
-The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, then passes the matching immutable
-image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
-gateway-builder trust boundary and are never host-prebuilt by this fixture.
-The current-checkout fixture enables local base-image resolution after the
-workflow removes Docker Hub credentials.
+Issue #11946 retired the standalone `device-auth-health` target. The target
+repeated these retained contracts:
 
-The release-baseline lane is retired. Historical package versions are not part
-of this current runtime contract.
+| Removed assertion | Retained owner |
+|---|---|
+| Install, onboard, list, status, and sandbox inference succeed. | `full-e2e` |
+| An authenticated compatible endpoint receives the sandbox request. | `openclaw-inference-switch` |
+| Gateway, dashboard, and inference HTTP 401 responses remain reachable. | `src/lib/verify-deployment.test.ts` and `src/lib/verify-deployment-agent.test.ts` |
+| Status keeps a reachable authenticated route online. | `test/cli/sandbox-status-json.test.ts` |
+| A real dashboard remains exposed through its supported host forward. | `dashboard-remote-bind` |
 
-Push-run timing for the reduced lifecycle has not yet been measured.
+The deleted helper tests covered only the retired target's command environment,
+retry loop, and cleanup calls. They did not own a product behavior.
+
+## Cloud inference consolidation
+
+Issue #11946 also retired the standalone `cloud-inference` target. The target's
+supported outcomes now have these owners:
+
+| Removed assertion | Retained owner |
+|---|---|
+| Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
+| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
+| `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
+The deleted provider retry classifier and sandbox-layout wrapper served only the
+retired target.
 
 ## OpenShell development artifact retention
 
@@ -840,7 +875,8 @@ dispatches qualify the exact stable OpenShell 0.0.116 product contract and do no
 select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
-The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.
+The `actions/setup-node` step selects Node.js 24.18.1 and disables automatic package manager caching before candidate checkout.
+The trusted workflow installs the exact reviewed npm 12 archive before it installs planner dependencies.
 An argument- and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
 A separate `curl` shim blocks network fallback.
 The installer still checks the release checksums and archive structure before installation.
@@ -914,8 +950,6 @@ lanes:
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
-- `rebuild-hermes`;
-- `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
 The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard,
@@ -1233,14 +1267,12 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 11 routed workflow lane identities / 13
+telemetry for 9 routed workflow lane identities / 11
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
 - `common-egress-agent` with the `openclaw-balanced-weather`,
   `openclaw-open-reference`, and `hermes-open-reference` shards
-- `rebuild-hermes`
-- `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
 - `channels-stop-start` with the `hermes` shard
@@ -1265,9 +1297,7 @@ Each execution writes one bounded, ordered v2 time series to the canonical
 - an `initialize` endpoint after commit-bound artifact restoration; the rebuild
   jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
-- a `periodic` sample on an approximately 15-second fixed cadence for
-  `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
-  60-second fixed cadence for every other execution;
+- a `periodic` sample on an approximately 60-second fixed cadence;
 - a `phase` sample before each semantic phase transition and when the final
   phase stops; and
 - a `finalize` endpoint from an `always()` step immediately before artifact
@@ -1282,14 +1312,8 @@ catch-up burst. Each successful append also prints one bounded
 The v2 ledger accepts at most 256 samples. Ordinary sampling stops once 255
 records exist to reserve the last slot for `finalize`. A missing, historical-v1,
 already-finalized, full, or invalid ledger permanently disables comparison
-sampling for that test progress instance. The two Hermes rebuild lanes use their
-shorter cadence to improve Docker/BuildKit peak-RSS evidence without changing
-the ledger bound, schema, privacy contract, or reserved final slot. In
-`rebuild-hermes` and `rebuild-hermes-stale-base`, where legacy phase resource
-evidence is configured, the workflow establishes its 32 GiB swap before
-`initialize` so the ledger sees one stable swap capacity. If canonical sampling
-becomes unavailable, the existing five-minute full snapshot becomes the
-best-effort fallback.
+sampling for that test progress instance. If canonical sampling becomes unavailable,
+the existing five-minute full snapshot becomes the best-effort fallback.
 That full profile may run `ps`, `docker stats`, and `docker system df`
 sequentially with a 15-second timeout each, or 45 seconds in the worst case;
 canonical sampling suppresses this heavier collection while it remains active.
@@ -1687,7 +1711,8 @@ for the recorded PR number, selected repository, selected commit SHA, base commi
 workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
 head-to-base comparison.
 
-The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
+The platform-evidence workflow runs only on configured pushes to `main`.
+It serializes runs for the same ref, retains the pending queue, and does not cancel an older commit when a newer `main` push arrives.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
 Its `portable-launch` job runs only when `github.ref` is `refs/heads/main`.
 The `portable-launch` job's exercise step exposes the long-lived repository `NVIDIA_INFERENCE_API_KEY` to the checked-out source through its environment.

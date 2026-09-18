@@ -20,7 +20,7 @@ source_root="$PWD"
 cache_to=""
 cache_from=""
 audit_evidence_from=""
-runtime_user="root"
+runtime_user="sandbox"
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)
@@ -249,7 +249,6 @@ validate_audit_evidence() {
     --audit-config "$trusted_audit_config" \
     --registry https://registry.yarnpkg.com \
     --threshold high \
-    --legacy-audit true \
     --result "$audit_policy_result"
   [[ -f "$audit_policy_result" && -s "$audit_policy_result" && ! -L "$audit_policy_result" ]] || {
     echo "ERROR: protected managed-image reviewed audit policy result is missing or unsafe" >&2

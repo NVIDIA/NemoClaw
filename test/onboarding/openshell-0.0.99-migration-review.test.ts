@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
-import { parseGatewayInference } from "../../src/lib/inference/config.js";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../src/lib/adapters/openshell/inference-route-cli.js";
 import { resolveOnboardManagedBootstrapLaunch } from "../../src/lib/onboard/managed-workload/onboard-orchestration.js";
 import { validateName } from "../../src/lib/runner.js";
 
-const repoRoot = path.resolve(import.meta.dirname, "../..");
 describe("OpenShell 0.0.99 executable contracts", () => {
   it("binds managed Docker activation to the v0.0.99 supervisor workdir argv (#8497)", () => {
     const authorityStore = {};
@@ -49,11 +45,17 @@ describe("OpenShell 0.0.99 executable contracts", () => {
     expect(launch?.authorityStore).toBe(authorityStore);
   });
   it("proves the exposed 0.0.99 compatibility contracts through behavior (#8497)", () => {
-    expect(
-      parseGatewayInference(
-        `Inference:\n  Workspace: default\n  Provider: compatible-endpoint\n  Model: review-model\n  Version: 1\n\nSystem inference: Not configured`,
-      ),
-    ).toMatchObject({ provider: "compatible-endpoint", model: "review-model" });
+    const inference = createSynchronousCliOpenShellInferenceRouteObserver(() => ({
+      status: 0,
+      output: `Inference:\n  Workspace: default\n  Provider: compatible-endpoint\n  Model: review-model\n  Version: 1\n\nSystem inference: Not configured`,
+    })).observeInferenceRoute({ target: { kind: "named", gatewayName: "nemoclaw" } });
+    expect(inference).toMatchObject({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "compatible-endpoint", model: "review-model" },
+      },
+    });
 
     expect(validateName("a".repeat(19), "sandbox name")).toBe("a".repeat(19));
     expect(() => validateName("a".repeat(20), "sandbox name")).toThrow(

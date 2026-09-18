@@ -87,8 +87,6 @@ export function assertPolicylessSandboxCreateArgv(argv: readonly string[]): void
   }
 }
 
-type OpenShellCommandResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
-
 function createPortableRuntimePatch(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,

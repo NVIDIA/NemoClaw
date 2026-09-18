@@ -36,15 +36,31 @@ export interface TeamsHostForwardPortOverlap {
 
 export interface TeamsHostForwardPortConflictHookOptions {
   readonly currentSandbox?: string | null | (() => string | null);
+  readonly currentGatewayName?: string | null | (() => string | null);
   readonly registryEntries?:
     | readonly TeamsHostForwardPortConflictRegistryEntry[]
     | (() => readonly TeamsHostForwardPortConflictRegistryEntry[]);
+  readonly checkPortAvailable?: (port: number) => Promise<TeamsHostPortAvailabilityResult>;
+  readonly isCurrentSandboxForward?: (
+    currentSandbox: string,
+    currentGatewayName: string | null,
+    port: number,
+    listenerPid: number,
+  ) => boolean | Promise<boolean>;
   readonly findConflicts?: (
     currentSandbox: string | null,
     port: number,
     entries: readonly TeamsHostForwardPortConflictRegistryEntry[],
   ) => readonly TeamsHostForwardPortConflict[];
   readonly formatConflict?: (conflict: TeamsHostForwardPortConflict) => string;
+}
+
+export interface TeamsHostPortAvailabilityResult {
+  readonly ok: boolean;
+  readonly warning?: string;
+  readonly process?: string;
+  readonly pid?: number | null;
+  readonly reason?: string;
 }
 
 export interface TeamsHostForwardPortStatusHookOptions {
@@ -59,7 +75,7 @@ export interface TeamsHostForwardPortStatusHookOptions {
 export function createTeamsHostForwardPortConflictHook(
   options: TeamsHostForwardPortConflictHookOptions = {},
 ): MessagingHookHandler {
-  return (context) => {
+  return async (context) => {
     if (context.channelId !== "teams") return {};
 
     const currentSandbox = resolveCurrentSandbox(context, options);
@@ -73,10 +89,39 @@ export function createTeamsHostForwardPortConflictHook(
 
     const findConflicts = options.findConflicts ?? findTeamsHostForwardPortConflicts;
     const conflicts = findConflicts(currentSandbox, port, entries);
-    if (conflicts.length === 0) return {};
+    if (conflicts.length > 0) {
+      const formatConflict = options.formatConflict ?? formatTeamsHostForwardPortConflictMessage;
+      throw new MessagingHookConflictError(conflicts.map(formatConflict).join("\n"));
+    }
 
-    const formatConflict = options.formatConflict ?? formatTeamsHostForwardPortConflictMessage;
-    throw new MessagingHookConflictError(conflicts.map(formatConflict).join("\n"));
+    if (!options.checkPortAvailable) return {};
+    const availability = await options.checkPortAvailable(port);
+    if (availability.ok) {
+      if (!availability.warning) return {};
+      throw new MessagingHookConflictError(
+        formatTeamsHostPortUnverifiedConflict(port, availability.warning),
+      );
+    }
+
+    const currentGatewayName = resolveCurrentGatewayName(context, options);
+    const listenerPid = availability.pid;
+    if (
+      currentSandbox &&
+      Number.isSafeInteger(listenerPid) &&
+      Number(listenerPid) > 1 &&
+      (await options.isCurrentSandboxForward?.(
+        currentSandbox,
+        currentGatewayName,
+        port,
+        Number(listenerPid),
+      ))
+    ) {
+      return {};
+    }
+
+    throw new MessagingHookConflictError(
+      formatTeamsHostPortAvailabilityConflict(port, availability),
+    );
   };
 }
 
@@ -185,6 +230,30 @@ export function formatTeamsHostForwardPortConflictMessage({
   );
 }
 
+export function formatTeamsHostPortAvailabilityConflict(
+  port: number,
+  availability: TeamsHostPortAvailabilityResult,
+): string {
+  const processName = availability.process?.trim();
+  const blocker =
+    processName && processName !== "unknown"
+      ? `${processName}${availability.pid ? ` (PID ${availability.pid})` : ""}`
+      : availability.pid
+        ? `PID ${availability.pid}`
+        : "another process";
+  return (
+    `Microsoft Teams webhook port ${port} is already in use by ${blocker}. ` +
+    "Free the port or set MSTEAMS_PORT to a different free port before enabling Teams."
+  );
+}
+
+export function formatTeamsHostPortUnverifiedConflict(port: number, warning: string): string {
+  return (
+    `Microsoft Teams webhook port ${port} could not be verified as free: ${warning}. ` +
+    "Resolve the probe failure or set MSTEAMS_PORT to a different free port before enabling Teams."
+  );
+}
+
 function resolveCurrentSandbox(
   context: MessagingHookContext,
   options: TeamsHostForwardPortConflictHookOptions,
@@ -192,6 +261,16 @@ function resolveCurrentSandbox(
   return (
     normalizeNullableString(context.inputs?.currentSandbox) ??
     resolveNullableOption(options.currentSandbox)
+  );
+}
+
+function resolveCurrentGatewayName(
+  context: MessagingHookContext,
+  options: TeamsHostForwardPortConflictHookOptions,
+): string | null {
+  return (
+    normalizeNullableString(context.inputs?.currentGatewayName) ??
+    resolveNullableOption(options.currentGatewayName)
   );
 }
 

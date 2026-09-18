@@ -8,6 +8,9 @@
 ARG BASE_IMAGE
 ARG NEMOCLAW_CORPORATE_CA_B64=
 
+FROM scratch AS reviewed-npm-archive
+ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
+
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
 FROM scratch AS mcp-tool-discovery-runtime
@@ -20,7 +23,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-im
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
 # interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da AS managed-bootstrap-entrypoint-builder
+FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
 COPY scripts/managed-bootstrap-entrypoint.c ./
@@ -151,19 +154,28 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
+
+# Standardize stale and same-run bases before applying npm 12 private-tree
+# remediations. The local archive is independently SHA-256 and SRI verified.
+RUN node /scripts/upgrade-bundled-npm.mts \
+      --npm-root /usr/local/lib/node_modules/npm \
+      --archive /tmp/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN rm /tmp/npm-12.0.2.tgz
 
 # The final managed image owns the shipped dependency boundary independently
-# of base freshness. Reassert the idempotent npm-private node-tar fix here.
+# of base freshness. Reassert every reviewed npm-private remediation.
+# hadolint ignore=DL3059
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
-
-# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
-
-# Reassert the npm-private ip-address fix for the final filesystem. When
-# onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -187,6 +199,7 @@ COPY agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagent
 COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts
 COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py
 COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py
+COPY agents/langchain-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py
 # SECURITY: copy only the two hash-verified plugin inputs, never the source directory.
 COPY agents/langchain-deepagents-code/profile-plugin/pyproject.toml /opt/nemoclaw-deepagents-profile-plugin/
 COPY agents/langchain-deepagents-code/profile-plugin/src/nemoclaw_deepagents_profile/__init__.py /opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/
@@ -224,7 +237,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
+    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -239,6 +252,9 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True); import deepagents; import deepagents_code' \
     && /opt/venv/bin/pip3 check \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
+    && python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
+    && /opt/venv/bin/python3 -I -c 'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close()' \
+    && rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
@@ -415,7 +431,7 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "libssl3t64=3.5.7-1~deb13u2" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
@@ -427,7 +443,7 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
     test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
-    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \

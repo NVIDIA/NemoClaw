@@ -32,6 +32,7 @@ export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as 
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
+export type RuntimeProviderFinalSandboxLiveness = "openshell-and-docker" | "openshell-only";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
@@ -115,7 +116,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
-  readonly managedGatewayOutputs: readonly string[];
+  readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;
   readonly trustedGatewayBin: string | null;
@@ -166,7 +167,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }
@@ -347,6 +352,8 @@ export type RuntimeProviderCommandCapture = {
 };
 
 export interface RuntimeProviderLifecycleInput {
+  /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
@@ -578,6 +585,8 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 type RuntimeProviderGatewaySurfaceBase = {
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
+  /** Evidence source that authorizes final shared-gateway cleanup. */
+  readonly finalSandboxLiveness: RuntimeProviderFinalSandboxLiveness;
   /** Project provider-owned gateway behavior without changing host state. */
   observeHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,
@@ -625,7 +634,9 @@ export type RuntimeProviderLifecycleSurface =
       /** Provider-owned timeout for direct container lifecycle mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      start(
+        input: RuntimeProviderLifecycleInput,
+      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
         verifyGateway: (sandboxName: string) => Promise<void>,
@@ -633,7 +644,7 @@ export type RuntimeProviderLifecycleSurface =
       stop(
         input: RuntimeProviderLifecycleInput,
         hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome;
+      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 

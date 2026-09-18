@@ -17,7 +17,7 @@ const inventory: TrustedE2eRecommendationInventory = {
   workflow: "e2e.yaml",
   fanoutId: "e2e-all",
   selectorTypes: ["all", "job", "target"],
-  allowedJobIds: ["device-auth-health"],
+  allowedJobIds: ["openclaw-inference-switch"],
   manualOnlyJobIds: ["hardware-check"],
   liveSupportedTargetIds: ["sample-target"],
 };
@@ -53,7 +53,7 @@ describe("Review queue context", () => {
         ...expected.riskPlan,
         requiredJobs: [
           {
-            id: "device-auth-health",
+            id: "openclaw-inference-switch",
             tier: 1 as const,
             families: [],
             reasons: ["Check authentication."],
@@ -211,6 +211,7 @@ describe("Advisor E2E receipts", () => {
       [
         receipt("first", {
           ...empty,
+          noAdditionalE2eReason: null,
           unresolvedRecommendations: ["No trusted target covers the new device."],
         }),
         receipt("second"),
@@ -224,7 +225,7 @@ describe("Advisor E2E receipts", () => {
   it("deduplicates specialists without weakening a required recommendation (#11489)", () => {
     const item = {
       selectorType: "job",
-      id: "device-auth-health",
+      id: "openclaw-inference-switch",
       reason: "Verify authentication.",
     };
     const receipts = [false, true].map((required, index) =>
@@ -241,7 +242,7 @@ describe("Advisor E2E receipts", () => {
 
   it.each([
     { selectorType: "job", id: "invented" },
-    { selectorType: "target", id: "device-auth-health" },
+    { selectorType: "target", id: "openclaw-inference-switch" },
     { selectorType: "all", id: "" },
     { selectorType: "job", id: "$(command)" },
   ])("rejects an unsupported selector $selectorType:$id (#11489)", (selector) => {
@@ -260,7 +261,7 @@ describe("Advisor E2E receipts", () => {
   it("rejects duplicate recommendations and extra input fields (#11489)", () => {
     const item = {
       selectorType: "job",
-      id: "device-auth-health",
+      id: "openclaw-inference-switch",
       required: true,
       reason: "Verify authentication.",
     };
@@ -311,7 +312,7 @@ describe("Advisor E2E receipts", () => {
     );
     expect(
       collectE2eRecommendations(receipts, input).recommendations.map((item) => item.id),
-    ).toContain("device-auth-health");
+    ).toContain("openclaw-inference-switch");
   });
 
   it("requires a successful recording and refuses a second recording (#11489)", async () => {
@@ -329,5 +330,32 @@ describe("Advisor E2E receipts", () => {
     const copy = recorder.snapshot();
     copy.noAdditionalE2eReason = "Changed";
     expect(recorder.snapshot()).toEqual(empty);
+  });
+});
+
+describe("Brev deterministic evidence", () => {
+  it("retains Brev after every specialist records no additional tests", () => {
+    const input = {
+      ...expected,
+      riskPlan: buildRiskPlan({
+        headSha: expected.riskPlan.headSha,
+        changedFiles: ["test/e2e/fixtures/full-e2e-gateway.ts"],
+      }),
+    };
+    const receipts = input.expectedSpecialists.map((interest) =>
+      buildSpecialistE2eReceipt({ ...input, interest, advisor: empty }),
+    );
+    const collected = collectE2eRecommendations(receipts, input);
+    expect(collected.status).toBe("selected");
+    expect(collected.recommendations).toContainEqual(
+      expect.objectContaining({
+        selectorType: "job",
+        id: "staging-brev-launchable",
+        required: true,
+      }),
+    );
+    expect(
+      buildReviewQueueContext(input, hostedEnvironment).deterministic.requiredJobs,
+    ).toContainEqual(expect.objectContaining({ id: "staging-brev-launchable" }));
   });
 });

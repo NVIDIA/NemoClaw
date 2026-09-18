@@ -97,12 +97,7 @@ const {
   getProbeProcessTimeoutMs,
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
 } = require("./probe-http-helpers");
-const {
-  getCurlTimingArgs,
-  runCurlProbe,
-  runChatCompletionsStreamingProbe,
-  runStreamingEventProbe,
-} = httpProbe;
+const { runCurlProbe, runChatCompletionsStreamingProbe, runStreamingEventProbe } = httpProbe;
 const { createOpenAiLikeAuthConfig } = authConfigModule;
 
 function buildOpenAiLikeAuthConfig(apiKey, options = {}) {
@@ -1323,7 +1318,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
       dependencies.teardownOrphanManagedGatewayOnAbort ??
       (require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy"))
         .teardownOrphanManagedGatewayOnAbort;
-    teardownOrphanManagedGatewayOnAbort();
+    await teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.
     console.error(

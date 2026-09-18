@@ -14,6 +14,8 @@ import {
 import { buildMessagingProviderApplication } from "../../messaging/applier/provider-application";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { recoverSandboxLifecycleIdentity } from "../../state/registry/lifecycle-generation";
+import type { SandboxEntry } from "../../state/registry/types";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -42,6 +44,7 @@ type GooglechatWebhookProxy = Pick<
   typeof import("../../messaging/channels/googlechat/tunnel/proxy"),
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
+type MessagingHostForwardModule = typeof import("../../onboard/messaging-host-forward");
 
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
@@ -51,6 +54,11 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  createMessagingHostForwardPreEnableHookRegistry() {
+    const messagingHostForward =
+      require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;
+    return messagingHostForward.createMessagingHostForwardPreEnableHookRegistry();
+  },
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
   clearStoppedSandboxStateRoots(
     sandboxName: string,
@@ -70,6 +78,22 @@ export const policyChannelDependencies = {
       sandboxName,
       gatewayName,
     });
+  },
+  recoverMessagingProviderAttachmentIdentity(
+    expected: SandboxEntry,
+    gatewayName: string,
+    sessionStore: Parameters<typeof recoverSandboxLifecycleIdentity>[3],
+  ): SandboxEntry | null {
+    return recoverSandboxLifecycleIdentity(
+      expected,
+      gatewayName,
+      (sandboxName, targetGateway) =>
+        policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
+          sandboxName,
+          targetGateway,
+        ),
+      sessionStore,
+    );
   },
   isMessagingProviderBindingConflict(error: unknown): error is Error & {
     readonly mutatedProviderNames: readonly string[];

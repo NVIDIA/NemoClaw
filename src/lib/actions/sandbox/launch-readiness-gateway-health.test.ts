@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
+  LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
   requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
@@ -34,6 +37,102 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-8091" },
+        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+      }),
+    );
+  });
+
+  it("treats HTTP and transport probe failures as unavailable evidence", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nUNAVAILABLE\n",
+      stderr: "",
+    }));
+
+    await expect(
+      isSandboxGatewayRunningForStatus("alpha", "nemoclaw-8091", {
+        getSessionAgent: () => null,
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
+      }),
+    ).resolves.toBeNull();
+
+    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+  });
+
+  it.each([
+    [0, "200", true],
+    [0, "401", true],
+    [7, "000", false],
+    [0, "503", false],
+    [28, "000", null],
+  ] as const)(
+    "observes cold startup from curl result %s:%s within the caller deadline",
+    async (code, http, expected) => {
+      const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(
+        async (request) => ({
+          outcome: { kind: "completed", exitCode: 0 },
+          stdout: execFileSync(
+            "sh",
+            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command[2]}`],
+            { encoding: "utf8" },
+          ),
+          stderr: "",
+        }),
+      );
+      await expect(
+        isSandboxGatewayRunningForStatus("alpha", "nemoclaw-19080", {
+          getSessionAgent: () => null,
+          getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+          commandExecutor: { runBuffered },
+          startup: { timeoutMs: 300 },
+        }),
+      ).resolves.toBe(expected);
+      expect(runBuffered).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          target: { kind: "named", gatewayName: "nemoclaw-19080" },
+          timeoutMilliseconds: 300,
+        }),
+      );
+    },
+  );
+
+  it("keeps failed startup transport unavailable rather than classifying the agent as stopped", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "failed", error: { kind: "timeout", message: "deadline expired" } },
+      stdout: "",
+      stderr: "",
+    }));
+    await expect(
+      isSandboxGatewayRunningForStatus("alpha", "nemoclaw", {
+        getSessionAgent: () => null,
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
+        startup: { timeoutMs: 300 },
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("observes Hermes through its native gateway instead of the retired lifecycle controller", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    }));
+    await expect(
+      isSandboxGatewayRunningForStatus("alpha", "nemoclaw-19080", {
+        getSessionAgent: () => loadAgent("hermes"),
+        getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        commandExecutor: { runBuffered },
+      }),
+    ).resolves.toBe(true);
+
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
         command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
       }),
     );
@@ -78,11 +177,11 @@ const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
 
-function dcodeEntry(): SandboxEntry {
+function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
     name: SANDBOX,
     agent: "langchain-deepagents-code",
-    provider: "openrouter-api",
+    provider,
     model: MODEL,
     preferredInferenceApi: null,
   } as SandboxEntry;
@@ -92,21 +191,22 @@ function dcodeHealthDeps(
   invocation: Awaited<
     ReturnType<NonNullable<LaunchReadinessHealthDeps["inferenceInvocationProbe"]>>
   >,
+  httpStatus = 404,
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
-      httpStatus: 404,
-      detail: "OK 404",
+      httpStatus,
+      detail: `OK ${httpStatus}`,
     })),
     inferenceInvocationProbe: vi.fn(async () => invocation),
   };
 }
 
-describe("Deep Agents Code OpenRouter launch readiness", () => {
-  it("accepts an injected terminal smoke without constructing a command executor", async () => {
+describe("Deep Agents Code launch readiness", () => {
+  it("rejects unconfigured inference before terminal smoke (#11520)", async () => {
     const smoke = vi.fn(async () => ({ ok: true }) as const);
 
     await expect(
@@ -119,20 +219,23 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
         false,
         { smoke },
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(LaunchReadinessEvidenceError);
 
-    expect(smoke).toHaveBeenCalledWith(SANDBOX, dcodeAgent);
+    expect(smoke).not.toHaveBeenCalled();
   });
 
-  it("accepts readiness after an inference request succeeds (#9834)", async () => {
-    const currentDeps = dcodeHealthDeps({ ok: true });
+  it.each([
+    ["openrouter-api", 404],
+    ["nvidia-prod", 200],
+  ])("accepts %s readiness after an inference request succeeds", async (provider, httpStatus) => {
+    const currentDeps = dcodeHealthDeps({ ok: true }, httpStatus);
 
     await expect(
       requireLaunchSemanticHealth(
         SANDBOX,
         GATEWAY,
         "langchain-deepagents-code",
-        dcodeEntry(),
+        dcodeEntry(provider),
         dcodeAgent,
         true,
         currentDeps,
@@ -142,25 +245,31 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
       sandboxName: SANDBOX,
       gatewayName: GATEWAY,
       agentName: "langchain-deepagents-code",
-      provider: "openrouter-api",
+      provider,
       model: MODEL,
       preferredInferenceApi: null,
     });
   });
 
-  it("rejects readiness and names the inference request when invocation fails (#9834)", async () => {
-    const currentDeps = dcodeHealthDeps({
-      ok: false,
-      detail: "sandbox inference invocation probe returned HTTP 401",
-      httpStatus: 401,
-    });
+  it.each([
+    ["openrouter-api", 404],
+    ["nvidia-prod", 200],
+  ])("rejects %s readiness when the inference request fails", async (provider, httpStatus) => {
+    const currentDeps = dcodeHealthDeps(
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      },
+      httpStatus,
+    );
 
     await expect(
       requireLaunchSemanticHealth(
         SANDBOX,
         GATEWAY,
         "langchain-deepagents-code",
-        dcodeEntry(),
+        dcodeEntry(provider),
         dcodeAgent,
         true,
         currentDeps,

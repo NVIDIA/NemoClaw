@@ -23,8 +23,11 @@ List the configured provider credentials when you need the provider ID.
 $$nemoclaw credentials list
 ```
 
-`inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, and `custom`.
+`inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, `custom`, and `llama-cpp`.
 NemoClaw normalizes an accepted alias to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
+
+If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
+If it cannot read the gateway list, it lists every supported provider ID instead.
 
 If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
@@ -49,9 +52,11 @@ $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 <AgentOnly variant="openclaw">
 
 For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
-Changes within the current API family hot-reload without replacing the gateway process.
-When the API family changes, NemoClaw commits the route and configuration, then restarts only the OpenClaw gateway and verifies its health.
+After any changed configuration sync, NemoClaw restarts only the OpenClaw gateway and verifies its health.
+The sandbox remains running, but agent requests are briefly interrupted.
 After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
+If the restart fails, the route and configuration remain committed.
+Run `$$nemoclaw <name> gateway restart` to apply the committed configuration.
 If pairing does not converge, the route and configuration remain committed.
 Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 

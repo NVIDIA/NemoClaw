@@ -23,7 +23,6 @@ const ACTION_PATH = join(
   "action.yaml",
 );
 const LOCAL_UPLOAD_ACTION = "./.github/actions/upload-e2e-artifacts";
-const DIRECT_UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 
 type MutableStep = Record<string, unknown> & {
   name?: string;
@@ -132,7 +131,6 @@ describe("E2E artifact uploads", () => {
   it("uses the pinned shared action for ordinary E2E result uploads", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs["messaging-providers"]).uses = LOCAL_UPLOAD_ACTION;
-    uploadStep(workflow.jobs["openclaw-plugin-runtime-exdev"]).uses = DIRECT_UPLOAD_ACTION;
     uploadStep(workflow.jobs["shared-e2e"]).uses =
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
 
@@ -140,8 +138,6 @@ describe("E2E artifact uploads", () => {
       expect.arrayContaining([
         "messaging-providers must not load upload-e2e-artifacts from the target checkout",
         "messaging-providers must use upload-e2e-artifacts exactly once",
-        "openclaw-plugin-runtime-exdev must not invoke actions/upload-artifact directly",
-        "openclaw-plugin-runtime-exdev must use upload-e2e-artifacts exactly once",
         "shared-e2e must use the reviewed immutable upload-e2e-artifacts reference",
         "shared-e2e must use upload-e2e-artifacts exactly once",
       ]),
@@ -264,19 +260,6 @@ describe("E2E artifact uploads", () => {
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
         "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup",
       ]),
-    );
-  });
-
-  it("derives execution jobs even when a marker and its upload disappear together", () => {
-    const workflow = mutableWorkflow();
-    const removedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
-    delete removedJob.env!.E2E_JOB;
-    removedJob.steps = removedJob.steps!.filter(
-      (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
-    );
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "openclaw-plugin-runtime-exdev must use upload-e2e-artifacts exactly once",
     );
   });
 });
