@@ -749,13 +749,13 @@ mod live {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires a manually curated redacted raw v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
-    async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
+    async fn authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle() {
         run_hosted_lifecycle(OPENCLAW).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires a manually curated redacted raw v0 Hermes export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
-    async fn v0_export_artifact_drives_v1_hosted_hermes_lifecycle() {
+    async fn authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle() {
         run_hosted_lifecycle(HERMES).await;
     }
 }

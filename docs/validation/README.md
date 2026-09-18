@@ -11,8 +11,9 @@ The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hos
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
 The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
 
-The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) compares a reviewed historical export with separately authored current v1 intent, then applies the ordinary owned lifecycle for issue #12019.
+The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) compares a reviewed historical export with separately authored current v1 intent and defines an explicitly gated owned lifecycle for issue #12019.
 It adds Hermes interface and runtime-policy preservation without introducing a production migration translator or extending the result to Relay or Switchyard.
+It is not qualification evidence until a native Linux run and its redacted lifecycle evidence are reviewed.
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.

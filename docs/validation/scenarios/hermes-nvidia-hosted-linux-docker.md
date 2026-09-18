@@ -44,7 +44,7 @@ Set the same absolute-path variables described by the OpenClaw scenario, includi
 ```sh
 export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-12019
 cargo test -p nemoclaw-e2e --test hosted_parity \
-  v0_export_artifact_drives_v1_hosted_hermes_lifecycle \
+  authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle \
   -- --ignored --nocapture
 ```
 
