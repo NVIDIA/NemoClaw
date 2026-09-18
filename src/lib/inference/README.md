@@ -8,7 +8,7 @@
 Suggested homes:
 
 ```text
-config.ts                 inference config parsing and normalization
+config.ts                 inference configuration and normalization
 health.ts                 inference endpoint health checks
 local.ts                  local inference orchestration helpers
 provider-models.ts        provider model catalog support
