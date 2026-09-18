@@ -58,8 +58,8 @@ Inline recipes supply their own model name and execution settings and reject the
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
 Snapshot directories include both repository and revision in their identity.
-The runtime retains the manifest, resumable partial files and completion receipt.
-Unchanged apply and export verify local receipts and file metadata without fetching the inventory or weights again.
+The runtime retains the manifest, resumable partial files and completion record.
+Unchanged apply and export verify local completion records and file metadata without fetching the inventory or weights again.
 
 Model changes replace the inference process while preserving its storage volume and previous snapshots.
 Failed observation stops planning; failed startup retains the established container and model data.
@@ -116,7 +116,7 @@ An unfinished apply must first reconcile that exact intent; do not change its ti
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
 Successful recovery must pass configuration and service readiness checks.
 Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
-No recovery step requires deleting receipts, keys, volumes, or ownership bindings.
+No recovery step requires deleting completion records, keys, volumes, or ownership bindings.
 
 The [runtime reporter](../crates/nemoclaw-runtime/src/runtime.rs), [supervisor](../crates/nemoclaw-runtime/src/supervisor.rs), and [SDK status reader](../crates/nemoclaw-sdk/src/managed/artifacts.rs) define these diagnostics and failure boundaries.
 

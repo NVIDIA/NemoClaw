@@ -107,7 +107,7 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
 ```
 
 It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
-Explicit recovery must preserve resource identities and the snapshot receipt.
+Explicit recovery must preserve resource identities and the snapshot completion record.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
 
@@ -135,7 +135,7 @@ Set `NEMOCLAW_TEST_SSH_ENGINE` to an explicit SSH URL and `NEMOCLAW_TEST_ENGINE_
 Run `ssh_failure` separately against rejected authentication, an untrusted host key, or an unavailable endpoint; it must report observation failure, not absence.
 
 The `ssh_upload` test additionally requires `NEMOCLAW_TEST_SSH_CONTAINER`, the full ID of a stopped container labeled `nemoclaw.experiment=ssh-transport`.
-It writes `/tmp/ssh-proof` and checks the streamed archive and unchanged identity.
+It writes `/tmp/ssh-transfer-test` and checks the streamed archive and unchanged identity.
 The caller owns fixture setup and cleanup; never target an unrelated container.
 
 The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 NVIDIA host without provisioning resources.

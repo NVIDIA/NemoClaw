@@ -44,7 +44,7 @@ A durable binding answers “which existing resource did this deployment establi
 Keeping both matters when a process replacement is requested but the old process still exists.
 Deletion must verify the old bound specification, even though the new YAML describes its replacement.
 
-The local state directory retains distinct kinds of evidence:
+The local state directory retains these records:
 
 | Record | Meaning | Why recovery needs it |
 |---|---|---|
@@ -103,7 +103,7 @@ A later readiness failure still retains bindings, but revised intent can proceed
 
 Destroy reverses the dependency direction: remove OpenShell workloads before stopping the gateway that owns them.
 It checks both saved plans before deletion and records when the OpenShell stage finishes.
-That checkpoint lets an interrupted destroy continue even after the gateway becomes unavailable.
+That saved progress lets an interrupted destroy continue even after the gateway becomes unavailable.
 The [managed orchestration commit](https://github.com/NVIDIA/NemoClaw/commit/b18e282837) records the failure cases behind this order.
 
 Ollama has a related dependency: a stopped service cannot return authoritative model inventory.
