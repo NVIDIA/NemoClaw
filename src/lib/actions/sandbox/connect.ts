@@ -432,6 +432,7 @@ async function runSandboxConnectProbe(
     return;
   }
 
+  let settledHermesGatewayObserved = false;
   if (startedStoppedContainer && agent?.name === "hermes") {
     const gatewayProcess = await measureAsync("processes", () =>
       waitForStartedHermesGatewayProcess(sandboxName, getSandboxTargetGatewayName(sandboxName), {
@@ -445,6 +446,7 @@ async function runSandboxConnectProbe(
       );
       process.exit(1);
     }
+    settledHermesGatewayObserved = gatewayProcess === true;
   }
 
   // Managed recovery runs quiet here, so its classified failure layer is the
@@ -454,6 +456,12 @@ async function runSandboxConnectProbe(
   const processCheck = await checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     probeTiming,
+    // Reuse the accepted managed-supervisor observation in this probe. A
+    // second sandbox-exec observation can be temporarily unavailable while
+    // the just-started sandbox finishes reopening its command transport.
+    ...(settledHermesGatewayObserved
+      ? { isSandboxGatewayRunningImpl: async () => true as const }
+      : {}),
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },

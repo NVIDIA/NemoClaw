@@ -219,6 +219,9 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.waitForStartedHermesGatewayProcessSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
     );
+    const recoveryOptions = harness.checkAndRecoverSpy.mock.calls[0]?.[1];
+    expect(recoveryOptions?.isSandboxGatewayRunningImpl).toBeTypeOf("function");
+    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("alpha")).resolves.toBe(true);
   });
 
   it("stops before recovery when a just-started Hermes gateway stays stopped", async () => {
@@ -262,6 +265,9 @@ describe("connectSandbox probe-only observe mode", () => {
 
     expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(
+      harness.checkAndRecoverSpy.mock.calls[0]?.[1]?.isSandboxGatewayRunningImpl,
+    ).toBeUndefined();
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Probe failed: could not inspect the"),
     );
