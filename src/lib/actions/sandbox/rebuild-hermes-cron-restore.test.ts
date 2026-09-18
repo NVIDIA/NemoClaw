@@ -138,6 +138,7 @@ function preparationReceipt(
     version: 1,
     action: "prepare-recover",
     drain_acquired: disposition === "gate-prepared",
+    gateway_recovery_requested: true,
     disposition,
     ...overrides,
   })}`;
@@ -519,16 +520,24 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
-  it.each(["gate-prepared", "not-required"] as const)(
-    "returns the %s pre-repair disposition",
-    (disposition) => {
+  it.each([
+    ["gate-prepared", true],
+    ["not-required", false],
+  ] as const)(
+    "returns the %s pre-repair disposition with gateway recovery requested=%s",
+    (disposition, gatewayRecoveryRequested) => {
       processMocks.executePrivilegedSandboxCommand.mockReturnValue({
         status: 0,
-        stdout: preparationReceipt(disposition),
+        stdout: preparationReceipt(disposition, {
+          gateway_recovery_requested: gatewayRecoveryRequested,
+        }),
         stderr: "",
       });
 
-      expect(prepareHermesCronRestoreRecovery("alpha")).toBe(disposition);
+      expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+        disposition,
+        gatewayRecoveryRequested,
+      });
       expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledWith(
         "alpha",
         [
@@ -546,6 +555,21 @@ describe("Hermes cron rebuild restore contract", () => {
     processMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
       stdout: preparationReceipt("gate-prepared", { drain_acquired: false }),
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "prepare-recover receipt failed validation",
+    );
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["nonboolean", "false"],
+  ])("rejects a %s gateway recovery request signal", (_description, value) => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: preparationReceipt("not-required", { gateway_recovery_requested: value }),
       stderr: "",
     });
 

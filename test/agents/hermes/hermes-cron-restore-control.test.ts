@@ -423,6 +423,10 @@ try:
         publisher.start()
         module.prepare_recovery()
         publisher.join()
+    elif scenario == "prepare-without-generation":
+        module.GATEWAY_RECOVERY_WAIT_SECONDS = 0.01
+        module.GATEWAY_RECOVERY_WAITING_PATH.unlink()
+        module.prepare_recovery()
     elif scenario == "prepare-existing-sync-failure":
         module._write_owned_drain("a" * 32)
         fail_directory_sync_on(1)
@@ -633,6 +637,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "prepare-matching-sync-failure"
       | "prepare-noop"
       | "prepare-before-generation"
+      | "prepare-without-generation"
       | "prepare-existing-sync-failure"
       | "prepare-mismatch"
       | "prepare-recovery-unsafe-mode"
@@ -1058,6 +1063,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"action":"prepare-recover"');
     expect(result.stdout).toContain('"disposition":"gate-prepared"');
     expect(result.stdout).toContain('"drain_acquired":true');
+    expect(result.stdout).toContain('"gateway_recovery_requested":true');
     expect(result.stdout).toContain("OWN_MARKER:present");
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
@@ -1100,6 +1106,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"action":"prepare-recover"');
     expect(result.stdout).toContain('"disposition":"not-required"');
     expect(result.stdout).toContain('"drain_acquired":false');
+    expect(result.stdout).toContain('"gateway_recovery_requested":true');
     expect(result.stdout).toContain("OWN_MARKER:absent");
     expect(result.stdout).toContain("RECOVERY_STATE:absent");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
@@ -1113,6 +1120,15 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"disposition":"not-required"');
     const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
     expect(readFileSync(requestPath, "utf8")).toBe(`v1 ${"e".repeat(64)}\n`);
+  });
+
+  it("reports false when no gateway recovery generation appears", () => {
+    const result = runLifecycle("prepare-without-generation");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('"disposition":"not-required"');
+    expect(result.stdout).toContain('"gateway_recovery_requested":false');
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
   });
 
   it("blocks gateway preparation when existing marker durability is unproved (#8472)", () => {

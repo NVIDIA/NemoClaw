@@ -71,7 +71,12 @@ export type HermesCronRestoreRecoveryOutcome =
   | "not-required"
   | "unsupported";
 
-export type HermesCronRestorePreparationOutcome = "gate-prepared" | "not-required" | "unsupported";
+export type HermesCronRestorePreparationOutcome =
+  | {
+      disposition: "gate-prepared" | "not-required";
+      gatewayRecoveryRequested: boolean;
+    }
+  | "unsupported";
 
 export class HermesCronRestoreIncompleteError extends Error {
   constructor() {
@@ -441,12 +446,22 @@ function parseCronRestorePreparationReceipt(stdout: string): HermesCronRestorePr
   if (
     receipt.version !== 1 ||
     receipt.action !== "prepare-recover" ||
+    typeof receipt.gateway_recovery_requested !== "boolean" ||
     !validDisposition ||
-    !hasExactReceiptFields(receipt, ["version", "action", "drain_acquired", "disposition"])
+    !hasExactReceiptFields(receipt, [
+      "version",
+      "action",
+      "drain_acquired",
+      "gateway_recovery_requested",
+      "disposition",
+    ])
   ) {
     throw new Error("Hermes cron prepare-recover receipt failed validation");
   }
-  return receipt.disposition as "gate-prepared" | "not-required";
+  return {
+    disposition: receipt.disposition as "gate-prepared" | "not-required",
+    gatewayRecoveryRequested: receipt.gateway_recovery_requested,
+  };
 }
 
 function parseCronRestoreControlError(stderr: string): { code: string; message: string } | null {

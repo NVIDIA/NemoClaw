@@ -852,11 +852,14 @@ def _receipt(
     print(f"{RECEIPT_PREFIX}{json.dumps(payload, separators=(',', ':'), sort_keys=True)}")
 
 
-def _prepare_recovery_receipt(drain_acquired: bool) -> None:
+def _prepare_recovery_receipt(
+    drain_acquired: bool, gateway_recovery_requested: bool
+) -> None:
     payload = {
         "version": 1,
         "action": "prepare-recover",
         "drain_acquired": drain_acquired,
+        "gateway_recovery_requested": gateway_recovery_requested,
         "disposition": "gate-prepared" if drain_acquired else "not-required",
     }
     print(f"{RECEIPT_PREFIX}{json.dumps(payload, separators=(',', ':'), sort_keys=True)}")
@@ -1012,7 +1015,7 @@ def prepare_recovery() -> None:
         generation = _wait_for_gateway_recovery_generation()
         if generation is not None:
             _publish_gateway_recovery_request(generation)
-        _prepare_recovery_receipt(drain_acquired)
+        _prepare_recovery_receipt(drain_acquired, generation is not None)
 
 
 def begin_drain() -> str:

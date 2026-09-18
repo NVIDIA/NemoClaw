@@ -48,7 +48,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     vi.clearAllMocks();
     mocks.connectSandbox.mockResolvedValue(undefined);
     mocks.inspectPortableAgentReceiptDisposition.mockReturnValue({ kind: "absent" });
-    mocks.prepareHermesCronRestoreRecovery.mockReturnValue("not-required");
+    mocks.prepareHermesCronRestoreRecovery.mockReturnValue({
+      disposition: "not-required",
+      gatewayRecoveryRequested: false,
+    });
     mocks.recoverHermesCronRestore.mockReturnValue("not-required");
     mocks.waitForGatedHermesGatewayRecovery.mockResolvedValue(true);
   });
@@ -58,7 +61,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     const events: string[] = [];
     mocks.prepareHermesCronRestoreRecovery.mockImplementation(() => {
       events.push("prepare");
-      return "gate-prepared";
+      return { disposition: "gate-prepared", gatewayRecoveryRequested: true };
     });
     mocks.waitForGatedHermesGatewayRecovery.mockImplementation(async () => {
       events.push("start");
@@ -80,6 +83,20 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     expect(events).toEqual(["prepare", "start", "connect", "recover"]);
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
     expect(mocks.waitForGatedHermesGatewayRecovery).toHaveBeenCalledWith("alpha");
+    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
+      probeOnly: true,
+      requireLaunchReadinessPublication: false,
+    });
+    expect(mocks.recoverHermesCronRestore).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not wait for a relaunch when preparation published no recovery request", async () => {
+    mocks.getSessionAgent.mockReturnValue({ name: "hermes" });
+
+    await recoverSandboxWithHermesCronRestore("alpha");
+
+    expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
+    expect(mocks.waitForGatedHermesGatewayRecovery).not.toHaveBeenCalled();
     expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
       probeOnly: true,
       requireLaunchReadinessPublication: false,
@@ -137,6 +154,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
 
   it("does not probe or release the cron gate when the gateway remains unobservable", async () => {
     mocks.getSessionAgent.mockReturnValue({ name: "hermes" });
+    mocks.prepareHermesCronRestoreRecovery.mockReturnValue({
+      disposition: "not-required",
+      gatewayRecoveryRequested: true,
+    });
     mocks.waitForGatedHermesGatewayRecovery.mockResolvedValue(false);
 
     await expect(recoverSandboxWithHermesCronRestore("alpha")).rejects.toThrow(

@@ -29,7 +29,7 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
       const agent = agentRuntime.getSessionAgent(sandboxName);
       if (agent?.name === "hermes") {
         const preparation = prepareHermesCronRestoreRecovery(sandboxName);
-        if (preparation !== "unsupported") {
+        if (preparation !== "unsupported" && preparation.gatewayRecoveryRequested) {
           const started = await waitForGatedHermesGatewayRecovery(sandboxName);
           if (!started) {
             throw new Error(
