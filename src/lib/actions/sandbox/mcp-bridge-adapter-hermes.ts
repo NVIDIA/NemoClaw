@@ -50,10 +50,10 @@ export type HermesMcpReloadFinalityInspection =
 function normalizeHermesReloadDiagnostic(value: string): string {
   return value
     .replace(/\u001b\[[0-9;]*m/gu, "")
-    .replaceAll("\u00d7", "x")
     .replace(/[\u2502]/gu, " ")
     .replace(/\s+/gu, " ")
-    .trim();
+    .trim()
+    .replace(/^Error:\s*\u00d7\s+code:/u, "Error: x code:");
 }
 
 function isHermesReloadRelayLossResult(

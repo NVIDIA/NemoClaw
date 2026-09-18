@@ -310,7 +310,8 @@ async function assertConcurrentAddSerialized(
     ),
   );
   const successful = attempts.filter((result) => result.exitCode === 0);
-  expect(successful.length).toBeGreaterThan(0);
+  const rejected = attempts.filter((result) => result.exitCode !== 0);
+  expect(successful).toHaveLength(1);
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,
@@ -337,17 +338,15 @@ async function assertConcurrentAddSerialized(
   });
   expect(statusObservation.registered).toBe(true);
   const resumed = await Promise.all(
-    attempts
-      .filter((result) => result.exitCode !== 0)
-      .map((originalResult) =>
-        retryAfterConcurrentAddTransientFailure({
-          committedBridgeVerified: true,
-          diagnostic: resultText(originalResult),
-          originalResult,
-          retry: () =>
-            add(`${options.artifactPrefix}-mcp-concurrent-add-after-portable-lock-contention`),
-        }),
-      ),
+    rejected.map((originalResult) =>
+      retryAfterConcurrentAddTransientFailure({
+        committedBridgeVerified: true,
+        diagnostic: resultText(originalResult),
+        originalResult,
+        retry: () =>
+          add(`${options.artifactPrefix}-mcp-concurrent-add-after-portable-lock-contention`),
+      }),
+    ),
   );
   expect([...successful, ...resumed].filter((result) => result.exitCode === 0)).toHaveLength(2);
   const exactRetry = await add(`${options.artifactPrefix}-mcp-concurrent-add-exact-retry`);

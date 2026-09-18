@@ -17,6 +17,7 @@ import {
   HermesMcpReloadRelayLossError,
   inspectAgentAdapterRegistration,
   inspectHermesMcpReloadFinality,
+  observeStableMcpCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
   registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
@@ -375,15 +376,15 @@ async function reconcileHermesMcpAddAfterRelayLoss(
   relayLoss: HermesMcpReloadRelayLossError,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<HermesMcpAddFinality> {
-  const nativeFinality = inspectHermesMcpReloadFinality(
-    sandboxName,
-    entry,
-    relayLoss.credentialRevision,
-    providerRuntimeSelection,
-  );
-  if (nativeFinality.state === "unknown") return nativeFinality;
-
   try {
+    const nativeFinality = inspectHermesMcpReloadFinality(
+      sandboxName,
+      entry,
+      relayLoss.credentialRevision,
+      providerRuntimeSelection,
+    );
+    if (nativeFinality.state === "unknown") return nativeFinality;
+
     const recovery = await inspectMcpAddRecovery(
       sandboxName,
       "hermes-config",
@@ -402,20 +403,14 @@ async function reconcileHermesMcpAddAfterRelayLoss(
       };
     }
 
-    const firstRevision = await observeMcpCredentialRevision(
+    const stableRevision = await observeStableMcpCredentialRevision(
       sandboxName,
       entry,
       providerRuntimeSelection,
+      30,
+      relayLoss.credentialRevision,
     );
-    const secondRevision = await observeMcpCredentialRevision(
-      sandboxName,
-      entry,
-      providerRuntimeSelection,
-    );
-    if (
-      firstRevision !== relayLoss.credentialRevision ||
-      secondRevision !== relayLoss.credentialRevision
-    ) {
+    if (stableRevision !== relayLoss.credentialRevision) {
       return {
         state: "unknown",
         detail: "Hermes MCP reload reconciliation found an unstable credential revision.",

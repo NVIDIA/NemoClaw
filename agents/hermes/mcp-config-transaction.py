@@ -25,6 +25,8 @@ and acknowledged reload guarantees.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import http.client
 import importlib.util
 import ipaddress
@@ -56,6 +58,9 @@ GATEWAY_PUBLIC_PORT_PATH = "/run/nemoclaw/hermes-api-port"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 RECONCILE_STABILITY_SECONDS = 1
+MCP_TRANSACTION_LOCK_PATH = "/etc/nemoclaw/hermes-mcp-transaction.lock"
+MCP_TRANSACTION_LOCK_EXPECTED_UID = 0
+MCP_TRANSACTION_LOCK_EXPECTED_GID = 0
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 MCP_DNS_LABEL_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -657,7 +662,48 @@ def inspect_managed_config(
     return {"ok": True, "state": "matched"}
 
 
-def reconcile_managed_config(payload: dict[str, object]) -> dict[str, object]:
+@contextlib.contextmanager
+def _mcp_transaction_lock():
+    """Serialize mutation and finality proof across independent exec relays."""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise RuntimeError("Hermes MCP transaction lock requires O_NOFOLLOW")
+    descriptor = os.open(
+        MCP_TRANSACTION_LOCK_PATH,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+    )
+    try:
+        parent = os.lstat(os.path.dirname(MCP_TRANSACTION_LOCK_PATH))
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != MCP_TRANSACTION_LOCK_EXPECTED_UID
+            or parent.st_gid != MCP_TRANSACTION_LOCK_EXPECTED_GID
+            or stat.S_IMODE(parent.st_mode) != 0o755
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != MCP_TRANSACTION_LOCK_EXPECTED_UID
+            or before.st_gid != MCP_TRANSACTION_LOCK_EXPECTED_GID
+            or stat.S_IMODE(before.st_mode) != 0o444
+        ):
+            raise RuntimeError("Hermes MCP transaction lock is unsafe")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        after = os.fstat(descriptor)
+        pathname = os.lstat(MCP_TRANSACTION_LOCK_PATH)
+        if (
+            (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+            or (pathname.st_dev, pathname.st_ino) != (after.st_dev, after.st_ino)
+        ):
+            raise RuntimeError("Hermes MCP transaction lock changed during acquisition")
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _reconcile_managed_config_locked(payload: dict[str, object]) -> dict[str, object]:
     """Prove one committed or absent config without changing gateway state."""
     _validate_inspection_payload(payload)
     present = payload["present"]
@@ -694,6 +740,12 @@ def reconcile_managed_config(payload: dict[str, object]) -> dict[str, object]:
         "ok": True,
         "state": "committed" if len(present) == 1 else "absent",
     }
+
+
+def reconcile_managed_config(payload: dict[str, object]) -> dict[str, object]:
+    """Prove finality only after every earlier MCP transaction is terminal."""
+    with _mcp_transaction_lock():
+        return _reconcile_managed_config_locked(payload)
 
 
 def _mutate(
@@ -1535,6 +1587,8 @@ def probe() -> dict[str, object]:
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
     _configure_gateway_public_port()
+    with _mcp_transaction_lock():
+        pass
     return {"ok": True}
 
 
@@ -1543,7 +1597,8 @@ def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
     if os.geteuid() != 0:
         _assert_non_root_lifecycle_identity()
     _configure_gateway_public_port()
-    return apply_transaction_and_reload(action, payload)
+    with _mcp_transaction_lock():
+        return apply_transaction_and_reload(action, payload)
 
 
 def main() -> int:

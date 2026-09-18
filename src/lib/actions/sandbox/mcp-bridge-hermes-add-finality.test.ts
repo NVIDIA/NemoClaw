@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
     inspectAgentAdapterRegistration: vi.fn(),
     inspectHermesMcpReloadFinality: vi.fn(),
     observeMcpCredentialRevision: vi.fn(),
+    observeStableMcpCredentialRevision: vi.fn(),
     observeSandboxOnGateway: vi.fn(),
     registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
     removeGeneratedPolicy: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("./mcp-bridge-adapters", async (importOriginal) => ({
   assertAgentMcpMutationRuntimeCapability: vi.fn(),
   inspectAgentAdapterRegistration: mocks.inspectAgentAdapterRegistration,
   inspectHermesMcpReloadFinality: mocks.inspectHermesMcpReloadFinality,
+  observeStableMcpCredentialRevision: mocks.observeStableMcpCredentialRevision,
   registerAgentAdapterAtCurrentCredentialRevision:
     mocks.registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation: vi.fn(),
@@ -219,6 +221,7 @@ describe("Hermes MCP add reload finality", () => {
         : { state: mocks.state.finality },
     );
     mocks.observeMcpCredentialRevision.mockImplementation(() => mocks.state.revision);
+    mocks.observeStableMcpCredentialRevision.mockImplementation(async () => mocks.state.revision);
     let identityObservations = 0;
     mocks.observeSandboxOnGateway.mockImplementation(() => {
       identityObservations += 1;
@@ -268,8 +271,24 @@ describe("Hermes MCP add reload finality", () => {
 
   it.each([
     ["read-only proof is unavailable", () => (mocks.state.finality = "unknown")],
+    [
+      "the read-only proof throws",
+      () => {
+        mocks.inspectHermesMcpReloadFinality.mockImplementation(() => {
+          throw new Error("read-only inspection failed");
+        });
+      },
+    ],
     ["the sandbox identity changes", () => (mocks.state.identityChanged = true)],
     ["the credential revision changes", () => (mocks.state.revision = "v8")],
+    [
+      "the credential revision drifts from v7 to v8 after two matching observations",
+      () => {
+        mocks.observeStableMcpCredentialRevision.mockRejectedValue(
+          new Error("Hermes MCP credential observations v7,v7,v8 did not stabilize"),
+        );
+      },
+    ],
     ["the provider identity changes", () => (mocks.state.providerIdentityChanged = true)],
     [
       "absence is paired with credential revision drift",

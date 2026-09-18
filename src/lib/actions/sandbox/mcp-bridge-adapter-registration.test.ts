@@ -67,6 +67,7 @@ import {
   buildHermesMcpStatusCommand,
   HermesMcpReloadRelayLossError,
   inspectHermesMcpReloadFinality,
+  observeStableMcpCredentialRevision,
   registerAgentAdapter,
   registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
@@ -250,7 +251,7 @@ describe("Hermes MCP reload finality", () => {
     mocks.runOpenshellProviderCommand.mockReturnValue({
       status: 1,
       stdout: "",
-      stderr: `\u001b[31m${hermesReloadRelayLoss.replace("x", "×")}\u001b[0m`,
+      stderr: `\u001b[31m${hermesReloadRelayLoss}\u001b[0m`,
     });
 
     let failure: unknown;
@@ -300,6 +301,14 @@ describe("Hermes MCP reload finality", () => {
         status: 1,
         stdout: "",
         stderr: `unrelated diagnostic\n${hermesReloadRelayLoss}`,
+      },
+    ],
+    [
+      "a multiplication sign inside semantic text",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss.replace("exec relay", "e×ec relay"),
       },
     ],
   ])("does not classify %s as a reload relay loss", async (_label, result) => {
@@ -737,6 +746,18 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         "v10",
       ),
     ).rejects.toThrow("credential revision did not stabilize");
+  });
+
+  it("rejects v7, v7, v8 while proving an attempted v7 revision", async () => {
+    mocks.observeMcpCredentialRevision
+      .mockResolvedValueOnce("v7")
+      .mockResolvedValueOnce("v7")
+      .mockResolvedValueOnce("v8");
+
+    await expect(
+      observeStableMcpCredentialRevision("alpha", baseEntry, runtimeSelection, 30, "v7"),
+    ).rejects.toThrow("credential revision did not stabilize");
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenCalledTimes(3);
   });
 
   it("fails closed when both bounded registrations advance the revision", async () => {
