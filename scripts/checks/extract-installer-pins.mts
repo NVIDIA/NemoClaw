@@ -72,6 +72,11 @@ type OpenShellReleaseTrust = {
   }[];
   pinLayout: OpenShellPinLayout;
   sandboxBuilds: readonly TrustedSandboxBuild[];
+  sourceIdentity?: {
+    commitSha: string;
+    releaseTag: string;
+    runtimeVersion: string;
+  };
   supervisor: TrustedSupervisorManifest | null;
   version: string;
 };
@@ -547,6 +552,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         sha256: "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d",
       },
     ],
+    sourceIdentity: {
+      commitSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
+      releaseTag: "v0.0.116",
+      runtimeVersion: "0.0.116",
+    },
     supervisor: {
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
@@ -565,7 +575,57 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
     version: "0.0.116",
   },
+  {
+    brevTemplateSha256: [
+      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+      "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+      "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+      "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "9d6c209c0eb4c3bbebb15f3650377c264d4e3e80f4aa685f89018c6beba10252",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/dev/openshell.rb",
+    },
+    // This prerequisite record seals the exact selected development release
+    // without changing the active stable selector. Release-data functions and
+    // selector literals remain normalized by the existing operational lock.
+    installerTemplateSha256: [
+      "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+      "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "41ab872f184a34cbfac8af876c6310117e790884b2cd423826f7aee7b0375cb5",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "34b49e96c7230a3ca05b3a9b94c9d6fbf212004f1e26053d8aab9249cdaed414",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "9a45d76f6ef80ec99e75f50168513e14d72932d7f7b30d50363ee5abaf1956bc",
+      },
+    ],
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    sandboxBuilds: [],
+    sourceIdentity: {
+      commitSha: "26f2f963936f68c0d5be36b34cda570d8f79f315",
+      releaseTag: "dev",
+      runtimeVersion: "0.0.117-dev.142-g26f2f9639",
+    },
+    supervisor: null,
+    version: "0.0.117",
+  },
 ] as const;
+
+function releaseBaseUrl(release: OpenShellReleaseTrust): string {
+  const releaseTag = release.sourceIdentity?.releaseTag ?? `v${release.version}`;
+  return `https://github.com/NVIDIA/OpenShell/releases/download/${releaseTag}`;
+}
+
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
 }
@@ -577,6 +637,13 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     "openshell-sandbox-checksums-sha256.txt",
   ] as const;
   const manifestAssets = release.manifests.map((manifest) => manifest.asset).sort();
+  const sourceIdentity = release.sourceIdentity;
+  const developmentVersion = sourceIdentity
+    ? new RegExp(
+        `^${release.version.replaceAll(".", "\\.")}-dev\\.[0-9]+-g([a-f0-9]{7,40})$`,
+        "u",
+      ).exec(sourceIdentity.runtimeVersion)
+    : null;
   if (
     !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(release.version) ||
     manifestAssets.length !== requiredManifests.length ||
@@ -584,6 +651,17 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     release.manifests.some((manifest) => !SHA256_PATTERN.test(manifest.sha256))
   ) {
     fail(`OpenShell v${release.version} must have exactly three trusted release-manifest digests`);
+  }
+  if (
+    sourceIdentity &&
+    (!/^[a-f0-9]{40}$/u.test(sourceIdentity.commitSha) ||
+      (sourceIdentity.releaseTag === `v${release.version}`
+        ? sourceIdentity.runtimeVersion !== release.version
+        : sourceIdentity.releaseTag !== "dev" ||
+          !developmentVersion ||
+          !sourceIdentity.commitSha.startsWith(developmentVersion[1] ?? "")))
+  ) {
+    fail(`trusted OpenShell v${release.version} source identity is invalid`);
   }
   const trustedManifestAssets = new Set(release.manifests.map((manifest) => manifest.asset));
   for (const [consumer, layout] of [
@@ -602,8 +680,7 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
   if (
     !release.formula ||
     release.formula.asset !== "openshell.rb" ||
-    release.formula.url !==
-      `https://github.com/NVIDIA/OpenShell/releases/download/v${release.version}/openshell.rb` ||
+    release.formula.url !== `${releaseBaseUrl(release)}/openshell.rb` ||
     !SHA256_PATTERN.test(release.formula.sha256)
   ) {
     fail(`trusted OpenShell v${release.version} formula record is invalid`);
@@ -1786,7 +1863,7 @@ function runCli(): void {
         ...installerReleases.flatMap((installerRelease) =>
           installerRelease.manifests.map(
             (manifest) =>
-              `manifest\t${installerRelease.version}\tOpenShell release\t${manifest.asset}\t${manifest.sha256}`,
+              `manifest\t${installerRelease.version}\t${releaseBaseUrl(installerRelease)}\t${manifest.asset}\t${manifest.sha256}`,
           ),
         ),
         ...installerReleases.map(

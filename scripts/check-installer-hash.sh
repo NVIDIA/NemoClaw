@@ -122,13 +122,13 @@ check_openshell_release_assets() {
     fi
     case "$record_type" in
       manifest)
-        [[ "$source" == "OpenShell release" ]] || {
+        [[ "$source" =~ ^https://github\.com/NVIDIA/OpenShell/releases/download/(v[0-9]+\.[0-9]+\.[0-9]+|dev)$ ]] || {
           echo "  STALE: trusted parser returned an invalid OpenShell manifest record."
           return 1
         }
         ;;
       formula)
-        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" ]]; then
+        if [[ "$asset" != "openshell.rb" || ! "$source" =~ ^https://github\.com/NVIDIA/OpenShell/releases/download/(v[0-9]+\.[0-9]+\.[0-9]+|dev)/openshell\.rb$ ]]; then
           echo "  STALE: trusted parser returned an invalid OpenShell formula record."
           return 1
         fi
@@ -173,6 +173,7 @@ check_openshell_release_assets() {
     formula_expected=""
     formula_matches=0
     formula_url=""
+    release_base=""
     count=0
     brev_count=0
     published_count=0
@@ -182,6 +183,12 @@ check_openshell_release_assets() {
       [[ "$parsed_version" == "$release_version" ]] || continue
       case "$record_type" in
         manifest)
+          if [[ -z "$release_base" ]]; then
+            release_base="$source"
+          elif [[ "$release_base" != "$source" ]]; then
+            echo "  STALE: trusted parser returned inconsistent OpenShell v${release_version} release sources."
+            return 1
+          fi
           manifest_specs+=("${asset}:${pinned}")
           ;;
         formula)
@@ -214,8 +221,11 @@ check_openshell_release_assets() {
       echo "  STALE: trusted parser did not return exactly one OpenShell v${release_version} formula record."
       return 1
     fi
+    if [[ -z "$release_base" || "$formula_url" != "${release_base}/openshell.rb" ]]; then
+      echo "  STALE: trusted parser did not bind the OpenShell v${release_version} formula to its release source."
+      return 1
+    fi
 
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
     echo "Checking OpenShell v${release_version} release assets..."
     for spec in "${manifest_specs[@]}"; do
       manifest="${spec%%:*}"
