@@ -27,7 +27,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
-| Review trust, credential custody, and isolation | [Security](security.md) |
+| Review trust, credential storage and access, and isolation | [Security](security.md) |
 | Declare sandbox filesystem, process, egress, and proxy settings | [Sandbox policy and proxy](sandbox-network.md) |
 
 ## Agents and Inference
@@ -76,7 +76,7 @@ Each explanation includes diagrams and links to the commits that established its
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
-| Artifact ownership, preparation verification, and receipt publication | [Recipe design](design/recipes.md) |
+| Artifact ownership, preparation verification, and completion record publication | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |
 | Proposed migration of previous user guides, public routes, and release documentation | [Documentation migration plan](design/documentation-migration.md) |
 

@@ -103,11 +103,12 @@ Acceptance uses a real fixture process with no DGX Spark configuration to exerci
 A separate HTTP fixture exercises backend readiness.
 Reference preparation keys, capacity decisions and the observed pre-refactor vLLM argument vector protect compatibility.
 
-The live image-upgrade gate must preserve storage receipts and all independent resource identities, then return an actual agent response and an unchanged export/reapply.
-These tests establish separation for this recipe; a second real backend remains the next test of how well the modules generalize.
+The [live image-change test](../testing/live.md#spark-and-fabric) requires plan and apply to replace only the inference service.
+[Separate tests](../testing/fixtures.md#runtime-boundaries) check storage retention, prepared-data reuse, and supervisor recovery; the [generic model lifecycle](../testing/live.md#generic-models) also checks an agent reply and export/reapply.
+A second real backend remains the next test of how well the modules generalize.
 
 The [refactor acceptance run](../validation/rust-runtime-boundaries-linux-arm64.json) passed the live image upgrade in 646 seconds.
-Only the inference process identity changed; cached artifact receipts and every independent binding were preserved.
+Only the inference process identity changed; cached artifact completion records and every independent binding were preserved.
 The agent replied `FOUR`, followed by unchanged apply and export/reapply.
 
 An independent offline rebuild produced the same runtime executable hash.
@@ -141,7 +142,7 @@ The served model name follows the repository, and model storage identity include
 
 The model resolver discovers a checksummed inference snapshot.
 Plan may read remote metadata but cannot download weights into runtime storage or prepare a model.
-Apply retains the manifest and resumable downloads; subsequent observation uses that retained manifest and completion receipts.
+Apply retains the manifest and resumable downloads; subsequent observation uses that retained manifest and completion records.
 
 Authentication, transport, partial inventories and changed artifacts are errors, never resource absence.
 
@@ -160,7 +161,7 @@ Weight size alone cannot prove that serving settings or agent behavior will work
 Keep those failures explicit rather than treating a downloadable model as a qualified agent backend or weakening the agent probe.
 
 With the corrected settings, Qwen3-4B passed actual Fabric OpenClaw replies, unchanged apply, export/reapply, and watchdog stop with explicit recovery.
-Resource identities and snapshot receipts stayed stable during recovery; intentional destroy retained storage, and a later apply reused it.
+Resource identities and snapshot completion records stayed stable during recovery; intentional destroy retained storage, and a later apply reused it.
 The same generic runtime image served both tested models.
 
 See the [retained evidence](../validation/rust-selected-model-linux-arm64.json).

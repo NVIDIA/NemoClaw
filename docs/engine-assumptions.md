@@ -18,7 +18,7 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 | Boundary and owner | Constraint |
 |---|---|
 | SDK `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets select local Docker or Podman API connections on Unix clients; SSH endpoints select Docker. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
-| SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, preflight, readiness, and export. |
+| SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, validation, readiness, and export. |
 | Provider `provider.rs`; SDK `services/registry.rs` and `services/installers/ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. The SDK and provider must select the same daemon. |
 | SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
 | SDK `managed/storage.rs`, `managed/observation.rs`, and `services/installers/ollama/service.rs` | Docker bindings combine daemon identity with resource identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Names and labels on another daemon cannot authorize adoption or deletion. |
@@ -64,11 +64,11 @@ flowchart TD
     SSH[SSH host collector] -->|memory, GPU, disk, and daemon identity| Match
     Match -->|yes| Rules[Typed capacity rules]
     Match -->|no or incomplete| Stop[Stop before resource allocation]
-    Rules -->|capacity accepted| Start[Continue deployment preflight]
+    Rules -->|capacity accepted| Start[Continue deployment validation]
 ```
 
 This check addresses the location of the measurements.
-Capacity can change after preflight, so the runtime also checks startup headroom and monitors memory while serving.
+Capacity can change after validation, so the runtime also checks startup headroom and monitors memory while serving.
 A failed collector never authorizes using client-host values as a fallback.
 
 | Boundary and owner | Constraint |
@@ -81,7 +81,7 @@ A failed collector never authorizes using client-host values as a fallback.
 
 The SSH collector requires existing host trust, Python 3, Docker, and NVIDIA tooling.
 It rejects a Docker context that points at another host and installs no packages.
-Mutations, capacity preflight, local credential reads, and active probes remain direct.
+Mutations, capacity validation, local credential reads, and active probes remain direct.
 
 Refresh and export share typed observations from the owning APIs.
 

@@ -81,9 +81,9 @@ impl Runner for PackagedRecipe<'_> {
                     .take((1 << 20) + 1)
                     .read_to_end(&mut bytes)
                     .await
-                    .map_err(|_| Error::State("cannot read recipe evidence"))?;
+                    .map_err(|_| Error::State("cannot read recipe tool output"))?;
                 if bytes.len() > 1 << 20 {
-                    return Err(Error::State("recipe evidence exceeds limit"));
+                    return Err(Error::State("recipe tool output exceeds limit"));
                 }
                 Ok(bytes)
             };

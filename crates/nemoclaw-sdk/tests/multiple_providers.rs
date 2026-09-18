@@ -17,21 +17,21 @@ fn generations() -> Generations {
     .map(|key| (key.into(), "a".repeat(32)))
     .into()
 }
-fn oracle(mut value: Value) -> Value {
-    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(json!({"name":"oracle","provider":"anthropic","api":"anthropic-messages","endpoint":"https://oracle.example/v1","credential":{"env":"ORACLE_KEY"}}));
+fn hosted(mut value: Value) -> Value {
+    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(json!({"name":"hosted","provider":"anthropic","api":"anthropic-messages","endpoint":"https://hosted.example/v1","credential":{"env":"HOSTED_KEY"}}));
     let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = json!("smart");
     inference["routes"]
         .as_array_mut()
         .unwrap()
-        .push(json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart-model"}}));
+        .push(json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart-model"}}));
     value
 }
 #[test]
 fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     let input: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
-    let mut value = oracle(input);
+    let mut value = hosted(input);
     let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
     other["agent"]["inference"]["routes"]
@@ -46,13 +46,13 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         .as_array_mut()
         .unwrap()
         .push(other);
-    let doc = Document::parse(value.to_string().as_bytes()).expect("local and oracle providers");
+    let doc = Document::parse(value.to_string().as_bytes()).expect("local and hosted providers");
     assert!(
         jsonschema::validator_for(&input_schema())
             .unwrap()
             .is_valid(&value)
     );
-    assert_eq!(doc.credential_names(), vec!["ORACLE_KEY"]);
+    assert_eq!(doc.credential_names(), vec!["HOSTED_KEY"]);
     let rows = targets(&doc, &generations()).unwrap();
     assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 2);
     assert_eq!(
@@ -63,10 +63,10 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
     let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
     let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-    assert_eq!(settings["provider"], "oracle");
+    assert_eq!(settings["provider"], "hosted");
     assert_eq!(
         settings["agents"][0]["inference"]["models"]["smart"]["connection"]["api_key_env"],
-        "NEMOCLAW_INFERENCE_ORACLE_KEY"
+        "NEMOCLAW_INFERENCE_HOSTED_KEY"
     );
     let other = rows
         .iter()
@@ -99,7 +99,7 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     );
 }
 #[test]
-fn managed_inference_remains_owned_when_the_default_uses_an_external_oracle() {
+fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let local_name = value["spec"]["inferenceProviders"][0]["name"]
@@ -107,7 +107,7 @@ fn managed_inference_remains_owned_when_the_default_uses_an_external_oracle() {
         .unwrap()
         .to_owned();
     value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
-    let doc = Document::parse(oracle(value).to_string().as_bytes())
+    let doc = Document::parse(hosted(value).to_string().as_bytes())
         .expect("managed local model plus external default");
     let runtime = runtime_targets(&doc, &generations()).unwrap();
     assert!(runtime.iter().any(|row| row.kind == "inference_service"));
@@ -123,7 +123,7 @@ fn managed_inference_remains_owned_when_the_default_uses_an_external_oracle() {
     assert!(
         !rows
             .iter()
-            .find(|row| row.kind == "provider" && row.values["name"] == "oracle")
+            .find(|row| row.kind == "provider" && row.values["name"] == "hosted")
             .unwrap()
             .values
             .contains_key("credential_source")
@@ -141,7 +141,7 @@ fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_defau
         .as_str()
         .unwrap()
         .to_owned();
-    let doc = Document::parse(oracle(value).to_string().as_bytes()).unwrap();
+    let doc = Document::parse(hosted(value).to_string().as_bytes()).unwrap();
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     assert_eq!(
         graph["resource"]["nemoclaw_ollama_model"]["ollama-server"]["model"],
@@ -153,7 +153,7 @@ fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_defau
             .unwrap();
     assert!(dependencies.contains(&json!("nemoclaw_ollama_model.ollama-server")));
     assert!(
-        !graph["resource"]["nemoclaw_provider"]["inference_oracle"]["depends_on"]
+        !graph["resource"]["nemoclaw_provider"]["inference_hosted"]["depends_on"]
             .as_array()
             .unwrap()
             .contains(&json!("nemoclaw_ollama_model.ollama-server"))

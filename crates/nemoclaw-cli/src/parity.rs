@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    enum Evidence {
+    enum Check {
         Authoring(AuthoringCase),
         Fixture(FixtureCase),
         QualifiedFixture(FixtureCase, Qualification),
@@ -282,7 +282,7 @@ mod tests {
         v0_behavior: &'static str,
         disposition: DispositionKind,
         gap: Option<Gap>,
-        evidence: Evidence,
+        check: Check,
     }
 
     fn gap(
@@ -310,7 +310,7 @@ mod tests {
                 v0_behavior: "OpenClaw defaults to hosted NVIDIA inference with an OpenAI-compatible completions route",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::Authoring(AuthoringCase::OpenClawCompletions),
+                check: Check::Authoring(AuthoringCase::OpenClawCompletions),
             },
             Scenario {
                 id: "V0-NAMING-IDENTITY",
@@ -331,7 +331,7 @@ mod tests {
                     ISSUE_12032,
                     "V1 separates deployment and sandbox names and defaults the authored sandbox to assistant, so the V0 name cannot be projected without a product mapping decision",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-NAMING-VALIDATION",
@@ -347,7 +347,7 @@ mod tests {
                     ISSUE_12034,
                     "the V1 parser correctly rejects the same invalid sandbox-name class; an accepted identity mapping remains separately owned",
                 ),
-                evidence: Evidence::Mutation(Mutation::InvalidSandboxName),
+                check: Check::Mutation(Mutation::InvalidSandboxName),
             },
             Scenario {
                 id: "V0-WORKFLOW-UNATTENDED",
@@ -368,9 +368,9 @@ mod tests {
                     "GAP-V0-WORKFLOW-UNATTENDED",
                     Boundary::ProductScope,
                     ISSUE_12032,
-                    "V1 authoring is non-mutating and the composed apply journey must define confirmation and notice ownership",
+                    "V1 authoring is non-mutating and the composed apply workflow must define confirmation and notice ownership",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-INFERENCE-RESPONSES",
@@ -381,7 +381,7 @@ mod tests {
                 v0_behavior: "an OpenClaw route can select a Responses-compatible API and model",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::Authoring(AuthoringCase::OpenClawResponses),
+                check: Check::Authoring(AuthoringCase::OpenClawResponses),
             },
             Scenario {
                 id: "V0-AGENT-HERMES",
@@ -392,7 +392,7 @@ mod tests {
                 v0_behavior: "Hermes is selectable directly or through the interactive agent picker",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::Authoring(AuthoringCase::HermesCompletions),
+                check: Check::Authoring(AuthoringCase::HermesCompletions),
             },
             Scenario {
                 id: "V0-AGENT-DEEPAGENTS",
@@ -408,7 +408,7 @@ mod tests {
                     ISSUE_12034,
                     "V1 parses Deep Agents intent but onboarding does not author this harness or V0 agent-manifest workflow",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::DeepAgents),
+                check: Check::Fixture(FixtureCase::DeepAgents),
             },
             Scenario {
                 id: "V0-OPENCLAW-AGENT-MANIFEST",
@@ -424,7 +424,7 @@ mod tests {
                     ISSUE_12034,
                     "V1 deploys each OpenClaw agent in a separate sandbox; onboarding does not author the V0 manifest workflow",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::FullFeatured),
+                check: Check::Fixture(FixtureCase::FullFeatured),
             },
             Scenario {
                 id: "V0-AGENT-PI",
@@ -440,7 +440,7 @@ mod tests {
                     ISSUE_12034,
                     "V1 parses Pi intent but onboarding does not author its native model shape",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Pi),
+                check: Check::Fixture(FixtureCase::Pi),
             },
             Scenario {
                 id: "V0-INFERENCE-ANTHROPIC",
@@ -456,7 +456,7 @@ mod tests {
                     ISSUE_12038,
                     "the shape parses but standalone generated lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Anthropic),
+                check: Check::Fixture(FixtureCase::Anthropic),
             },
             Scenario {
                 id: "V0-INFERENCE-ANTHROPIC-COMPATIBLE",
@@ -472,7 +472,7 @@ mod tests {
                     ISSUE_12038,
                     "the credential-bearing compatible shape parses but generated lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::AnthropicCompatible),
+                check: Check::Fixture(FixtureCase::AnthropicCompatible),
             },
             Scenario {
                 id: "V0-INFERENCE-COMPATIBLE",
@@ -501,7 +501,7 @@ mod tests {
                     ISSUE_12038,
                     "the generic external-provider shape parses but generated lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Compatible),
+                check: Check::Fixture(FixtureCase::Compatible),
             },
             Scenario {
                 id: "V0-INFERENCE-INPUT-MODALITIES",
@@ -517,7 +517,7 @@ mod tests {
                     ISSUE_12035,
                     "the illustrative OpenClaw input-modality override is not accepted by the V1 route schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::InferenceInputs),
+                check: Check::Mutation(Mutation::InferenceInputs),
             },
             Scenario {
                 id: "V0-INFERENCE-OPENAI",
@@ -533,7 +533,7 @@ mod tests {
                     ISSUE_12038,
                     "the credential-bearing OpenAI shape parses but generated lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::OpenAi),
+                check: Check::Fixture(FixtureCase::OpenAi),
             },
             Scenario {
                 id: "V0-INFERENCE-OPENROUTER",
@@ -549,7 +549,7 @@ mod tests {
                     ISSUE_12038,
                     "the credential-bearing OpenRouter shape parses but generated lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::OpenRouter),
+                check: Check::Fixture(FixtureCase::OpenRouter),
             },
             Scenario {
                 id: "V0-INFERENCE-OLLAMA",
@@ -570,7 +570,7 @@ mod tests {
                     ISSUE_12038,
                     "managed Ollama parses but generated standalone lifecycle qualification is pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::ManagedOllama),
+                check: Check::Fixture(FixtureCase::ManagedOllama),
             },
             Scenario {
                 id: "V0-INFERENCE-VLLM",
@@ -599,7 +599,7 @@ mod tests {
                     ISSUE_12038,
                     "the service graph parses but generated profile selection and live qualification are pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::ManagedVllm),
+                check: Check::Fixture(FixtureCase::ManagedVllm),
             },
             Scenario {
                 id: "V0-INFERENCE-LLAMACPP",
@@ -615,7 +615,7 @@ mod tests {
                     ISSUE_12035,
                     "the illustrative llama.cpp service backend is not accepted by the V1 provider schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::LlamaCppService),
+                check: Check::Mutation(Mutation::LlamaCppService),
             },
             Scenario {
                 id: "V0-INFERENCE-CREDENTIALS",
@@ -631,7 +631,7 @@ mod tests {
                     ISSUE_12029,
                     "V1 authors credential references but standalone commands do not yet fulfill them",
                 ),
-                evidence: Evidence::Authoring(AuthoringCase::OpenClawCompletions),
+                check: Check::Authoring(AuthoringCase::OpenClawCompletions),
             },
             Scenario {
                 id: "V0-INFERENCE-GEMINI",
@@ -647,7 +647,7 @@ mod tests {
                     ISSUE_12035,
                     "the illustrative Gemini provider shape is a proposal and is rejected by the V1 parser",
                 ),
-                evidence: Evidence::Mutation(Mutation::GeminiProvider),
+                check: Check::Mutation(Mutation::GeminiProvider),
             },
             Scenario {
                 id: "V0-PROFILE-PROVENANCE",
@@ -663,7 +663,7 @@ mod tests {
                     ISSUE_12035,
                     "the proposed servingProfile field is not accepted V1 schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::ServingProfileProvenance),
+                check: Check::Mutation(Mutation::ServingProfileProvenance),
             },
             Scenario {
                 id: "V0-INFERENCE-MODEL-ROUTER",
@@ -679,7 +679,7 @@ mod tests {
                     ISSUE_12035,
                     "the illustrative modelRouter declaration is not an accepted V1 schema shape",
                 ),
-                evidence: Evidence::Mutation(Mutation::ModelRouter),
+                check: Check::Mutation(Mutation::ModelRouter),
             },
             Scenario {
                 id: "V0-RUNTIME-PODMAN",
@@ -690,10 +690,7 @@ mod tests {
                 v0_behavior: "select Docker or native Podman for managed gateway and sandbox execution",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
-                    FixtureCase::Podman,
-                    Qualification::PodmanRuntime,
-                ),
+                check: Check::QualifiedFixture(FixtureCase::Podman, Qualification::PodmanRuntime),
             },
             Scenario {
                 id: "V0-RUNTIME-GPU-CONTROLS",
@@ -717,7 +714,7 @@ mod tests {
                     ISSUE_12036,
                     "the illustrative sandbox runtime GPU declaration is not accepted V1 schema; managed inference-service hardware is not equivalent",
                 ),
-                evidence: Evidence::Mutation(Mutation::GpuIntent),
+                check: Check::Mutation(Mutation::GpuIntent),
             },
             Scenario {
                 id: "V0-RUNTIME-RESOURCE-SIZING",
@@ -733,7 +730,7 @@ mod tests {
                     ISSUE_12036,
                     "the illustrative sandbox resource declaration is not accepted V1 schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::SandboxResources),
+                check: Check::Mutation(Mutation::SandboxResources),
             },
             Scenario {
                 id: "V0-INFERENCE-OLLAMA-PROXY-PORT",
@@ -749,7 +746,7 @@ mod tests {
                     ISSUE_12038,
                     "V1 parses the selected port in the referenced Ollama proxy service endpoint but V0-to-V1 authoring and generated lifecycle qualification are pending",
                 ),
-                evidence: Evidence::Fixture(FixtureCase::OllamaProxy),
+                check: Check::Fixture(FixtureCase::OllamaProxy),
             },
             Scenario {
                 id: "V0-RUNTIME-GATEWAY-PORT",
@@ -760,7 +757,7 @@ mod tests {
                 v0_behavior: "choose the local gateway endpoint port",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::Podman,
                     Qualification::GatewayEndpointLifecycle,
                 ),
@@ -779,7 +776,7 @@ mod tests {
                     ISSUE_12036,
                     "the proposed runtime.hostMounts field is not accepted V1 schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::HostMounts),
+                check: Check::Mutation(Mutation::HostMounts),
             },
             Scenario {
                 id: "V0-TOOLS-OBSERVABILITY",
@@ -805,7 +802,7 @@ mod tests {
                 v0_behavior: "preserve multi-agent model choices, explicit policy, tool presentation, and trace export",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::FullFeatured,
                     Qualification::ToolsObservabilityLifecycle,
                 ),
@@ -831,7 +828,7 @@ mod tests {
                     ISSUE_12042,
                     "the illustrative Hermes authentication, tool-gateway, and placeholder intent is not accepted V1 schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::HermesProviderTools),
+                check: Check::Mutation(Mutation::HermesProviderTools),
             },
             Scenario {
                 id: "V0-INTERFACES-DASHBOARD",
@@ -846,7 +843,7 @@ mod tests {
                 v0_behavior: "publish the agent dashboard or control UI on an explicit host port",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::Dashboard,
                     Qualification::DashboardLifecycle,
                 ),
@@ -860,7 +857,7 @@ mod tests {
                 v0_behavior: "publish the Hermes OpenAI-compatible API on an explicit reserved port",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::HermesInterfaces,
                     Qualification::HermesInterfacesLifecycle,
                 ),
@@ -874,7 +871,7 @@ mod tests {
                 v0_behavior: "preserve an explicit sandbox proxy while requiring policy review for private destinations",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::FullFeatured,
                     Qualification::ProxyPolicyLifecycle,
                 ),
@@ -896,7 +893,7 @@ mod tests {
                     ISSUE_12036,
                     "the illustrative trusted-private-host allowlist is not accepted V1 network schema and cannot be reduced to an ordinary public endpoint rule",
                 ),
-                evidence: Evidence::Mutation(Mutation::TrustedPrivateHosts),
+                check: Check::Mutation(Mutation::TrustedPrivateHosts),
             },
             Scenario {
                 id: "V0-INTEGRATION-WEB-SEARCH",
@@ -907,7 +904,7 @@ mod tests {
                 v0_behavior: "attach a credentialed web-search provider to selected agents",
                 disposition: DispositionKind::Representable,
                 gap: None,
-                evidence: Evidence::QualifiedFixture(
+                check: Check::QualifiedFixture(
                     FixtureCase::WebSearch,
                     Qualification::WebSearchLifecycle,
                 ),
@@ -926,7 +923,7 @@ mod tests {
                     ISSUE_12040,
                     "the illustrative Tavily integration is rejected because the accepted V1 provider enum contains only Brave",
                 ),
-                evidence: Evidence::Mutation(Mutation::TavilyWebSearch),
+                check: Check::Mutation(Mutation::TavilyWebSearch),
             },
             Scenario {
                 id: "V0-INTEGRATION-MESSAGING",
@@ -958,7 +955,7 @@ mod tests {
                     ISSUE_12037,
                     "the proposed sandbox.channels field is not accepted V1 schema",
                 ),
-                evidence: Evidence::Mutation(Mutation::MessagingChannels),
+                check: Check::Mutation(Mutation::MessagingChannels),
             },
             Scenario {
                 id: "V0-WORKFLOW-RECOVERY",
@@ -983,9 +980,9 @@ mod tests {
                     "GAP-V0-WORKFLOW-RECOVERY",
                     Boundary::ProductScope,
                     ISSUE_12032,
-                    "the complete V1 onboarding journey must decide how desired-state apply recovery surfaces in onboarding",
+                    "the complete V1 onboarding workflow must decide how desired-state apply recovery surfaces in onboarding",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-WORKFLOW-DEFER-ONBOARDING",
@@ -999,9 +996,9 @@ mod tests {
                     "GAP-V0-WORKFLOW-DEFER-ONBOARDING",
                     Boundary::ProductScope,
                     ISSUE_12032,
-                    "the composed V1 installation and onboarding journey must decide whether deferred authoring is a supported workflow",
+                    "the composed V1 installation and onboarding workflow must decide whether deferred authoring is a supported workflow",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-WORKFLOW-EXPRESS-OPT-OUT",
@@ -1017,7 +1014,7 @@ mod tests {
                     ISSUE_12032,
                     "V1 onboarding must decide whether installer admission profiles belong in desired-state authoring",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-DEFAULTS-POLICY-TOOLS-OBSERVABILITY",
@@ -1033,7 +1030,7 @@ mod tests {
                     ISSUE_12032,
                     "V1 explicit policy and authoring defaults do not currently define a lossless mapping for the V0 balanced and suggested defaults",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-WORKFLOW-FIREWALL-REPAIR",
@@ -1049,7 +1046,7 @@ mod tests {
                     ISSUE_12022,
                     "V1 desired-state authoring is host-read-only and does not own mutation of host firewall policy",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-WORKFLOW-EVENTS",
@@ -1063,9 +1060,9 @@ mod tests {
                     "GAP-V0-WORKFLOW-EVENTS",
                     Boundary::ProductScope,
                     ISSUE_12032,
-                    "the composed V1 journey has not accepted an onboarding event protocol",
+                    "the composed V1 workflow has not accepted an onboarding event protocol",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-WORKFLOW-EXTERNAL-COMPONENT",
@@ -1081,7 +1078,7 @@ mod tests {
                     ISSUE_12022,
                     "external component enrollment is an imperative gateway workflow rather than deployment authoring intent",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-CUSTOM-IMAGE",
@@ -1097,7 +1094,7 @@ mod tests {
                     ISSUE_12022,
                     "V1 authors desired state and consumes qualified immutable images; onboarding does not own arbitrary image builds",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-APF-INTERCEPTOR",
@@ -1113,7 +1110,7 @@ mod tests {
                     ISSUE_12022,
                     "V1 desired state requires declared policy intent and does not claim external policy provenance",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
             Scenario {
                 id: "V0-AGENT-NEMOCUA",
@@ -1129,7 +1126,7 @@ mod tests {
                     ISSUE_12022,
                     "candidate Computer Use support requires a separate accepted V1 scope decision",
                 ),
-                evidence: Evidence::None,
+                check: Check::None,
             },
         ]
     }
@@ -1761,26 +1758,23 @@ mod tests {
                 }
                 (_, None) => panic!("{} requires a stable owned gap", scenario.id),
             }
-            match (scenario.disposition, scenario.evidence) {
-                (DispositionKind::Representable, Evidence::Authoring(case))
-                | (DispositionKind::ParsedDownstream, Evidence::Authoring(case)) => {
+            match (scenario.disposition, scenario.check) {
+                (DispositionKind::Representable, Check::Authoring(case))
+                | (DispositionKind::ParsedDownstream, Check::Authoring(case)) => {
                     let output = authored(case);
                     assert!(output.yaml().len() as u64 <= MAX_DOCUMENT_BYTES);
                     let reparsed = Document::parse(output.yaml().as_bytes()).unwrap();
                     assert_eq!(&reparsed, output.document(), "{}", scenario.id);
                     assert_authoring(case, &reparsed);
                 }
-                (DispositionKind::ParsedDownstream, Evidence::Fixture(case)) => {
+                (DispositionKind::ParsedDownstream, Check::Fixture(case)) => {
                     let bytes = fixture(case);
                     let document = Document::parse(bytes.as_slice()).unwrap_or_else(|error| {
                         panic!("{} must remain parser-accepted: {error}", scenario.id)
                     });
                     assert_fixture(case, &document);
                 }
-                (
-                    DispositionKind::Representable,
-                    Evidence::QualifiedFixture(case, qualification),
-                ) => {
+                (DispositionKind::Representable, Check::QualifiedFixture(case, qualification)) => {
                     let bytes = fixture(case);
                     let document = Document::parse(bytes.as_slice()).unwrap_or_else(|error| {
                         panic!("{} must remain parser-accepted: {error}", scenario.id)
@@ -1790,7 +1784,7 @@ mod tests {
                 }
                 (
                     DispositionKind::ParseRejected | DispositionKind::ProposedShapeRejected,
-                    Evidence::Mutation(mutation),
+                    Check::Mutation(mutation),
                 ) => {
                     let yaml = mutated_yaml(mutation);
                     assert!(
@@ -1801,10 +1795,10 @@ mod tests {
                 }
                 (
                     DispositionKind::IntentionallyNotTargeted | DispositionKind::ScopeDecision,
-                    Evidence::None,
+                    Check::None,
                 ) => {}
                 _ => panic!(
-                    "{} has evidence inconsistent with its disposition",
+                    "{} has a check inconsistent with its disposition",
                     scenario.id
                 ),
             }

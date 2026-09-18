@@ -61,7 +61,7 @@ impl OllamaBackend {
                 self.engine.observe_ollama_removal(&spec, id).await?
             } else if apply {
                 if field("running")? != "true" {
-                    return Err(Error::Conflict("this slice declares Ollama running"));
+                    return Err(Error::Conflict("managed Ollama requires running = true"));
                 }
                 Some(self.engine.ensure_ollama(&spec, id).await?)
             } else {

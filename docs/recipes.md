@@ -46,7 +46,7 @@ An optional `snapshot` carries the exact model file manifest, including sizes an
 Otherwise the shared downloader resolves the pinned repository and revision.
 An optional `reuse` names an existing snapshot directory relative to `/data` and a previous preparation key.
 
-It is an explicit cache import, not permission to accept old verification evidence.
+The runtime verifies imported files again before recording the new preparation as complete.
 The inline Qwen example uses these fields to reuse its earlier snapshot and packed bytes.
 
 ## Execution Protocol
@@ -83,14 +83,14 @@ Verification independently checks those candidates and returns JSON on stdout:
 
 Names are relative to the staging directory.
 Duplicate names, traversal, symlinked output paths, incomplete hashes, and output beyond the declared byte budget fail verification.
-The runtime independently hashes the listed files, records their metadata, and publishes a completion receipt through a directory rename.
+The runtime independently hashes the listed files, records their metadata, and publishes a completion record through a directory rename.
 
 It limits protocol output to 1 MiB and each tool invocation to eight hours.
 Tool logs belong on stderr.
 Cancellation terminates the owned process group and retains staged data.
 
 The preparation key includes the pinned model identity and inline recipe contract.
-Unchanged apply checks the existing completion receipt and file metadata without invoking the tools.
+Unchanged apply checks the existing completion record and file metadata without invoking the tools.
 Changed or incomplete published data fails observation; it is not treated as absent or silently rebuilt.
 
 ## Plan, Apply and Retention
@@ -99,7 +99,7 @@ Plan validates declarations and observes hardware, state, and retained files.
 It never runs preparation or verification executables.
 Apply checks the pinned image capabilities and packaged files, downloads or reuses the snapshot, prepares and verifies data, then starts vLLM through the shared supervisor.
 
-The Qwen adapter can hard-link earlier packed data into staging and verify it before accepting a new receipt.
+The Qwen adapter can hard-link earlier packed data into staging for verification before the runtime saves a new completion record.
 This avoids repacking while preserving the old published files.
 The model-specific orphan-recovery rule remains in that adapter, not the shared preparation lifecycle.
 
@@ -117,4 +117,4 @@ Recipe declarations are trusted deployment input, and the pinned runtime image m
 The executable hash is an additional identity check, not a sandbox for recipe code.
 Recipe authors must version the contract when preparation semantics change, including changes to helper code used by their executable.
 
-The complete declaration participates in the preparation key, so even serving-only edits currently select a new receipt.
+The complete declaration participates in the preparation key, so even serving-only edits currently change that key.

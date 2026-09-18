@@ -481,10 +481,10 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     )
     .unwrap();
     value["spec"]["gateway"]["endpoint"] = serde_json::json!(fixture.endpoint);
-    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle", "provider":"openai", "endpoint":"http://172.20.0.1:19999/v1"}));
+    value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"hosted", "provider":"openai", "endpoint":"http://172.20.0.1:19999/v1"}));
     let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = serde_json::json!("primary");
-    inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart-model"}}));
+    inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart-model"}}));
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
@@ -522,7 +522,7 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
             .spec
             .as_mut()
             .unwrap();
-        assert_eq!(sandbox.providers, vec!["local", "oracle"]);
+        assert_eq!(sandbox.providers, vec!["local", "hosted"]);
         sandbox.providers.pop();
     }
     assert!(client.read("sandbox", &row, false).await.is_err());

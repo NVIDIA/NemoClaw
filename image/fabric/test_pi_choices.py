@@ -24,7 +24,7 @@ class PiChoices(unittest.TestCase):
             }
 
         fast = choice("local", "fast", "https://local.example/v1", 128)
-        smart = choice("oracle", "smart", "https://oracle.example/v1", 1024)
+        smart = choice("hosted", "smart", "https://hosted.example/v1", 1024)
         inference = {
             **{k: v for k, v in fast.items() if k != "pi"},
             "agents": [
@@ -38,7 +38,7 @@ class PiChoices(unittest.TestCase):
         self.assertEqual(config["models"]["default"], config["models"]["route_fast"])
         self.assertEqual(config["models"]["route_smart"]["model"], "smart")
         self.assertEqual(
-            config["models"]["route_smart"]["api_key_env"], "NEMOCLAW_INFERENCE_ORACLE_KEY"
+            config["models"]["route_smart"]["api_key_env"], "NEMOCLAW_INFERENCE_HOSTED_KEY"
         )
         self.assertEqual(
             config["models"]["route_smart"]["settings"]["model_metadata"]["maxTokens"], 1024

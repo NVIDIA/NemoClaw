@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(endpoint.path, "/v1/**");
         assert_eq!(endpoint.protocol, "rest");
         assert!(endpoint.allowed_ips.contains(&"172.20.0.1/32".to_string()));
-        let other = definition("oracle", "https://api.example.com/v1", "anthropic", true).unwrap();
+        let other = definition("hosted", "https://api.example.com/v1", "anthropic", true).unwrap();
         assert_ne!(
             other.credentials[0].env_vars,
             profile.credentials[0].env_vars

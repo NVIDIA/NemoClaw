@@ -106,20 +106,20 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
     let mut provider = value["spec"]["inferenceProviders"][0].clone();
-    provider["name"] = json!("oracle");
-    provider["endpoint"] = json!("https://oracle.example/v1");
-    provider["credential"] = json!({"env":"ORACLE_KEY"});
+    provider["name"] = json!("hosted");
+    provider["endpoint"] = json!("https://hosted.example/v1");
+    provider["credential"] = json!({"env":"HOSTED_KEY"});
     value["spec"]["inferenceProviders"]
         .as_array_mut()
         .unwrap()
         .push(provider);
     let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
-    let mut oracle = inference["routes"][0].clone();
-    oracle["name"] = json!("smart");
-    oracle["providerRef"] = json!("oracle");
-    oracle["overrides"]["model"] = json!("custom-smart");
-    oracle["overrides"]["piModel"]["maxTokens"] = json!(4096);
-    inference["routes"].as_array_mut().unwrap().push(oracle);
+    let mut hosted = inference["routes"][0].clone();
+    hosted["name"] = json!("smart");
+    hosted["providerRef"] = json!("hosted");
+    hosted["overrides"]["model"] = json!("custom-smart");
+    hosted["overrides"]["piModel"]["maxTokens"] = json!(4096);
+    inference["routes"].as_array_mut().unwrap().push(hosted);
     inference["default"] = json!("primary");
     let doc = Document::parse(value.to_string().as_bytes()).expect("Pi supports model choices");
     let generations: Generations = ["workspace", "provider", "sandbox"]
@@ -135,7 +135,7 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     assert_eq!(choices["smart"]["pi"]["piModel"]["maxTokens"], 4096);
     assert_eq!(
         choices["smart"]["connection"]["api_key_env"],
-        "NEMOCLAW_INFERENCE_ORACLE_KEY"
+        "NEMOCLAW_INFERENCE_HOSTED_KEY"
     );
     assert_eq!(
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),

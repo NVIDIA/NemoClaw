@@ -15,7 +15,7 @@ Keeping those details in a compiled recipe enum made adding or changing a model 
 
 The [inline declaration](https://github.com/NVIDIA/NemoClaw/commit/b71671aa33) moved those requirements into a versioned contract.
 The [execution protocol](https://github.com/NVIDIA/NemoClaw/commit/5585add1e7) lets the runtime invoke pinned image executables with structured JSON.
-The later [compatibility removal](https://github.com/NVIDIA/NemoClaw/commit/c9bf619774) deleted the built-in model backend and old receipt reader.
+The later [compatibility removal](https://github.com/NVIDIA/NemoClaw/commit/c9bf619774) deleted the built-in model backend and old completion record reader.
 
 The runtime image supplies executable code; the YAML identifies that code and declares what it needs.
 The artifact's verifier decides whether prepared files are meaningful for its model.
@@ -25,8 +25,8 @@ Both checks are necessary: a matching file hash alone cannot prove that a model-
 ## Verify Before Publishing Prepared Data
 
 Preparation can take hours or leave partial output after interruption.
-The runtime therefore uses a staging directory and publishes a completion receipt only after verification.
-The receipt records the preparation identity and verified files so later observations can check retained data without rerunning the tools.
+The runtime therefore uses a staging directory and publishes a completion record only after verification.
+The completion record contains the preparation identity and verified files so later observations can check retained data without rerunning the tools.
 
 The diagram shows where candidate files become a published preparation:
 
@@ -34,13 +34,13 @@ The diagram shows where candidate files become a published preparation:
 flowchart TD
     Contract[Validate declaration and pinned image tools] --> Snapshot[Resolve or reuse pinned snapshot]
     Snapshot --> Existing{Published preparation exists?}
-    Existing -->|yes| Observe[Check receipt and file metadata]
+    Existing -->|yes| Observe[Check completion record and file metadata]
     Observe -->|valid| Serve[Start backend with verified paths]
     Observe -->|invalid| Stop[Stop; retain data for diagnosis]
     Existing -->|no| Stage[Prepare candidate files in staging]
     Stage --> Verify[Run artifact verifier]
     Verify --> Check[Check paths, sizes, hashes, and byte budget]
-    Check --> Publish[Write receipt and rename staging directory]
+    Check --> Publish[Write completion record and rename staging directory]
     Publish --> Serve
     Stage -. failure or cancellation .-> Retain[Retain unpublished staging data]
     Verify -. failure or cancellation .-> Retain
@@ -53,7 +53,7 @@ The [verification failure tests](https://github.com/NVIDIA/NemoClaw/commit/d14bd
 The current [preparation lifecycle](../../crates/nemoclaw-sdk/src/services/installers/vllm/recipes/preparation.rs) performs the final checks and directory rename.
 
 An explicit cache import follows the same rule.
-It offers old files to the new verifier as candidates; it does not transfer trust from an old receipt.
+It offers old files to the new verifier as candidates; it does not transfer trust from an old completion record.
 The complete declaration participates in the preparation key, so a serving-only edit currently selects a different preparation identity too.
 This favors a single auditable identity over independently versioned preparation and serving contracts.
 
@@ -84,7 +84,7 @@ Image labels declare required capabilities and protocol support.
 Executable invocation uses structured input without shell interpolation or a dynamic library.
 A future file or reference form could resolve into the same inline structure; it is not implemented by this contract.
 
-Recipe receipts and image capabilities use the existing engine-scoped Docker observation boundary.
+Recipe completion records and image capabilities use the existing engine-scoped Docker observation boundary.
 OpenShell refresh and export retain the shared API readers; execution, downloads, and active probes remain direct.
 Adding a collector at the same engine boundary would duplicate that responsibility without moving observations to a new host.
 

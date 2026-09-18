@@ -56,7 +56,7 @@ The [alias-retarget tests](https://github.com/NVIDIA/NemoClaw/commit/5c8936f115)
 
 The client may run on a laptop while the selected engine runs beside a GPU.
 Reading the laptop's `/proc` files would produce valid measurements for the wrong machine.
-The SDK needs both measurements and evidence that they belong to the execution target being checked.
+The SDK must match the measurements to the selected daemon’s identity.
 
 The [SSH host collector](https://github.com/NVIDIA/NemoClaw/commit/853a729490) verifies that its remote Docker context is local and associates measurements with the daemon ID.
 Missing or mismatched observations stop the capacity check; the SDK never substitutes client-host memory or disk measurements.
@@ -71,7 +71,7 @@ Its result does not establish independent physical capacity or separate-host qua
 
 Decision: Accept for execution-target preparation requested by cvillela.
 Keep the existing YAML, resource addresses and binding encodings during connection selection work.
-cvillela owns acceptance; two-engine fixtures and a separately recorded live OpenShell/Podman proof are the validation gates.
+cvillela owns acceptance; two-engine fixtures and a separately recorded live OpenShell/Podman test are the validation gates.
 This does not qualify Podman or remote deployment merely because a Docker-compatible client connects.
 
 A connection alias selects transport details.
@@ -120,17 +120,17 @@ Current apply stops at configuration and readiness; [explicit verification](../i
 
 ### Native Podman Validation
 
-The earlier [external gateway proof](../validation/rust-podman-rootless-linux-arm64.json) used OpenShell `d1155aa70042d3e2ee49dbfa15346b108b7c1d92` and its native Podman driver.
+The earlier [external gateway test](../validation/rust-podman-rootless-linux-arm64.json) used OpenShell `d1155aa70042d3e2ee49dbfa15346b108b7c1d92` and its native Podman driver.
 It uses Podman image volumes, secrets and rootless networking rather than merely substituting a socket in the Docker driver.
 Manual qualification must exercise that driver and record daemon identity behavior by rootless/rootful namespace.
 
-That rootless Linux ARM64 proof exercised the native driver on Podman 4.9.3.
+That rootless Linux ARM64 test exercised the native driver on Podman 4.9.3.
 It accepts the client's v5.0.0 API requests and runs Fabric OpenClaw with inference on the existing Docker host.
 Isolated egress returns a policy denial, while the OpenShell inference route returns an actual agent reply.
 
 Unchanged apply and export/reapply preserve sandbox and hosted-runtime identities.
 
-Two assumptions failed in this proof.
+Two assumptions failed in this test.
 Podman's Docker-compatible `/info.ID` changes across requests to the same API service, so it cannot back our durable execution-target binding.
 Podman resource support needs a separately qualified, persistent namespace identity; do not derive it from a socket, hostname or this compatibility field.
 
@@ -141,7 +141,7 @@ Sandbox deletion now has a bounded 90-second budget; ordinary reads remain bound
 The failed first deletion retained state, and an explicit destroy reconciled confirmed absence.
 
 No automatic mutation retry was added.
-The live proof and a delayed-delete fixture protect the correction.
+The live test and a delayed-delete fixture protect the correction.
 
 This result covers an external native OpenShell gateway and rootless Podman sandboxes on this Linux host.
 That earlier result did not qualify managed Podman resources.
@@ -152,17 +152,17 @@ See the [Podman evidence](../validation/rust-podman-rootless-linux-arm64.json).
 
 ### SSH Transport Validation
 
-The next transport slice accepts explicit `ssh://user@host:port` Docker endpoints in the SDK.
+The SSH transport accepts explicit `ssh://user@host:port` Docker endpoints in the SDK.
 It uses OpenSSH and `docker system dial-stdio`, requires existing host trust, and does not retry mutations.
 Remote capacity defaults to unavailable; selecting SSH never assigns the local host collector.
 
 Real loopback SSH tests exercise daemon identity, absence, denied authentication/host trust and artifact upload/download.
 They qualify the transport, not remote provisioning, network reachability between hosts, or remote GPU observation.
-No engine-selection YAML or inference tunnel is introduced by this slice.
+No engine-selection YAML or inference tunnel is introduced by this change.
 
 ### Independent Inference Placement
 
-The remote-model slice accepts independent service placement and publication.
+Managed model services accept independent service placement and publication.
 Decision: Accept for independent inference placement requested by cvillela.
 cvillela owns acceptance and the separate-host qualification gate.
 A service's placement selects a Docker SSH connection and private container network.
@@ -213,7 +213,7 @@ Explicit apply completed the snapshot without replacing the container.
 No-op and export/reapply preserved model-file timestamps and runtime bindings.
 
 Transport failure and retargeting the same SSH alias to the original daemon stopped plan and preserved state bytes, despite identically named, owned fixtures on both engines.
-Destroy touched only the selected engine and retained the model volume and completion receipt.
+Destroy touched only the selected engine and retained the model volume and completion record.
 
 The resident supervisor also handled its explicit protection-trip signal after the CLI exited, stopped inference without an automatic restart, and recovered on explicit apply with the same container and model data.
 Memory-threshold behavior remains covered by fixtures; the live test did not exhaust host memory.

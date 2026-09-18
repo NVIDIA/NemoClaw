@@ -70,17 +70,17 @@ async fn interrupted_snapshot_resumes_confirmed_range_and_unchanged_apply_downlo
         std::fs::read(dir.path().join("weights.bin.nemoclaw-partial")).unwrap(),
         b"ri"
     );
-    let receipt = client
+    let completion = client
         .ensure(dir.path(), &model, &cancel, &|_| {})
         .await
         .unwrap();
-    assert_eq!(receipt, observe(dir.path(), &model).unwrap());
+    assert_eq!(completion, observe(dir.path(), &model).unwrap());
     assert_eq!(
         client
             .ensure(dir.path(), &model, &cancel, &|_| {})
             .await
             .unwrap(),
-        receipt
+        completion
     );
     server.await.unwrap();
     let requests = requests.lock().unwrap();
@@ -140,7 +140,7 @@ async fn corrupted_established_files_are_retained_without_download() {
     );
 }
 #[test]
-fn manifest_rejects_path_and_receipt_collisions() {
+fn manifest_rejects_path_and_reserved_metadata_collisions() {
     for name in [
         "../weights",
         "a/../weights",
@@ -213,8 +213,8 @@ async fn snapshot_bounds_parallel_streams_and_retains_manifest_order() {
         assert!(arrivals.try_recv().is_err());
         permits.add_permits(8);
     };
-    let (receipt, ()) = tokio::join!(work, gate);
-    assert_eq!(receipt.unwrap(), observe(dir.path(), &model).unwrap());
+    let (completion, ()) = tokio::join!(work, gate);
+    assert_eq!(completion.unwrap(), observe(dir.path(), &model).unwrap());
     server.await.unwrap();
 }
 #[tokio::test]

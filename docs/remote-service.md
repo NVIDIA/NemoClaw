@@ -32,7 +32,7 @@ nemoclaw plan --state-dir .local/remote examples/spark/remote-vllm.yaml
 nemoclaw apply --state-dir .local/remote examples/spark/remote-vllm.yaml
 ```
 
-Apply creates retained model storage and the inference network/container on the SSH target, checks preparation receipts and readiness there, then configures the sandbox's OpenShell route.
+Apply creates retained model storage and the inference network/container on the SSH target, checks preparation completion records and readiness there, then configures the sandbox's OpenShell route.
 Plan reads remote capacity and resource state without creating runtime resources.
 Changing a bound engine endpoint requires migration and is rejected.
 

@@ -309,7 +309,7 @@ The experiment checks ordered invocations and trace artifacts against local prot
 Use [the Relay fixture procedure](testing/fixtures.md#hermes-relay-tracing-fixture) to reproduce those checks without a live endpoint.
 
 The current image recipe pins Hermes 0.21.0 and Relay 0.7.3, matching the Fabric adapter's declared Relay range.
-Treat this as a tracing proof, not the production Relay 0.8 path.
+This experimental tracing integration does not use Relay 0.8.
 Production migration remains gated on a released Fabric adapter compatible with the released Hermes and Relay tuple, followed by the normal security and live end-to-end qualification.
 
 ## Define and Attach Integrations

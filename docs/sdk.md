@@ -141,7 +141,7 @@ The remote user must be able to run Docker against the intended daemon.
 
 Host keys must already be trusted.
 Authentication is noninteractive and uses OpenSSH configuration, keys or its agent.
-Passwords in URLs, remote socket paths, URL options and IPv6 literals are not supported in this slice; an SSH config alias can select the host.
+Passwords in URLs, remote socket paths, URL options and IPv6 literals are not supported; an SSH config alias can select the host.
 
 Each API request has its own SSH connection, with a 10-second connection timeout and a 120-second transport bound.
 There is no connection pool or automatic mutation retry.
@@ -152,7 +152,7 @@ Supply a typed `HostObserver` with `with_host_observer` when remote measurements
 Existing engine ID and resource ownership checks apply to observations obtained over SSH.
 
 Managed service placement now selects this transport independently of the OpenShell gateway.
-For an explicit SSH service, both SDK preflight and the provider subprocess use the fixed `SshHost` collector, unless an in-process SDK caller supplies its own observer.
+For an explicit SSH service, both SDK runtime validation and the provider subprocess use the fixed `SshHost` collector, unless an in-process SDK caller supplies its own observer.
 Plain `Engine::connect` retains the unavailable default.
 
 The collector reads the SSH host's Linux memory, NVIDIA inventory and Docker storage filesystem, rejects a Docker context pointing to another host, and tags measurements with the daemon identity for comparison.

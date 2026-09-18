@@ -94,7 +94,7 @@ Sandbox image changes require the [separate-deployment path](#choose-the-change-
 Keep the original bundle and state for existing deployments.
 
 Supported health with not-ready or unknown readiness fails apply and retains resources.
-The SDK returns structured health evidence; the CLI writes it as JSON to stderr with exit status 1.
+The SDK returns structured health observations; the CLI writes them as JSON to stderr with exit status 1.
 Transport failures and malformed reports also fail rather than becoming healthy or unsupported.
 Keep the state directory, inspect the failure, and explicitly reapply the same configuration after recovery.
 The report is an observation at its recorded time, not a promise of future availability or successful tasks.

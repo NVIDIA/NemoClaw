@@ -46,7 +46,8 @@ pub struct VerifiedFile {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Receipt {
+/// Manifest identity and verified file metadata saved in `.nemoclaw-complete.json`.
+pub struct CompletionRecord {
     pub manifest: String,
     pub files: Vec<VerifiedFile>,
 }
@@ -155,28 +156,28 @@ fn safe_path(root: &Path, relative: &str, create: bool) -> Result<PathBuf, Error
     }
     Ok(directory.join(file))
 }
-pub fn observe(directory: &Path, manifest: &Manifest) -> Result<Receipt, Error> {
+pub fn observe(directory: &Path, manifest: &Manifest) -> Result<CompletionRecord, Error> {
     manifest.validate()?;
     let marker = safe_path(directory, ".nemoclaw-complete.json", false)?;
     if !fs::symlink_metadata(&marker).is_ok_and(|m| m.is_file()) {
-        return Err(failure("snapshot completion receipt unavailable"));
+        return Err(failure("snapshot completion record unavailable"));
     }
-    let receipt: Receipt = serde_json::from_slice(
-        &fs::read(marker).map_err(|_| failure("snapshot completion receipt unavailable"))?,
+    let completion: CompletionRecord = serde_json::from_slice(
+        &fs::read(marker).map_err(|_| failure("snapshot completion record unavailable"))?,
     )
-    .map_err(|_| failure("invalid snapshot completion receipt"))?;
-    if receipt.manifest != manifest.key() || receipt.files.len() != manifest.files.len() {
+    .map_err(|_| failure("invalid snapshot completion record"))?;
+    if completion.manifest != manifest.key() || completion.files.len() != manifest.files.len() {
         return Err(failure(
             "snapshot completion conflicts with pinned manifest",
         ));
     }
-    for (verified, file) in receipt.files.iter().zip(&manifest.files) {
+    for (verified, file) in completion.files.iter().zip(&manifest.files) {
         let path = safe_path(directory, &file.name, false)?;
         if verified.file != *file || modified(&path, file.size)? != verified.modified {
             return Err(failure("verified model snapshot changed or is incomplete"));
         }
     }
-    Ok(receipt)
+    Ok(completion)
 }
 
 pub struct Client {
@@ -228,13 +229,13 @@ impl Client {
         manifest: &Manifest,
         cancel: &CancellationToken,
         progress: &(dyn Fn(&str) + Sync),
-    ) -> Result<Receipt, Error> {
+    ) -> Result<CompletionRecord, Error> {
         manifest.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        if let Ok(receipt) = observe(directory, manifest) {
-            return Ok(receipt);
+        if let Ok(completion) = observe(directory, manifest) {
+            return Ok(completion);
         }
         let work = futures_util::stream::iter(manifest.files.iter().enumerate())
             .map(|(index, file)| async move {
@@ -265,12 +266,12 @@ impl Client {
             .try_collect::<Vec<_>>();
         let mut files = tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=work=>result? };
         files.sort_by_key(|(index, _)| *index);
-        let receipt = Receipt {
+        let completion = CompletionRecord {
             manifest: manifest.key(),
             files: files.into_iter().map(|(_, file)| file).collect(),
         };
-        save_json(&directory.join(".nemoclaw-complete.json"), &receipt)?;
-        Ok(receipt)
+        save_json(&directory.join(".nemoclaw-complete.json"), &completion)?;
+        Ok(completion)
     }
     async fn ensure_file(
         &self,

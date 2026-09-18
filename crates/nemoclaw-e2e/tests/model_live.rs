@@ -110,9 +110,9 @@ async fn exercise(fresh: bool) {
     let observed = engine.observe_runtime(&spec, &id).await.unwrap().unwrap();
     engine.verify_artifacts(&observed).await.unwrap();
     let model = format!("/data/{}", huggingface::directory(desired));
-    let receipt_path = format!("{model}/.nemoclaw-complete.json");
-    let receipt = engine
-        .read_file(&observed.container_id, &receipt_path, 1 << 20)
+    let completion_path = format!("{model}/.nemoclaw-complete.json");
+    let completion = engine
+        .read_file(&observed.container_id, &completion_path, 1 << 20)
         .await
         .unwrap()
         .unwrap();
@@ -153,11 +153,11 @@ async fn exercise(fresh: bool) {
     assert_eq!(bindings(&directory), before);
     assert_eq!(
         engine
-            .read_file(&observed.container_id, &receipt_path, 1 << 20)
+            .read_file(&observed.container_id, &completion_path, 1 << 20)
             .await
             .unwrap()
             .unwrap(),
-        receipt
+        completion
     );
     // Safe operator trip exercises the resident guard without exhausting memory.
     assert!(
@@ -203,11 +203,11 @@ async fn exercise(fresh: bool) {
     assert_eq!(bindings(&directory), before);
     assert_eq!(
         engine
-            .read_file(&observed.container_id, &receipt_path, 1 << 20)
+            .read_file(&observed.container_id, &completion_path, 1 << 20)
             .await
             .unwrap()
             .unwrap(),
-        receipt
+        completion
     );
     deployment.destroy(&cancel).await.unwrap();
     // Refresh rejects a missing bound container to prevent accidental recreation.

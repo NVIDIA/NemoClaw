@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Generic preparation protocol and durable completion receipts.
+//! Generic preparation protocol and durable completion records.
 use super::super::Service;
 use super::inline::{InlineRecipe, relative};
 use crate::{
@@ -35,7 +35,8 @@ pub trait Runner: Send + Sync {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Completion {
+/// Preparation identity and verified file metadata saved in `complete.json`.
+pub struct CompletionRecord {
     pub key: String,
     pub files: Vec<VerifiedFile>,
 }
@@ -45,19 +46,19 @@ pub struct Verification {
     pub files: Vec<File>,
 }
 fn invalid() -> Error {
-    Error::State("recipe preparation evidence is incomplete or changed")
+    Error::State("recipe preparation is incomplete or changed")
 }
-pub fn validate_receipt(
+pub fn validate_completion(
     recipe: &InlineRecipe,
     key: &str,
-    receipt: &Completion,
+    completion: &CompletionRecord,
 ) -> Result<(), Error> {
-    if receipt.key != key || receipt.files.is_empty() || receipt.files.len() > 1024 {
+    if completion.key != key || completion.files.is_empty() || completion.files.len() > 1024 {
         return Err(invalid());
     }
     let mut names = BTreeSet::new();
     let mut total = 0u64;
-    for file in &receipt.files {
+    for file in &completion.files {
         let f = &file.file;
         if !relative(&f.name)
             || f.name == "complete.json"
@@ -78,7 +79,7 @@ pub fn validate_receipt(
     }
     Ok(())
 }
-fn observe(root: &Path, recipe: &InlineRecipe, key: &str) -> Result<Completion, Error> {
+fn observe(root: &Path, recipe: &InlineRecipe, key: &str) -> Result<CompletionRecord, Error> {
     if !fs::symlink_metadata(root).is_ok_and(|m| m.is_dir()) {
         return Err(invalid());
     }
@@ -86,17 +87,17 @@ fn observe(root: &Path, recipe: &InlineRecipe, key: &str) -> Result<Completion, 
     if !fs::symlink_metadata(&marker).is_ok_and(|m| m.is_file() && m.len() <= 1 << 20) {
         return Err(invalid());
     }
-    let receipt: Completion =
+    let completion: CompletionRecord =
         serde_json::from_slice(&fs::read(marker).map_err(|_| invalid())?).map_err(|_| invalid())?;
-    validate_receipt(recipe, key, &receipt)?;
-    for file in &receipt.files {
+    validate_completion(recipe, key, &completion)?;
+    for file in &completion.files {
         check_path(root, &file.file.name)?;
         if crate::snapshot::modified(&root.join(&file.file.name), file.file.size)? != file.modified
         {
             return Err(invalid());
         }
     }
-    Ok(receipt)
+    Ok(completion)
 }
 fn check_path(root: &Path, name: &str) -> Result<(), Error> {
     if !relative(name) {
@@ -124,7 +125,7 @@ pub async fn prepare(
     service: &Service,
     runner: &dyn Runner,
     cancel: &CancellationToken,
-) -> Result<Completion, Error> {
+) -> Result<CompletionRecord, Error> {
     service.validate()?;
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -151,19 +152,19 @@ pub async fn prepare(
         if bytes.len() > 1 << 20 {
             return Err(invalid());
         }
-        let evidence: Verification = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-        let mut receipt = Completion {
+        let verification: Verification = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let mut completion = CompletionRecord {
             key: key.clone(),
             files: Vec::new(),
         };
-        for file in evidence.files {
+        for file in verification.files {
             check_path(&staging, &file.name)?;
             let path = staging.join(&file.name);
             let modified = crate::snapshot::modified(&path, file.size)?;
-            receipt.files.push(VerifiedFile { file, modified });
+            completion.files.push(VerifiedFile { file, modified });
         }
-        validate_receipt(recipe, &key, &receipt)?;
-        for verified in &receipt.files {
+        validate_completion(recipe, &key, &completion)?;
+        for verified in &completion.files {
             use sha2::{Digest, Sha256};
             use tokio::io::AsyncReadExt;
             let path = staging.join(&verified.file.name);
@@ -199,7 +200,7 @@ pub async fn prepare(
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        save_json(&staging.join("complete.json"), &receipt)?;
+        save_json(&staging.join("complete.json"), &completion)?;
         fs::rename(&staging, &directory).map_err(|_| invalid())?;
         #[cfg(unix)]
         fs::File::open(root)
