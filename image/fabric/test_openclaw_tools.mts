@@ -13,7 +13,9 @@ for (const agentId of ["reader", "primary"]) {
   const options = {
     api: "openai-completions",
     tuning: {},
-    agents: [agentId === "primary" ? { name: agentId } : { name: agentId, tools: { allow: ["read"] } }],
+    agents: [
+      agentId === "primary" ? { name: agentId } : { name: agentId, tools: { allow: ["read"] } },
+    ],
   };
   const config = JSON.parse(
     execFileSync(

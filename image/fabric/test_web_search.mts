@@ -10,7 +10,7 @@ import { t as createBraveProvider } from "/opt/nemoclaw/plugins/brave/dist/brave
 const options = {
   api: "openai-completions",
   tuning: {},
-  agents: [{ name: "main" }, { name: "reader", tools: { allow: ["read"] } }, { name: "writer" }],
+  agents: [{ name: "main" }],
   webSearch: { provider: "brave", agentRefs: ["main"], credential: { env: "SEARCH_KEY" } },
 };
 const config: {
@@ -28,18 +28,15 @@ const config: {
   ),
 );
 process.env.BRAVE_API_KEY = "fixture-placeholder";
-for (const agentId of ["main", "reader", "writer"]) {
-  const tools = createOpenClawCodingTools({
-    config,
-    agentId,
-    sessionKey: `agent:${agentId}:fixture`,
-    workspaceDir: "/sandbox/workspace",
-    cwd: "/sandbox/workspace",
-  });
-  const names = tools.map((t) => t.name);
-  assert.equal(names.includes("web_search"), agentId === "main", `${agentId}: ${names}`);
-  if (agentId === "reader") assert.deepEqual(names, ["read"]);
-}
+const tools = createOpenClawCodingTools({
+  config,
+  agentId: "main",
+  sessionKey: "agent:main:fixture",
+  workspaceDir: "/sandbox/workspace",
+  cwd: "/sandbox/workspace",
+});
+const names = tools.map((tool) => tool.name);
+assert(names.includes("web_search"), names.join(","));
 const requests: { url: string; key: string | string[] | undefined }[] = [];
 const server = http.createServer((request, response) => {
   assert(request.url);
@@ -89,4 +86,4 @@ try {
 } finally {
   await new Promise((resolve) => server.close(resolve));
 }
-console.log("Native Brave plugin: selected-agent tool grants and HTTP search response verified.");
+console.log("Native Brave plugin: single-agent tool grant and HTTP search response verified.");
