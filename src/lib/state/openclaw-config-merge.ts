@@ -42,6 +42,8 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
+  /** Fresh rebuild owns the generated compaction policy for the selected route. */
+  agentCompactionPath: ["agents", "defaults", "compaction"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -361,6 +363,24 @@ function reconcileAgentPrimaryModel(
   updateMainAgentListModel(agents, freshPrimary);
 }
 
+/** Keep the freshly generated route policy instead of restoring stale build-time defaults. */
+function reconcileAgentCompaction(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const currentAgents = currentConfig.agents;
+  if (!isPlainObject(currentAgents)) return;
+  const currentDefaults = currentAgents.defaults;
+  if (!isPlainObject(currentDefaults)) return;
+  const agents = ensureMergedObject(merged, "agents");
+  const defaults = ensureMergedObject(agents, "defaults");
+  if ("compaction" in currentDefaults) {
+    defaults.compaction = cloneJson(currentDefaults.compaction);
+  } else {
+    delete defaults.compaction;
+  }
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -381,6 +401,7 @@ export function mergeOpenClawRestoredConfig(
   merged.plugins = mergeOpenClawPlugins(backedUpConfig.plugins, currentConfig.plugins);
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
   reconcileAgentPrimaryModel(merged, currentConfig);
+  reconcileAgentCompaction(merged, currentConfig);
 
   return merged;
 }
