@@ -41,6 +41,38 @@ export interface ExpectedState {
   dockerSandboxContainer?: { expected: ExpectedPresence };
 }
 
+export interface NemoClawInstanceManifest {
+  apiVersion: "nemoclaw.io/v1";
+  kind: "NemoClawInstance";
+  metadata: {
+    name: string;
+  };
+  spec: {
+    setup: {
+      install: Record<string, unknown>;
+      runtime: Record<string, unknown>;
+      platform: Record<string, unknown>;
+    };
+    onboarding: {
+      agent: string;
+      provider: string;
+      modelRoute?: string;
+      policyTier?: string;
+      policyMode?: string;
+      policyPresets?: string[];
+      messaging?: string[];
+      features?: Record<string, unknown>;
+      lifecycle?: string;
+      gateway?: Record<string, unknown>;
+    };
+    state?: {
+      workspaceRef?: string;
+      credentialRefs?: string[];
+      [key: string]: unknown;
+    };
+  };
+}
+
 export interface TargetEnvironment {
   platform: string;
   install: string;
@@ -50,12 +82,31 @@ export interface TargetEnvironment {
   lifecycle?: string;
 }
 
+export const CONFIG_EXPORT_EXPECTATIONS = [
+  "required",
+  "expected-refusal",
+  "no-usable-sandbox",
+] as const;
+
+export type ConfigExportExpectation = (typeof CONFIG_EXPORT_EXPECTATIONS)[number];
+
+export const CONFIG_EXPORT_REFUSAL_CATEGORIES = ["unsupported"] as const;
+
+export type ConfigExportRefusalCategory = (typeof CONFIG_EXPORT_REFUSAL_CATEGORIES)[number];
+
+export type ConfigExportContract =
+  | { expectation: "required" }
+  | { expectation: "expected-refusal"; failureCategory: ConfigExportRefusalCategory }
+  | { expectation: "no-usable-sandbox" };
+
 export interface TargetDefinition {
   id: string;
   description: string;
   executionCoverage: E2eExecutionMetadata;
+  manifestPath: string;
   environment: TargetEnvironment;
   expectedStateId: string;
+  configExport: ConfigExportContract;
   requiredSecrets: string[];
   gatewayRuntimes: E2eGatewayRuntimeSupport;
 }

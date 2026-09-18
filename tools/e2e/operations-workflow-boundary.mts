@@ -864,8 +864,23 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
-  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
-    errors.push("live E2E must wait for matrix generation and base-image publication");
+  if (
+    live.with?.openshell_sdk_artifact_name !==
+    "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
+  ) {
+    errors.push("live must consume its reviewed SDK artifact through the standard profile");
+  }
+
+  if (
+    !sameMembers(needs(live), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
+    );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {

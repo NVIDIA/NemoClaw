@@ -535,8 +535,9 @@ The live assertions require `web_fetch` for one fixed public reference, reject `
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
 The typed `live` matrix uses the same workflow, with its existing image dependencies and inference credential guard.
-Typed executions skip the catalogue SDK archive installation and select one registered target in `registry-targets.test.ts`.
+Typed executions install the reviewed SDK archive and select one registered target in `registry-targets.test.ts`.
 They retain their trace sanitization, raw trace cleanup, and explicit artifact allowlist.
+Successful typed executions require `config-export-evidence.v1.json`, which the workflow uploads with their other approved artifacts.
 Each target selects its runner through the catalogue.
 The reusable workflow validates the catalogue plan before candidate checkout.
 It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
@@ -546,8 +547,7 @@ The reusable workflow installs those packages through the pinned host-dependency
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
 A host package or selector alone does not require a dedicated workflow job.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
-The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for catalogue targets.
-Typed targets retain the caller's `checkout_sha` value, which is empty when no alternate checkout is requested.
+The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the resolved candidate commit for catalogue and typed targets.
 TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
 On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.

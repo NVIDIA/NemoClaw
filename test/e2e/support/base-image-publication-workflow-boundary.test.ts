@@ -315,6 +315,20 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
+      "live SDK dependency",
+      (value) => (value.jobs.live.needs = ["base-image-publication", "generate-matrix"]),
+    ],
+    [
+      "live SDK artifact identity",
+      (value) => (value.jobs.live.with!.openshell_sdk_artifact_name = "unreviewed-sdk"),
+    ],
+    [
+      "live missing SDK artifact",
+      (value) => {
+        delete value.jobs.live.with!.openshell_sdk_artifact_name;
+      },
+    ],
+    [
       "live managed-image revision",
       (value) => (value.jobs.live.with!.managed_image_revision = "${{ github.sha }}"),
     ],

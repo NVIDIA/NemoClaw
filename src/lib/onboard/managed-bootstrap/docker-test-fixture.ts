@@ -64,6 +64,7 @@ export type DockerFixtureAcknowledgement =
   | "journal:cutover"
   | "journal:completion"
   | "journal:bootstrap-complete"
+  | "journal:openshell-handoff-complete"
   | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
@@ -85,6 +86,7 @@ export type DockerFixtureOptions = {
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
   readonly completionUnavailablePolls?: number;
+  readonly beforeSharedStateCommit?: () => void;
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
@@ -488,6 +490,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
         case "exec":
           switch (true) {
             case args.includes("--commit-shared-state-transaction"): {
+              options.beforeSharedStateCommit?.();
               const result = options.sharedStateCommitResult ?? ok();
               sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
@@ -577,7 +580,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
         ? { status: 1, stderr: "lost rm acknowledgement" }
         : result;
     }),
-    runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
+    runCaptureOpenshell: vi.fn((args) =>
+      args[1] === "list"
+        ? "alpha  Ready\n"
+        : `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`,
+    ),
     runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };

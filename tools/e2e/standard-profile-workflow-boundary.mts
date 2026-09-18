@@ -363,6 +363,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Delete raw live E2E traces",
     "Summarize artifacts",
     "Write E2E evidence manifest",
+    "Require automatic config export evidence",
     "Upload typed target artifacts",
     "Upload skill-agent artifacts",
     "Upload E2E artifacts",
@@ -768,6 +769,26 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
   }
   const cleanup = requireStep(errors, workflowSteps, "Delete raw live E2E traces");
   const upload = requireStep(errors, workflowSteps, "Upload typed target artifacts");
+  const configExport = requireStep(
+    errors,
+    workflowSteps,
+    "Require automatic config export evidence",
+  );
+  if (
+    !isDeepStrictEqual(configExport, {
+      name: "Require automatic config export evidence",
+      if: `\${{ success() && ${typed} }}`,
+      shell: "bash",
+      env: { TARGET_ID: "${{ inputs.target_id }}" },
+      run: 'test -f "e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json"',
+    }) ||
+    workflowSteps.indexOf(configExport ?? {}) <= workflowSteps.indexOf(execute ?? {}) ||
+    workflowSteps.indexOf(configExport ?? {}) >= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push(
+      "typed targets must require automatic config export evidence after tests and before upload",
+    );
+  }
   const order = [configure, prepare, execute, sanitize, cleanup, upload].map((step) =>
     workflowSteps.indexOf(step ?? {}),
   );
@@ -818,6 +839,7 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
     "environment.result.json",
     "onboarding.result.json",
     "state-validation.result.json",
+    "config-export-evidence.v1.json",
     "dcode-base-image.json",
     "cloud-onboard-trace-timing-summary.json",
     "onboard-progress-budget.json",

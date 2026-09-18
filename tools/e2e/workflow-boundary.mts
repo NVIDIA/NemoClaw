@@ -2613,8 +2613,16 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (asRecord(liveTargets.with).timeout_minutes !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
-  if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("live job must depend on base-image-publication and generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live job must depend on base-image-publication, generate-matrix, and package-openshell-sdk",
+    );
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");
@@ -2639,7 +2647,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     coverage_variant: "${{ matrix.coverage_variant }}",
     runtime_provider: "${{ matrix.runtime_provider }}",
     test_file: "test/e2e/live/registry-targets.test.ts",
-    openshell_sdk_artifact_name: "",
+    openshell_sdk_artifact_name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
     restore_cli: true,
     install_mode: "none",
     install_non_interactive: false,

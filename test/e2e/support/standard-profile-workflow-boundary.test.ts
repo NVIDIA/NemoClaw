@@ -44,6 +44,32 @@ function recordDcodeEvidence(directory: string, candidateSha: string, reference:
 }
 
 describe("standard E2E execution profile", () => {
+  it.each([
+    { mode: "removed check", run: "true" },
+    {
+      mode: "ignored shell failure",
+      run: 'test -f "e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json" || true',
+    },
+    {
+      mode: "printed check",
+      run: "echo 'test -f \"e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json\"'",
+    },
+    { mode: "ignored step failure", "continue-on-error": true },
+    { mode: "disabled check", if: "${{ false }}" },
+  ])("rejects $mode in the config export evidence requirement", ({ mode: _mode, ...mutation }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    const requirement = profile.jobs.run.steps.find(
+      (step) => step.name === "Require automatic config export evidence",
+    )!;
+    Object.assign(requirement, mutation);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed targets must require automatic config export evidence after tests and before upload",
+    );
+  });
+
   it("uploads typed artifacts only after successful execution planning", () => {
     const profile = YAML.parse(
       fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -124,6 +150,22 @@ describe("standard E2E execution profile", () => {
     },
   );
 
+  it.each([
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK archive without package credentials",
+  ])("rejects missing or late SDK preparation: %s", (name) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    );
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toEqual([]);
+    const steps = profile.jobs.run.steps;
+    const index = steps.findIndex((step: { name?: string }) => step.name === name);
+    const [removed] = steps.splice(index, 1);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).not.toEqual([]);
+    steps.push(removed);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).not.toEqual([]);
+  });
+
   it.each(["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"])(
     "rejects %s on a non-execution step",
     (key) => {
@@ -140,26 +182,28 @@ describe("standard E2E execution profile", () => {
     },
   );
 
-  it.each(["onboard-progress-budget.json", "dcode-base-image.json", "raw-traces/"])(
-    "rejects changes to the typed artifact allowlist: %s",
-    (artifact) => {
-      const profile = YAML.parse(
-        fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
-      ) as {
-        jobs: { run: { steps: Array<{ name?: string; with?: { path: string } }> } };
-      };
-      const upload = profile.jobs.run.steps.find(
-        (step) => step.name === "Upload typed target artifacts",
-      )!;
-      upload.with!.path =
-        artifact === "raw-traces/"
-          ? `${upload.with!.path}e2e-artifacts/live/raw-traces/\n`
-          : upload.with!.path.replace(artifact, `${artifact}.backup`);
-      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
-        "typed target artifacts must preserve the reviewed allowlist and execution identity",
-      );
-    },
-  );
+  it.each([
+    "onboard-progress-budget.json",
+    "dcode-base-image.json",
+    "config-export-evidence.v1.json",
+    "raw-traces/",
+  ])("rejects changes to the typed artifact allowlist: %s", (artifact) => {
+    const profile = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as {
+      jobs: { run: { steps: Array<{ name?: string; with?: { path: string } }> } };
+    };
+    const upload = profile.jobs.run.steps.find(
+      (step) => step.name === "Upload typed target artifacts",
+    )!;
+    upload.with!.path =
+      artifact === "raw-traces/"
+        ? `${upload.with!.path}e2e-artifacts/live/raw-traces/\n`
+        : upload.with!.path.replace(artifact, `${artifact}.backup`);
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+      "typed target artifacts must preserve the reviewed allowlist and execution identity",
+    );
+  });
 
   it("rejects DCode base evidence recorded after execution", () => {
     const profile = YAML.parse(

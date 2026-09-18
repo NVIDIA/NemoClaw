@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TargetDefinition } from "../types.ts";
-import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
 import { E2E_GATEWAY_RUNTIMES } from "../../../../tools/e2e/gateway-runtime.mts";
+import { ubuntuRepoManagedRuntime, ubuntuRepoManagedRuntimeLifecycle } from "../matrix.ts";
+import type { TargetDefinition } from "../types.ts";
 
 const TARGETS: readonly TargetDefinition[] = [
   {
@@ -15,8 +15,10 @@ const TARGETS: readonly TargetDefinition[] = [
       environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
+    configExport: { expectation: "required" },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
@@ -29,11 +31,13 @@ const TARGETS: readonly TargetDefinition[] = [
       environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/langchain-deepagents-code-nvidia.yaml",
     environment: ubuntuRepoManagedRuntimeLifecycle(
       "cloud-langchain-deepagents-code",
       "dcode-rebuild-invalid-credential",
     ),
     expectedStateId: "cloud-deepagents-code-ready",
+    configExport: { expectation: "expected-refusal", failureCategory: "unsupported" },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },
@@ -46,8 +50,10 @@ const TARGETS: readonly TargetDefinition[] = [
       environmentOrInferenceEndpoint: "Ubuntu Docker host; local negative fixture",
       unresolvedReason: "",
     },
+    manifestPath: "test/e2e/manifests/openclaw-nvidia-policy-custom-missing-presets.yaml",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
     expectedStateId: "onboarding-failure-policy-presets-required",
+    configExport: { expectation: "required" },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
   },

@@ -769,6 +769,13 @@ jobs:
             }' >"$ARTIFACT_DIRECTORY/evidence-manifest.json"
           chmod 0600 "$ARTIFACT_DIRECTORY/evidence-manifest.json"
 
+      - name: Require automatic config export evidence
+        if: ${{ success() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
+        shell: bash
+        env:
+          TARGET_ID: ${{ inputs.target_id }}
+        run: test -f "e2e-artifacts/live/${TARGET_ID}/config-export-evidence.v1.json"
+
       - name: Upload typed target artifacts
         if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -782,6 +789,7 @@ jobs:
             e2e-artifacts/live/${{ inputs.target_id }}/environment.result.json
             e2e-artifacts/live/${{ inputs.target_id }}/onboarding.result.json
             e2e-artifacts/live/${{ inputs.target_id }}/state-validation.result.json
+            e2e-artifacts/live/${{ inputs.target_id }}/config-export-evidence.v1.json
             e2e-artifacts/live/${{ inputs.target_id }}/dcode-base-image.json
             e2e-artifacts/live/${{ inputs.target_id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/${{ inputs.target_id }}/onboard-progress-budget.json

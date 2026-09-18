@@ -9,7 +9,11 @@ import { type E2eExecutionRow, validateE2eExecutionRows } from "./execution-cove
 import { requireLiveTargetExecution } from "../../test/e2e/registry/execution.ts";
 import { requireExpectedState } from "../../test/e2e/registry/expected-states.ts";
 import { canonicalTargets } from "../../test/e2e/registry/definitions/baseline.ts";
-import type { TargetDefinition } from "../../test/e2e/registry/types.ts";
+import {
+  CONFIG_EXPORT_EXPECTATIONS,
+  CONFIG_EXPORT_REFUSAL_CATEGORIES,
+  type TargetDefinition,
+} from "../../test/e2e/registry/types.ts";
 
 import { isDeepStrictEqual } from "node:util";
 
@@ -748,7 +752,6 @@ const profileTargets: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/ollama/proxy-observation.ts",
       "scripts/ollama-auth-proxy.mts",
       "src/lib/adapters/config/live-export-source.ts",
-      "src/lib/domain/config/verify-ollama-serving.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
     ],
@@ -1737,7 +1740,29 @@ export function buildExecutionInventory(
       throw new Error(`Execution target identity differs: ${entry.id}`);
     if (entry.route === "typed") {
       requireLiveTargetExecution(entry.definition);
-      requireExpectedState(entry.definition.expectedStateId);
+      const target = entry.definition;
+      const expectedState = requireExpectedState(target.expectedStateId);
+      if (!CONFIG_EXPORT_EXPECTATIONS.includes(target.configExport?.expectation)) {
+        throw new Error(
+          `Target '${target.id}' has a config export coverage gap; declare required, expected-refusal, or no-usable-sandbox.`,
+        );
+      }
+      if (
+        target.configExport.expectation === "no-usable-sandbox" &&
+        expectedState.sandbox?.expected !== "absent"
+      ) {
+        throw new Error(
+          `Target '${target.id}' no-usable-sandbox config export requires an absent sandbox expected state.`,
+        );
+      }
+      if (
+        target.configExport.expectation === "expected-refusal" &&
+        !CONFIG_EXPORT_REFUSAL_CATEGORIES.includes(target.configExport.failureCategory)
+      ) {
+        throw new Error(
+          `Target '${target.id}' must declare the exact expected config export refusal category.`,
+        );
+      }
     }
     if (entry.route === "external-workflow" || entry.route === "workflow") {
       const { entrypoint } = entry.definition;

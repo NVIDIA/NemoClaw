@@ -109,6 +109,7 @@ export function managedWorkload(
     startupProfileContractVersion: 1,
     encodedProfile: built.encodedProfile,
     startupProfileSha256: built.startupProfileSha256,
+    ...(built.corporateCaB64 === undefined ? {} : { corporateCaB64: built.corporateCaB64 }),
     credentialProxyReplayRequired: false,
     shared: true,
   };

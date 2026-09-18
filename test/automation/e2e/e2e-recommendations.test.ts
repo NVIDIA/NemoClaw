@@ -143,6 +143,7 @@ describe("E2E recommendation normalizer", () => {
         "test/e2e/fixtures/phases/lifecycle-profile.ts",
         "test/platform/images/vllm-docker-storage.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
+        "test/helpers/timeouts.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });

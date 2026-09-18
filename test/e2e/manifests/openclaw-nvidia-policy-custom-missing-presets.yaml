@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-policy-custom-missing-presets
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    policyMode: custom
+    policyPresets: []
+    messaging: []
+    lifecycle: policy-custom-missing-presets-negative
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_INFERENCE_API_KEY

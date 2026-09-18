@@ -3,8 +3,9 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import * as expectedStates from "../registry/expected-states.ts";
 import type { TargetDefinition } from "../registry/types.ts";
 import { validateE2eExecutionRows } from "../../../tools/e2e/execution-coverage.mts";
 import {
@@ -20,6 +21,8 @@ const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
 
 const TYPED_FIXTURE: TargetDefinition = {
   id: "typed-proof",
+  manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
+  configExport: { expectation: "required" },
   description: "Executable typed target fixture",
   environment: {
     platform: "ubuntu-local",
@@ -96,6 +99,56 @@ const MANUAL_FIXTURE: Extract<E2eInventoryTarget, { route: "manual" }> = {
 };
 
 describe("deterministic target registry", () => {
+  it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
+    const registered = TYPED_FIXTURE;
+    expect(
+      buildExecutionInventory([{ id: registered.id, route: "typed", definition: registered }]).get(
+        registered.id,
+      )?.definition,
+    ).toBe(registered);
+    const targetWithoutExpectation = {
+      ...registered,
+      configExport: undefined,
+    } as unknown as typeof registered;
+
+    expect(() =>
+      buildExecutionInventory([
+        { id: targetWithoutExpectation.id, route: "typed", definition: targetWithoutExpectation },
+      ]),
+    ).toThrow(/config export coverage gap/);
+  });
+
+  it.each(["cloud-openclaw-ready", "cloud-deepagents-code-ready"])(
+    "rejects no-usable-sandbox when %s does not require absence (#11485)",
+    (expectedStateId) => {
+      const target: TargetDefinition = {
+        ...TYPED_FIXTURE,
+        expectedStateId,
+        configExport: { expectation: "no-usable-sandbox" },
+      };
+
+      expect(() =>
+        buildExecutionInventory([{ id: target.id, route: "typed", definition: target }]),
+      ).toThrow(/no-usable-sandbox config export requires an absent sandbox expected state/);
+
+      const absentTarget = { ...target, expectedStateId: "fixture-absent-sandbox" };
+      const lookup = vi.spyOn(expectedStates, "requireExpectedState").mockReturnValueOnce({
+        id: absentTarget.expectedStateId,
+        sandbox: { expected: "absent" },
+      });
+      try {
+        expect(
+          buildExecutionInventory([
+            { id: absentTarget.id, route: "typed", definition: absentTarget },
+          ]).get(absentTarget.id)?.definition,
+        ).toBe(absentTarget);
+        expect(lookup).toHaveBeenCalledWith(absentTarget.expectedStateId);
+      } finally {
+        lookup.mockRestore();
+      }
+    },
+  );
+
   it("distinguishes execution identities even when their descriptions match", () => {
     const first = WORKFLOW_FIXTURE.definition.coverage[0]!.row;
     const second = { ...first, id: "another-proof" };

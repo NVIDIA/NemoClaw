@@ -73,7 +73,14 @@ describe("live target registry discovery", () => {
     expect(buildLiveTargetRunPlan(target)).toMatchObject({
       targetId: target.id,
       expectedStateId: target.expectedStateId,
-      phases: ["environment", "onboarding", "lifecycle", "state-validation"],
+      configExportExpectation: "expected-refusal",
+      phases: [
+        "environment",
+        "onboarding",
+        "lifecycle",
+        "state-validation",
+        "config-export-validation",
+      ],
       e2eCloudExperimentalChecks: DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
     });
   });

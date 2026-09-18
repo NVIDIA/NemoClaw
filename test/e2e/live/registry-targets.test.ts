@@ -5,14 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
+  type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
-import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 import { liveTargetTestTitle } from "../registry/execution.ts";
 import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
@@ -22,6 +23,14 @@ import {
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
+
+const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
+  "dcode-rebuild-invalid-credential",
+]);
+
+function isLifecycleProfile(value: string | undefined): value is LifecycleProfile {
+  return value !== undefined && LIFECYCLE_PROFILES.has(value as LifecycleProfile);
+}
 
 const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
   REPO_ROOT,
@@ -42,9 +51,11 @@ const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
   (targetId): targetId is string => targetId !== undefined,
 );
 requireTargets(SELECTED_TARGET_IDS);
-
 for (const [targetIndex, target] of listTargets().entries()) {
-  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
+  const timeoutContract = liveTargetTimeoutContract(
+    target.environment.lifecycle,
+    target.configExport.expectation,
+  );
 
   test(
     liveTargetTestTitle(target),
@@ -54,10 +65,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
-        : { timeout: timeoutContract.testTimeoutMs }),
+        : { timeout: testTimeout(timeoutContract.testTimeoutMs) }),
     },
     async ({
       artifacts,
+      cleanup,
+      configExportValidation,
       environment,
       host,
       lifecycle,
@@ -66,7 +79,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
       secrets,
       stateValidation,
     }) => {
-      progress.phase("resolve the target contract and run plan");
       const dcodeBaseContract = loadDcodeBaseImagePublicationEvidence(
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
@@ -134,11 +146,15 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("verify the expected sandbox state");
       const validation = await stateValidation.from(target.expectedStateId, instance);
 
+      progress.phase("validate the exported sandbox configuration");
+      const configExport = await configExportValidation.from(target, instance);
+
       progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        cleanup,
         dcodeBaseImageReference,
         host,
         secrets,
@@ -152,6 +168,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
+        configExport: {
+          expectation: configExport.expectation,
+          classification: configExport.classification,
+          contract: configExport.contract,
+          elapsedMs: configExport.elapsedMs,
+        },
         dcodeBaseImage,
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
