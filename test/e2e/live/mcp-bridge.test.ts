@@ -341,12 +341,11 @@ async function assertConcurrentAddSerialized(
       .filter((result) => result.exitCode !== 0)
       .map((originalResult) =>
         retryAfterConcurrentAddTransientFailure({
-          adapter: options.expectedAdapter,
           committedBridgeVerified: true,
           diagnostic: resultText(originalResult),
           originalResult,
           retry: () =>
-            add(`${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`),
+            add(`${options.artifactPrefix}-mcp-concurrent-add-after-portable-lock-contention`),
         }),
       ),
   );

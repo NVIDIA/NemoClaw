@@ -15,6 +15,7 @@ import {
   buildHermesMcpStatusCommand,
   entryHeaders,
   HERMES_MCP_TRANSACTION_HELPER,
+  hermesManagedServerConfig,
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -27,6 +28,44 @@ const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
   "Hermes gateway is not running under the managed service lifecycle";
+const HERMES_MCP_RECONCILE_TIMEOUT_SECONDS = 90;
+const HERMES_RELOAD_RELAY_LOSS = `Error: x code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"`;
+
+export class HermesMcpReloadRelayLossError extends McpBridgeError {
+  readonly credentialRevision: McpAttachedCredentialRevision;
+
+  constructor(credentialRevision: McpAttachedCredentialRevision) {
+    super(
+      "The Hermes MCP reload closed its OpenShell exec relay before the add outcome was confirmed.",
+    );
+    this.name = "HermesMcpReloadRelayLossError";
+    this.credentialRevision = credentialRevision;
+  }
+}
+
+export type HermesMcpReloadFinalityInspection =
+  | { state: "committed" | "absent" }
+  | { state: "unknown"; detail: string };
+
+function normalizeHermesReloadDiagnostic(value: string): string {
+  return value
+    .replace(/\u001b\[[0-9;]*m/gu, "")
+    .replaceAll("\u00d7", "x")
+    .replace(/[\u2502]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function isHermesReloadRelayLossResult(
+  result: ReturnType<typeof runOpenshellProviderCommand>,
+  output: string,
+): boolean {
+  return (
+    result.status === 1 &&
+    !result.error &&
+    normalizeHermesReloadDiagnostic(output) === HERMES_RELOAD_RELAY_LOSS
+  );
+}
 
 export function buildHermesMcpRegisterCommand(
   entry: McpSourceEntry,
@@ -72,6 +111,99 @@ export function buildHermesMcpExecArgs(
 
 export function buildHermesMcpProbeCommand(): string[] {
   return [HERMES_MCP_TRANSACTION_HELPER, "probe"];
+}
+
+export function buildHermesMcpReconcileCommand(
+  entry: McpSourceEntry,
+  credentialRevision: McpAttachedCredentialRevision,
+  state: "committed" | "absent",
+): string[] {
+  const payload =
+    state === "committed"
+      ? {
+          present: {
+            [entry.server]: hermesManagedServerConfig(entry, credentialRevision),
+          },
+          absent: [],
+        }
+      : { present: {}, absent: [entry.server] };
+  return [HERMES_MCP_TRANSACTION_HELPER, "reconcile", "--payload", JSON.stringify(payload)];
+}
+
+function inspectHermesMcpReconcileState(
+  sandboxName: string,
+  entry: McpSourceEntry,
+  credentialRevision: McpAttachedCredentialRevision,
+  expectedState: "committed" | "absent",
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): HermesMcpReloadFinalityInspection {
+  let result: ReturnType<typeof runOpenshellProviderCommand>;
+  try {
+    result = runOpenshellProviderCommand(
+      buildHermesMcpExecArgs(
+        sandboxName,
+        buildHermesMcpReconcileCommand(entry, credentialRevision, expectedState),
+        HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
+      ),
+      {
+        ignoreError: true,
+        runtimeSelection,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 105_000,
+      },
+    );
+  } catch (error) {
+    return {
+      state: "unknown",
+      detail: redactBridgeSecretsForDisplay(
+        error instanceof Error ? error.message : String(error),
+        entry,
+      ),
+    };
+  }
+  const output = redactBridgeSecretsForDisplay(commandOutput(result), entry);
+  const response = parseLastJsonObject(result.stdout || "");
+  if (
+    result.status === 0 &&
+    !result.error &&
+    response?.ok === true &&
+    response.state === expectedState
+  ) {
+    return { state: expectedState };
+  }
+  return {
+    state: "unknown",
+    detail: output || "Hermes MCP reconciliation returned no result.",
+  };
+}
+
+/** Prove committed state or exact absence without repeating the mutation. */
+export function inspectHermesMcpReloadFinality(
+  sandboxName: string,
+  entry: McpSourceEntry,
+  credentialRevision: McpAttachedCredentialRevision,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): HermesMcpReloadFinalityInspection {
+  const committed = inspectHermesMcpReconcileState(
+    sandboxName,
+    entry,
+    credentialRevision,
+    "committed",
+    runtimeSelection,
+  );
+  if (committed.state === "committed") return committed;
+  const absent = inspectHermesMcpReconcileState(
+    sandboxName,
+    entry,
+    credentialRevision,
+    "absent",
+    runtimeSelection,
+  );
+  if (absent.state === "absent") return absent;
+  return {
+    state: "unknown",
+    detail: "Hermes MCP reconciliation proved neither committed state nor absence.",
+  };
 }
 
 export async function inspectHermesAdapterRegistration(
@@ -170,7 +302,10 @@ function runHermesAdapterCommand(
   command: readonly string[],
   failureMessage: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-  options: AdapterMutationOptions & { requireReload?: boolean } = {},
+  options: AdapterMutationOptions & {
+    credentialRevision?: McpAttachedCredentialRevision;
+    requireReload?: boolean;
+  } = {},
 ): void {
   // OpenShell current main executes this fixed helper argv with ordinary
   // workload authority. There is no listener, proxy, persistent service, or
@@ -200,6 +335,13 @@ function runHermesAdapterCommand(
   );
   if (result.status !== 0 || result.error) {
     if (options.bestEffort) return;
+    if (
+      options.requireReload &&
+      options.credentialRevision &&
+      isHermesReloadRelayLossResult(result, output)
+    ) {
+      throw new HermesMcpReloadRelayLossError(options.credentialRevision);
+    }
     const errorDetail = result.error
       ? redactBridgeSecretsForDisplay(result.error.message, entry, options.envValues ?? {})
       : "";
@@ -258,7 +400,7 @@ export async function registerHermesAdapter(
     buildHermesMcpRegisterCommand(entry, replaceExisting, credentialRevision),
     `Hermes MCP config registration failed for '${entry.server}'.`,
     runtimeSelection,
-    { envValues, requireReload: true },
+    { credentialRevision, envValues, requireReload: true },
   );
   await verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
 }

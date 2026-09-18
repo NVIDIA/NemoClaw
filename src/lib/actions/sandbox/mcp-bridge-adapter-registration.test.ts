@@ -65,6 +65,8 @@ vi.mock("./mcp-bridge/timing", () => ({
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
+  HermesMcpReloadRelayLossError,
+  inspectHermesMcpReloadFinality,
   registerAgentAdapter,
   registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
@@ -94,6 +96,7 @@ const registered = { status: 0, stdout: "registered\n", stderr: "" };
 const mismatch = { status: 0, stdout: "mismatch\n", stderr: "" };
 const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" };
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+const hermesReloadRelayLoss = `Error:   × code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"\n`;
 
 function resetOpenClawConfigMocks(): void {
   mocks.readSandboxConfig.mockReset().mockReturnValue({
@@ -233,6 +236,129 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     ).rejects.toThrow(
       `${adapterCase.adapter} config verification failed after adding 'github': mismatch.`,
     );
+  });
+});
+
+describe("Hermes MCP reload finality", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+    mocks.runOpenshellProviderCommand.mockReset();
+    mocks.getSandbox.mockReset().mockReturnValue(sandbox);
+  });
+
+  it("classifies only the exact status-1 reload relay loss and retains its credential revision", async () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `\u001b[31m${hermesReloadRelayLoss.replace("x", "×")}\u001b[0m`,
+    });
+
+    let failure: unknown;
+    try {
+      await registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        { GITHUB_TOKEN: "host-only-secret" },
+        { credentialRevision: "v12" },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(HermesMcpReloadRelayLossError);
+    expect(failure).toMatchObject({ credentialRevision: "v12" });
+    expect(String(failure)).not.toContain("host-only-secret");
+  });
+
+  it.each([
+    ["another exit status", { status: 2, stdout: "", stderr: hermesReloadRelayLoss }],
+    [
+      "a spawn error",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss,
+        error: new Error("spawn failed"),
+      },
+    ],
+    [
+      "another service-unavailable message",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss.replace(
+          "exec relay closed before the command reported an exit status",
+          "supervisor session disconnected",
+        ),
+      },
+    ],
+    [
+      "an exact message with unrelated output",
+      {
+        status: 1,
+        stdout: "",
+        stderr: `unrelated diagnostic\n${hermesReloadRelayLoss}`,
+      },
+    ],
+  ])("does not classify %s as a reload relay loss", async (_label, result) => {
+    mocks.runOpenshellProviderCommand.mockReturnValue(result);
+
+    await expect(
+      registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        {},
+        { credentialRevision: "v12" },
+      ),
+    ).rejects.not.toBeInstanceOf(HermesMcpReloadRelayLossError);
+  });
+
+  it("proves committed state with one read-only helper observation", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: '{"ok":true,"state":"committed"}\n',
+      stderr: "",
+    });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "committed",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
+      "host-only-secret",
+    );
+  });
+
+  it("proves absence only after committed-state reconciliation fails", () => {
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "config mismatch" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: '{"ok":true,"state":"absent"}\n',
+        stderr: "",
+      });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "absent",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns unknown when neither helper observation proves finality", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 2,
+      stdout: "",
+      stderr: "config mismatch",
+    });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation proved neither committed state nor absence.",
+    });
   });
 });
 

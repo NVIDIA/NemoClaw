@@ -46,7 +46,11 @@ export {
 export {
   buildHermesMcpExecArgs,
   buildHermesMcpProbeCommand,
+  buildHermesMcpReconcileCommand,
   buildHermesMcpRegisterCommand,
+  HermesMcpReloadRelayLossError,
+  inspectHermesMcpReloadFinality,
+  type HermesMcpReloadFinalityInspection,
 } from "./mcp-bridge-adapter-hermes";
 export {
   type AdapterRegistrationInspection,
