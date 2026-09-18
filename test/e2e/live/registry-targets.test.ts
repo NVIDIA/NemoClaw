@@ -157,22 +157,34 @@ for (const [targetIndex, target] of listTargets().entries()) {
             : await lifecycle.simulate(lifecycleProfile, instance);
       }
 
-      progress.phase("verify the expected sandbox state");
-      const validation = await stateValidation.from(target.expectedStateId, instance);
-
-      progress.phase("validate the exported sandbox configuration");
-      const configExport = await configExportValidation.from(target, instance);
-
-      progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
-      expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
-      await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
-        artifacts,
-        cleanup,
-        dcodeBaseImageReference,
-        host,
-        secrets,
-      });
+      let validation!: Awaited<ReturnType<typeof stateValidation.from>>;
+      let configExport!: Awaited<ReturnType<typeof configExportValidation.from>>;
+      const validateState = async () => {
+        progress.phase("verify the expected sandbox state");
+        validation = await stateValidation.from(target.expectedStateId, instance);
+      };
+      const validateConfigExport = async () => {
+        progress.phase("validate the exported sandbox configuration");
+        configExport = await configExportValidation.from(target, instance);
+      };
+      const runCloudChecks = async () => {
+        progress.phase("run target-specific cloud checks");
+        expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
+        await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
+          artifacts,
+          cleanup,
+          dcodeBaseImageReference,
+          host,
+          secrets,
+        });
+      };
+      const runChecksFirst = checkScripts.length > 0;
+      await (runChecksFirst ? undefined : validateState());
+      await (runChecksFirst ? undefined : validateConfigExport());
+      await runCloudChecks();
+      await (runChecksFirst ? validateConfigExport() : undefined);
+      await (runChecksFirst ? validateState() : undefined);
 
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract

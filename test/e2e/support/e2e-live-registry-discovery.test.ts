@@ -68,14 +68,15 @@ describe("live target registry discovery", () => {
       targetId: target.id,
       manifestPath: target.manifestPath,
       expectedStateId: target.expectedStateId,
-      configExportExpectation: "expected-refusal",
+      configExportExpectation: "required",
       suiteIds: target.suiteIds,
       phases: [
         "environment",
         "onboarding",
         "lifecycle",
-        "state-validation",
+        "cloud-experimental-checks",
         "config-export-validation",
+        "state-validation",
       ],
       e2eCloudExperimentalChecks: DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
     });

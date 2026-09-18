@@ -490,6 +490,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   it("keeps the managed DCode thread-auto-approval live check valid Bash (#6478)", () => {
     const result = spawnSync("bash", ["-n", dcodeApprovalCheck], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
+    const script = fs.readFileSync(dcodeApprovalCheck, "utf8");
+    expect(script).toContain("rebuild_named_sandbox disabled --no-observability");
+    expect(script).toContain('observability_registry_state)" = "disabled"');
   });
 
   it.each([

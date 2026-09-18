@@ -52,6 +52,12 @@ function agentSettings(source: VerifiedExportSource) {
   };
 }
 
+function harnessKind(
+  source: VerifiedExportSource,
+): V1Alpha1Export["spec"]["sandboxes"][number]["harness"]["kind"] {
+  return source.agent === "langchain-deepagents-code" ? "deepagents" : source.agent;
+}
+
 function exportAgent(
   source: VerifiedExportSource,
   providerName: string,
@@ -107,6 +113,12 @@ function targetProcess(policy: Record<string, unknown>): void {
   if (process?.run_as_group === "sandbox") process.run_as_group = "1000";
 }
 
+function agentFilesystemRoots(agent: VerifiedExportSource["agent"]): string[] {
+  if (agent === "openclaw") return ["/app"];
+  if (agent === "hermes") return ["/opt/hermes"];
+  return [];
+}
+
 function targetFilesystem(
   policy: Record<string, unknown>,
   agent: VerifiedExportSource["agent"],
@@ -115,7 +127,7 @@ function targetFilesystem(
   if (!filesystem) return;
   const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
   const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-  const roots = ["/opt/fabric", "/opt/nemoclaw", agent === "openclaw" ? "/app" : "/opt/hermes"];
+  const roots = ["/opt/fabric", "/opt/nemoclaw", ...agentFilesystemRoots(agent)];
   for (const root of roots) {
     if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
   }
@@ -171,7 +183,7 @@ export function buildExportConfig(
                   },
                 },
               }),
-          harness: { kind: source.agent, ...agentSettings(source) },
+          harness: { kind: harnessKind(source), ...agentSettings(source) },
           agents: exportAgents(source, providerName),
         },
       ],

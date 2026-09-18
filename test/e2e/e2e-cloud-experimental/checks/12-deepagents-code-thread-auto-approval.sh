@@ -39,6 +39,7 @@ info() {
 
 rebuild_named_sandbox() {
   local mode="$1"
+  local observability_flag="${2:-}"
   local attempt output status prior_timeout_output retry_delay_seconds
   prior_timeout_output=""
   retry_delay_seconds="${NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS:-3}"
@@ -46,7 +47,13 @@ rebuild_named_sandbox() {
     || fail "rebuild retry delay must be a non-negative integer"
 
   for attempt in 1 2; do
-    if output="$("$CLI" "$SANDBOX_NAME" rebuild --yes --dcode-auto-approval "$mode" 2>&1)"; then
+    local -a rebuild_args=(
+      "$SANDBOX_NAME" rebuild --yes --dcode-auto-approval "$mode"
+    )
+    if [ -n "$observability_flag" ]; then
+      rebuild_args+=("$observability_flag")
+    fi
+    if output="$("$CLI" "${rebuild_args[@]}" 2>&1)"; then
       printf '%s\n' "$output"
       return 0
     else
@@ -77,6 +84,20 @@ is_positive_integer() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+observability_registry_state() {
+  SANDBOX_NAME="$SANDBOX_NAME" node - <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const registry = JSON.parse(
+  fs.readFileSync(path.join(process.env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+);
+const entry = registry.sandboxes?.[process.env.SANDBOX_NAME];
+if (!entry || entry.agent !== "langchain-deepagents-code" ||
+    typeof entry.observabilityEnabled !== "boolean") process.exit(1);
+process.stdout.write(entry.observabilityEnabled ? "enabled" : "disabled");
+NODE
 }
 
 is_default_auto_approval_denial() {
@@ -339,13 +360,15 @@ main() {
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
   info "Disabling thread-opt-in through the named sandbox rebuild interface"
-  rebuild_output="$(rebuild_named_sandbox disabled)" \
-    || fail "named sandbox rebuild could not disable thread-opt-in: $rebuild_output"
+  rebuild_output="$(rebuild_named_sandbox disabled --no-observability)" \
+    || fail "named sandbox rebuild could not restore the export baseline: $rebuild_output"
 
   assert_capability_projection disabled
   assert_status_mode disabled
   assert_default_denial_ignores_ambient_override
-  pass "named sandbox rebuild restores trusted default denial"
+  [ "$(observability_registry_state)" = "disabled" ] \
+    || fail "named sandbox rebuild did not disable observability"
+  pass "named sandbox rebuild restores the disabled export baseline"
 
   printf '%s: 6 passed, 0 failed\n' "$PREFIX"
 }

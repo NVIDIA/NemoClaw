@@ -21,19 +21,17 @@ export function buildLiveTargetRunPlan(target: TargetDefinition): LiveTargetRunP
     expectedStateId: target.expectedStateId,
     configExportExpectation: target.configExport.expectation,
     suiteIds: target.suiteIds ?? [],
-    phases: [
-      "environment",
-      "onboarding",
-      ...(target.environment?.lifecycle ? ["lifecycle"] : []),
-      "state-validation",
-      "config-export-validation",
-    ],
+    phases: ["environment", "onboarding", ...(target.environment?.lifecycle ? ["lifecycle"] : [])],
   };
   const cloudExperimentalChecks = cloudExperimentalChecksForOnboarding(
     target.environment?.onboarding,
   );
   if (cloudExperimentalChecks.length > 0) {
     plan.e2eCloudExperimentalChecks = [...cloudExperimentalChecks];
+    plan.phases.push("cloud-experimental-checks");
+    plan.phases.push("config-export-validation", "state-validation");
+  } else {
+    plan.phases.push("state-validation", "config-export-validation");
   }
   return plan;
 }

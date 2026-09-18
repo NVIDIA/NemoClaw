@@ -786,7 +786,7 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].observability",
         "spec.sandboxes[].integrations.webSearch",
         "spec.sandboxes[].integrations.messaging",
-        "spec.sandboxes[].agents[0].type",
+        "spec.sandboxes[].harness.kind",
         "spec.inferenceProviders",
       ]),
     );

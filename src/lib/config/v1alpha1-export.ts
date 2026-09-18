@@ -33,7 +33,7 @@ export interface V1Alpha1Export {
         proxy?: Readonly<{ host: string; port: number }>;
       }>;
       harness: Readonly<{
-        kind: "hermes" | "openclaw";
+        kind: "deepagents" | "hermes" | "openclaw";
         execution?: Readonly<{ timeoutSeconds?: number; heartbeatEvery?: string }>;
         interfaces?: Readonly<Record<string, unknown>>;
         observability?: Readonly<Record<string, unknown>>;
