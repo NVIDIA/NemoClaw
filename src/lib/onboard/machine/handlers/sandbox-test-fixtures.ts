@@ -324,6 +324,7 @@ export function createDeps(
       createSandbox: calls.createSandbox,
       retireReplacedSandboxWorkload: calls.retireReplacedSandboxWorkload,
       finalizeSandboxRouteReservation: calls.finalizeRouteReservation,
+      reserveSandboxInferenceRoute: vi.fn(() => true),
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
       recordStepComplete: calls.complete,
