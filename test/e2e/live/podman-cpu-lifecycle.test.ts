@@ -10,6 +10,7 @@ import { vi } from "vitest";
 import type { ContainerEngine } from "../../../src/lib/adapters/container-engine";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity";
 import type { OpenShellSandboxObserver } from "../../../src/lib/adapters/openshell/sandbox-observer";
+import { withSandboxLifecycleLock } from "../../../src/lib/actions/sandbox/gateway-state";
 import { startSandbox } from "../../../src/lib/actions/sandbox/start";
 import { stopSandbox } from "../../../src/lib/actions/sandbox/stop";
 import {
@@ -424,6 +425,10 @@ exit 1
           ...cliEnv,
           NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
         };
+        const withLifecycleLock: typeof withSandboxLifecycleLock = (name, operation) =>
+          withSandboxLifecycleLock(name, operation, {
+            stateDir: path.join(root, "public-lifecycle-locks"),
+          });
         const observer: OpenShellSandboxObserver = {
           listSandboxes: async () => ({
             ok: true,
@@ -462,6 +467,7 @@ exit 1
           stopSandboxChannels: vi.fn(),
           teardownSandboxDashboardForward: async () => true,
           updateSandbox,
+          withLifecycleLock,
         });
         expect(entry.stopped).toBe(true);
         const stopped = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
@@ -477,6 +483,7 @@ exit 1
             runtimeProviders,
             updateSandbox,
             verifyGateway: verifyRestartedAgent,
+            withLifecycleLock,
           }),
         ).resolves.toEqual({ exitCode: 0 });
         expect(verifyRestartedAgent).toHaveBeenCalledExactlyOnceWith(sandboxName);
@@ -491,6 +498,7 @@ exit 1
           stopSandboxChannels: vi.fn(),
           teardownSandboxDashboardForward: async () => true,
           updateSandbox,
+          withLifecycleLock,
         });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
