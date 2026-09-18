@@ -3640,8 +3640,10 @@ run_preupgrade_backup() {
 }
 
 force_fresh_install_has_existing_state() {
-  local container_inventory receipt_volume_inventory user_bin volume_name volume_label volume_suffix
+  local container_id container_image container_inventory container_label_inventory container_name
+  local receipt_volume_inventory user_bin volume_name volume_label volume_suffix
   local existing_state=0 managed_docker_state=0
+  _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [[ -e "$(nemoclaw_state_root)" ]] \
@@ -3663,10 +3665,25 @@ force_fresh_install_has_existing_state() {
   fi
   if command_exists docker; then
     docker info >/dev/null 2>&1 || return 2
-    container_inventory="$(
+    container_label_inventory="$(
       docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1 2>/dev/null
     )" || return 2
-    [[ -z "$container_inventory" ]] || managed_docker_state=1
+    _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$(printf '%s\n' "$container_label_inventory" | sed -n '1p')"
+    container_inventory="$(
+      docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}' 2>/dev/null
+    )" || return 2
+    while read -r container_id container_image container_name; do
+      [[ -n "$container_id" ]] || continue
+      case "$container_name" in
+        openshell-* | nemoclaw-*) _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id" ;;
+      esac
+      case "$container_image" in
+        nemoclaw-* | openshell/* | ghcr.io/nvidia/nemoclaw | ghcr.io/nvidia/nemoclaw:* | ghcr.io/nvidia/nemoclaw@* | ghcr.io/nvidia/nemoclaw/* | ghcr.io/nvidia/nemoclaw-*)
+          _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id"
+          ;;
+      esac
+      [[ -z "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]] || break
+    done <<<"$container_inventory"
     receipt_volume_inventory="$(
       docker volume ls --format '{{.Name}}' 2>/dev/null
     )" || return 2
@@ -3689,6 +3706,9 @@ force_fresh_install_has_existing_state() {
         return 3
       fi
     done <<<"$receipt_volume_inventory"
+  fi
+  if ((existing_state == 0)) && [[ -n "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]]; then
+    return 4
   fi
   ((existing_state == 0 && managed_docker_state == 0)) || return 0
   return 1
@@ -3746,24 +3766,6 @@ run_force_fresh_uninstaller() {
     --yes --destroy-user-data --force-fresh-reset --all-gateway-ports
 }
 
-force_fresh_managed_user_local_openshell_binary() {
-  local binary="$1" binary_path="$2" user_bin="$3"
-  local manifest="${user_bin}/.nemoclaw-openshell-managed-v1" digest=""
-  [[ "$binary_path" == "${user_bin}/${binary}" ]] || return 1
-  [[ -f "$binary_path" && ! -L "$binary_path" && -x "$binary_path" && -O "$binary_path" ]] \
-    || return 1
-  [[ -f "$manifest" && ! -L "$manifest" && -O "$manifest" ]] || return 1
-  if command_exists sha256sum; then
-    digest="$(sha256sum "$binary_path" | awk '{print $1}')" || return 1
-  elif command_exists shasum; then
-    digest="$(shasum -a 256 "$binary_path" | awk '{print $1}')" || return 1
-  else
-    return 1
-  fi
-  [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || return 1
-  grep -Fqx -- "${digest}  ${binary}" "$manifest"
-}
-
 preflight_macos_openshell_for_force_fresh_install() {
   local formula="nvidia/openshell/openshell" binary="" binary_path=""
   local user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}" homebrew_bin=""
@@ -3777,8 +3779,8 @@ preflight_macos_openshell_for_force_fresh_install() {
   for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
     binary_path="${user_bin}/${binary}"
     if [[ -e "$binary_path" ]]; then
-      force_fresh_managed_user_local_openshell_binary "$binary" "$binary_path" "$user_bin" \
-        || error "The force-fresh installer found an unverified OpenShell executable at ${binary_path}. Remove or reconcile it explicitly, then rerun. No cleanup started."
+      [[ -f "$binary_path" && ! -L "$binary_path" && -x "$binary_path" && -O "$binary_path" ]] \
+        || error "The force-fresh installer found an unsafe OpenShell executable at ${binary_path}. Remove or reconcile it explicitly, then rerun. No cleanup started."
     fi
     binary_path="$(command -v "$binary" 2>/dev/null || true)"
     [[ -z "$binary_path" || "$binary_path" == "${user_bin}/${binary}" ]] && continue
@@ -3817,6 +3819,7 @@ run_force_fresh_install_reset() {
     1) info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install." ;;
     2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
     3) error "Force-fresh cleanup found pre-label receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. NemoClaw cannot prove ownership of this legacy volume. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
+    4) error "Force-fresh cleanup found unverified Docker container ${_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER}. NemoClaw cannot prove this Docker-only resource belongs to the current installation. Inspect and reconcile it explicitly, then rerun. No cleanup started." ;;
     *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
   esac
   remove_macos_openshell_for_force_fresh_install

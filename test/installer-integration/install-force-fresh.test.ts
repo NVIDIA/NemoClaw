@@ -69,49 +69,80 @@ exit 1
   expect(result.stdout).toBe("present");
 });
 
-it("detects Docker-only state only through an authoritative managed-image label", () => {
+it("stops before cleanup for a label-only Docker container without trusted state", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-detect-docker-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") printf '0123456789ab\n' ;;
+  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
+    printf '0123456789ab registry.example.com/unrelated:latest arbitrary-name\n'
+    ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
 `,
   );
 
-  const result = callPayloadFunction("force_fresh_install_has_existing_state && printf 'present'", {
-    HOME: tmp,
-    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-  });
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
 
-  expect(result.status).toBe(0);
-  expect(result.stdout).toBe("present");
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("unverified Docker container 0123456789ab");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
-it("does not treat an unlabeled prefix-matching Docker container as owned state", () => {
+it("stops before cleanup for a convention-matching Docker-only container", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-ignore-docker-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
+    printf 'fedcba987654 redis:7 openshell-orphan\n'
+    ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
 `,
   );
 
-  const result = callPayloadFunction("force_fresh_install_has_existing_state", {
-    HOME: tmp,
-    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-  });
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
 
   expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("unverified Docker container fedcba987654");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
 it("detects labelled Docker receipt-volume-only state", () => {
@@ -122,6 +153,7 @@ it("detects labelled Docker receipt-volume-only state", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}} {{.Image}} {{.Names}}") exit 0 ;;
   "volume ls --format {{.Name}}")
     printf 'nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
     ;;
@@ -154,6 +186,7 @@ it("stops before cleanup for a pre-label receipt-volume-only state", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}} {{.Image}} {{.Names}}") exit 0 ;;
   "volume ls --format {{.Name}}") printf '%s\n' "$LEGACY_VOLUME" ;;
   *)
     if [[ "$1" == "volume" && "$2" == "inspect" ]]; then
@@ -456,6 +489,33 @@ it("routes a managed helper from XDG_BIN_HOME through the staged uninstaller", (
     "prepare:/tmp/staged-candidate",
     "uninstall:/tmp/staged-candidate",
   ]);
+});
+
+it("lets the staged uninstaller reject a malformed ownership manifest before package removal", () => {
+  const { root: tmp } = installerCheckout("nemoclaw-force-fresh-malformed-manifest-");
+  const userBin = path.join(tmp, "xdg-bin");
+  const packageMarker = path.join(tmp, "package-removal-started");
+  fs.mkdirSync(userBin, { recursive: true });
+  writeExecutable(path.join(userBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+  fs.writeFileSync(path.join(userBin, ".nemoclaw-openshell-managed-v1"), "malformed\n", {
+    mode: 0o600,
+  });
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
+      prepare_force_fresh_uninstaller() { :; }
+      run_force_fresh_uninstaller() { printf 'canonical-ownership-rejected\\n'; return 9; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$PACKAGE_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    { HOME: tmp, PACKAGE_MARKER: packageMarker, XDG_BIN_HOME: userBin },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).toContain("canonical-ownership-rejected");
+  expect(fs.existsSync(packageMarker)).toBe(false);
 });
 
 it("stops before package removal when managed uninstall rejects partial state", () => {
