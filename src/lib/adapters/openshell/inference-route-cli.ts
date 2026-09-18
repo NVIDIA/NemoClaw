@@ -34,7 +34,7 @@ export type CaptureOpenShellInferenceRoute = (
     outputLimitBytes: number;
     timeout: number;
   },
-) => CapturedOpenShellInferenceRouteResult | Promise<CapturedOpenShellInferenceRouteResult>;
+) => Promise<CapturedOpenShellInferenceRouteResult>;
 
 export type CaptureOpenShellInferenceRouteSynchronously = (
   args: string[],

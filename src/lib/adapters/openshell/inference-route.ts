@@ -62,7 +62,7 @@ export type ObserveOpenShellInferenceRouteRequest = Readonly<{
 export interface OpenShellInferenceRouteObserver {
   observeInferenceRoute(
     request: ObserveOpenShellInferenceRouteRequest,
-  ): Promise<OpenShellInferenceRouteResult>;
+  ): OpenShellInferenceRouteResult | Promise<OpenShellInferenceRouteResult>;
 }
 
 /** Observe one gateway inference route through a synchronous transport. */
