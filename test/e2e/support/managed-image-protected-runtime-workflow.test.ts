@@ -98,6 +98,49 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("rejects a multiarch job without CLI artifact restoration", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    job.steps = (job.steps as Array<Record<string, unknown>>).filter(
+      (step) => step.name !== "Restore exact-commit CLI artifact",
+    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must define exactly one 'Restore exact-commit CLI artifact' step",
+    );
+  });
+
+  it.each([
+    ["before preparation", "Prepare E2E workspace", 0],
+    ["after activation", "Validate candidate activation contract", 1],
+  ] as const)("rejects CLI artifact restoration %s", (_label, boundary, offset) => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const restore = namedMultiarchStep(value, "Restore exact-commit CLI artifact");
+    const steps = (job.steps as Array<Record<string, unknown>>).filter((step) => step !== restore);
+    steps.splice(steps.findIndex((step) => step.name === boundary) + offset, 0, restore);
+    job.steps = steps;
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+  });
+
+  it("rejects an unpinned CLI restore action", () => {
+    const value = workflow();
+    namedMultiarchStep(value, "Restore exact-commit CLI artifact").uses =
+      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@main";
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must pin the reviewed CLI artifact restore action",
+    );
+  });
+
+  it("rejects CLI restoration without the producer provenance", () => {
+    const value = workflow();
+    namedMultiarchStep(value, "Restore exact-commit CLI artifact").with = {};
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup CLI artifact restore must bind provenance-json to ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+    );
+  });
+
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
   it.each([
     [

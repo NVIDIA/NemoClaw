@@ -256,6 +256,18 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
+  requireStep(errors, steps, "Prepare E2E workspace");
+  const restore = requireStep(errors, steps, "Restore exact-commit CLI artifact");
+  if (
+    restore?.uses !==
+    "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef"
+  ) {
+    errors.push(`${JOB_ID} must pin the reviewed CLI artifact restore action`);
+  }
+  requireValues(errors, `${JOB_ID} CLI artifact restore`, record(restore?.with), {
+    "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+  });
+
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
   requireFragments(errors, activation, [
     `activation="${ACTIVATION_PATH}"`,
@@ -440,6 +452,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Checkout protected managed-image candidate source",
     "Validate trusted Hermes resolver checkout path",
     "Checkout trusted Hermes resolver",
+    "Prepare E2E workspace",
+    "Restore exact-commit CLI artifact",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",
     "Remove trusted Hermes resolver checkout",
