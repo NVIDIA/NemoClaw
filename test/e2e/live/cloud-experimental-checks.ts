@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { expect } from "vitest";
@@ -24,7 +25,16 @@ const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
 const FRESH_REONBOARD_TIMEOUT_MS = 15 * 60_000;
 const OBSERVABILITY_TIMEOUT_MS = 8 * 60_000;
+const TUI_MODEL_TURN_TIMEOUT_MS = 20 * 60_000;
 const THREAD_AUTO_APPROVAL_TIMEOUT_MS = 35 * 60_000;
+const TUI_CALLER_RECOVERY_TIMEOUT_MS = 45_000;
+const TUI_SESSION_ID_ENV = "NEMOCLAW_TUI_SESSION_ID";
+const DCODE_PROCESS_COUNT_MARKER = "NEMOCLAW_DCODE_PROCESS_COUNT:";
+const TUI_CALLER_RECOVERY_MARKER = "NEMOCLAW_TUI_CALLER_RECOVERY_OK:";
+const DCODE_TUI_SESSION_GUARD = path.join(
+  REPO_ROOT,
+  "test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh",
+);
 
 export type CloudExperimentalChecksEvidence = {
   targetId: string;
@@ -106,17 +116,135 @@ export function assertRequiredCloudExperimentalResult(
 export function cloudExperimentalCheckTimeoutMs(scriptPath: string): number {
   if (scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK) return FRESH_REONBOARD_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_OBSERVABILITY_CHECK) return OBSERVABILITY_TIMEOUT_MS;
+  if (scriptPath === DEEPAGENTS_CODE_TUI_CHECK) return TUI_MODEL_TURN_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK) {
     return THREAD_AUTO_APPROVAL_TIMEOUT_MS;
   }
   return DEFAULT_CHECK_TIMEOUT_MS;
 }
 
+function processCountFromResult(label: string, result: ShellProbeResult): number | Error {
+  const output = resultText(result);
+  if (result.exitCode !== 0 || result.timedOut || result.signal) {
+    return new Error(`${label} failed: ${output || `exit=${result.exitCode ?? "unknown"}`}`);
+  }
+  const counts = output
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(DCODE_PROCESS_COUNT_MARKER))
+    .map((line) => line.slice(DCODE_PROCESS_COUNT_MARKER.length));
+  const count = counts.at(-1);
+  if (!count || !/^\d+$/u.test(count)) {
+    return new Error(`${label} did not report a DCode process count: ${output}`);
+  }
+  return Number(count);
+}
+
+async function captureDcodeProcessBaseline(
+  sandboxName: string,
+  context: Pick<E2ETargetFixtures, "host">,
+): Promise<number> {
+  const result = await context.host.command(
+    "bash",
+    [DCODE_TUI_SESSION_GUARD, "baseline", sandboxName],
+    {
+      artifactName: "cloud-experimental-dcode-process-baseline",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const count = processCountFromResult("capture the pre-TUI DCode process baseline", result);
+  return count instanceof Error ? Promise.reject(count) : count;
+}
+
+async function cleanupFailedTuiSession(
+  sandboxName: string,
+  sessionId: string,
+  baseline: number,
+  context: Pick<E2ETargetFixtures, "host">,
+): Promise<void> {
+  const result = await context.host.command(
+    "bash",
+    [DCODE_TUI_SESSION_GUARD, "recover", sandboxName, sessionId, String(baseline)],
+    {
+      artifactName: "cloud-experimental-dcode-tui-caller-recovery",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: TUI_CALLER_RECOVERY_TIMEOUT_MS,
+    },
+  );
+  const remainingCount = processCountFromResult("clean up the failed DCode TUI session", result);
+  if (remainingCount instanceof Error) return Promise.reject(remainingCount);
+  const output = resultText(result);
+  if (!output.includes(`${TUI_CALLER_RECOVERY_MARKER}${remainingCount}`)) {
+    return Promise.reject(
+      new Error(`clean up the failed DCode TUI session did not confirm completion: ${output}`),
+    );
+  }
+}
+
+async function runDcodeTuiCheck(
+  sandboxName: string,
+  scriptPath: string,
+  apiKey: string,
+  context: Pick<E2ETargetFixtures, "cleanup" | "host"> & {
+    dcodeBaseImageReference?: string;
+  },
+): Promise<ShellProbeResult> {
+  const baseline = await captureDcodeProcessBaseline(sandboxName, context);
+  const sessionId = randomUUID();
+  let recoveryArmed = true;
+  let recoveryAttempt: Promise<void> | undefined;
+  const recover = async (): Promise<void> => {
+    if (!recoveryArmed) return;
+    recoveryAttempt ??= cleanupFailedTuiSession(sandboxName, sessionId, baseline, context);
+    try {
+      await recoveryAttempt;
+      recoveryArmed = false;
+    } finally {
+      recoveryAttempt = undefined;
+    }
+  };
+  context.cleanup.add(`clean up failed DCode TUI session ${sessionId}`, recover);
+
+  let result: ShellProbeResult;
+  try {
+    result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
+      artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
+      cwd: REPO_ROOT,
+      env: {
+        ...buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
+          dcodeBaseImageReference: context.dcodeBaseImageReference,
+        }),
+        [TUI_SESSION_ID_ENV]: sessionId,
+      },
+      redactionValues: [apiKey],
+      timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
+    });
+  } catch (error) {
+    try {
+      await recover();
+    } catch (recoveryError) {
+      return Promise.reject(
+        new AggregateError(
+          [error, recoveryError],
+          "DCode TUI check failed, and its sandbox process cleanup did not complete",
+        ),
+      );
+    }
+    return Promise.reject(error);
+  }
+  if (result.exitCode === 0 && !result.timedOut && !result.signal) {
+    recoveryArmed = false;
+  } else {
+    await recover();
+  }
+  return result;
+}
+
 export async function runE2eCloudExperimentalChecks(
   targetId: string,
   sandboxName: string,
   checkScripts: readonly string[],
-  context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets"> & {
+  context: Pick<E2ETargetFixtures, "artifacts" | "cleanup" | "host" | "secrets"> & {
     dcodeBaseImageReference?: string;
   },
 ): Promise<void> {
@@ -149,16 +277,19 @@ export async function runE2eCloudExperimentalChecks(
     );
   }
   for (const scriptPath of checkScripts) {
-    const result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
-      artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
-      cwd: REPO_ROOT,
-      env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
-        dcodeBaseImageReference: context.dcodeBaseImageReference,
-        forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
-      }),
-      redactionValues: [apiKey],
-      timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
-    });
+    const result =
+      scriptPath === DEEPAGENTS_CODE_TUI_CHECK
+        ? await runDcodeTuiCheck(sandboxName, scriptPath, apiKey, context)
+        : await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
+            artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
+            cwd: REPO_ROOT,
+            env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
+              dcodeBaseImageReference: context.dcodeBaseImageReference,
+              forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
+            }),
+            redactionValues: [apiKey],
+            timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
+          });
     assertRequiredCloudExperimentalResult(scriptPath, result);
     if (
       scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK &&
