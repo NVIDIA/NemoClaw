@@ -125,7 +125,9 @@ This does not expose the raw credential to the sandbox before the request is aut
 ## Agent Adapters
 
 <AgentOnly variant="openclaw">
-OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox. Older managed Mcporter entries are accepted only by the explicit `mcp migrate` path.
+OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox.
+Use `mcp migrate --apply` to convert older managed Mcporter entries to native configuration.
+To discard an entry instead, follow [Remove a Server](manage-mcp-servers#remove-a-server); removal requires proven registry ownership.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes writes managed HTTP entries under `/sandbox/.hermes/config.yaml`.
@@ -160,7 +162,8 @@ The command carries no MCP traffic or raw service credential, and its payload co
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-OpenClaw stores MCP servers in the native `openclaw.json` `mcp.servers` map. Run `nemoclaw <name> mcp migrate` before the first mutation when an older sandbox still contains a managed Mcporter entry. The migration preview calls out that materializing the native entry activates behavior OpenClaw previously did not load.
+Before converting an older managed Mcporter entry, run `nemoclaw <name> mcp migrate` to preview the change.
+The preview explains that creating the native entry activates behavior OpenClaw previously did not load.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
