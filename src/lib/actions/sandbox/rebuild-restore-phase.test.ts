@@ -21,7 +21,11 @@ const backupManifest = {
 
 describe("rebuild filesystem restore", () => {
   beforeEach(() => {
-    vi.spyOn(restoreWindow, "beginOpenClawPostRestoreDoctor").mockResolvedValue({
+    vi.spyOn(restoreWindow, "beginOpenClawBackupQuiesce").mockResolvedValue({
+      ok: true,
+      window: { sandboxName: "alpha", kind: "backup" },
+    });
+    vi.spyOn(restoreWindow, "promoteOpenClawBackupQuiesceToPostRestoreDoctor").mockResolvedValue({
       ok: true,
       window: { sandboxName: "alpha" },
     });
@@ -62,13 +66,20 @@ describe("rebuild filesystem restore", () => {
       restoreSucceeded: true,
       openClawDoctorWindow: { sandboxName: "alpha" },
     });
-    expect(restoreWindow.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
+    expect(restoreWindow.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       undefined,
     );
     expect(
-      vi.mocked(restoreWindow.beginOpenClawPostRestoreDoctor).mock.invocationCallOrder[0],
+      vi.mocked(restoreWindow.beginOpenClawBackupQuiesce).mock.invocationCallOrder[0],
     ).toBeLessThan(restore.mock.invocationCallOrder[0]!);
+    expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor).mock
+        .invocationCallOrder[0]!,
+    );
+    expect(
+      restoreWindow.promoteOpenClawBackupQuiesceToPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
   });
 
   it("allows whole-state file restore only for an explicit custom image", async () => {

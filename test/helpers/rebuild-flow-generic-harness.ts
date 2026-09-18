@@ -938,9 +938,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       overrides.executeSandboxExecCommand ??
         (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    async (sandboxName, runtimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
   const runOpenClawPostRestoreDoctorSpy = vi
-    .spyOn(processRecovery, "beginOpenClawPostRestoreDoctor")
-    .mockImplementation(async (sandboxName, runtimeSelection) => {
+    .spyOn(openClawLifecycle, "promoteOpenClawBackupQuiesceToPostRestoreDoctor")
+    .mockImplementation(async (window) => {
       const result = await (
         overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
       )();
@@ -948,17 +957,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return {
         ok: true,
         window: {
-          sandboxName,
-          ...(runtimeSelection ? { runtimeSelection } : {}),
+          sandboxName: window.sandboxName,
+          ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
         },
       };
     });
   vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
     async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
-      const result = await (
-        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
-      )();
-      if (!result.ok) return result;
       return {
         ok: true,
         window: {

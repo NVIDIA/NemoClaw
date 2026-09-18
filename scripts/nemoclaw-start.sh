@@ -5108,6 +5108,8 @@ PY_SQLITE_TMPDIR
 run_requested_openclaw_backup_quiesce() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-backup-quiesce-v1"
+  local promote_expected="nemoclaw-openclaw-backup-quiesce-promote-doctor-v1"
+  local doctor_expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
   local release_expected="nemoclaw-openclaw-post-upgrade-doctor-release-v1"
   local abort_expected="nemoclaw-openclaw-post-upgrade-doctor-abort-v1"
   local ready="/tmp/nemoclaw-post-upgrade-doctor-ready"
@@ -5185,6 +5187,18 @@ EOF
     if [ "$marker_value" = "$release_expected" ]; then
       rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw source backup quiesce released gateway launch" >&2
+      return 0
+    fi
+    if [ "$marker_value" = "$promote_expected" ]; then
+      # Rebuild restored the captured state while this early gate held every
+      # startup writer down. Retire the backup receipt, publish the doctor
+      # request under the same owner, and continue only as far as the later
+      # post-setup doctor gate. Doctor therefore repairs the restored tree,
+      # rather than a fresh tree that restore subsequently overwrites.
+      rm -f -- "$ready" || return 1
+      printf '%s\n' "$doctor_expected" \
+        | _nemoclaw_safe_replace_tmp_file "$marker" 600 "$marker_owner" required || return 1
+      echo "[setup] OpenClaw restored state promoted to post-upgrade doctor" >&2
       return 0
     fi
     if [ "$marker_value" = "$abort_expected" ]; then

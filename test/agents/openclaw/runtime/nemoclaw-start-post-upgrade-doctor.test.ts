@@ -104,6 +104,16 @@ function releaseAfterReady(f: ReturnType<typeof fixture>): string {
   ].join("; ");
 }
 
+function promoteAfterReady(f: ReturnType<typeof fixture>): string {
+  const staged = `${f.marker}.promote`;
+  return [
+    `(while [ ! -f ${JSON.stringify(f.ready)} ]; do sleep 0.01; done`,
+    `printf '%s\n' nemoclaw-openclaw-backup-quiesce-promote-doctor-v1 >${JSON.stringify(staged)}`,
+    `chmod 600 ${JSON.stringify(staged)}`,
+    `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}) &`,
+  ].join("; ");
+}
+
 describe("nemoclaw-start post-upgrade doctor", () => {
   it("holds backup state before startup mutation without invoking doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
@@ -124,6 +134,39 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
       expect(fs.existsSync(f.normalizeCalls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs doctor only after a quiesced restore is promoted", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            backupQuiesceFunction(source, f.configDir, f.ready),
+            doctorFunction(source, f.configDir, f.ready),
+            promoteAfterReady(f),
+            "run_requested_openclaw_backup_quiesce || exit $?",
+            `printf 'restored-before-doctor\\n' >${JSON.stringify(f.calls)}`,
+            releaseAfterReady(f),
+            "run_requested_openclaw_post_upgrade_doctor",
+          ].join("\n"),
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        "restored-before-doctor\ndoctor --fix --yes --non-interactive\n",
+      );
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }
