@@ -40,7 +40,7 @@ Remove it only after the minimum supported OpenShell provides a root-owned lifec
 
 ## Verify Recovery Health
 
-For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
+For controller-backed built-in recovery, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
 
 The controller rechecks the managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
@@ -49,6 +49,10 @@ A failed managed probe cannot be overridden by an outer-namespace HTTP response.
 Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
 
 <AgentOnly variant="hermes">
+After an authenticated gated recovery request, NemoClaw observes the replacement Hermes gateway through the sandbox health endpoint over OpenShell.
+It uses the health timeout from the Hermes agent manifest and repeats the check after the shared settle window.
+This gated recovery check does not require the retired NemoClaw managed gateway controller.
+
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger recovery of the observed gateway child.
 

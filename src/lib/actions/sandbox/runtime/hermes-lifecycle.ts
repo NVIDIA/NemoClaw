@@ -77,9 +77,11 @@ export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Pr
   }
   return processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
     quiet: true,
-    requireManagedProbe: true,
     timeoutSeconds,
-    managedProbeImpl: (name) => processRecovery.isSandboxGatewayRunningForStatus(name, undefined),
+    // Hermes and OpenShell own the native gateway lifecycle. Observe the
+    // relaunched gateway through its sandbox health endpoint instead of the
+    // retired NemoClaw managed-gateway controller.
+    managedProbeImpl: () => null,
   });
 }
 

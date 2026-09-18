@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSessionAgent: vi.fn(),
-  isSandboxGatewayRunningForStatus: vi.fn(),
   waitForRecoveredSandboxGateway: vi.fn(),
 }));
 
@@ -16,7 +15,6 @@ vi.mock("../../../agent/runtime", async (importOriginal) => ({
 
 vi.mock("../process-recovery", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process-recovery")>()),
-  isSandboxGatewayRunningForStatus: mocks.isSandboxGatewayRunningForStatus,
   waitForRecoveredSandboxGateway: mocks.waitForRecoveredSandboxGateway,
 }));
 
@@ -32,20 +30,17 @@ describe("gated Hermes gateway recovery", () => {
     mocks.waitForRecoveredSandboxGateway.mockResolvedValue(true);
   });
 
-  it("uses the bounded managed recovery wait while the supervisor relaunches", async () => {
+  it("uses the bounded sandbox HTTP health wait while the supervisor relaunches", async () => {
     await expect(waitForGatedHermesGatewayRecovery("alpha")).resolves.toBe(true);
 
     expect(mocks.waitForRecoveredSandboxGateway).toHaveBeenCalledWith("alpha", {
       quiet: true,
-      requireManagedProbe: true,
       timeoutSeconds: 90,
       managedProbeImpl: expect.any(Function),
     });
 
     const options = mocks.waitForRecoveredSandboxGateway.mock.calls[0]?.[1];
-    mocks.isSandboxGatewayRunningForStatus.mockResolvedValueOnce(null);
-    await expect(options?.managedProbeImpl?.("alpha")).resolves.toBeNull();
-    expect(mocks.isSandboxGatewayRunningForStatus).toHaveBeenCalledWith("alpha", undefined);
+    expect(options?.managedProbeImpl?.("alpha")).toBeNull();
   });
 
   it("propagates a bounded recovery failure", async () => {
