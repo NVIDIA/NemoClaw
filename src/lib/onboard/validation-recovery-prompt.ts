@@ -89,17 +89,14 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "credential" && credentialEnv) {
+      console.log(`  ${label} authorization failed.`);
       console.log(
-        `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
+        "  Choose retry to enter the API key securely, back to change the provider or model, or exit to stop onboarding.",
       );
-      console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
       const choice = (
-        await deps.prompt(
-          "  Options: retry (re-enter key), back (change provider), exit [retry]: ",
-          {
-            secret: true,
-          },
-        )
+        await deps.prompt("  Options: retry, back, exit [retry]: ", {
+          secret: true,
+        })
       )
         .trim()
         .toLowerCase();
