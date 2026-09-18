@@ -48,6 +48,7 @@ import {
   MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
+import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
@@ -157,6 +158,7 @@ export interface UninstallRunOptions {
   assumeYes: boolean;
   deleteModels: boolean;
   destroyUserData?: boolean;
+  forceFreshReset?: boolean;
   gatewayName?: string;
   keepOpenShell: boolean;
 }
@@ -852,6 +854,24 @@ function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
       ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
       : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
   );
+}
+
+function removeForceFreshUserLocalOpenShell(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): boolean {
+  const userBin = path.resolve(
+    runtime.env.XDG_BIN_HOME || path.join(runtime.env.HOME || os.homedir(), ".local", "bin"),
+  );
+  try {
+    for (const target of paths.openshellInstallPaths) {
+      if (path.dirname(path.resolve(target)) === userBin) removePath(target, runtime);
+    }
+    return true;
+  } catch (error) {
+    runtime.error(`Could not remove managed user-local OpenShell binaries: ${formatError(error)}`);
+    return false;
+  }
 }
 
 async function deletePortableOpenShellSandbox(
@@ -2360,6 +2380,54 @@ function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
   )
     runtime.log(`Removed Docker volume ${name}`);
   else runtime.warn(`Failed to remove Docker volume ${name}`);
+}
+
+const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
+  `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
+  "u",
+);
+
+function removeForceFreshReceiptVolumes(runtime: UninstallRuntime): boolean {
+  const inventory = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
+    env: runtime.env,
+  });
+  if (inventory.status !== 0) {
+    runtime.error(
+      "Could not inventory managed-startup receipt volumes during force-fresh cleanup.",
+    );
+    return false;
+  }
+  const volumes = splitNonEmptyLines(inventory.stdout).filter((name) =>
+    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
+  );
+  for (const volume of volumes) {
+    const removed = runtime.runDocker(["volume", "rm", "-f", volume], {
+      env: runtime.env,
+      stdio: "ignore",
+    });
+    if (removed.status !== 0) {
+      runtime.error(`Managed-startup receipt volume '${volume}' could not be removed.`);
+      return false;
+    }
+    runtime.log(`Removed managed-startup receipt volume ${volume}`);
+  }
+  const remaining = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
+    env: runtime.env,
+  });
+  if (remaining.status !== 0) {
+    runtime.error("Could not verify managed-startup receipt volume cleanup.");
+    return false;
+  }
+  const retained = splitNonEmptyLines(remaining.stdout).find((name) =>
+    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
+  );
+  if (retained) {
+    runtime.error(
+      `Managed-startup receipt volume '${retained}' remains after force-fresh cleanup.`,
+    );
+    return false;
+  }
+  return true;
 }
 
 function parseOllamaModelInventory(output: string): string[] {
@@ -4117,6 +4185,22 @@ async function executePreparedPlan(
         step.actions.forEach((action) => {
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
         });
+        if (options.forceFreshReset) {
+          if (scopedToSelectedGateway) {
+            runtime.error(
+              "Force-fresh cleanup preserved receipt volumes because another gateway environment remains.",
+            );
+            return { ok: false, scopedToSelectedGateway };
+          }
+          if (!removeForceFreshReceiptVolumes(runtime)) {
+            return { ok: false, scopedToSelectedGateway };
+          }
+        }
+      } else if (options.forceFreshReset && runtime.commandExists("docker")) {
+        runtime.error(
+          "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent.",
+        );
+        return { ok: false, scopedToSelectedGateway };
       }
     } else if (step.name === "Model stores") {
       if (
@@ -4136,9 +4220,12 @@ async function executePreparedPlan(
         for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
         if (preserveSharedOpenShell) {
           runtime.log(binaryKeepMessage);
-        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
+        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT && !options.forceFreshReset) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
         } else if (runtime.platform === "darwin") {
+          if (options.forceFreshReset && !removeForceFreshUserLocalOpenShell(paths, runtime)) {
+            return { ok: false, scopedToSelectedGateway };
+          }
           reportRetainedMacOsOpenShell(runtime);
         } else {
           paths.openshellInstallPaths.forEach((target) =>

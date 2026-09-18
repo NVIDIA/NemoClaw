@@ -10,7 +10,7 @@ import { cleanupTempDir } from "../temp-files";
 
 const RECEIPT_VOLUME_DIRECTORY = "/run/nemoclaw/managed-startup-receipt-transfer";
 const RECEIPT_SEED_PREFIX = "nemoclaw-managed-startup-receipt-seed";
-const RECEIPT_VOLUME_PREFIX = "nemoclaw-managed-startup-receipt-volume";
+export const MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX = "nemoclaw-managed-startup-receipt-volume";
 
 export type DockerDaemonReceipt = {
   readonly hostPath: string;
@@ -100,7 +100,7 @@ export function transferDockerReceiptToDaemon(
   options: DockerReceiptTransferOptions,
 ): DockerDaemonReceipt {
   const dockerRun = options.dockerRun;
-  const volumeName = receiptName(RECEIPT_VOLUME_PREFIX);
+  const volumeName = receiptName(MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX);
   const seedName = receiptName(RECEIPT_SEED_PREFIX);
   let volumeCreated = false;
   let seedCreated = false;

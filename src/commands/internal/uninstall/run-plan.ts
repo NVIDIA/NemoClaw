@@ -30,6 +30,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
         "Uninstall every gateway port on this host, not only the port NEMOCLAW_GATEWAY_PORT selects",
     }),
     "all-gateway-ports-child": Flags.boolean({ hidden: true }),
+    "force-fresh-reset": Flags.boolean({ hidden: true }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
     "delete-models": Flags.boolean({
       description:
@@ -51,6 +52,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       assumeYes: flags.yes ?? false,
       deleteModels: flags["delete-models"] ?? false,
       destroyUserData: flags["destroy-user-data"] ?? false,
+      forceFreshReset: flags["force-fresh-reset"] ?? false,
       gatewayName: flags.gateway,
       keepOpenShell: flags["keep-openshell"] ?? false,
     };

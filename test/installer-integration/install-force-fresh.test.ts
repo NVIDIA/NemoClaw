@@ -129,7 +129,7 @@ printf 'destroy=%s args=%s\n' "\${NEMOCLAW_UNINSTALL_DESTROY_USER_DATA:-}" "$*" 
 
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   expect(fs.readFileSync(logPath, "utf-8")).toBe(
-    `destroy=1 args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --yes --destroy-user-data --all-gateway-ports\n`,
+    `destroy=1 args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --yes --destroy-user-data --force-fresh-reset --all-gateway-ports\n`,
   );
 });
 
@@ -148,7 +148,7 @@ it("stops when the staged candidate uninstaller fails", () => {
   expect(result.status).not.toBe(0);
 });
 
-it("removes Homebrew and standalone OpenShell installations", () => {
+it("removes only Homebrew after the canonical uninstaller handles user-local binaries", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-brew-");
   const localBin = path.join(tmp, ".local", "bin");
   const logPath = path.join(tmp, "brew.log");
@@ -177,10 +177,10 @@ exit 0
     "services stop nvidia/openshell/openshell",
     "uninstall --force nvidia/openshell/openshell",
   ]);
-  expect(fs.existsSync(path.join(localBin, "openshell"))).toBe(false);
-  expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(false);
-  expect(fs.existsSync(path.join(localBin, "openshell-sandbox"))).toBe(false);
-  expect(fs.existsSync(path.join(localBin, "openshell-driver-vm"))).toBe(false);
+  expect(fs.existsSync(path.join(localBin, "openshell"))).toBe(true);
+  expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(true);
+  expect(fs.existsSync(path.join(localBin, "openshell-sandbox"))).toBe(true);
+  expect(fs.existsSync(path.join(localBin, "openshell-driver-vm"))).toBe(true);
 }, 30_000);
 
 it("stops when Homebrew cannot remove OpenShell", () => {
@@ -225,21 +225,23 @@ it("runs cleanup before selecting fresh onboarding", () => {
   ]);
 });
 
-it("removes standalone OpenShell helpers even when no other state is detected", () => {
-  const result = callPayloadFunction(`
-    warn() { :; }
-    info() { :; }
-    force_fresh_install_has_existing_state() { return 1; }
-    prepare_force_fresh_uninstaller() { printf 'unexpected-prepare\n'; }
-    run_force_fresh_uninstaller() { printf 'unexpected-uninstall\n'; }
-    remove_macos_openshell_for_force_fresh_install() { printf 'openshell-reset\n'; }
-    run_force_fresh_install_reset
-  `);
+it.each(["openshell-gateway", "openshell-sandbox", "openshell-driver-vm"])(
+  "routes a standalone %s helper through canonical cleanup",
+  (binary) => {
+    const { root: tmp } = installerCheckout("nemoclaw-force-fresh-helper-detect-");
+    const localBin = path.join(tmp, ".local", "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeExecutable(path.join(localBin, binary), "#!/usr/bin/env bash\nexit 0\n");
 
-  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  expect(result.stdout.trim()).toBe("openshell-reset");
-  expect(result.stdout).not.toContain("unexpected-");
-});
+    const result = callPayloadFunction(
+      "force_fresh_install_has_existing_state && printf 'present'",
+      { HOME: tmp },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("present");
+  },
+);
 
 it("stops before package removal when managed uninstall rejects partial state", () => {
   const result = callPayloadFunction(`

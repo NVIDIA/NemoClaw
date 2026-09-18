@@ -37,7 +37,9 @@ describe("internal uninstall command", () => {
     process.exitCode = undefined;
     const instance = new InternalUninstallRunPlanCommand([], {} as Config);
     Object.defineProperty(instance, "parse", {
-      value: vi.fn().mockResolvedValue({ flags: { yes: true, "keep-openshell": true } }),
+      value: vi.fn().mockResolvedValue({
+        flags: { yes: true, "force-fresh-reset": true, "keep-openshell": true },
+      }),
     });
     const command = instance.run().then(() => {
       finished = true;
@@ -45,7 +47,7 @@ describe("internal uninstall command", () => {
     try {
       await Promise.race([started, command]);
       expect(mocks.runUninstallPlanProduction).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ assumeYes: true, keepOpenShell: true }),
+        expect.objectContaining({ assumeYes: true, forceFreshReset: true, keepOpenShell: true }),
         expect.objectContaining({
           backupAllBeforeUninstall: expect.any(Function),
           withSandboxMutationLock: expect.any(Function),

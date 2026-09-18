@@ -21,9 +21,9 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-async function runUninstallPlan(deps: UninstallRunDeps) {
+async function runUninstallPlan(deps: UninstallRunDeps, forceFreshReset = false) {
   return await runUninstallPlanBase(
-    { assumeYes: true, deleteModels: false, keepOpenShell: false },
+    { assumeYes: true, deleteModels: false, forceFreshReset, keepOpenShell: false },
     {
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
         gatewayName,
@@ -43,6 +43,7 @@ async function runUninstallPlan(deps: UninstallRunDeps) {
 async function uninstallOpenShell(options: {
   brewAvailable: boolean;
   brewStatus: number | null;
+  forceFreshReset?: boolean;
   platform?: NodeJS.Platform;
 }) {
   const home = "/tmp/nemoclaw-uninstall-test";
@@ -56,28 +57,31 @@ async function uninstallOpenShell(options: {
     removed.push(target);
     return ok();
   };
-  const result = await runUninstallPlan({
-    commandExists: (command) =>
-      command === "openshell" || (command === "brew" && options.brewAvailable),
-    env: { HOME: home } as NodeJS.ProcessEnv,
-    existsSync: (target) => existing.has(String(target)),
-    hasPortableRuntimeCleanup: () => false,
-    isTty: true,
-    log: (line) => logs.push(line),
-    platform: options.platform ?? "darwin",
-    rmSync: vi.fn((target) => remove(String(target))),
-    run: vi.fn((command, args) => {
-      calls.push([command, ...args]);
-      return command === "sudo" && args[0] === "rm" && args[1] === "-f"
-        ? remove(args[2])
-        : command === "openshell" && args[0] === "gateway" && args[1] === "list"
-          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-          : command === "brew" && args[0] === "list"
-            ? { status: options.brewStatus, stdout: "", stderr: "" }
-            : ok();
-    }),
-    runDocker: () => ok(),
-  });
+  const result = await runUninstallPlan(
+    {
+      commandExists: (command) =>
+        command === "openshell" || (command === "brew" && options.brewAvailable),
+      env: { HOME: home } as NodeJS.ProcessEnv,
+      existsSync: (target) => existing.has(String(target)),
+      hasPortableRuntimeCleanup: () => false,
+      isTty: true,
+      log: (line) => logs.push(line),
+      platform: options.platform ?? "darwin",
+      rmSync: vi.fn((target) => remove(String(target))),
+      run: vi.fn((command, args) => {
+        calls.push([command, ...args]);
+        return command === "sudo" && args[0] === "rm" && args[1] === "-f"
+          ? remove(args[2])
+          : command === "openshell" && args[0] === "gateway" && args[1] === "list"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : command === "brew" && args[0] === "list"
+              ? { status: options.brewStatus, stdout: "", stderr: "" }
+              : ok();
+      }),
+      runDocker: () => ok(),
+    },
+    options.forceFreshReset,
+  );
 
   return { calls, executablePaths, logs, remaining: [...existing], removed, result };
 }
@@ -96,6 +100,20 @@ it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)
   expect(logs).toContain(
     `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${FORMULA}`,
   );
+});
+
+it("lets force-fresh remove only managed user-local OpenShell binaries", async () => {
+  const { executablePaths, remaining, removed, result } = await uninstallOpenShell({
+    brewAvailable: true,
+    brewStatus: 0,
+    forceFreshReset: true,
+  });
+  const userLocal = executablePaths.filter((target) => target.includes("/.local/bin/"));
+  const system = executablePaths.filter((target) => target.startsWith("/usr/local/bin/"));
+
+  expect(result.exitCode).toBe(0);
+  expect(new Set(removed)).toEqual(new Set(userLocal));
+  expect(new Set(remaining)).toEqual(new Set(system));
 });
 
 it.each([

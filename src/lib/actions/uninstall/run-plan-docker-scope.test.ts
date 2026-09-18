@@ -151,4 +151,64 @@ describe("uninstall Docker resource scope", () => {
 
     expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
   });
+
+  it.each([
+    ["removes", 0, 0],
+    ["fails closed on", 1, 1],
+  ] as const)(
+    "%s retained managed-startup receipt volumes during force-fresh cleanup",
+    async (_scenario, removalStatus, expectedExitCode) => {
+      const owned = `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`;
+      const unrelated = "nemoclaw-managed-startup-receipt-volume-user-data";
+      const calls: string[][] = [];
+      let ownedPresent = true;
+      const runDocker = vi.fn((args: string[]) => {
+        calls.push(args);
+        const command = args.join(" ");
+        if (command === "info") return ok();
+        if (command === "ps -a --format {{.ID}} {{.Image}} {{.Names}}") return ok();
+        if (command === "images --format {{.ID}} {{.Repository}}:{{.Tag}}") return ok();
+        if (command === "volume ls --format {{.Name}}") {
+          return ok(`${ownedPresent ? `${owned}\n` : ""}${unrelated}\n`);
+        }
+        if (command === `volume rm -f ${owned}`) {
+          if (removalStatus === 0) ownedPresent = false;
+          return { status: removalStatus, stdout: removalStatus === 0 ? owned : "", stderr: "" };
+        }
+        if (command.startsWith("volume inspect ")) {
+          return { status: 1, stdout: "", stderr: "Error: no such volume" };
+        }
+        return ok();
+      });
+
+      const result = await runUninstallPlan(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          forceFreshReset: true,
+          keepOpenShell: true,
+        },
+        {
+          commandExists: () => true,
+          env: { HOME: "/tmp/nemoclaw-force-fresh-receipts" } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          hasPortableRuntimeCleanup: () => false,
+          isTty: false,
+          kill: () => true,
+          log: () => undefined,
+          rmSync: vi.fn(),
+          run: (command, args) =>
+            command === "openshell" && args.join(" ") === "gateway list -o json"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok(),
+          runDocker,
+        },
+      );
+
+      expect(result.exitCode).toBe(expectedExitCode);
+      expect(calls).toContainEqual(["volume", "rm", "-f", owned]);
+      expect(calls).not.toContainEqual(["volume", "rm", "-f", unrelated]);
+    },
+  );
 });

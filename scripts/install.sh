@@ -3575,6 +3575,9 @@ force_fresh_install_has_existing_state() {
     || [[ -e "${HOME}/.local/state/nemoclaw" ]] \
     || [[ -e "${HOME}/.local/bin/nemoclaw" ]] \
     || [[ -e "${HOME}/.local/bin/openshell" ]] \
+    || [[ -e "${HOME}/.local/bin/openshell-gateway" ]] \
+    || [[ -e "${HOME}/.local/bin/openshell-sandbox" ]] \
+    || [[ -e "${HOME}/.local/bin/openshell-driver-vm" ]] \
     || command_exists nemoclaw \
     || command_exists openshell; then
     return 0
@@ -3641,7 +3644,7 @@ run_force_fresh_uninstaller() {
     || error "Node.js is required for the force-fresh uninstaller."
   NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
     "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
-    --yes --destroy-user-data --all-gateway-ports
+    --yes --destroy-user-data --force-fresh-reset --all-gateway-ports
 }
 
 remove_macos_openshell_for_force_fresh_install() {
@@ -3654,11 +3657,6 @@ remove_macos_openshell_for_force_fresh_install() {
   elif [[ "$openshell_path" == /opt/homebrew/* || "$openshell_path" == /usr/local/* ]]; then
     error "The force-fresh installer found a system OpenShell binary that Homebrew did not identify as ${formula}. Remove that installation explicitly, then rerun."
   fi
-  local binary
-  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
-    rm -f -- "${HOME}/.local/bin/${binary}" \
-      || error "Could not remove ${HOME}/.local/bin/${binary} during the force-fresh install."
-  done
   hash -r 2>/dev/null || true
 }
 
