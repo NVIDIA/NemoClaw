@@ -75,6 +75,7 @@ import {
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions as BaseRestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
+  restartOpenClawGatewayThroughProvider,
   sandboxAgentName,
 } from "./gateway-restart";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
@@ -873,6 +874,12 @@ export async function restartSandboxGateway(
     restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
       deps: {
+        restartOpenClawGateway: (name) =>
+          restartOpenClawGatewayThroughProvider(
+            name,
+            runtimeSelection,
+            registry.getSandbox(name)?.gatewayName,
+          ),
         getSessionAgent: agentRuntime.getSessionAgent,
         getSandbox: registry.getSandbox,
         resolveSandboxDashboardPort,

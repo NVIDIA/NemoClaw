@@ -5112,7 +5112,7 @@ seed_default_workspace_templates_as_sandbox
 validate_nemoclaw_tmp_permissions
 
 # Start the gateway as the native sandbox agent user. OpenClaw owns its gateway
-# lifecycle, including in-process restart; NemoClaw only performs initial
+# lifecycle, including native process replacement; NemoClaw only performs initial
 # startup, records the process for health integration, and forwards sandbox
 # shutdown signals.
 # The launch primitive arms signal and EXIT cleanup before writing the marker.

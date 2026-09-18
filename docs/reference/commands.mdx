@@ -1414,11 +1414,11 @@ $$nemoclaw my-assistant recover
 
 <AgentOnly variant="openclaw,hermes">
 
-The privileged control path requires a running direct sandbox container that belongs to the named registry entry. Supported built-in images use either a direct root entrypoint or the OpenShell-managed process shape with OpenShell as PID 1 and exactly one nonroot `nemoclaw-start` supervisor. An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape fails with the `privileged control unavailable` failure layer. Kubernetes and other deployments without a matching direct container also fail with that layer.
+For `recover`, the privileged control path requires a running direct sandbox container that belongs to the named registry entry. Supported built-in images use either a direct root entrypoint or the OpenShell-managed process shape with OpenShell as PID 1 and exactly one nonroot `nemoclaw-start` supervisor. An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape fails with the `privileged control unavailable` failure layer. Kubernetes and other deployments without a matching direct container also fail with that layer.
 
 ### `$$nemoclaw <name> gateway restart`
 
-Force-restart the supported in-sandbox gateway process through the controller for the live container topology. Use this after runtime configuration or plugin changes that the agent reads only at gateway startup, such as Hermes Langfuse plugin settings. Unlike `recover`, this command restarts a healthy gateway instead of exiting after the health probe.
+Restart the supported in-sandbox gateway through the agent's native `gateway restart` command. Use this after runtime configuration or plugin changes that the agent reads only at gateway startup, such as Hermes Langfuse plugin settings. Unlike `recover`, this command restarts a healthy gateway instead of exiting after the health probe.
 
 ```bash
 $$nemoclaw my-assistant gateway restart [--quiet|-q]
@@ -1427,6 +1427,20 @@ $$nemoclaw my-assistant gateway restart [--quiet|-q]
 On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
 It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
 `--quiet` suppresses progress lines but still prints refusal diagnostics.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+In supported Linux OpenShell sandboxes, OpenClaw's native restart replaces the Node process image while preserving its process ID, so updated plugin modules load without recreating the sandbox.
+The host must have access to the sandbox's registered runtime. NemoClaw uses that runtime to run the native command as the `sandbox` user, with root privileges and capabilities removed. This lets OpenClaw find its gateway process without granting the paired CLI device administrative scopes.
+NemoClaw verifies gateway health and checks or recovers host-side forwards after the native command succeeds.
+A native command failure, health timeout, or forward recovery failure makes the command fail.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
 In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
 In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
 That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
@@ -1452,7 +1466,7 @@ If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mu
 
 </AgentOnly>
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="hermes">
 
 The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when transaction metadata cannot be validated, relaunch quarantined, launch failure, health timeout, or forward recovery failure. `relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after repeated process or health failures or an unrecoverable startup-layout refusal. Inspect the reported cause before choosing a repair; another recovery request does not retry a stopped relaunch. For ordinary process or health failures, correct the cause, then run `$$nemoclaw <name> stop` and `$$nemoclaw <name> start` to reset the supervisor. Rebuild only if the sandbox still cannot start.
 
@@ -1464,7 +1478,7 @@ For Hermes, `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>` identifies a suppo
 
 </AgentOnly>
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="hermes">
 
 An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`. Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths. Terminal agents do not have a gateway runtime and fail as unsupported.
 

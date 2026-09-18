@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export { restartOpenClawGatewayThroughProvider } from "./gateway-restart/openclaw-native-restart";
+
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
+import { parseOpenClawJsonDocuments } from "../../openclaw/agent-json-provenance";
 import { redactFullWithUrls } from "../../security/redact";
 
 export type GatewayRestartCommandResult = {
@@ -84,6 +87,9 @@ type SandboxExec = (
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
 export type GatewayRestartDeps = {
+  restartOpenClawGateway: (
+    sandboxName: string,
+  ) => GatewayRestartCommandResult | Promise<GatewayRestartCommandResult | null> | null;
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
@@ -410,8 +416,14 @@ export async function restartSandboxGatewayWithDeps(
       `  Restarting ${agentRuntime.getAgentDisplayName(agent)} gateway in '${sandboxName}'...`,
     );
   }
-  const nativeCommand = `${agentName} gateway restart`;
-  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  // Keep lifecycle decisions in the native agent. OpenClaw listener discovery
+  // needs the host runtime transport because sandbox exec is Landlock-confined.
+  const nativeCommand =
+    agentName === "openclaw" ? "openclaw gateway restart --json" : "hermes gateway restart";
+  const restartResult =
+    agentName === "openclaw"
+      ? await deps.restartOpenClawGateway(sandboxName)
+      : await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult || restartResult.status !== 0) {
     const classified = classifyGatewayRestartFailure(restartResult);
     if (agentName === "hermes" && classified.layer === "secret-boundary refusal") {
@@ -428,6 +440,22 @@ export async function restartSandboxGatewayWithDeps(
         : [];
     printGatewayRestartFailure(sandboxName, "native agent command", detail, gatewayLogTail);
     return { ok: false, failureLayer: "native agent command", detail };
+  }
+
+  if (agentName === "openclaw") {
+    const documents = parseOpenClawJsonDocuments(restartResult.stdout);
+    const acknowledgement =
+      documents.length === 1
+        ? (documents[0] as {
+            ok?: boolean;
+            result?: string;
+          } | null)
+        : null;
+    if (acknowledgement?.ok !== true || acknowledgement.result !== "restarted") {
+      const detail = "OpenClaw did not confirm that the gateway restarted";
+      printGatewayRestartFailure(sandboxName, "native agent command", detail);
+      return { ok: false, failureLayer: "native agent command", detail };
+    }
   }
 
   if (

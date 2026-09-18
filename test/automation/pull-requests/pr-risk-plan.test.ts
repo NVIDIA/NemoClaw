@@ -445,6 +445,14 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
+  it("selects native plugin reload coverage for the OpenClaw restart patch", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["scripts/lib/patch-openclaw-container-restart.mts"]).map(
+        (target) => target.id,
+      ),
+    ).toEqual(["full-e2e"]);
+  });
+
   it("maps shared canonical OpenShell components to every live consumer (#11547)", () => {
     const changedFile = "test/helpers/openshell-components.ts";
 

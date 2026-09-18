@@ -823,6 +823,14 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
+The `full-e2e` plugin lifecycle invokes v1, replaces it with v2, and invokes v2
+through the running gateway after each native restart. This proves that restart
+loads updated plugin code, beyond discovery through a separate CLI process.
+The OpenClaw 2026.7.1 compatibility patch replaces the Node process image in
+Linux OpenShell sandboxes while preserving its PID. Deterministic process tests
+cover fresh module loading, invocation and environment handoff, and unchanged
+native behavior outside that boundary.
+
 ## Device-auth health classification
 
 Issue #11946 retired the standalone `device-auth-health` target. The target

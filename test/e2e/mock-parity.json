@@ -165,6 +165,7 @@
         "test/e2e/live/sandbox-credential-boundary.ts"
       ],
       "fast": [
+        "test/agents/openclaw/openclaw-container-restart-patch.test.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",

@@ -3,8 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
-import { classifyGatewayRestartFailure } from "./gateway-restart";
-import { restartSandboxGateway } from "./process-recovery";
+import {
+  classifyGatewayRestartFailure,
+  restartSandboxGatewayWithDeps as restartSandboxGateway,
+} from "./gateway-restart";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -47,12 +49,21 @@ describe("restartSandboxGateway native lifecycle", () => {
 
   function baseDeps(overrides = {}) {
     return {
+      restartOpenClawGateway: vi.fn(async () => ({
+        status: 0,
+        stdout: JSON.stringify({ ok: true, result: "restarted" }),
+        stderr: "",
+      })),
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
       executeSandboxExecCommand: vi.fn(async () => ({
         status: 0,
-        stdout: "",
+        stdout: JSON.stringify({
+          ok: true,
+          result: "scheduled",
+          restart: { ok: true, delayMs: 0 },
+        }),
         stderr: "",
       })),
       waitForRecoveredSandboxGateway: vi.fn(async () => true),
@@ -75,12 +86,33 @@ describe("restartSandboxGateway native lifecycle", () => {
       restarted: true,
       healthPassed: true,
     });
-    expect(deps.executeSandboxExecCommand).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw gateway restart",
-      210000,
-    );
+    expect(deps.restartOpenClawGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "Gateway service is not installed.",
+    "null",
+    '{"ok":true}\n{"ok":true}',
+    JSON.stringify({ ok: true, result: "scheduled", restart: { ok: true, delayMs: -1 } }),
+    JSON.stringify({ ok: false }),
+    JSON.stringify({ ok: true, result: "deferred", restart: { ok: true, delayMs: 0 } }),
+    JSON.stringify({ ok: true, result: "scheduled", restart: { ok: true, delayMs: 60_001 } }),
+  ])(
+    "does not accept a healthy old gateway after an unacknowledged restart: %s",
+    async (stdout) => {
+      silenceConsole();
+      const deps = baseDeps({
+        restartOpenClawGateway: vi.fn(async () => ({ status: 0, stdout, stderr: "" })),
+      });
+      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toMatchObject({
+        ok: false,
+        failureLayer: "native agent command",
+      });
+      expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    },
+  );
 
   it("asks Hermes to restart its gateway", async () => {
     silenceConsole();
@@ -129,7 +161,7 @@ describe("restartSandboxGateway native lifecycle", () => {
   it("reports the native agent failure without an authorization verdict", async () => {
     silenceConsole();
     const deps = baseDeps({
-      executeSandboxExecCommand: vi.fn(async () => ({
+      restartOpenClawGateway: vi.fn(async () => ({
         status: 1,
         stdout: "",
         stderr: "native restart failed",
