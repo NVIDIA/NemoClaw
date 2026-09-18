@@ -11,6 +11,7 @@ import {
   DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS,
   DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
   finalizeDockerEngine27ReceiptProbe,
+  requireDockerResourceAbsent,
   validateDockerEngine27SeedIsolation,
 } from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
 import {
@@ -86,6 +87,7 @@ describe("protected managed-image startup helpers", () => {
           },
         ],
         NetworkMode: "none",
+        Privileged: false,
         ReadonlyRootfs: true,
         SecurityOpt: ["no-new-privileges"],
       },
@@ -98,9 +100,41 @@ describe("protected managed-image startup helpers", () => {
     expect(() =>
       validateDockerEngine27SeedIsolation({
         ...secureSeed,
+        HostConfig: { ...secureSeed.HostConfig, Privileged: true },
+      }),
+    ).toThrow("receipt seed was privileged");
+    expect(() =>
+      validateDockerEngine27SeedIsolation({
+        ...secureSeed,
         HostConfig: { ...secureSeed.HostConfig, CapDrop: [] },
       }),
     ).toThrow("receipt seed retained capabilities");
+  });
+
+  it("proves cleanup only from Docker's explicit absence response", () => {
+    expect(() =>
+      requireDockerResourceAbsent(
+        { status: 1, stderr: "Error: No such container: receipt-seed", stdout: "" },
+        "receipt seed",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      requireDockerResourceAbsent(
+        {
+          error: new Error("spawnSync docker ETIMEDOUT"),
+          status: null,
+          stderr: "",
+          stdout: "",
+        },
+        "receipt seed",
+      ),
+    ).toThrow("receipt seed absence was not proven");
+    expect(() =>
+      requireDockerResourceAbsent(
+        { status: 1, stderr: "permission denied", stdout: "" },
+        "receipt seed",
+      ),
+    ).toThrow("receipt seed absence was not proven");
   });
 
   it("parses exact protected dispatch identity", () => {

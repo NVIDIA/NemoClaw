@@ -40,7 +40,7 @@ export const DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS =
   DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
   DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS / 2;
 
-type CommandResult = {
+export type CommandResult = {
   readonly error?: Error;
   readonly status: number | null;
   readonly stderr: string;
@@ -127,12 +127,14 @@ export function validateDockerEngine27SeedIsolation(value: unknown): void {
       CapDrop?: unknown;
       Mounts?: unknown;
       NetworkMode?: unknown;
+      Privileged?: unknown;
       ReadonlyRootfs?: unknown;
       SecurityOpt?: unknown;
     };
   };
   requireCondition(seed.Config?.User === "0", "receipt seed did not use numeric root");
   requireCondition(seed.HostConfig?.NetworkMode === "none", "receipt seed retained networking");
+  requireCondition(seed.HostConfig?.Privileged === false, "receipt seed was privileged");
   requireCondition(seed.HostConfig?.ReadonlyRootfs === true, "receipt seed root was writable");
   requireCondition(
     Array.isArray(seed.HostConfig?.SecurityOpt) &&
@@ -156,8 +158,12 @@ export function validateDockerEngine27SeedIsolation(value: unknown): void {
   );
 }
 
-function requireAbsent(result: CommandResult, resource: string): void {
-  requireCondition(result.status !== 0, `${resource} remained after receipt-transfer cleanup`);
+export function requireDockerResourceAbsent(result: CommandResult, resource: string): void {
+  const detail = commandDetail(result);
+  requireCondition(
+    result.status !== 0 && /\bno such (?:container|object|volume)\b/iu.test(detail),
+    `${resource} absence was not proven after receipt-transfer cleanup: ${detail}`,
+  );
 }
 
 export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
@@ -183,7 +189,7 @@ export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
     "refusing to remove a Docker Engine 27 daemon with mismatched ownership",
   );
   requireSuccess(runDocker(["rm", "-f", daemonName], "cleanup"), "remove Docker Engine 27 daemon");
-  requireAbsent(
+  requireDockerResourceAbsent(
     runDocker(["container", "inspect", daemonName], "cleanup"),
     "Docker Engine 27 daemon",
   );
@@ -337,7 +343,10 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
     });
     successfulVolume = receipt.volumeName;
     requireCondition(successfulSeed.length > 0, "receipt transfer did not create a seed");
-    requireAbsent(innerDocker(["container", "inspect", successfulSeed]), "successful receipt seed");
+    requireDockerResourceAbsent(
+      innerDocker(["container", "inspect", successfulSeed]),
+      "successful receipt seed",
+    );
     requireSuccess(
       innerDocker([
         "run",
@@ -397,8 +406,14 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
       failedSeed.length > 0 && failedVolume.length > 0,
       "failed transfer omitted resources",
     );
-    requireAbsent(innerDocker(["container", "inspect", failedSeed]), "failed receipt seed");
-    requireAbsent(innerDocker(["volume", "inspect", failedVolume]), "failed receipt volume");
+    requireDockerResourceAbsent(
+      innerDocker(["container", "inspect", failedSeed]),
+      "failed receipt seed",
+    );
+    requireDockerResourceAbsent(
+      innerDocker(["volume", "inspect", failedVolume]),
+      "failed receipt volume",
+    );
   } catch (error) {
     primaryError = error;
   }

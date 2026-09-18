@@ -3590,10 +3590,10 @@ run_force_fresh_install_reset() {
     prepare_force_fresh_uninstaller "$source_root"
     run_force_fresh_uninstaller "$source_root" \
       || error "Force-fresh cleanup stopped because the authoritative whole-host uninstall did not complete. The installer preserved remaining state for a safe retry."
-    remove_macos_openshell_for_force_fresh_install
   else
     info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install."
   fi
+  remove_macos_openshell_for_force_fresh_install
   FRESH=1
   export NEMOCLAW_FRESH=1
   export NEMOCLAW_REINSTALL_CLI=1

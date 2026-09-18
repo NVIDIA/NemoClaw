@@ -251,6 +251,22 @@ it("runs cleanup before selecting fresh onboarding", () => {
   ]);
 });
 
+it("removes standalone OpenShell helpers even when no other state is detected", () => {
+  const result = callPayloadFunction(`
+    warn() { :; }
+    info() { :; }
+    force_fresh_install_has_existing_state() { return 1; }
+    prepare_force_fresh_uninstaller() { printf 'unexpected-prepare\n'; }
+    run_force_fresh_uninstaller() { printf 'unexpected-uninstall\n'; }
+    remove_macos_openshell_for_force_fresh_install() { printf 'openshell-reset\n'; }
+    run_force_fresh_install_reset
+  `);
+
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(result.stdout.trim()).toBe("openshell-reset");
+  expect(result.stdout).not.toContain("unexpected-");
+});
+
 it("stops before package removal when managed uninstall rejects partial state", () => {
   const result = callPayloadFunction(`
     warn() { :; }
