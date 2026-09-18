@@ -25,26 +25,6 @@ export interface ProtectedManagedImageDispatchEnvironment {
   workspace: string;
 }
 
-export const DOCKER_ENGINE_27_PROBE_TIMEOUT_MS = 10 * 60_000;
-
-export function dockerEngine27ReceiptDaemonName(runId: number, runAttempt: number): string {
-  return `nemoclaw-receipt-engine27-${String(runId)}-${String(runAttempt)}`;
-}
-
-export function shouldRunDockerEngine27ReceiptProbe(
-  platform: ProtectedManagedImagePlatform,
-): boolean {
-  return platform === "linux/amd64";
-}
-
-export function registerDockerEngine27ReceiptCleanup(
-  cleanup: { trackDisposable(name: string, dispose: () => void): void },
-  daemonName: string,
-  dispose: () => void,
-): void {
-  cleanup.trackDisposable(`remove owned Docker Engine 27 daemon ${daemonName}`, dispose);
-}
-
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);

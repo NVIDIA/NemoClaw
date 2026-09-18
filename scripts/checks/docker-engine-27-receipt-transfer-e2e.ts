@@ -19,16 +19,26 @@ const RECEIPT_IMAGE =
   "docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc";
 const RECEIPT_VOLUME_DIRECTORY = "/run/nemoclaw/managed-startup-receipt-transfer";
 const DAEMON_OWNER_LABEL = "io.nvidia.nemoclaw.e2e.docker27-receipt";
-export const DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS = 120_000;
-export const DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS = 30_000;
+export const DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS = 30_000;
+export const DOCKER_ENGINE_27_PULL_TIMEOUT_MS = 120_000;
+export const DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS = 15_000;
 export const DOCKER_ENGINE_27_READINESS_ATTEMPTS = 45;
 export const DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS = 5_000;
 export const DOCKER_ENGINE_27_READINESS_INTERVAL_MS = 1_000;
+export const DOCKER_ENGINE_27_MAX_OPERATION_COUNT = 28;
+export const DOCKER_ENGINE_27_PULL_COUNT = 2;
+export const DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT = 3;
+export const DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS = 60_000;
 export const DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS =
   DOCKER_ENGINE_27_READINESS_ATTEMPTS *
     (DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS + DOCKER_ENGINE_27_READINESS_INTERVAL_MS) +
-  DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS +
-  DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS;
+  DOCKER_ENGINE_27_MAX_OPERATION_COUNT * DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PULL_COUNT * DOCKER_ENGINE_27_PULL_TIMEOUT_MS +
+  DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS;
+export const DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS =
+  DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
+  DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS / 2;
 
 type CommandResult = {
   readonly error?: Error;
@@ -37,42 +47,24 @@ type CommandResult = {
   readonly stdout: string;
 };
 
-function runDocker(args: readonly string[]): CommandResult {
-  const result = spawnSync("docker", [...args], {
-    encoding: "utf8",
-    killSignal: "SIGKILL",
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS,
-  });
-  return {
-    ...(result.error ? { error: result.error } : {}),
-    status: result.status,
-    stderr: result.stderr ?? "",
-    stdout: result.stdout ?? "",
-  };
-}
+type DockerCommandProfile = "cleanup" | "operation" | "pull" | "readiness";
 
-function runDockerReadiness(args: readonly string[]): CommandResult {
+function runDocker(
+  args: readonly string[],
+  profile: DockerCommandProfile = "operation",
+): CommandResult {
   const result = spawnSync("docker", [...args], {
     encoding: "utf8",
     killSignal: "SIGKILL",
-    maxBuffer: 1024 * 1024,
-    timeout: DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS,
-  });
-  return {
-    ...(result.error ? { error: result.error } : {}),
-    status: result.status,
-    stderr: result.stderr ?? "",
-    stdout: result.stdout ?? "",
-  };
-}
-
-function runDockerCleanup(args: readonly string[]): CommandResult {
-  const result = spawnSync("docker", [...args], {
-    encoding: "utf8",
-    killSignal: "SIGKILL",
-    maxBuffer: 1024 * 1024,
-    timeout: DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS,
+    maxBuffer: profile === "operation" || profile === "pull" ? 8 * 1024 * 1024 : 1024 * 1024,
+    timeout:
+      profile === "pull"
+        ? DOCKER_ENGINE_27_PULL_TIMEOUT_MS
+        : profile === "readiness"
+          ? DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS
+          : profile === "cleanup"
+            ? DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS
+            : DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS,
   });
   return {
     ...(result.error ? { error: result.error } : {}),
@@ -99,7 +91,7 @@ function requireCondition(condition: unknown, detail: string): asserts condition
 
 async function waitForDocker27(daemonName: string): Promise<void> {
   for (let attempt = 0; attempt < DOCKER_ENGINE_27_READINESS_ATTEMPTS; attempt += 1) {
-    if (runDockerReadiness(["exec", daemonName, "docker", "info"]).status === 0) return;
+    if (runDocker(["exec", daemonName, "docker", "info"], "readiness").status === 0) return;
     await new Promise<void>((resolve) =>
       setTimeout(resolve, DOCKER_ENGINE_27_READINESS_INTERVAL_MS),
     );
@@ -169,13 +161,16 @@ function requireAbsent(result: CommandResult, resource: string): void {
 }
 
 export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
-  const inspected = runDockerCleanup([
-    "container",
-    "inspect",
-    "--format",
-    `{{ index .Config.Labels "${DAEMON_OWNER_LABEL}" }}`,
-    daemonName,
-  ]);
+  const inspected = runDocker(
+    [
+      "container",
+      "inspect",
+      "--format",
+      `{{ index .Config.Labels "${DAEMON_OWNER_LABEL}" }}`,
+      daemonName,
+    ],
+    "cleanup",
+  );
   if (inspected.status !== 0) {
     requireCondition(
       /No such (?:container|object)/iu.test(commandDetail(inspected)),
@@ -187,8 +182,11 @@ export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
     inspected.stdout.trim() === daemonName,
     "refusing to remove a Docker Engine 27 daemon with mismatched ownership",
   );
-  requireSuccess(runDockerCleanup(["rm", "-f", daemonName]), "remove Docker Engine 27 daemon");
-  requireAbsent(runDockerCleanup(["container", "inspect", daemonName]), "Docker Engine 27 daemon");
+  requireSuccess(runDocker(["rm", "-f", daemonName], "cleanup"), "remove Docker Engine 27 daemon");
+  requireAbsent(
+    runDocker(["container", "inspect", daemonName], "cleanup"),
+    "Docker Engine 27 daemon",
+  );
 }
 
 async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<void> {
@@ -208,8 +206,14 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
 
   try {
     requireSuccess(
+      runDocker(["pull", DIND_IMAGE], "pull"),
+      "pull digest-pinned Docker Engine 27 image",
+    );
+    requireSuccess(
       runDocker([
         "run",
+        "--pull",
+        "never",
         "--privileged",
         "--detach",
         "--name",
@@ -233,7 +237,10 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
       `unexpected Docker Engine version ${engineVersion}`,
     );
 
-    requireSuccess(innerDocker(["pull", RECEIPT_IMAGE]), "pull digest-pinned receipt image");
+    requireSuccess(
+      runDocker(["exec", daemonName, "docker", "pull", RECEIPT_IMAGE], "pull"),
+      "pull digest-pinned receipt image",
+    );
     requireSuccess(
       runDocker(["cp", fixtureReceipt, `${daemonName}:${daemonReceipt}`]),
       "stage protected receipt in Docker Engine 27 client",
