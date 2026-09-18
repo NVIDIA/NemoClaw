@@ -32,6 +32,7 @@ internal static class NativeSetupOperations
             throw new InvalidOperationException("Integration keys no longer match the selected options.");
         var serviceBytes = new Dictionary<string, byte[]>();
         byte[]? credential = null;
+        byte[]? transaction = null;
         try
         {
             credential = configuration.ReadCredential(password);
@@ -42,26 +43,50 @@ internal static class NativeSetupOperations
             if (configuration.LocalModel is not null)
                 progress?.Invoke(new NativeExpressProgress("verification", "Checking the installed model and runtime before saving your settings.", null, null));
             var preparation = await runSetupHelper(launcher, new[] { "--configure-native", "--prepare-all" }, configurationBytes, true);
-            var bindings = ReadBindings(preparation, requiredServices, configuration.LocalModel);
+            ReadBindings(preparation, requiredServices, configuration.LocalModel);
             cancellation.ThrowIfCancellationRequested();
             if (configuration.LocalModel is not null)
                 progress?.Invoke(new NativeExpressProgress("configuration", "Saving your choices and protecting the API key in Windows Credential Manager.", null, null));
             // The progress callback disables cancellation in the UI. This second check is the
             // commit boundary; once it passes, finish every credential and configuration write.
             cancellation.ThrowIfCancellationRequested();
-            var binding = bindings.Inference;
-            var serviceBindings = bindings.Services;
-            if (binding is not null)
-                await runSetupHelper(launcher, new[] { credential.Length == 0 ? "--credential-delete" : "--credential-write", configuration.Inference, "--binding", binding }, credential, false);
-            foreach (var service in requiredServices)
-                await runSetupHelper(launcher, new[] { "--credential-write", service, "--binding", serviceBindings[service] }, serviceBytes[service], false);
-            await runSetupHelper(launcher, new[] { "--configure-native" }, configurationBytes, false);
+            transaction = SerializeTransaction(configurationBytes, credential, serviceBytes);
+            // The configuration owner acquires the state lease before touching credentials
+            // and restores previous bindings if the save fails. Secrets use stdin only.
+            await runSetupHelper(launcher, new[] { "--configure-native", "--transaction" }, transaction, false);
             NativeDesktopIntegration.Ensure(configuration.Agent, launcher);
         }
         finally
         {
             if (credential is not null) CryptographicOperations.ZeroMemory(credential);
+            if (transaction is not null) CryptographicOperations.ZeroMemory(transaction);
             foreach (var bytes in serviceBytes.Values) CryptographicOperations.ZeroMemory(bytes);
+        }
+    }
+
+    private static byte[] SerializeTransaction(byte[] configuration, byte[] credential, Dictionary<string, byte[]> services)
+    {
+        using var buffer = new MemoryStream();
+        try
+        {
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartObject();
+                writer.WritePropertyName("configuration");
+                writer.WriteRawValue(configuration);
+                writer.WriteStartObject("credentials");
+                writer.WriteString("inference", credential.AsSpan());
+                writer.WriteStartObject("services");
+                foreach (var entry in services) writer.WriteString(entry.Key, entry.Value.AsSpan());
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+            return buffer.ToArray();
+        }
+        finally
+        {
+            if (buffer.TryGetBuffer(out var bytes)) CryptographicOperations.ZeroMemory(bytes.AsSpan());
         }
     }
 
@@ -93,7 +118,9 @@ internal static class NativeSetupOperations
         };
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = startInfo };
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // A transaction includes bounded vault snapshots, writes, and possible rollback.
+        // Do not kill its owner at the old single-operation timeout while it is recovering.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(arguments.Contains("--transaction") ? 600 : 30));
         if (!process.Start()) throw new InvalidOperationException("The native setup helper could not start.");
         try
         {

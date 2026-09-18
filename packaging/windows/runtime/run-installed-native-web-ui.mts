@@ -49,7 +49,6 @@ import { resolveNativeConfiguredInference } from "./native-configured-inference.
 import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
 
 import {
-  nativeCredentialBinding,
   nativeQualificationLoopbackConfig,
   readOpenedRegularFile,
   writeNativeGatewayConfig,
@@ -101,58 +100,32 @@ async function withTimeout<T>(promise: Promise<T>, timeout: number, label: strin
   }
 }
 
-async function updateWindowsCredential(
-  launcher: string,
-  configuration: NativeOnboardingConfiguration,
-) {
-  const { inference: provider, credential, endpoint } = configuration;
-  if (endpoint === undefined) fail("The credential endpoint is missing.");
-  const binding = nativeCredentialBinding({ ...configuration, endpoint });
-  const operation = credential ? "--credential-write" : "--credential-delete";
-  const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
-    (resolve, reject) => {
-      const child = spawn(launcher, [operation, provider, "--binding", binding], {
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk) => {
-        stdout = `${stdout}${chunk.toString("utf8")}`.slice(-4096);
-      });
-      child.stderr.on("data", (chunk) => {
-        stderr = `${stderr}${chunk.toString("utf8")}`.slice(-4096);
-      });
-      child.once("error", reject);
-      child.once("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-      child.stdin.end(credential, "utf8");
-    },
-  );
-  if (result.code !== 0 || result.stdout)
-    throw new Error(
-      credential
-        ? "Windows Credential Manager could not protect this API key."
-        : "Windows Credential Manager could not clear the previous API key.",
-    );
-}
-
 export async function saveNativeOnboardingConfiguration(
   launcher: string,
   configuration: NativeOnboardingConfiguration,
   dependencies: {
-    updateCredential?: typeof updateWindowsCredential;
     configure?: typeof configureNativeFromStdin;
   } = {},
 ) {
-  await (dependencies.updateCredential ?? updateWindowsCredential)(launcher, configuration);
   const record = nativeAgentConfigurationRecord(configuration);
-  const configPath = await (dependencies.configure ?? configureNativeFromStdin)(
-    launcher,
-    [],
-    Readable.from([Buffer.from(JSON.stringify(record), "utf8")]),
+  const input = Buffer.from(
+    JSON.stringify({
+      configuration: record,
+      credentials: { inference: configuration.credential, services: null },
+    }),
+    "utf8",
   );
-  if (typeof configPath !== "string") fail("graphical onboarding did not save its configuration");
-  return configPath;
+  try {
+    const configPath = await (dependencies.configure ?? configureNativeFromStdin)(
+      launcher,
+      ["--transaction"],
+      Readable.from([input]),
+    );
+    if (typeof configPath !== "string") fail("graphical onboarding did not save its configuration");
+    return configPath;
+  } finally {
+    input.fill(0);
+  }
 }
 
 function readNativeAgentConfiguration(agent: string) {

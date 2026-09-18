@@ -22,6 +22,11 @@ import {
   readWindowsCredential,
 } from "./native-security.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
+import {
+  nativeConfigurationCredentialStore,
+  withNativeCredentialTransaction,
+  type CredentialChange,
+} from "./native-configuration-credentials.mts";
 
 export type NativeOnboardingConfiguration = {
   agent: string;
@@ -193,20 +198,37 @@ function writeNativeAgentConfiguration(configuration: NativeOnboardingConfigurat
   const configPath = path.join(stateRoot, "native-windows.json");
   const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   const persisted = nativeAgentConfigurationRecord(configuration);
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-  fs.renameSync(temporaryPath, configPath);
   const activePath = path.join(localAppData, "NVIDIA", "NemoClaw", "active-agent.txt");
   const activeTemporaryPath = `${activePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-  fs.renameSync(activeTemporaryPath, activePath);
+  const previous = readOpenedRegularFile(configPath, { maxBytes: 16 * 1024 });
+  let replaced = false;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.renameSync(temporaryPath, configPath);
+    replaced = true;
+    fs.renameSync(activeTemporaryPath, activePath);
+  } catch (error) {
+    if (replaced) {
+      if (previous === null) fs.unlinkSync(configPath);
+      else {
+        fs.writeFileSync(temporaryPath, previous, { flag: "wx", mode: 0o600 });
+        fs.renameSync(temporaryPath, configPath);
+      }
+    }
+    throw error;
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
+    fs.rmSync(activeTemporaryPath, { force: true });
+  }
   return configPath;
 }
 
@@ -221,16 +243,47 @@ export async function configureNativeFromStdin(
     readCredential?: typeof readWindowsCredential;
     readServices?: typeof readNativeServiceEnvironment;
     deleteCredential?: typeof deleteCredentialByBinding;
+    credentialStore?: typeof nativeConfigurationCredentialStore;
+    writeConfiguration?: typeof writeNativeAgentConfiguration;
   } = {},
 ) {
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of input) {
-    bytes += chunk.length;
-    if (bytes > 16 * 1024) fail("native setup configuration exceeds its size limit");
-    chunks.push(chunk);
+  const transaction = args.includes("--transaction");
+  let payload;
+  try {
+    for await (const chunk of input) {
+      chunks.push(chunk);
+      bytes += chunk.length;
+      if (bytes > (transaction ? 128 : 16) * 1024)
+        fail("native setup configuration exceeds its size limit");
+    }
+    const serialized = Buffer.concat(chunks);
+    try {
+      payload = JSON.parse(serialized.toString("utf8"));
+    } catch {
+      // JSON parser diagnostics can quote the private transaction input.
+      fail("native setup configuration is invalid");
+    } finally {
+      serialized.fill(0);
+    }
+  } finally {
+    chunks.forEach((chunk) => chunk.fill(0));
   }
-  const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const submitted = transaction ? payload?.configuration : payload;
+  const credentials = transaction ? payload?.credentials : undefined;
+  if (
+    transaction &&
+    (args.some((arg) => arg.startsWith("--prepare")) ||
+      !credentials ||
+      typeof credentials !== "object" ||
+      Array.isArray(credentials) ||
+      Object.keys(credentials).some((key) => !["inference", "services"].includes(key)) ||
+      typeof credentials.inference !== "string" ||
+      typeof credentials.services !== "object" ||
+      Array.isArray(credentials.services))
+  )
+    fail("native setup credential transaction is invalid");
   if (
     submitted?.schemaVersion !== 1 ||
     submitted?.classification !== "nemoclaw-native-windows-agent-configuration" ||
@@ -265,6 +318,31 @@ export async function configureNativeFromStdin(
     true,
   );
   normalized.options = normalizeNativeOptions(submitted.agent, submitted.options);
+  if (transaction) {
+    const value = normalizeProviderCredential(normalized.inference, credentials.inference);
+    if (value !== credentials.inference || Boolean(value) !== submitted.credentialStored)
+      fail("native setup credential does not match the configuration");
+    const services = selectedNativeServices(normalized.options);
+    if (
+      credentials.services !== null &&
+      (Object.keys(credentials.services).length !== services.length ||
+        services.some((service) => !Object.hasOwn(credentials.services, service)))
+    )
+      fail("native setup service credentials do not match the configuration");
+    for (const service of services) {
+      if (credentials.services === null) continue;
+      const key = credentials.services[service];
+      if (
+        typeof key !== "string" ||
+        !key ||
+        Buffer.byteLength(key, "utf8") > 2048 ||
+        /[\u0000\r\n]/u.test(key) ||
+        (service === "slack-bot" && !key.startsWith("xoxb-")) ||
+        (service === "slack-app" && !key.startsWith("xapp-"))
+      )
+        fail("native setup service credential is invalid");
+    }
+  }
   if (submitted.localModel) normalized.localModel = submitted.localModel;
   const servicePosition = args.indexOf("--prepare-service");
   if (servicePosition !== -1) {
@@ -319,19 +397,6 @@ export async function configureNativeFromStdin(
   );
   try {
     state.assertHeld();
-    const credential = normalized.localModel
-      ? ""
-      : await (dependencies.readCredential ?? readWindowsCredential)(
-          launcher,
-          { ...normalized, endpoint: normalized.endpoint! },
-          submitted.credentialStored,
-        );
-    normalized.credential = normalizeProviderCredential(normalized.inference, credential);
-    await (dependencies.readServices ?? readNativeServiceEnvironment)(
-      launcher,
-      normalized.agent,
-      normalized.options,
-    );
     const previousPath = path.join(
       requiredDirectory(process.env.LOCALAPPDATA ?? "", "Windows local application-data directory"),
       "NVIDIA",
@@ -351,8 +416,61 @@ export async function configureNativeFromStdin(
       previous?.credentialStored === true
         ? nativeCredentialBinding(previous)
         : null;
-    state.assertHeld();
-    const configPath = writeNativeAgentConfiguration(normalized);
+    const commit = async () => {
+      normalized.credential = normalizeProviderCredential(
+        normalized.inference,
+        normalized.localModel
+          ? ""
+          : await (dependencies.readCredential ?? readWindowsCredential)(
+              launcher,
+              { ...normalized, endpoint: normalized.endpoint! },
+              submitted.credentialStored,
+            ),
+      );
+      await (dependencies.readServices ?? readNativeServiceEnvironment)(
+        launcher,
+        normalized.agent,
+        normalized.options,
+      );
+      state.assertHeld();
+      return (dependencies.writeConfiguration ?? writeNativeAgentConfiguration)(normalized);
+    };
+    if (transaction) {
+      const changes: CredentialChange[] = [];
+      if (binding)
+        changes.push({ provider: normalized.inference, binding, value: credentials.inference });
+      if (previousBinding && previousBinding !== binding)
+        changes.push({ provider: previous.inference, binding: previousBinding, value: "" });
+      for (const service of Object.keys(NATIVE_SERVICES)) {
+        // The graphical repair UI can retain selected service keys; they are still verified
+        // under this lease before configuration is committed.
+        if (
+          credentials.services === null &&
+          selectedNativeServices(normalized.options).some((selected) => selected === service)
+        )
+          continue;
+        changes.push({
+          provider: service,
+          binding: nativeServiceBinding(normalized.agent, service),
+          value: credentials.services?.[service] ?? "",
+        });
+      }
+      try {
+        return await withNativeCredentialTransaction(
+          launcher,
+          changes,
+          () => state.assertHeld(),
+          commit,
+          dependencies.credentialStore,
+        );
+      } finally {
+        for (const change of changes) change.value = "";
+        credentials.inference = "";
+        for (const service of Object.keys(credentials.services ?? {}))
+          credentials.services[service] = "";
+      }
+    }
+    const configPath = await commit();
     if (previousBinding && previousBinding !== binding)
       await (dependencies.deleteCredential ?? deleteCredentialByBinding)(
         launcher,

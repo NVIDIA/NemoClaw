@@ -123,7 +123,7 @@ internal static class Program
         if (invocations.Count != 2 ||
             !invocations[0].Arguments.SequenceEqual(new[] { "--configure-native", "--prepare-all" }) ||
             !invocations[0].CaptureOutput || !invocations[0].Phases.SequenceEqual(new[] { "verification" }) ||
-            !invocations[1].Arguments.SequenceEqual(new[] { "--configure-native" }) ||
+            !invocations[1].Arguments.SequenceEqual(new[] { "--configure-native", "--transaction" }) ||
             invocations[1].CaptureOutput || !invocations[1].Phases.SequenceEqual(new[] { "verification", "configuration" }) ||
             NativeExpressSetup.ValidationCalls != 1 || NativeDesktopIntegration.EnsureCalls != 1)
             throw new InvalidOperationException("The native setup preparation and configuration commit phases are out of order.");
@@ -163,6 +163,45 @@ internal static class Program
         if (completedBeforePreparation || invocations != 1 || !phases.SequenceEqual(new[] { "verification" }) ||
             NativeExpressSetup.ValidationCalls != 1 || NativeDesktopIntegration.EnsureCalls != 0)
             throw new InvalidOperationException("Native setup cancellation interrupted preparation instead of waiting for its safe checkpoint.");
+    }
+
+    private static async Task AssertCredentialTransactionAsync(bool fail)
+    {
+        ResetFixtureState();
+        const string secret = "nvapi-test-only-transaction-key";
+        using var password = new System.Security.SecureString();
+        foreach (var character in secret) password.AppendChar(character);
+        var configuration = new NativeSetupConfiguration("hermes", "nvidia", "https://integrate.api.nvidia.com/v1", "test-model", true);
+        var calls = 0;
+        byte[]? transaction = null;
+        Task<string> Helper(string launcher, string[] arguments, byte[] input, bool captureOutput)
+        {
+            calls++;
+            if (calls == 1)
+            {
+                if (System.Text.Encoding.UTF8.GetString(input).Contains(secret, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Preparation received a secret.");
+                return Task.FromResult("{\"schemaVersion\":1,\"inference\":\"" + new string('a', 64) + "\",\"services\":{}}");
+            }
+            if (calls != 2 || captureOutput || !arguments.SequenceEqual(new[] { "--configure-native", "--transaction" }))
+                throw new InvalidOperationException("Credential mutations escaped the configuration transaction.");
+            transaction = input;
+            using var document = JsonDocument.Parse(input);
+            if (document.RootElement.GetProperty("credentials").GetProperty("inference").GetString() != secret ||
+                document.RootElement.GetProperty("configuration").GetRawText().Contains(secret, StringComparison.Ordinal))
+                throw new InvalidOperationException("The private transaction envelope is invalid.");
+            if (fail) throw new IOException("Simulated owner failure.");
+            return Task.FromResult(string.Empty);
+        }
+        try
+        {
+            await NativeSetupOperations.SaveWithHelperAsync(configuration, password, null, null, CancellationToken.None, "unused-test-launcher", Helper);
+            if (fail) throw new InvalidOperationException("A failed transaction was accepted.");
+        }
+        catch (IOException) when (fail) { }
+        if (calls != 2 || transaction is null || transaction.Any(value => value != 0) ||
+            NativeDesktopIntegration.EnsureCalls != (fail ? 0 : 1))
+            throw new InvalidOperationException("Transaction cleanup or success publication failed.");
     }
 
     private static void AssertRecoverableMaintenanceCancellationCanRetry()
@@ -238,9 +277,11 @@ internal static class Program
         await AssertCancellationDuringCommitTransitionStopsMutationAsync();
         await AssertSuccessfulOrderingAsync();
         await AssertCancellationIsDeferredUntilPreparationFinishesAsync();
+        await AssertCredentialTransactionAsync(false);
+        await AssertCredentialTransactionAsync(true);
         AssertRecoverableMaintenanceCancellationCanRetry();
         AssertRecoverableMaintenanceProductionWiring();
-        Console.WriteLine("7 native setup cancellation controls passed; preparation finishes before cancellation, mutation begins only after the commit boundary, and every recoverable maintenance path can retry.");
+        Console.WriteLine("9 native setup controls passed; cancellation checkpoints and private credential transactions preserve the configuration owner.");
         return 0;
     }
 }

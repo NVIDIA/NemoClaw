@@ -119,6 +119,7 @@ export async function readCredentialByBinding(
   launcher: string,
   provider: string,
   binding: string,
+  optional = false,
 ): Promise<string> {
   if (
     ![
@@ -138,10 +139,19 @@ export async function readCredentialByBinding(
     fail("the stored credential identity is invalid");
   const result = await new Promise<{ code: number; bytesRead: number; secret: Buffer }>(
     (resolve, reject) => {
-      const child = spawn(launcher, ["--credential-read", provider, "--binding", binding], {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      const child = spawn(
+        launcher,
+        [
+          optional ? "--credential-read-optional" : "--credential-read",
+          provider,
+          "--binding",
+          binding,
+        ],
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        },
+      );
       const chunks: Buffer[] = [];
       let bytesRead = 0;
       const terminate = (message: string) => {
@@ -179,13 +189,19 @@ export async function readCredentialByBinding(
       });
       child.once("close", (code) => {
         clearTimeout(timer);
-        resolve({ code: code ?? 1, bytesRead, secret: Buffer.concat(chunks) });
+        const secret = Buffer.concat(chunks);
+        chunks.forEach((chunk) => chunk.fill(0));
+        resolve({ code: code ?? 1, bytesRead, secret });
       });
     },
   );
-  if (result.code !== 0 || result.bytesRead === 0 || result.bytesRead > 2048)
-    fail("Windows Credential Manager does not contain a valid bounded provider credential");
-  return result.secret.toString("utf8");
+  try {
+    if (result.code !== 0 || (!optional && result.bytesRead === 0) || result.bytesRead > 2048)
+      fail("Windows Credential Manager does not contain a valid bounded provider credential");
+    return result.secret.toString("utf8");
+  } finally {
+    result.secret.fill(0);
+  }
 }
 
 export async function deleteCredentialByBinding(

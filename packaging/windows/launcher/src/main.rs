@@ -180,12 +180,15 @@ fn credential_write(provider: &str, binding: Option<&str>) {
     }
 }
 
-fn credential_read(provider: &str, binding: Option<&str>) {
+fn credential_read(provider: &str, binding: Option<&str>, optional: bool) {
     let target = credential_target(provider, binding)
         .unwrap_or_else(|| credential_error("The credential provider is invalid."));
     let target_wide = wide(&target);
     let mut credential = ptr::null_mut();
     let found = unsafe { CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) };
+    if found == 0 && optional && std::io::Error::last_os_error().raw_os_error() == Some(1168) {
+        return;
+    }
     if found == 0 || credential.is_null() {
         credential_error("No credential is stored for this provider.");
     }
@@ -219,6 +222,16 @@ fn credential_delete(provider: &str, binding: Option<&str>) {
     {
         credential_error("Windows Credential Manager could not delete the credential.");
     }
+}
+
+#[test]
+fn optional_credential_snapshot_accepts_an_absent_bound_target() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let binding = format!("{nonce:064x}");
+    credential_read("compatible", Some(&binding), true);
 }
 
 #[cfg(feature = "immutable-runtime")]
@@ -536,13 +549,17 @@ fn main() {
     }
     if forwarded
         .first()
-        .is_some_and(|value| value == "--credential-read")
+        .is_some_and(|value| value == "--credential-read" || value == "--credential-read-optional")
     {
         let provider = forwarded
             .get(1)
             .and_then(|value| value.to_str())
             .unwrap_or_else(|| credential_error("A credential provider is required."));
-        credential_read(provider, credential_binding(&forwarded));
+        credential_read(
+            provider,
+            credential_binding(&forwarded),
+            forwarded[0] == "--credential-read-optional",
+        );
         return;
     }
     if forwarded

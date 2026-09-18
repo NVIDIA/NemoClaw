@@ -720,8 +720,11 @@ test("web onboarding uses the canonical lease and never persists its secret or l
     const chunks: Buffer[] = [];
     for await (const chunk of input) chunks.push(Buffer.from(chunk));
     const serialized = Buffer.concat(chunks).toString("utf8");
-    submittedRecord = JSON.parse(serialized);
-    assert(!serialized.includes(secret));
+    const payload = JSON.parse(serialized);
+    submittedRecord = payload.configuration;
+    assert.equal(payload.credentials.inference, secret);
+    assert(!JSON.stringify(submittedRecord).includes(secret));
+    assert.deepEqual(args, ["--transaction"]);
     assert(!serialized.includes("launch"));
     events.push("configure");
     return await configureNativeFromStdin(
@@ -763,6 +766,18 @@ test("web onboarding uses the canonical lease and never persists its secret or l
           events.push(`delete:${provider}`);
           deletions.push({ provider, binding });
         },
+        credentialStore: {
+          read: async () => "",
+          write: async (_launcher, change) => {
+            if (change.value) {
+              assert.equal(change.value, secret);
+              events.push("credential-write");
+            } else {
+              events.push(`delete:${change.provider}`);
+              deletions.push({ provider: change.provider, binding: change.binding });
+            }
+          },
+        },
       },
     );
   };
@@ -771,15 +786,11 @@ test("web onboarding uses the canonical lease and never persists its secret or l
     fs.writeFileSync(configPath, previousText);
     fs.writeFileSync(activePath, "openclaw\n");
     const pending = saveNativeOnboardingConfiguration("unused", webConfiguration, {
-      updateCredential: async (_launcher, value) => {
-        assert.equal(value.credential, secret);
-        events.push("credential-write");
-      },
       configure,
     });
     await acquiring;
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(events, ["credential-write", "configure", "acquire"]);
+    assert.deepEqual(events, ["configure", "acquire"]);
     assert.equal(fs.readFileSync(configPath, "utf8"), previousText);
     assert.equal(fs.readFileSync(activePath, "utf8"), "openclaw\n");
     assert.deepEqual((submittedRecord as { options?: unknown } | null)?.options, {
@@ -787,6 +798,7 @@ test("web onboarding uses the canonical lease and never persists its secret or l
     });
     admit();
     assert.equal(await pending, configPath);
+    assert(events.indexOf("credential-write") > events.indexOf("held"));
     const persistedText = fs.readFileSync(configPath, "utf8");
     const persisted = JSON.parse(persistedText);
     assert.equal(persisted.agent, "hermes");
