@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as sandboxCommandCli from "../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import {
   createDockerRuntimeProviderBundle,
@@ -10,7 +12,12 @@ import {
 } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
+import * as registry from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
@@ -237,6 +244,45 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway.mock.invocationCallOrder[0]).toBeGreaterThan(
       probeGatewayProcess.mock.invocationCallOrder[2],
     );
+  });
+
+  it("observes Hermes startup through the native health endpoint", async () => {
+    const requests: OpenShellSandboxBufferedCommandRequest[] = [];
+    const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+      requests.push(request);
+      return {
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+        stderr: "",
+      };
+    });
+    vi.spyOn(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+      probeDirectory: vi.fn(async () => ({ state: "present" as const })),
+      runBuffered,
+      runStreaming: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        release: () => undefined,
+      })),
+    });
+    vi.spyOn(registry, "getSandbox").mockReturnValue(
+      sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
+    );
+    const h = harness({ probeGatewayProcess: undefined });
+    h.getSandbox.mockReturnValue(
+      sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual(
+      expect.objectContaining({
+        sandboxName: "my-sandbox",
+        target: { kind: "named", gatewayName: "nemoclaw-19080" },
+        command: ["sh", "-c", expect.stringContaining("/health")],
+      }),
+    );
+    expect(requests[0]?.command.join(" ")).not.toContain("/usr/local/bin/nemoclaw-gateway-control");
   });
 
   it.each(["openclaw", undefined])(
