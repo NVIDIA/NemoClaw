@@ -13,7 +13,7 @@ export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
   "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
 export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
-  "openshell-windows-tip-9a0946a3-mxc-v0-8-0-qualification" as const;
+  "openshell-windows-tip-acd2a572-mxc-v0-8-0-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -168,13 +168,13 @@ export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndD
   },
   expectation: {
     distribution: {
-      version: "0.0.117-dev.153+g9a0946a3c",
-      revision: "9a0946a3ccc76a6b8fdeacdf70c76feda6f16c0b",
-      sha256: "e1004bd83028ce745fcbd78f7f240f65d65c3b9f1786df7a09e4704c894703f9",
+      version: "0.0.117-dev.154+gacd2a5721",
+      revision: "acd2a57219811b21bafa0a15938041c1b6f8bcc5",
+      sha256: "a7b1d020a75e3db6be41ca08de7f166fa4daadd96f1afccf60c68b69ec127cb5",
     },
     components: {
-      cliSha256: "05e725968c04db97a7702cd5c95bd2f1d5bfdfe003d70590a290d3fd61a848b2",
-      gatewaySha256: "7c15de65fab0db48fd147fb693d4fa88cba2f36aab5095c7fa9c0908f7897e7c",
+      cliSha256: "33645cd76ca6a74a18ed2a99f71732d1f9a92dd880a9a528b815132cdcb03299",
+      gatewaySha256: "4959d9d464a5f984f44d15d4907e236fadb83bcc4763af788f2c61291132196e",
       wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
     },
     gateway: {
