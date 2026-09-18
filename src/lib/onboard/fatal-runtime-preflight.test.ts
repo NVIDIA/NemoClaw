@@ -37,6 +37,7 @@ import { selectDefaultOllamaModel } from "../inference/local";
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
 import type { GatewayObservationSnapshot, GatewayReadinessProjection } from "../readiness/gateway";
 import type { SystemReadinessReport } from "../readiness/types";
+import * as platformQualification from "../readiness/platform-qualification";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
   assertOnboardGatewayReadiness,
@@ -497,6 +498,41 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(exit).not.toHaveBeenCalled();
     expect(report.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
     expect(report.provenance.observedAt).toBe(observedAt);
+  });
+
+  function slowMetadataAdmission(reuseDelay: number) {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    let currentTime = Date.parse(collectedAt) + reuseDelay;
+    vi.spyOn(platformQualification, "collectPlatformIdentity").mockImplementation(() => {
+      currentTime += 45_000;
+      return {};
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const admit = () =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => new Date(currentTime),
+        presentAdvisories: false,
+        exitProcess: exit,
+      });
+    return { admit, exit };
+  }
+
+  it("excludes slow metadata collection from host reuse age (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(0);
+    expect(admit().evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale caller facts even after slow metadata collection (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(45_000);
+    expect(admit).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("charges a delay between host collection and the gate (#10670)", () => {

@@ -588,7 +588,22 @@ export function assertOnboardHostReadiness(
         ...collected,
         failure: collected.failure ?? "Host collection timestamps are invalid or out of order.",
       };
-  const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
+  const identity = getBuildIdentity();
+  // Reject caller facts that were already stale before metadata collection.
+  // Only that collection's own duration is excluded from the reuse window.
+  const reusedReport =
+    options.collectedAt === undefined
+      ? undefined
+      : projectHostReadiness(snapshot, {
+          ...identity,
+          now: () => new Date(collected.observedAt),
+        });
+  const readinessReport = reusedReport?.evidence.some(({ id }) => id === "host.probe.stale")
+    ? reusedReport
+    : projectHostReadiness(
+        { ...snapshot, completedAt: collected.completedAt },
+        { ...identity, now },
+      );
   return assertOnboardSystemReadiness(readinessReport, host, options);
 }
 
