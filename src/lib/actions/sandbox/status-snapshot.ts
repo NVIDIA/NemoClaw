@@ -3,21 +3,24 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
+import { createCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import {
-  detectOpenShellStateRpcResultIssue,
-  type OpenShellStateRpcIssue,
-} from "../../adapters/openshell/gateway-drift";
-import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
+  type OpenShellInferenceRouteObserver,
+  type OpenShellInferenceRouteResult,
+} from "../../adapters/openshell/inference-route";
+import {
+  captureOpenshellForStatus,
+  getStatusProbeTimeoutMs,
+} from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
-  buildGatewayInferenceGetArgs,
   getLlamaCppRouteDetails,
   type GatewayInference,
   type LlamaCppRouteDetails,
-  parseGatewayInference,
   planInferenceRouteReconcile,
   type RecordedInferenceRoute,
 } from "../../inference/config";
@@ -43,7 +46,11 @@ import {
 import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
-import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
+import {
+  detectInferenceRouteRpcIssue,
+  getReconciledSandboxGatewayState,
+  getSandboxGatewayStateForStatus,
+} from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
@@ -305,6 +312,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
   recordSandboxStopIntent?: typeof recordSandboxStopIntentAcrossGatewayRoots;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
   probeSandboxInferenceInvocationImpl?: ProbeSandboxInferenceInvocation;
@@ -542,21 +550,28 @@ export async function collectSandboxStatusSnapshot(
   const suppressInferenceProbe =
     (postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
     opts.suppressInferenceProbe === true;
-  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
     try {
       gatewayName = resolveSandboxGatewayName(sb);
-      liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)(
-        buildGatewayInferenceGetArgs(gatewayName),
-      );
+      const observer =
+        opts.deps?.inferenceRouteObserver ??
+        createCliOpenShellInferenceRouteObserver(captureOpenshellForStatus);
+      liveResult = await observer.observeInferenceRoute({
+        target: { kind: "named", gatewayName },
+        timeoutMs: getStatusProbeTimeoutMs(),
+      });
     } catch {
       // Invalid persisted gateway bindings and failed reads stay fail-closed:
       // never substitute the selected/default gateway's inference route.
       liveResult = null;
     }
   }
-  const rpcIssue = liveResult ? await detectOpenShellStateRpcResultIssue(liveResult) : null;
+  const rpcIssue: OpenShellStateRpcIssue | null = await detectInferenceRouteRpcIssue(
+    liveResult,
+    gatewayName,
+  );
   if (rpcIssue) {
     return {
       sb,
@@ -575,13 +590,7 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   const live =
-    liveResult &&
-    liveResult.status === 0 &&
-    !liveResult.error &&
-    !liveResult.signal &&
-    !isCommandTimeout(liveResult)
-      ? parseGatewayInference(liveResult.output)
-      : null;
+    liveResult?.ok && liveResult.value.state === "configured" ? liveResult.value.route : null;
   const recordedRoute =
     sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null;
   const liveRoute = live ? { provider: live.provider, model: live.model } : null;

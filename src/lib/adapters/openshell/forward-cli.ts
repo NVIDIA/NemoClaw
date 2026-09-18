@@ -1301,7 +1301,11 @@ export function createCliOpenShellForwardAdapter(
               }
             : { observation: { state: "foreign", forward } as const };
         }
-        const direct = await inspectSafely(forward, undefined, remaining(deadline, now));
+        const direct = await inspectSafely(
+          forward,
+          request.expectedListenerPidsByPort?.get(forward.port),
+          remaining(deadline, now),
+        );
         if (direct.state === "unbound") {
           const beforeReachability = await runFence(assertCurrent, deadline);
           if (beforeReachability) {

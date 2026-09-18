@@ -185,6 +185,9 @@ describe("destroySandbox flow", () => {
             trace.push("delete");
             harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:get":
+            trace.push("get");
+            return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
           case "sandbox:list":
             trace.push("list");
             return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
@@ -199,7 +202,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "list", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "get", "get", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -242,6 +245,8 @@ describe("destroySandbox flow", () => {
               crossedDeleteBoundary = true;
               harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
+            case "sandbox:get":
+              return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
             case "sandbox:list":
               return {
                 status: 0,
