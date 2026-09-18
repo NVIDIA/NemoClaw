@@ -12,7 +12,7 @@ Source paths in the tables are relative to the old `docs/` directory.
 Destination paths are relative to `docs/`.
 Work package IDs refer to the plan.
 Disposition describes how an old topic maps to v1; it does not report completion.
-Coverage below records authoring closure separately from remaining qualification or implementation gates.
+Coverage below records completed documentation separately from remaining testing or implementation requirements.
 **Written** means current supported guidance is authored and reviewed; any named gate remains open.
 **Boundary written** means the limitation and current alternative are documented, while the old workflow still requires implementation or qualification.
 All 125 source topics have been reconciled; neither status means the full release/journey gates have passed.
@@ -250,7 +250,7 @@ These additions are required even when no old page maps to them directly.
 
 ## Remaining Gates and Sequence
 
-Authoring closure does not satisfy the plan's release milestones.
+Completed documentation does not satisfy the plan's release milestones.
 Use these gates to schedule the remaining work; do not create a new how-to from an untested assumption.
 
 | Gate and responsible role | Start when | Required checks and results |

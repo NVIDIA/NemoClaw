@@ -51,7 +51,7 @@ This prompt routes documentation; it does not supply missing installers, native-
 The repository includes a [NemoClaw user-guide skill](../.agents/skills/nemoclaw-user-guide/SKILL.md) for version selection and task routing.
 For an assistant with access to this checkout, ask it to read `.agents/skills/nemoclaw-user-guide/SKILL.md` before answering your NemoClaw task.
 Keep the skill in the checkout so its relative links resolve to the same revision's guides.
-It checks the intended product version and executable surface before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
+It checks the intended product version and available commands and options before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
 Review the cited version and task guide in its answer before operational work.
 
 The skill only routes documentation; reading it does not install software or change deployment resources.

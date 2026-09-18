@@ -310,7 +310,7 @@ Use [the Relay fixture procedure](testing/fixtures.md#hermes-relay-tracing-fixtu
 
 The current image recipe pins Hermes 0.21.0 and Relay 0.7.3, matching the Fabric adapter's declared Relay range.
 This experimental tracing integration does not use Relay 0.8.
-Production migration remains gated on a released Fabric adapter compatible with the released Hermes and Relay tuple, followed by the normal security and live end-to-end qualification.
+Production migration requires a released Fabric adapter that works with the selected released versions of Hermes and Relay, followed by security checks and live end-to-end tests.
 
 ## Define and Attach Integrations
 
