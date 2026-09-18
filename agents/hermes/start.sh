@@ -2950,6 +2950,7 @@ launch_hermes_gateway_current_user() {
 # other failures propagate to OpenShell unchanged.
 readonly HERMES_SERVICE_RESTART_STATUS=75
 readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
+readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1
 
 hermes_gateway_recovery_request_value() {
   local extra generation metadata request requester_pid requester_start version
@@ -3086,6 +3087,14 @@ wait_for_hermes_gateway_recovery_request() {
     if [ "$version" = v2 ] \
       && [ "$request_generation" = "$HERMES_GATEWAY_RECOVERY_GENERATION" ]; then
       wait_for_hermes_recovery_requester_exit "$requester_pid" "$requester_start" || return $?
+      # The controller request becomes visible before Docker necessarily delivers
+      # its exit status and buffered receipt to the host-side exec client. Settle
+      # that transport only after the exact requester process has exited so the
+      # gateway cannot replace the controller while it is still running.
+      sleep "$HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS" || {
+        echo "[SECURITY] Hermes gateway recovery controller transport did not settle" >&2
+        return 1
+      }
       echo "[gateway] Gated host recovery requested; relaunching under the existing OpenShell entrypoint" >&2
       return 0
     fi
