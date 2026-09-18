@@ -5,6 +5,12 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
+import {
+  abortUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawPostRestoreDoctor,
+  finishUnregisteredOpenClawPostRestoreDoctor,
+  type OpenClawPostRestoreDoctorWindow,
+} from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
@@ -804,6 +810,17 @@ export async function finalizeCreatedSandbox(
     );
   };
   let preparedRegistration: SandboxEntry | undefined;
+  let openClawRestoreWindow: OpenClawPostRestoreDoctorWindow | null = null;
+  const abortOpenClawRestoreWindow = async (): Promise<void> => {
+    if (!openClawRestoreWindow) return;
+    const aborted = await abortUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+    if (!aborted.ok) {
+      deps.error(
+        `  OpenClaw offline restore cleanup did not converge (${aborted.stage}: ${aborted.detail}).`,
+      );
+    }
+    openClawRestoreWindow = null;
+  };
   if (options.restoreBackupPath) {
     deps.note(
       options.preUpgradeBackup
@@ -821,6 +838,22 @@ export async function finalizeCreatedSandbox(
       return deps.exitProcess(1);
     }
     preparedRegistration = await deps.prepareRegistration();
+    if (options.targetAgentType === "openclaw") {
+      deps.revalidateSandboxIdentity?.(
+        `entering offline state restore for sandbox '${options.sandboxName}'`,
+      );
+      const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(options.sandboxName);
+      if (!doctorWindow.ok) {
+        deps.error(
+          `  OpenClaw state restore could not enter its gateway-down maintenance window (${doctorWindow.stage}: ${doctorWindow.detail}).`,
+        );
+        deps.error("  State was not restored and registry metadata was not updated.");
+        reportUnregisteredSandboxRecovery();
+        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+        return deps.exitProcess(1);
+      }
+      openClawRestoreWindow = doctorWindow.window;
+    }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
@@ -829,12 +862,18 @@ export async function finalizeCreatedSandbox(
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
       return preparedRegistration;
     };
-    const restore = await deps.restoreRecreatedSandboxState(
-      options.sandboxName,
-      options.restoreBackupPath,
-      restoreOptions,
-      resolveTarget,
-    );
+    let restore: RestoreResult;
+    try {
+      restore = await deps.restoreRecreatedSandboxState(
+        options.sandboxName,
+        options.restoreBackupPath,
+        restoreOptions,
+        resolveTarget,
+      );
+    } catch (error) {
+      await abortOpenClawRestoreWindow();
+      throw error;
+    }
     deps.revalidateSandboxIdentity?.(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
@@ -844,6 +883,7 @@ export async function finalizeCreatedSandbox(
       );
     } else {
       if (restore.error === MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR) {
+        await abortOpenClawRestoreWindow();
         deps.error(
           `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
         );
@@ -871,9 +911,27 @@ export async function finalizeCreatedSandbox(
       deps.error(
         "  Workspace state restoration did not complete. Registry metadata was not updated.",
       );
+      await abortOpenClawRestoreWindow();
       reportUnregisteredSandboxRecovery();
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
+    }
+    if (openClawRestoreWindow) {
+      deps.revalidateSandboxIdentity?.(
+        `releasing offline state restore for sandbox '${options.sandboxName}'`,
+      );
+      const resumed = await finishUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+      if (!resumed.ok) {
+        await abortOpenClawRestoreWindow();
+        deps.error(
+          `  Restored OpenClaw state, but the replacement gateway did not return healthy (${resumed.stage}: ${resumed.detail}).`,
+        );
+        deps.error("  Registry metadata was not updated.");
+        reportUnregisteredSandboxRecovery();
+        deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
+        return deps.exitProcess(1);
+      }
+      openClawRestoreWindow = null;
     }
   }
 

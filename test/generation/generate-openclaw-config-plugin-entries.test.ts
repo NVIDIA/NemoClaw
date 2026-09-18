@@ -37,7 +37,8 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
   { channelId: "googlechat", pluginId: "googlechat" },
 ] as const;
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "imessage", pluginId: "imessage" },
+  { channelId: "a2a", pluginId: "a2a" },
+  { channelId: "reef", pluginId: "reef" },
 ] as const;
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,

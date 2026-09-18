@@ -105,7 +105,7 @@ describe("mergeOpenClawRestoredConfig", () => {
       {
         agents: {
           defaults: { model: { primary: "inference/stale" }, thinkingDefault: "off" },
-          list: [{ id: "main", default: true, model: "inference/stale" }],
+          entries: { main: { default: true, model: "inference/stale" } },
         },
       },
       { agents: { defaults: { model: { primary: "inference/current" } } } },
@@ -113,7 +113,7 @@ describe("mergeOpenClawRestoredConfig", () => {
 
     expect(merged.agents).toEqual({
       defaults: { model: { primary: "inference/current" }, thinkingDefault: "off" },
-      list: [{ id: "main", default: true, model: "inference/current" }],
+      entries: { main: { default: true, model: "inference/current" } },
     });
   });
 

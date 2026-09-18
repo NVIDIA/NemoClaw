@@ -10,6 +10,15 @@ import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
 import { baseOpenClawGenerationEnv } from "../helpers/openclaw-env-fixture";
 
 const BASE_ENV = baseOpenClawGenerationEnv();
+const MANAGED_LLAMA_CPP_ENV = {
+  ...BASE_ENV,
+  NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+  NEMOCLAW_PROVIDER_KEY: "inference",
+  NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
+  NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+  NEMOCLAW_INFERENCE_API: "openai-completions",
+  NEMOCLAW_UPSTREAM_PROVIDER: "llama-cpp-local",
+};
 
 let tmpDir: string;
 
@@ -35,6 +44,28 @@ describe("generate-openclaw-config.mts: tool disclosure", () => {
 
   it("restores direct tool exposure through the agent-neutral override", () => {
     const config = buildConfig({ ...BASE_ENV, NEMOCLAW_TOOL_DISCLOSURE: "direct" });
+
+    expect(config.tools?.toolSearch).toBe(false);
+  });
+
+  it("keeps managed llama.cpp on the compact structured tool surface", () => {
+    const config = buildConfig(MANAGED_LLAMA_CPP_ENV);
+
+    expect(config.tools?.toolSearch).toEqual({
+      mode: "tools",
+      searchDefaultLimit: 8,
+      maxSearchLimit: 20,
+    });
+    expect(config.models.providers.inference.models[0].compat).toMatchObject({
+      toolSchemaProfile: "llamacpp",
+    });
+  });
+
+  it("keeps an explicit direct request authoritative for managed llama.cpp", () => {
+    const config = buildConfig({
+      ...MANAGED_LLAMA_CPP_ENV,
+      NEMOCLAW_TOOL_DISCLOSURE: "direct",
+    });
 
     expect(config.tools?.toolSearch).toBe(false);
   });

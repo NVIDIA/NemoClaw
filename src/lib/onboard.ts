@@ -1388,7 +1388,7 @@ const gatewayStart = createGatewayStart({
   isGatewayHttpReady,
   isLinuxDockerDriverGatewayEnabled,
   selectNamedGatewayForReuseIfNeeded,
-  startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
+  ...dockerDriverGatewayStart,
   step,
 });
 
@@ -2904,7 +2904,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           note,
           startRecordedStep,
-          startGateway,
+          ...gatewayStart,
           recordStepComplete,
           exitProcess: (code) => process.exit(code),
         },
@@ -3200,11 +3200,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,
           isOpenclawReady,
-          isOpenclawGatewayReady: openclawSetup.createOpenclawGatewayReadinessProbe(
-            registry.getSandbox,
-            DASHBOARD_PORT,
-            sandboxExec,
-          ),
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,

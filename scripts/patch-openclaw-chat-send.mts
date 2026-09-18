@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x through 2026.7.x
+ * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x through 2026.9.x
  * chat.send gateway behavior. Remove this when upstream OpenClaw preserves
  * submitted chat.send run lineage and stops emitting empty terminal chat
  * events.
@@ -75,20 +75,26 @@ function patchChatSendRunStart(source: string, file: string): PatchResult {
   if (source.includes("nemoclaw: correlate chat.send run ids")) {
     return { nextSource: source, status: "already-applied" };
   }
-  const nextSource = source.replace(
-    /(onAgentRunStart: \(runId\) => \{\n)(\s*)agentRunStarted = true;/,
-    (_match, prefix, indent) =>
-      `${prefix}${indent}agentRunStarted = true;\n` +
-      `${indent}if (runId && runId !== clientRunId) context.addChatRun(runId, { sessionKey, clientRunId }); ` +
-      `// nemoclaw: correlate chat.send run ids (#2603, #3145)`,
-  );
-  if (nextSource === source) {
+  const legacyTarget = /(onAgentRunStart: \(runId\) => \{\n)(\s*)(agentRunStarted = true;)/;
+  const dispatchTarget =
+    /(onAgentRunStart: \(runId, _identity, options\) => \{\n)(\s*)(replyDispatchRun = options;)/;
+  const legacyMatches = source.match(new RegExp(legacyTarget.source, "g")) ?? [];
+  const dispatchMatches = source.match(new RegExp(dispatchTarget.source, "g")) ?? [];
+  if (legacyMatches.length + dispatchMatches.length !== 1) {
     return {
       nextSource: source,
       status: "no-match",
       error: `OpenClaw chat.send run-start shape not recognized in ${file}`,
     };
   }
+  const target = legacyMatches.length === 1 ? legacyTarget : dispatchTarget;
+  const nextSource = source.replace(
+    target,
+    (_match, prefix, indent, firstCallbackLine) =>
+      `${prefix}${indent}${firstCallbackLine}\n` +
+      `${indent}if (runId && runId !== clientRunId) context.addChatRun(runId, { sessionKey, clientRunId }); ` +
+      `// nemoclaw: correlate chat.send run ids (#2603, #3145)`,
+  );
   return { nextSource, status: "would-apply" };
 }
 
@@ -231,6 +237,25 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
       status: working === source ? "already-applied" : "would-apply",
     };
   }
+  const admittedTurnTarget =
+    /(const currentInboundContext = params\.defaults\.opts\?\.isHeartbeat === true \? queued\.currentInboundContext : refreshActiveGoalContext\(queued\.currentInboundContext, activeEntry\);\n\s*const turn = \{\n\s*)runId: crypto\.randomUUID\(\),/;
+  const admittedTurnMatches = working.match(new RegExp(admittedTurnTarget.source, "g")) ?? [];
+  if (admittedTurnMatches.length === 1) {
+    const nextSource = working.replace(
+      admittedTurnTarget,
+      (_match, prefix) =>
+        `${prefix}runId: queued.runId ?? params.defaults.opts?.runId ?? crypto.randomUUID(), ` +
+        `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
+    );
+    return { nextSource, status: "would-apply" };
+  }
+  if (admittedTurnMatches.length > 1) {
+    return {
+      nextSource: source,
+      status: "no-match",
+      error: `OpenClaw followup runner run-id shape not recognized in ${file}`,
+    };
+  }
   const hasOptsBinding =
     /\bfunction\s+runQueuedFollowup\(\s*queued,\s*opts\b/.test(working) ||
     /\bconst\s+\{[^}]*\bopts\b[^}]*\}\s*=\s*params;/.test(working);
@@ -246,7 +271,7 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   // 2026.5.27 closes over params.opts and admits a queued reply turn before
   // creating the run id. OpenClaw 2026.6.10 keeps that admission flow but routes
   // the session id through effectiveQueued and includes routeThreadId. OpenClaw
-  // 2026.7.1 resolves the queued inbound context immediately before the run id.
+  // 2026.9.1 resolves the queued inbound context immediately before the run id.
   let nextSource = working.replace(
     /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
     (_match, prefix) =>
@@ -279,12 +304,14 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   return { nextSource, status: "would-apply" };
 }
 
+const EMBEDDED_AGENT_RETRY_PERSISTENCE_TARGET =
+  /(let suppressNextUserMessagePersistence = params\.suppressNextUserMessagePersistence \?\? false;\n[ \t]*let lastPersistedCurrentMessageId;\n[ \t]*const onUserMessagePersisted = \(message\) => \{\n)([ \t]*)(if \(params\.currentMessageId !== void 0\) lastPersistedCurrentMessageId = params\.currentMessageId;)/;
+
 function patchEmbeddedAgentRetryPersistence(source: string, file: string): PatchResult {
   if (source.includes("nemoclaw: suppress persisted user turn on embedded retries")) {
     return { nextSource: source, status: "already-applied" };
   }
-  const target =
-    /(let suppressNextUserMessagePersistence = params\.suppressNextUserMessagePersistence \?\? false;\n[ \t]*let lastPersistedCurrentMessageId;\n[ \t]*const onUserMessagePersisted = \(message\) => \{\n)([ \t]*)(if \(params\.currentMessageId !== void 0\) lastPersistedCurrentMessageId = params\.currentMessageId;)/;
+  const target = EMBEDDED_AGENT_RETRY_PERSISTENCE_TARGET;
   if ((source.match(new RegExp(target.source, "g")) ?? []).length !== 1) {
     return {
       nextSource: source,
@@ -364,8 +391,9 @@ const FILES: FileSpec[] = [
         (source.includes("replyOperation = createReplyOperation") ||
           (source.includes("admitReplyTurn") &&
             source.includes("replyOperation = admission.operation")) ||
-          source.includes("preserve chat.send run ids in followup queue")) &&
+          source.includes("async function admitFollowupTurn(params)")) &&
         (source.includes("const runId = crypto.randomUUID();") ||
+          source.includes("runId: crypto.randomUUID(),") ||
           source.includes("preserve chat.send run ids in followup queue"))
       );
     },
@@ -382,8 +410,10 @@ const FILES: FileSpec[] = [
     id: "embedded-agent-retries",
     label: "embedded-agent retry runtime",
     requiredWhen(sources) {
-      return sources.some((source) =>
-        source.includes("effectiveQueued.admissionSessionId ?? run.sessionId"),
+      return sources.some(
+        (source) =>
+          source.includes("let lastPersistedCurrentMessageId;") &&
+          source.includes("empty response detected: runId="),
       );
     },
     selector(source) {

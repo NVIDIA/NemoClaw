@@ -51,10 +51,13 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "d181ff3c36d8982f78b5627d1f4a02fd30d2667cd1ca8ffb97fb65535ae452ee",
   "6d4094a9d7c21eeb408cadd728da7cd7e0ee9574746436be59c26b218c8ab218",
   "fa9a9916a254ea4faa06339c759b89ade441bd54c22fa8fc4c927547e40ff456",
+  // Reviewed NemoClaw runtime-state permissions; the instruction only changes
+  // filesystem metadata and preserves the generated dashboard config.
   "d50e094416f150f74c24f81665be08064a1c5bd23c11d29575b20379b5a58ce2",
   "42ef0b12e92ebe146c25367831b4ce3a2664f0fa99fd5e4fb98a8939d3af8800",
   "8b49e78185185f1b7e24d01631186554fef21d2300db65c9bc9998e7ec00469f",
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
+  "9068e33dfc0e794a60149229823fa49f4bf7aeb1f7b06f1fc8c79243a78d002e",
   "715d3a312ee9952d9fe55b827f2c855a078cdfbc2a8d6edeb32699dcaebb952b",
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
   "e4d6ad4cea1f9b676bcd0c11b3665933bc9baf783de1adef782c283775dd5171",
@@ -62,6 +65,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "9fcc674a44a152707380cdb09a67f8594f568288406c96f5354f1c87f5b939a6",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
   "ca1f7b1cb9dd5d467f806792c4072a84ef1e6402c3e8650b6325b95cc186ccdf",
+  "4e517a6a30d0489c0d3df219f3510189b774da7d8adf1ffa6d09c3283caeb37f",
   "4165899eb1f0f948f8883eddf4136136caac21cee1df39b12afea7672b23a378",
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
@@ -78,7 +82,29 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
   "0634acc02be0de381a0f706baff09233a1c069d55f6419fea0f385909656e88b",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
+  "4e9657fbcb5125375526565714926638d0e7d40d56f2726e3a4c7b02aa42bcd9",
+  // Reviewed 2026.9.1 optional-plugin archive verification and neutral union install.
+  "2cdccfbeaf58c06c1df1d98b066543b1576d43d5742e8eb98a8c7bc71825adee",
+  // The same reviewed install after OpenClaw 2026.9.1 began requiring
+  // explicit acceptance of package-declared plugin capabilities.
+  "46a1858936c680a21252483515f55ebfa2de65fb4352d27ec71d3aaa8d67dbd5",
+  // The same reviewed install with npm forced offline for every optional
+  // plugin command; it still preserves the generated dashboard config.
+  "a72a06b293274fb997f5a4b8b1c61cf3daa8a7cc4b8385baa0d9dc63400b8d52",
+  // Reviewed local NemoClaw plugin installation with explicit capability
+  // acceptance; the following inspect and pruning steps are unchanged.
+  "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
+  // Reviewed neutral-union validation for OpenClaw 2026.9.1's bundled a2a,
+  // reef, and Telegram channel inventory.
+  "6727034f71f9fadce7d076d0e9518c288f904b13b2be8037565b61a87b1dfbb0",
+  // Reviewed 2026.9.1 legacy-state migration hardening, obsolete exec-approval
+  // cleanup, and canonical SQLite ownership repair. This exact instruction
+  // preserves the generated openclaw.json dashboard binding.
+  "5a05a0165f86404dfab14fcd4b0cc94b97eca42c1ebf264b385b245f323d07d0",
   "76961dfa868381e4fb3756eb8eae0c6645074132bc0e9d96bda7f3058ac12706",
+  // Native gateway lifecycle plus the 2026.9.1 canonical pairing-state
+  // reader. This merged instruction only hardens installed helper metadata.
+  "e119ca83b4982da2201821e5d29bb9964cc9fd1c60dc95cd56a6abcaa17d6416",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

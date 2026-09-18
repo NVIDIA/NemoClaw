@@ -25,11 +25,10 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
-> &
-  Partial<
-    Pick<typeof import("../../actions/sandbox/process-recovery"), "waitForRecoveredSandboxGateway">
-  >;
+  | "checkAndRecoverSandboxProcesses"
+  | "waitForRecreatedSandboxOpenShellReady"
+  | "waitForStartedNativeGatewayProcess"
+>;
 type GatewayRestartDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
   "restartSandboxGateway"
@@ -378,52 +377,32 @@ export const finalizationHandlerDeps = {
     portableSupervisorEnvironment?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    const result = await processRecovery.checkAndRecoverSandboxProcesses(name, {
-      ...options,
-      ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
-    });
-    const recovered =
+    const target = finalizationHandlerRuntime
+      .loadLaunchReadiness()
+      .resolveOrdinaryOpenClawPairingTarget(name);
+    if (target) {
+      const startup = await processRecovery.waitForStartedNativeGatewayProcess(
+        name,
+        "openclaw",
+        target.gatewayName,
+      );
+      if (startup === false) return false;
+    }
+    const recover = () =>
+      processRecovery.checkAndRecoverSandboxProcesses(name, {
+        ...options,
+        ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+      });
+    let result = await recover();
+    if (result.checked !== true) {
+      const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
+      if (controlPlaneReady) result = await recover();
+    }
+    return (
       result.checked === true &&
       (result.wasRunning !== false || result.recovered === true) &&
-      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true);
-    if (recovered) return true;
-    if (
-      portableSupervisorEnvironment ||
-      result.checked !== true ||
-      result.wasRunning !== false ||
-      ("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
-    ) {
-      return false;
-    }
-    // A recreated OpenShell sandbox can accept inference before its native
-    // gateway process becomes visible to the process observer. Give that
-    // already-started gateway one bounded health-settlement window before
-    // issuing a restart command. The affected resume/rebuild path reached
-    // finalization less than a second after sandbox recreation and otherwise
-    // failed through a service-oriented native restart command.
-    if (
-      processRecovery.waitForRecoveredSandboxGateway &&
-      (await processRecovery.waitForRecoveredSandboxGateway(name, {
-        quiet: true,
-        initialManagedHealthPassed: false,
-        managedProbeImpl: () => null,
-        timeoutSeconds: 10,
-      }))
-    ) {
-      return true;
-    }
-    // Native managed agents intentionally have no legacy supervisor recovery
-    // owner. During onboarding finalization, recover a stopped native gateway
-    // through its public agent restart boundary, which also proves health and
-    // restores the declared forwards before the state machine can complete.
-    try {
-      const restart = await finalizationHandlerRuntime
-        .loadGatewayRestart()
-        .restartSandboxGateway(name, { quiet: true });
-      return restart.ok;
-    } catch {
-      return false;
-    }
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
+    );
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

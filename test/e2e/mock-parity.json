@@ -287,6 +287,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-tui-ref-fidelity.ts"],
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
         "test/e2e/support/openclaw-tui-run-classification.test.ts",
@@ -968,6 +969,7 @@
     {
       "live": "test/e2e/live/runtime-overrides.test.ts",
       "fast": [
+        "test/generation/generate-openclaw-config.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
