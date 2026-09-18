@@ -2566,6 +2566,10 @@ NemoClaw first removes the named agent-native entry so the agent can no longer u
 
 The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. A named legacy Mcporter or `.nemoclaw-mcp.json` entry can be removed directly only when its committed NemoClaw registry row proves ownership. An unproven legacy entry is preserved; use `mcp migrate --apply` when you intend to convert it to native state.
 
+Legacy removal also requires every other committed legacy row to have an observed legacy entry with the same server name.
+If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
+Run `$$nemoclaw my-assistant mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
+
 ```bash
 $$nemoclaw my-assistant mcp remove github [--force]
 ```

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { McpProviderInspection } from "./mcp-bridge-provider";
 
 const entry = {
   server: "github",
@@ -34,7 +35,13 @@ const mocks = vi.hoisted(() => ({
   selectGateway: vi.fn(),
   assertTeardown: vi.fn(),
   removePolicy: vi.fn(),
-  inspectProvider: vi.fn(async () => ({ exists: false })),
+  inspectProvider: vi.fn(async (): Promise<McpProviderInspection> => ({
+    exists: false,
+    id: null,
+    resourceVersion: null,
+    type: null,
+    credentialKeys: null,
+  })),
   detachProvider: vi.fn(),
   waitForDetached: vi.fn(),
   preflightTargets: vi.fn().mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
@@ -57,7 +64,8 @@ vi.mock("./mcp-bridge-adapters", () => ({
   reloadOpenClawGatewayAfterMcpMutation: mocks.reloadOpenClaw,
   unregisterAgentAdapter: mocks.unregister,
 }));
-vi.mock("./mcp-bridge-provider", () => ({
+vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-provider")>()),
   assertMcpProviderRecoverable: mocks.assertProviderRecoverable,
   getMcpProviderInspectionRuntimeSelection: () => ({
     gatewayName: "nemoclaw",
@@ -66,7 +74,6 @@ vi.mock("./mcp-bridge-provider", () => ({
   providerAttached: () => true,
   preflightMcpEntryTargets: mocks.preflightTargets,
   inspectMcpProvider: mocks.inspectProvider,
-  providerMatchesManagedCredential: () => false,
   detachProvider: mocks.detachProvider,
   waitForDetachedMcpCredential: mocks.waitForDetached,
 }));
@@ -373,6 +380,14 @@ describe("explicit MCP migration", () => {
       mocks.readConfig.mockReturnValue({});
       return true;
     });
+    mocks.inspectProvider.mockResolvedValueOnce({
+      exists: true,
+      id: secondEntry.providerId,
+      resourceVersion: 1,
+      type: "generic",
+      credentialKeys: secondEntry.env,
+    });
+    mocks.detachProvider.mockResolvedValueOnce("detached");
 
     await expect(removeMcpBridge("alpha", "gitlab")).resolves.toBeUndefined();
     expect(mocks.removeLegacy).toHaveBeenCalledExactlyOnceWith(
@@ -382,6 +397,21 @@ describe("explicit MCP migration", () => {
     );
     expect(mocks.unregister).not.toHaveBeenCalled();
 
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
+    const committedEntry = { ...secondEntry, source: "legacy-registry", denyTools: [] };
+    expect(mocks.removePolicy).toHaveBeenCalledExactlyOnceWith("alpha", committedEntry, {
+      runtimeSelection,
+    });
+    expect(mocks.detachProvider).toHaveBeenCalledExactlyOnceWith("alpha", committedEntry, {
+      allowLegacyGeneric: true,
+      runtimeSelection,
+    });
+    expect(mocks.waitForDetached).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      committedEntry,
+      runtimeSelection,
+    );
+
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: entry },
       sources: { native: {}, legacy: { github: entry } },
@@ -389,6 +419,40 @@ describe("explicit MCP migration", () => {
     await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
       items: [{ server: "github", action: "migrate" }],
     });
+  });
+
+  it("removes a native server without changing an unrelated legacy registration", async () => {
+    const nativeEntry = {
+      ...entry,
+      server: "gitlab",
+      source: "native" as const,
+      env: ["GITLAB_TOKEN"],
+      providerName: "alpha-mcp-gitlab",
+      providerId: "gitlab-provider-id",
+      policyName: "mcp-bridge-gitlab",
+    };
+    const legacy = { github: entry };
+    mocks.inspectSource.mockReturnValue({
+      bridges: { gitlab: nativeEntry },
+      sources: { native: { gitlab: nativeEntry }, legacy },
+    });
+    mocks.unregister.mockResolvedValueOnce("removed");
+
+    await expect(removeMcpBridge("alpha", "gitlab")).resolves.toBeUndefined();
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
+    expect(mocks.unregister).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "openclaw-config",
+      nativeEntry,
+      runtimeSelection,
+      expect.objectContaining({ teardown: true, force: false }),
+    );
+    expect(mocks.removePolicy).toHaveBeenCalledExactlyOnceWith("alpha", nativeEntry, {
+      runtimeSelection,
+    });
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(legacy).toEqual({ github: entry });
   });
 
   it("rejects legacy removal before mutation when another registry-only row remains", async () => {

@@ -200,7 +200,10 @@ Removing the server deletes the agent-native entry, removes its generated key fr
 ## Remove a Server
 
 For a legacy registration, removal requires a committed registry row that proves ownership of the named entry.
-You do not need to migrate that entry before removing it.
+Removal also requires every other committed legacy row to have an observed legacy entry with the same server name.
+If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
+Run `$$nemoclaw my-sandbox mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
+When these conditions pass, you do not need to migrate the named entry before removing it.
 NemoClaw preserves unproven entries and refuses removal when the same server exists in both legacy and native configuration.
 
 Remove the named registration:
