@@ -31,7 +31,7 @@ export type CaptureOpenShellInferenceRoute = (
     ignoreError: true;
     includeStderr: true;
     includeStreams: true;
-    maxBuffer: number;
+    outputLimitBytes: number;
     timeout: number;
   },
 ) => CapturedOpenShellInferenceRouteResult | Promise<CapturedOpenShellInferenceRouteResult>;
@@ -259,7 +259,6 @@ function captureOptions(request: ObserveOpenShellInferenceRouteRequest) {
     ignoreError: true as const,
     includeStderr: true as const,
     includeStreams: true as const,
-    maxBuffer: CAPTURE_MAX_BYTES,
     timeout: request.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   };
 }
@@ -275,7 +274,10 @@ export function createSynchronousCliOpenShellInferenceRouteObserver(
       if (requestError) return failure(requestError);
       let captured: CapturedOpenShellInferenceRouteResult;
       try {
-        captured = capture(argsFor(request.target), captureOptions(request));
+        captured = capture(argsFor(request.target), {
+          ...captureOptions(request),
+          maxBuffer: CAPTURE_MAX_BYTES,
+        });
       } catch {
         return processStartFailure();
       }
@@ -295,7 +297,10 @@ export function createCliOpenShellInferenceRouteObserver(
       if (requestError) return failure(requestError);
       let captured: CapturedOpenShellInferenceRouteResult;
       try {
-        captured = await capture(argsFor(request.target), captureOptions(request));
+        captured = await capture(argsFor(request.target), {
+          ...captureOptions(request),
+          outputLimitBytes: CAPTURE_MAX_BYTES,
+        });
       } catch {
         return processStartFailure();
       }

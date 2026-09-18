@@ -38,7 +38,7 @@ describe("CLI inference route observation", () => {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      maxBuffer: 1024 * 1024,
+      outputLimitBytes: 1024 * 1024,
       timeout: 4_321,
     });
   });
@@ -63,7 +63,7 @@ describe("CLI inference route observation", () => {
     });
     expect(capture).toHaveBeenCalledExactlyOnceWith(
       ["inference", "get", "-g", "nemoclaw-19090"],
-      expect.objectContaining({ timeout: 4_321 }),
+      expect.objectContaining({ maxBuffer: 1024 * 1024, timeout: 4_321 }),
     );
   });
 
