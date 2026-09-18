@@ -130,12 +130,41 @@ const cases: readonly StartFailureCase[] = [
       }),
   },
   {
-    mode: "the child emits an error",
-    failure: { stage: "spawn", reason: "child_error" },
+    mode: "the executable operation is not permitted",
+    failure: { stage: "spawn", reason: "permission_denied" },
+    terminationCount: 0,
+    harness: () =>
+      createHarness({
+        spawn: () => {
+          throw Object.assign(new Error("private invocation diagnostic"), { code: "EPERM" });
+        },
+      }),
+  },
+  {
+    mode: "the child reports an operation permission error",
+    failure: { stage: "spawn", reason: "permission_denied" },
     terminationCount: 1,
     harness: childEventHarness((events) =>
-      events.emit("error", new Error("private child diagnostic")),
+      events.emit("error", Object.assign(new Error("private child diagnostic"), { code: "EPERM" })),
     ),
+  },
+  {
+    mode: "the child emits an error before it exits",
+    failure: { stage: "spawn", reason: "child_error" },
+    terminationCount: 1,
+    harness: childEventHarness((events) => {
+      events.emit("error", new Error("private child diagnostic"));
+      events.emit("exit", 17, null);
+    }),
+  },
+  {
+    mode: "the child exits before it emits an error",
+    failure: { stage: "startup", reason: "child_exited", exitStatus: 19 },
+    terminationCount: 1,
+    harness: childEventHarness((events) => {
+      events.emit("exit", 19, null);
+      events.emit("error", new Error("private child diagnostic"));
+    }),
   },
   {
     mode: "a child listener cannot be installed",
