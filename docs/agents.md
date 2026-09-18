@@ -377,7 +377,7 @@ Destroy removes the managed provider and profile without revoking the key at Bra
 Unchanged apply does not rotate a changed value behind the same environment reference.
 
 Every attached agent must be an unrestricted OpenClaw or Deep Agents agent.
-Selected agents receive `web_search`; OpenClaw explicitly denies it for other agents, while Deep Agents only configures its MCP tool for selected agents.
+The selected sandbox agent receives `web_search`; Deep Agents exposes it through its configured MCP tool.
 Read-only policies cannot attach search.
 The native tool restriction applies within each sandbox; OpenShell provides isolation between sandboxes.
 Other harnesses are rejected.

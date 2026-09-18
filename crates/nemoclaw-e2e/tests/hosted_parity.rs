@@ -7,6 +7,45 @@ use sha2::{Digest, Sha256};
 const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
 
+// This scenario compares separately authored current intent with a test-only
+// projection. The raw export remains unchanged and never reaches deployment.
+fn authored_document(raw: &[u8], current: &[u8]) -> Document {
+    let document =
+        Document::parse(current).expect("authored v1 input must use current agent syntax");
+    let mut projected: serde_json::Value =
+        serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
+    let sandboxes = projected["spec"]["sandboxes"].as_array_mut().unwrap();
+    assert_eq!(sandboxes.len(), 1, "hosted parity requires one sandbox");
+    let sandbox = sandboxes[0].as_object_mut().unwrap();
+    let agents = sandbox
+        .remove("agents")
+        .expect("raw v0 export requires its historical agents list");
+    assert_eq!(agents.as_array().unwrap().len(), 1);
+    assert!(!sandbox.contains_key("agent"));
+    sandbox.insert("agent".into(), agents[0].clone());
+    assert_eq!(
+        Document::parse(projected.to_string().as_bytes()).unwrap(),
+        document,
+        "authored v1 configuration must preserve the raw export's portable intent"
+    );
+    document
+}
+
+#[test]
+fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
+    let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+    let current = include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml");
+    let document = authored_document(raw, current);
+    assert_eq!(document, Document::parse(current.as_slice()).unwrap());
+    let mut changed = document.clone();
+    changed.spec.sandboxes[0].agent.name = "different-agent".into();
+    assert!(
+        std::panic::catch_unwind(|| authored_document(raw, changed.yaml().unwrap().as_bytes()))
+            .is_err()
+    );
+    assert!(std::panic::catch_unwind(|| authored_document(raw, raw)).is_err());
+}
+
 #[test]
 fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent() {
     let v0 = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml");
@@ -22,20 +61,9 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         Document::parse(raw.as_slice()).is_err(),
         "legacy agents lists require explicit reauthoring"
     );
-    let v1 =
-        Document::parse(include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice())
-            .unwrap();
-    // Compare the separately authored fixture with the historical input. This
-    // test-only projection does not add a legacy import path to the SDK.
-    let mut authored: serde_json::Value =
-        serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
-    let sandbox = authored["spec"]["sandboxes"][0].as_object_mut().unwrap();
-    let agents = sandbox.remove("agents").unwrap();
-    assert_eq!(agents.as_array().unwrap().len(), 1);
-    sandbox.insert("agent".into(), agents[0].clone());
-    assert_eq!(
-        Document::parse(authored.to_string().as_bytes()).unwrap(),
-        v1
+    let v1 = authored_document(
+        raw,
+        include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
     let gateway = &v1.spec.gateway;
     assert_eq!(gateway.management, "managed");
@@ -377,8 +405,8 @@ mod live {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires a manually curated redacted raw v0 export, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
-    async fn v0_export_artifact_drives_v1_hosted_openclaw_lifecycle() {
+    #[ignore = "requires redacted raw NEMOCLAW_LIVE_V0_EXPORT and separately authored NEMOCLAW_LIVE_V1_CONFIG, owned fresh Docker state, a verified bundle, and NVIDIA_INFERENCE_API_KEY; creates and destroys only that deployment"]
+    async fn authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle() {
         let gate = std::env::var("NEMOCLAW_RUN_LIVE_HOSTED_PARITY").unwrap();
         let qualification_candidate = match gate.as_str() {
             "issue-11810" => {
@@ -414,6 +442,7 @@ mod live {
         }
 
         let v0_export_path = explicit("NEMOCLAW_LIVE_V0_EXPORT");
+        let v1_config_path = explicit("NEMOCLAW_LIVE_V1_CONFIG");
         let directory = explicit("NEMOCLAW_LIVE_HOSTED_STATE");
         let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
         let v0_export_bytes = fs::read(v0_export_path).unwrap();
@@ -421,8 +450,14 @@ mod live {
         let mut v0_export_evidence = v0_artifact_audit(&v0_export_bytes, v0_source.as_deref());
         v0_export_evidence["redactedYaml"] =
             json!(String::from_utf8(v0_export_bytes.clone()).unwrap());
-        let document = Document::parse(v0_export_bytes.as_slice())
-            .expect("the curated export must use current singular agent syntax; legacy agents lists are unsupported");
+        let v1_config_bytes = fs::read(v1_config_path).unwrap();
+        assert_redacted(&v1_config_bytes);
+        let document = super::authored_document(&v0_export_bytes, &v1_config_bytes);
+        let v1_config_evidence = json!({
+            "sha256": sha256(&v1_config_bytes),
+            "redactedYaml": String::from_utf8(v1_config_bytes).unwrap(),
+            "source": "explicitly authored current configuration",
+        });
         validate_scenario_document(&document);
         let image = &document.spec.sandboxes[0].image.ref_;
         assert_eq!(
@@ -468,8 +503,10 @@ mod live {
                 "v1SourceWorktreeClean": source_status.is_empty(),
                 "credentialInputs": {"NVIDIA_INFERENCE_API_KEY": "environment reference; value omitted"},
                 "v0Export": v0_export_evidence,
+                "v1Configuration": v1_config_evidence,
                 "input": {
-                    "contract": "raw-v0-v1alpha1-export-v1",
+                    "contract": "explicit-v1-authoring-preserves-v0-intent",
+                    "legacyProjectionEqualsAuthoredV1": true,
                     "v1Input": serde_json::to_value(&document).unwrap()
                 },
                 "environment": current_environment,
@@ -558,7 +595,7 @@ mod live {
         evidence.record(
             "desiredStateComparison",
             json!({
-                "rawV0EqualsV1Export": true,
+                "authoredV1EqualsV1Export": true,
                 "v1ExportSha256": sha256(&exported_bytes)
             }),
         );
@@ -601,7 +638,7 @@ mod live {
         );
         evidence.record(
             "verdict",
-            "raw v0 export parses directly and its v1 lifecycle and agent behavior are verified",
+            "separately authored v1 intent matches the raw v0 export projection; its lifecycle and agent behavior are verified",
         );
         evidence.record("passed", true);
     }
