@@ -3023,6 +3023,10 @@ wait_for_hermes_gateway_recovery_request() {
     current="$(hermes_gateway_recovery_request_value)" || return 1
     if [ "$current" = "v1 ${HERMES_GATEWAY_RECOVERY_GENERATION}" ]; then
       echo "[gateway] Gated host recovery requested; relaunching under the existing OpenShell entrypoint" >&2
+      # The privileged controller publishes the request immediately before it
+      # flushes its receipt and exits. Give that exec session one polling
+      # interval to finish before gateway relaunch can invalidate it.
+      sleep 1
       return 0
     fi
     sleep 1

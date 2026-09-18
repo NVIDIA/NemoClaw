@@ -70,7 +70,7 @@ describe("Hermes native service restart supervision", () => {
       "set -uo pipefail",
       'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf b%.0s {1..64})"; request_identity="v1 $HERMES_GATEWAY_RECOVERY_GENERATION"; }',
       'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
-      'sleep() { echo "unexpected sleep" >&2; return 1; }',
+      'sleep() { printf "%s\\n" "controller-handoff-complete"; }',
       extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
       "wait_for_hermes_gateway_recovery_request",
     ].join("\n");
@@ -78,7 +78,7 @@ describe("Hermes native service restart supervision", () => {
     const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).not.toContain("unexpected sleep");
+    expect(result.stdout.trim()).toBe("controller-handoff-complete");
     expect(result.stderr).toContain("Gated host recovery requested");
   });
 
