@@ -84,8 +84,15 @@ pub(super) fn check_destroy_plan(
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
     for drift in &plan.resource_drift {
-        if !allowed.contains_key(&drift.address) || !bindings.contains_key(&drift.address) {
-            return Err(Error::Conflict("destroy plan contains unbound drift"));
+        if !allowed.contains_key(&drift.address) {
+            return Err(Error::Conflict(
+                "destroy plan reports changes to an undeclared resource",
+            ));
+        }
+        if !bindings.contains_key(&drift.address) {
+            return Err(Error::Conflict(
+                "destroy plan reports changes to a resource without a saved ID",
+            ));
         }
         if drift.change.actions == ["delete"]
             && (!absent.insert(&drift.address)
@@ -101,9 +108,9 @@ pub(super) fn check_destroy_plan(
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "destroy plan contains an undeclared resource",
         ))?;
-        let binding = bindings
-            .get(&change.address)
-            .ok_or(Error::Conflict("destroy plan contains an unbound resource"))?;
+        let binding = bindings.get(&change.address).ok_or(Error::Conflict(
+            "destroy plan contains a resource without a saved ID",
+        ))?;
         if !seen.insert(&change.address) || absent.contains(&change.address) {
             return Err(Error::Conflict(
                 "destroy plan contains a duplicate resource",

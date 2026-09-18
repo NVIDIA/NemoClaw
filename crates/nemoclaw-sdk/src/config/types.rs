@@ -576,7 +576,7 @@ pub struct Memory {
     pub min_free_gib: i64,
     #[serde(rename = "freeGateGiB")]
     #[schemars(default)]
-    /// Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.
+    /// Check minFreeGiB only when available memory is below this threshold in GiB. Must be at least minAvailableGiB after defaults.
     pub free_gate_gib: i64,
     #[serde(rename = "consecutiveSamples")]
     #[schemars(default)]

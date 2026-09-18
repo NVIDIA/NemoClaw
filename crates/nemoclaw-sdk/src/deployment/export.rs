@@ -11,11 +11,21 @@ impl Deployment {
     async fn export_inner(&self, cancel: &CancellationToken) -> Result<Document, Error> {
         let (_, store) = self.open()?;
         let record = store.load()?.ok_or(Error::Conflict(
-            "export requires established resource bindings",
+            "no saved deployment configuration; apply a configuration before exporting",
         ))?;
-        if record.pending || record.destroying || record.destroyed {
+        if record.pending {
             return Err(Error::Conflict(
-                "export requires established bindings; reconcile unfinished operations first",
+                "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
+            ));
+        }
+        if record.destroying {
+            return Err(Error::Conflict(
+                "cannot export while destroy is unfinished; run destroy again with the same state directory",
+            ));
+        }
+        if record.destroyed {
+            return Err(Error::Conflict(
+                "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
             ));
         }
 
@@ -33,7 +43,7 @@ impl Deployment {
                 "id".into(),
                 bindings
                     .get(&target.address)
-                    .ok_or(Error::Conflict("resource has no durable state identity"))?
+                    .ok_or(Error::Conflict("resource has no saved ID"))?
                     .id
                     .clone(),
             );
@@ -165,6 +175,69 @@ async fn export_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn export_reports_recovery_for_each_saved_operation_state_without_changing_files() {
+        let bundle = tempfile::tempdir().unwrap();
+        let mut manifest = crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        };
+        for name in crate::bundle::required_files(&manifest.version).unwrap() {
+            let path = bundle.path().join(&name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"not an executable").unwrap();
+            manifest
+                .files
+                .insert(name, crate::bundle::hash_file(&path).unwrap());
+        }
+        save_json(&bundle.path().join("manifest.json"), &manifest).unwrap();
+        let document =
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap();
+        for (flags, expected) in [
+            (
+                None,
+                "no saved deployment configuration; apply a configuration before exporting",
+            ),
+            (
+                Some((true, false, false)),
+                "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
+            ),
+            (
+                Some((false, true, false)),
+                "cannot export while destroy is unfinished; run destroy again with the same state directory",
+            ),
+            (
+                Some((false, false, true)),
+                "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
+            ),
+        ] {
+            let state = tempfile::tempdir().unwrap();
+            let intent = state.path().join("intent.json");
+            if let Some((pending, destroying, destroyed)) = flags {
+                let mut record = Record::new(document.clone()).unwrap();
+                record.pending = pending;
+                record.destroying = destroying;
+                record.destroyed = destroyed;
+                Store::open(state.path()).unwrap().save(&record).unwrap();
+            }
+            let before = fs::read(&intent).ok();
+            let resource_state = state.path().join("terraform.tfstate");
+            fs::write(&resource_state, br#"{"version":4,"resources":[]}"#).unwrap();
+            let before_resources = fs::read(&resource_state).unwrap();
+            let deployment = Deployment::new(state.path(), bundle.path());
+            let error = deployment
+                .export(&CancellationToken::new())
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected, "{flags:?}");
+            assert_eq!(fs::read(&intent).ok(), before);
+            assert_eq!(fs::read(&resource_state).unwrap(), before_resources);
+        }
+    }
 
     fn provider_row(document: &Document) -> Row {
         let record = Record::new(document.clone()).unwrap();

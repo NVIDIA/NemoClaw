@@ -413,7 +413,7 @@ impl Service {
 
         require(
             IMAGE.is_match(&self.image),
-            "Spark requires qualified backend, pinned model, and immutable image",
+            "service image must be pinned by a SHA-256 digest",
         )?;
         crate::backends::validation::validate(self)
     }

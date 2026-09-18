@@ -116,7 +116,7 @@ impl Storage {
             .await
             .map_err(|error| remote(&error))?;
         self.observe(engine, id).await?.ok_or(Error::Conflict(
-            "created model storage is unobservable; retain intent and reconcile",
+            "cannot observe model storage after creation; keep the state directory and run apply again with the same configuration",
         ))
     }
 }

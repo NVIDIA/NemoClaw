@@ -1488,7 +1488,7 @@
             }
           ],
           "default": 12,
-          "description": "Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.",
+          "description": "Check minFreeGiB only when available memory is below this threshold in GiB. Must be at least minAvailableGiB after defaults.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."

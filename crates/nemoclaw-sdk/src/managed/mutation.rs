@@ -112,7 +112,7 @@ impl Engine {
                 .map_err(|error| remote(&error))?;
         }
         self.observe_runtime(spec, id).await?.ok_or(Error::Conflict(
-            "started runtime is unobservable; retain intent",
+            "cannot observe the runtime after starting it; keep the state directory and run apply again with the same configuration",
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
