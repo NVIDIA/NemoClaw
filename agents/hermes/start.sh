@@ -326,6 +326,8 @@ fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 HERMES_STARTUP_READY_FILE="/run/nemoclaw/hermes-startup-ready"
+HERMES_GATEWAY_RECOVERY_REQUEST_FILE="/run/nemoclaw/hermes-gateway-recovery-request"
+HERMES_GATEWAY_RECOVERY_WAITING_FILE="/tmp/nemoclaw-hermes-gateway-recovery-waiting"
 HERMES_RESTART_SEALED=0
 
 # A same-container PID 1 restart can retain /run. Revoke the prior readiness
@@ -2920,6 +2922,13 @@ prepare_hermes_root_runtime() {
 }
 
 launch_hermes_gateway_current_user() {
+  if [ -e "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" ] \
+    || [ -L "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" ]; then
+    rm -f -- "$HERMES_GATEWAY_RECOVERY_WAITING_FILE" || {
+      echo "[SECURITY] Refusing Hermes startup because the stale gateway recovery generation could not be removed" >&2
+      return 1
+    }
+  fi
   cleanup_stale_hermes_gateway_runtime || return $?
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
@@ -2936,9 +2945,98 @@ launch_hermes_gateway_current_user() {
 
 # With --external-supervisor, Hermes 0.21.3 handles SIGUSR1 by exiting with
 # EX_TEMPFAIL (75). In the non-root OpenShell topology, this entrypoint remains
-# alive and relaunches the gateway only for that status. Other exits propagate
-# to OpenShell unchanged.
+# alive and relaunches the gateway immediately for that status. A clean stop is
+# held until the privileged recovery transaction has restored its cron gate;
+# other failures propagate to OpenShell unchanged.
 readonly HERMES_SERVICE_RESTART_STATUS=75
+
+hermes_gateway_recovery_request_value() {
+  local generation metadata request
+  if [ ! -e "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ] \
+    && [ ! -L "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  if [ ! -f "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ] \
+    || [ -L "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ]; then
+    echo "[SECURITY] Hermes gateway recovery request is not a regular file" >&2
+    return 1
+  fi
+  metadata="$(stat -c '%u:%g:%a:%h:%d:%i' -- "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" 2>/dev/null)" || {
+    echo "[SECURITY] Hermes gateway recovery request metadata is unavailable" >&2
+    return 1
+  }
+  case "$metadata" in
+    0:0:444:1:*) ;;
+    *)
+      echo "[SECURITY] Hermes gateway recovery request metadata is unsafe" >&2
+      return 1
+      ;;
+  esac
+  request="$(cat -- "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE")" || {
+    echo "[SECURITY] Hermes gateway recovery request is unreadable" >&2
+    return 1
+  }
+  case "$request" in
+    "v1 "*) generation="${request#v1 }" ;;
+    *) generation= ;;
+  esac
+  if [ "${#generation}" -ne 64 ]; then
+    echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+    return 1
+  fi
+  case "$generation" in
+    *[!0-9a-f]*)
+      echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$request"
+}
+
+publish_hermes_gateway_recovery_generation() {
+  local generation temporary_marker
+  generation="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+  if [ "${#generation}" -ne 64 ]; then
+    echo "[SECURITY] Hermes gateway recovery generation is unavailable" >&2
+    return 1
+  fi
+  temporary_marker="$(mktemp "${HERMES_GATEWAY_RECOVERY_WAITING_FILE}.XXXXXX")" || {
+    echo "[SECURITY] Hermes gateway recovery generation could not be prepared" >&2
+    return 1
+  }
+  if ! printf 'v1 %s\n' "$generation" >"$temporary_marker" \
+    || ! chmod 0600 "$temporary_marker" \
+    || ! mv -f -- "$temporary_marker" "$HERMES_GATEWAY_RECOVERY_WAITING_FILE"; then
+    rm -f -- "$temporary_marker"
+    echo "[SECURITY] Hermes gateway recovery generation could not be published atomically" >&2
+    return 1
+  fi
+  HERMES_GATEWAY_RECOVERY_GENERATION="$generation"
+}
+
+wait_for_hermes_gateway_recovery_request() {
+  local current
+  publish_hermes_gateway_recovery_generation || return 1
+  echo "[gateway] Hermes gateway stopped cleanly; awaiting gated host recovery" >&2
+  while :; do
+    current="$(hermes_gateway_recovery_request_value)" || return 1
+    if [ "$current" = "v1 ${HERMES_GATEWAY_RECOVERY_GENERATION}" ]; then
+      echo "[gateway] Gated host recovery requested; relaunching under the existing OpenShell entrypoint" >&2
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+relaunch_hermes_gateway_current_user() {
+  mark_hermes_gateway_stopped
+  launch_hermes_gateway_current_user || return $?
+  wait_for_hermes_gateway_internal "$GATEWAY_PID" || return $?
+  ensure_hermes_supervised_auxiliaries || return $?
+  finalize_tirith_marker_retry
+  refresh_hermes_supervised_child_pids
+}
 
 supervise_hermes_service_restarts_current_user() {
   local gateway_status=0
@@ -2946,17 +3044,15 @@ supervise_hermes_service_restarts_current_user() {
   while :; do
     gateway_status=0
     wait "$GATEWAY_PID" || gateway_status=$?
-    if [ "$gateway_status" -ne "$HERMES_SERVICE_RESTART_STATUS" ]; then
+    if [ "$gateway_status" -eq 0 ]; then
+      wait_for_hermes_gateway_recovery_request || return $?
+    elif [ "$gateway_status" -eq "$HERMES_SERVICE_RESTART_STATUS" ]; then
+      echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
+    else
       return "$gateway_status"
     fi
 
-    echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
-    mark_hermes_gateway_stopped
-    launch_hermes_gateway_current_user || return $?
-    wait_for_hermes_gateway_internal "$GATEWAY_PID" || return $?
-    ensure_hermes_supervised_auxiliaries || return $?
-    finalize_tirith_marker_retry
-    refresh_hermes_supervised_child_pids
+    relaunch_hermes_gateway_current_user || return $?
   done
 }
 

@@ -706,7 +706,7 @@ const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 /** Retry a stopped Hermes gateway observation before returning the probe result. */
 export async function waitForStartedHermesGatewayProcess(
   sandboxName: string,
-  gatewayName: string,
+  gatewayName: string | undefined,
   options: {
     probe?: typeof isSandboxGatewayRunningForStatus;
     sleep?: (delayMs: number) => Promise<void>;

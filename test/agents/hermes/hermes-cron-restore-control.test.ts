@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -27,6 +28,8 @@ const LIFECYCLE_HARNESS = String.raw`
 import importlib.util
 import os
 import sys
+import threading
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,12 +42,23 @@ module.HERMES_HOME = Path(sys.argv[3])
 module.SANDBOX_HOME = module.HERMES_HOME.parent
 module.NEMOCLAW_HOME = module.SANDBOX_HOME / ".nemoclaw"
 module.CONTROL_LOCK_PATH = module.SANDBOX_HOME / "run" / "cron-restore.lock"
+module.GATEWAY_RECOVERY_REQUEST_PATH = (
+    module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-request"
+)
+module.GATEWAY_RECOVERY_WAITING_PATH = (
+    module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-waiting"
+)
 module.ROOT_UID = os.geteuid()
 module.ROOT_GID = os.getegid()
 module.NEMOCLAW_HOME.mkdir(mode=0o755)
 module.CONTROL_LOCK_PATH.parent.mkdir(mode=0o755)
 os.chmod(module.NEMOCLAW_HOME, 0o755)
 os.chmod(module.CONTROL_LOCK_PATH.parent, 0o755)
+module.GATEWAY_RECOVERY_WAITING_PATH.write_text(
+    "v1 " + "c" * 64 + "\n",
+    encoding="ascii",
+)
+os.chmod(module.GATEWAY_RECOVERY_WAITING_PATH, 0o600)
 cron_validations = 0
 def validate_cron_tree():
     global cron_validations
@@ -394,6 +408,21 @@ try:
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         module.prepare_recovery()
+    elif scenario == "prepare-before-generation":
+        module.GATEWAY_RECOVERY_WAITING_PATH.unlink()
+        def publish_generation():
+            time.sleep(0.05)
+            staged = module.GATEWAY_RECOVERY_WAITING_PATH.with_suffix(".staged")
+            staged.write_text(
+                "v1 " + "e" * 64 + "\n",
+                encoding="ascii",
+            )
+            os.chmod(staged, 0o600)
+            staged.replace(module.GATEWAY_RECOVERY_WAITING_PATH)
+        publisher = threading.Thread(target=publish_generation)
+        publisher.start()
+        module.prepare_recovery()
+        publisher.join()
     elif scenario == "prepare-existing-sync-failure":
         module._write_owned_drain("a" * 32)
         fail_directory_sync_on(1)
@@ -515,6 +544,10 @@ finally:
         "RECOVERY_STATE:"
         + ("present" if module._release_recovery_path().exists() else "absent")
     )
+    print(
+        "RECOVERY_REQUEST:"
+        + ("present" if module.GATEWAY_RECOVERY_REQUEST_PATH.exists() else "absent")
+    )
     print(f"CRON_VALIDATIONS:{cron_validations}")
     print(f"DURABILITY_SYNCS:{durability_sync_calls}")
     print("REARM_CALLS:" + ",".join(rearm_calls))
@@ -599,6 +632,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "prepare-matching"
       | "prepare-matching-sync-failure"
       | "prepare-noop"
+      | "prepare-before-generation"
       | "prepare-existing-sync-failure"
       | "prepare-mismatch"
       | "prepare-recovery-unsafe-mode"
@@ -1027,6 +1061,10 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("OWN_MARKER:present");
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
+    const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
+    expect(readFileSync(requestPath, "utf8")).toBe(`v1 ${"c".repeat(64)}\n`);
+    expect(lstatSync(requestPath).mode & 0o777).toBe(0o444);
   });
 
   it("keeps matching prepared recovery authority idempotent (#8472)", () => {
@@ -1038,6 +1076,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("OWN_MARKER:present");
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
   });
 
   it("blocks gateway preparation when matching recovery authority durability is unproved (#8472)", () => {
@@ -1050,6 +1089,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("DURABILITY_SYNCS:1");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
   });
 
   it("returns a typed no-op when no recovery authority exists (#8472)", () => {
@@ -1063,6 +1103,16 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("OWN_MARKER:absent");
     expect(result.stdout).toContain("RECOVERY_STATE:absent");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
+  });
+
+  it("publishes a matching request when recovery starts before the supervisor generation", () => {
+    const result = runLifecycle("prepare-before-generation");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('"disposition":"not-required"');
+    const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
+    expect(readFileSync(requestPath, "utf8")).toBe(`v1 ${"e".repeat(64)}\n`);
   });
 
   it("blocks gateway preparation when existing marker durability is unproved (#8472)", () => {

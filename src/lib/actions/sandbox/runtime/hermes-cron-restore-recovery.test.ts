@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   inspectPortableAgentReceiptDisposition: vi.fn(),
   prepareHermesCronRestoreRecovery: vi.fn(),
   recoverHermesCronRestore: vi.fn(),
+  waitForGatedHermesGatewayRecovery: vi.fn(),
   withSandboxLifecycleLock: vi.fn(
     async (_sandboxName: string, operation: () => Promise<void>, _options: unknown) => operation(),
   ),
@@ -31,6 +32,10 @@ vi.mock("../connect", () => ({
   connectSandbox: mocks.connectSandbox,
 }));
 
+vi.mock("./hermes-lifecycle", () => ({
+  waitForGatedHermesGatewayRecovery: mocks.waitForGatedHermesGatewayRecovery,
+}));
+
 vi.mock("../rebuild-hermes-post-restore", () => ({
   prepareHermesCronRestoreRecovery: mocks.prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore: mocks.recoverHermesCronRestore,
@@ -45,6 +50,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     mocks.inspectPortableAgentReceiptDisposition.mockReturnValue({ kind: "absent" });
     mocks.prepareHermesCronRestoreRecovery.mockReturnValue("not-required");
     mocks.recoverHermesCronRestore.mockReturnValue("not-required");
+    mocks.waitForGatedHermesGatewayRecovery.mockResolvedValue(true);
   });
 
   it("prepares the Hermes gate before gateway repair under the sandbox mutation lock", async () => {
@@ -53,6 +59,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     mocks.prepareHermesCronRestoreRecovery.mockImplementation(() => {
       events.push("prepare");
       return "gate-prepared";
+    });
+    mocks.waitForGatedHermesGatewayRecovery.mockImplementation(async () => {
+      events.push("start");
+      return true;
     });
     mocks.connectSandbox.mockImplementation(async () => {
       events.push("connect");
@@ -67,8 +77,9 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     expect(mocks.withSandboxLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       timeoutMs: 30_000,
     });
-    expect(events).toEqual(["prepare", "connect", "recover"]);
+    expect(events).toEqual(["prepare", "start", "connect", "recover"]);
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
+    expect(mocks.waitForGatedHermesGatewayRecovery).toHaveBeenCalledWith("alpha");
     expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
       probeOnly: true,
       requireLaunchReadinessPublication: false,
@@ -90,6 +101,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       requireLaunchReadinessPublication: false,
     });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
+    expect(mocks.waitForGatedHermesGatewayRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });
 
@@ -103,6 +115,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       "recovery authority is unsafe",
     );
     expect(mocks.connectSandbox).not.toHaveBeenCalled();
+    expect(mocks.waitForGatedHermesGatewayRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });
 
@@ -114,11 +127,25 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     await recoverSandboxWithHermesCronRestore("alpha");
 
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
+    expect(mocks.waitForGatedHermesGatewayRecovery).not.toHaveBeenCalled();
     expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
       probeOnly: true,
       requireLaunchReadinessPublication: false,
     });
     expect(mocks.recoverHermesCronRestore).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not probe or release the cron gate when the gateway remains unobservable", async () => {
+    mocks.getSessionAgent.mockReturnValue({ name: "hermes" });
+    mocks.waitForGatedHermesGatewayRecovery.mockResolvedValue(false);
+
+    await expect(recoverSandboxWithHermesCronRestore("alpha")).rejects.toThrow(
+      "Hermes gateway did not become observable after its gated recovery request in sandbox 'alpha'",
+    );
+
+    expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
+    expect(mocks.connectSandbox).not.toHaveBeenCalled();
+    expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });
 
   it("does not invoke Hermes control for another agent", async () => {
@@ -131,6 +158,7 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
       requireLaunchReadinessPublication: false,
     });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
+    expect(mocks.waitForGatedHermesGatewayRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });
 

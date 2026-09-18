@@ -64,4 +64,16 @@ export function executePrivilegedSandboxCommand(
   return processRecovery.executePrivilegedSandboxCommand(...args);
 }
 
+export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Promise<boolean> {
+  return (
+    (await processRecovery.waitForStartedHermesGatewayProcess(sandboxName, undefined, {
+      // Hermes uses its in-sandbox supervisor, so an inconclusive
+      // observation remains transitional while the supervisor consumes the
+      // root-owned recovery request.
+      probe: async (name, gatewayName) =>
+        (await processRecovery.isSandboxGatewayRunningForStatus(name, gatewayName)) ?? false,
+    })) === true
+  );
+}
+
 export type SandboxCommandResult = processRecovery.SandboxCommandResult;
