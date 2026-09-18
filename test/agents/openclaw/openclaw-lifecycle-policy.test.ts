@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
@@ -111,6 +113,54 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
+  it("selects the system npm owner only for native OpenClaw self-update", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-wrapper-"));
+    const fakeNode = path.join(root, "node");
+    const wrapper = path.join(root, "openclaw");
+    const source = fs
+      .readFileSync(path.join(REPO_ROOT, "scripts", "openclaw-cli-wrapper.sh"), "utf8")
+      .replace("/usr/local/bin/node", fakeNode)
+      .replace(
+        "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
+        "/reviewed/openclaw/openclaw.mjs",
+      );
+    fs.writeFileSync(
+      fakeNode,
+      [
+        "#!/bin/sh",
+        'printf "upper=%s\\nlower=%s\\n" "${NPM_CONFIG_PREFIX-}" "${npm_config_prefix-}"',
+        'printf "arg=%s\\n" "$@"',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(wrapper, source, { mode: 0o755 });
+
+    try {
+      const update = spawnSync(wrapper, ["update", "--dry-run"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_CONFIG_PREFIX: "/sandbox/.local",
+          npm_config_prefix: "/hostile/lowercase",
+        },
+      });
+      expect(update.status, update.stderr).toBe(0);
+      expect(update.stdout).toContain("upper=/usr/local\nlower=\n");
+      expect(update.stdout).toContain("arg=/reviewed/openclaw/openclaw.mjs\n");
+      expect(update.stdout).toContain("arg=update\narg=--dry-run\n");
+
+      const list = spawnSync(wrapper, ["agents", "list"], {
+        encoding: "utf8",
+        env: { ...process.env, NPM_CONFIG_PREFIX: "/sandbox/.local" },
+      });
+      expect(list.status, list.stderr).toBe(0);
+      expect(list.stdout).toContain("upper=/sandbox/.local\n");
+      expect(list.stdout).toContain("arg=agents\narg=list\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
     expect(policy).toMatchObject({ schemaVersion: 1, defaultPolicy: "deny" });

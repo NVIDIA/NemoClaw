@@ -710,6 +710,7 @@ COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/p
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
+COPY scripts/lib/patch-openclaw-secondary-main-session-delete.mts /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
@@ -725,6 +726,7 @@ COPY scripts/lib/openclaw_pairing_state.py /usr/local/lib/nemoclaw/openclaw_pair
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
+COPY scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
@@ -946,6 +948,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
@@ -1540,6 +1543,13 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# Restore 2026.7.1 secondary-agent main-session deletion while preserving
+# 2026.9.1 primary-main protection and its cleanup lifecycle. Remove
+# when upstream distinguishes primary and secondary main sessions.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
 #
 # OpenClaw 2026.9.1 formats sandbox inference egress failures as either generic
@@ -1985,6 +1995,13 @@ USER root
 # Channel runtime preloads are authored as TypeScript and compiled in the
 # runtime-preload-builder stage before being flattened by filename for --require.
 COPY --from=openclaw-runtime-payload / /
+
+# Preserve the CLI's package-resolution symlink while its .bin wrapper selects
+# /usr/local only for 2026.9.1 self-update owner detection.
+RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && install -o root -g root -m 0755 \
+        /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.

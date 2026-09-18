@@ -241,6 +241,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
+    writeFixture(path.join("scripts", "openclaw-cli-wrapper.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
     writeFixture(path.join("scripts", "validate-openclaw-tool-search.mts"));
@@ -288,6 +289,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-managed-transport-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
@@ -544,6 +546,11 @@ describe("sandbox build context staging", () => {
 
     expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
     expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
+    const stagedOpenClawWrapper = path.join(stagedScripts, "openclaw-cli-wrapper.sh");
+    expect(fs.readFileSync(stagedOpenClawWrapper, "utf8")).toBe(
+      fs.readFileSync(path.join(sourceRoot, "scripts", "openclaw-cli-wrapper.sh"), "utf8"),
+    );
+    expect((fs.statSync(stagedOpenClawWrapper).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
     expect(fs.readFileSync(stagedIdentity, "utf8")).toBe(
       fs.readFileSync(path.join(sourceRoot, "scripts", "lib", "reviewed-npm-identity.mts"), "utf8"),

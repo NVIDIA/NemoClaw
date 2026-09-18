@@ -433,6 +433,7 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /scripts/lib/patch-openclaw-npm12-pack-json.mts
+COPY --chmod=0444 scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -620,6 +621,15 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+# Keep /usr/local/bin/openclaw as the symlink into this .bin directory so its
+# real path remains a valid package-resolution anchor. The wrapper satisfies
+# OpenClaw 2026.9.1's update-owner preflight without changing the sandbox user's
+# npm prefix for ordinary plugin and package work.
+RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && install -o root -g root -m 0755 \
+        /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
 
 # Baseline health check. The base image runs no service, so this only
 # verifies the Node.js runtime is functional. Child images that expose

@@ -322,6 +322,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-cli-wrapper.sh"),
+    path.join(stagedScriptsDir, "openclaw-cli-wrapper.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
     path.join(stagedScriptsDir, "codex-acp-wrapper.sh"),
   );
@@ -419,6 +423,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-secondary-main-session-delete.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),
