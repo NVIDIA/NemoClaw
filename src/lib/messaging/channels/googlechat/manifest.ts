@@ -24,6 +24,12 @@ export const googlechatManifest = {
       kind: "secret",
       required: true,
       envKey: "GOOGLECHAT_SERVICE_ACCOUNT",
+      // A downloaded SA JSON key file is pretty-printed (or a caller may `cat`
+      // it verbatim into the env var), so it legitimately contains embedded
+      // newlines. Safe to allow here only because this value is never
+      // rendered into an env-lines file or JSON-fragment string — see the
+      // "No credentials/secretFiles here" comment on `credentials` below.
+      allowLineBreaks: true,
       // Cap the mask — a ~2 KB SA JSON would otherwise echo thousands of stars.
       maskCap: 40,
       // Validate the paste now (token-paste hook re-prompts, then skips the
