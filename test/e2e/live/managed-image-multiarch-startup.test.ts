@@ -13,6 +13,7 @@ import {
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
 } from "./managed-image-multiarch-startup-helpers.ts";
@@ -60,7 +61,11 @@ test(
     );
 
     progress.phase("verify Docker Engine 27 receipt transfer");
-    const docker27DaemonName = `nemoclaw-receipt-engine27-${String(dispatch.runId)}-${String(dispatch.runAttempt)}`;
+    const docker27DaemonName = dockerEngine27ReceiptDaemonName(
+      dispatch.runId,
+      dispatch.runAttempt,
+      dispatch.platform,
+    );
     cleanup.trackDisposable(`remove owned Docker Engine 27 daemon ${docker27DaemonName}`, () => {
       execFileSync(
         process.execPath,
