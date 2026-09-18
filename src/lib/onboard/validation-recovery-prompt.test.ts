@@ -168,4 +168,43 @@ describe("validation recovery credential prompt", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(process.env.OPENAI_API_KEY).toBe("sk-existing");
   });
+
+  it("tells the user that retry opens the credential prompt when authorization fails (#12079)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "selection"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("credential");
+
+    const messages = log.mock.calls.map(([message]) => message);
+    expect(messages).toContain("  OpenAI authorization failed.");
+    expect(messages).toContain(
+      "  Choose retry to enter the API key securely, back to change the provider or model, or exit to stop onboarding.",
+    );
+    // The options prompt must not request a key and forbid entering one at once (#12079).
+    expect(messages).not.toContainEqual(expect.stringMatching(/paste/iu));
+    expect(prompt).toHaveBeenCalledWith("  Options: retry, back, exit [retry]: ", {
+      secret: true,
+    });
+    expectCredentialPromptWasSecret(prompt);
+  });
+
+  it("masks the options prompt so a pasted API key is not echoed (#12079)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["sk-pasted-at-the-options-prompt", "back"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("selection");
+
+    expect(prompt).toHaveBeenCalledWith("  Options: retry, back, exit [retry]: ", {
+      secret: true,
+    });
+    const messages = log.mock.calls.map(([message]) => message);
+    expect(messages).not.toContainEqual(expect.stringContaining("sk-pasted-at-the-options-prompt"));
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+  });
 });
