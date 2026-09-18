@@ -180,13 +180,19 @@ fn credential_write(provider: &str, binding: Option<&str>) {
     }
 }
 
+fn credential_absence_allowed(optional: bool, error: Option<i32>) -> bool {
+    optional && error == Some(1168)
+}
+
 fn credential_read(provider: &str, binding: Option<&str>, optional: bool) {
     let target = credential_target(provider, binding)
         .unwrap_or_else(|| credential_error("The credential provider is invalid."));
     let target_wide = wide(&target);
     let mut credential = ptr::null_mut();
     let found = unsafe { CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) };
-    if found == 0 && optional && std::io::Error::last_os_error().raw_os_error() == Some(1168) {
+    if found == 0
+        && credential_absence_allowed(optional, std::io::Error::last_os_error().raw_os_error())
+    {
         return;
     }
     if found == 0 || credential.is_null() {
@@ -225,13 +231,13 @@ fn credential_delete(provider: &str, binding: Option<&str>) {
 }
 
 #[test]
-fn optional_credential_snapshot_accepts_an_absent_bound_target() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let binding = format!("{nonce:064x}");
-    credential_read("compatible", Some(&binding), true);
+fn optional_credential_snapshot_rejects_vault_failures_including_missing_logon_session() {
+    assert!(credential_absence_allowed(true, Some(1168)));
+    assert!(!credential_absence_allowed(false, Some(1168)));
+    for error in [None, Some(0), Some(5), Some(1312), Some(87)] {
+        assert!(!credential_absence_allowed(true, error));
+        assert!(!credential_absence_allowed(false, error));
+    }
 }
 
 #[cfg(feature = "immutable-runtime")]

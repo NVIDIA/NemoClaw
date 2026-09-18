@@ -669,6 +669,9 @@ jobs:
           Copy-Item -LiteralPath "$source\package" -Destination "$transfer\package" -Recurse
           [void][IO.Directory]::CreateDirectory("$transfer\assembled")
           Copy-Item -LiteralPath "$source\assembled\runtime-identity.json" -Destination "$transfer\assembled\runtime-identity.json"
+          # Keep the original sealed controller/application transfer beside the MSI.
+          # Acceptance must not depend on an older cache surviving the entire build.
+          Copy-Item -LiteralPath "$env:RUNNER_TEMP\finished-windows-application-transfer" -Destination "$transfer\compiled-application" -Recurse
           $manifest = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Create -Root $transfer `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
             -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT)
@@ -746,12 +749,6 @@ jobs:
           path: ${{ runner.temp }}/finished-windows-product-transfer
           key: ${{ needs.windows-finished-installer.outputs.installer_cache_key }}
           fail-on-cache-miss: true
-      - name: Restore exact same-run compiled application cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/finished-windows-application-transfer
-          key: ${{ needs.windows-compiled-application.outputs.application_cache_key }}
-          fail-on-cache-miss: true
       - name: Verify and materialize exact same-run startup inputs
         shell: pwsh
         env:
@@ -760,7 +757,7 @@ jobs:
         run: |
           $env:GITHUB_SHA = $env:CANDIDATE_SHA
           $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
-          $application = "$env:RUNNER_TEMP\finished-windows-application-transfer"
+          $application = "$product\compiled-application"
           $verifiedProduct = @(& "$env:GITHUB_WORKSPACE\candidate\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
             -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent openclaw `
             -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST)
@@ -826,7 +823,6 @@ jobs:
       product_version: ${{ needs.windows-finished-request.outputs.product_version }}
       installer_cache_key: ${{ needs.windows-finished-installer.outputs.installer_cache_key }}
       installer_manifest_sha256: ${{ needs.windows-finished-installer.outputs.installer_manifest_sha256 }}
-      application_cache_key: ${{ needs.windows-compiled-application.outputs.application_cache_key }}
       application_manifest_sha256: ${{ needs.windows-compiled-application.outputs.application_manifest_sha256 }}
 
   windows-compiled-application:
@@ -892,6 +888,13 @@ jobs:
             1>"$output\installed-acceptance-controller.stdout.log" `
             2>"$output\installed-acceptance-controller.stderr.log"
           if ($LASTEXITCODE -ne 0) { throw 'The Windows installed-acceptance controller controls failed.' }
+          & "$work\node\node.exe" --experimental-strip-types --no-warnings --test `
+            packaging/windows/installer/qualify-installed-hermes.test.mts `
+            packaging/windows/installer/windows-native-transfer.test.mts `
+            packaging/windows/runtime/native-configuration-credentials.test.mts `
+            packaging/windows/runtime/native-setup-configuration.test.mts `
+            packaging/windows/runtime/native-setup-transaction.test.mts
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows Hermes and configuration transaction controls failed.' }
           $files = @($tests | ForEach-Object {
             $file = Join-Path $env:GITHUB_WORKSPACE $_
             @{ file = $_; bytes = (Get-Item -LiteralPath $file).Length; sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -1985,7 +1988,12 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/control-installed-openclaw-input.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/run-installed-acceptance.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/qualify-finished-package.test.mts'),
-            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-ui-tunnel.test.mts')
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-ui-tunnel.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/qualify-installed-hermes.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/windows-native-transfer.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-configuration-credentials.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-setup-configuration.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-setup-transaction.test.mts')
           )
           try {
             $ErrorActionPreference = 'Continue'

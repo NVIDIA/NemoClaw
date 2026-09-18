@@ -192,10 +192,10 @@ describe("native Windows installer pull request acceptance", () => {
       restoreStepName: "Restore exact same-run installer cache",
     },
     {
-      caseName: "compiled application save and startup application restore",
+      caseName: "compiled application save and nested startup application restore",
       saveJobName: "windows-compiled-application",
       restoreJobName: "windows-finished-installed-startup",
-      restoreStepName: "Restore exact same-run compiled application cache",
+      restoreStepName: "Restore exact same-run installer cache",
     },
   ])(
     "uses exact same-run caches with producer manifests instead of runnable artifacts for $caseName",
@@ -226,13 +226,32 @@ describe("native Windows installer pull request acceptance", () => {
       const restores = restoreJob.steps?.filter((step) =>
         step.uses?.startsWith("actions/cache/restore@"),
       );
-      expect(restores).toHaveLength(2);
+      expect(restores).toHaveLength(
+        restoreJobName === "windows-finished-installed-startup" ? 1 : 2,
+      );
       const restore = requiredStep(restoreJob, restoreStepName);
       expect(restore.uses).toMatch(/^actions\/cache\/restore@/u);
       expect(restore.with?.["fail-on-cache-miss"]).toBe(true);
       expect(restore.with).not.toHaveProperty("restore-keys");
       expect(JSON.stringify(restoreJob)).toContain("windows-native-transfer.ps1");
       expect(JSON.stringify(restoreJob)).toContain("ExpectedManifestSha256");
+      expect(
+        requiredStep(installer, "Seal the installer for same-run private qualification").run,
+      ).toContain('-Destination "$transfer\\compiled-application" -Recurse');
+      const startupInputs = requiredStep(
+        requiredJob(workflow, "windows-finished-installed-startup"),
+        "Verify and materialize exact same-run startup inputs",
+      ).run;
+      const trustedInputs = requiredStep(
+        requiredJob(trusted, "full-installed-acceptance"),
+        "Verify and materialize exact qualified inputs",
+      ).run;
+      expect(startupInputs).toContain('$application = "$product\\compiled-application"');
+      expect(startupInputs).toContain("-Root $application");
+      expect(startupInputs).toContain("-ExpectedManifestSha256 $env:APPLICATION_MANIFEST");
+      expect(trustedInputs).toContain('$application = "$product\\compiled-application"');
+      expect(trustedInputs).toContain("-Root $application");
+      expect(trustedInputs).toContain("-ExpectedManifestSha256 $env:APPLICATION_MANIFEST");
       const compiledUploadPaths = (compiled.steps ?? [])
         .filter((step) => step.uses?.startsWith("actions/upload-artifact@"))
         .map((step) => String(step.with?.path ?? ""))

@@ -3,10 +3,15 @@
 
 # Canonical Hermes Personal MXC qualification
 
-**Blocked before installer integration.** The exact official PortableGit shell
-works on the Windows ARM64 host and fails during MSYS initialization inside the
-selected Personal MXC boundary. No Hermes installer is qualified or published by
-this result. The existing finished OpenClaw preview is a separate artifact.
+This Personal MXC probe does not qualify a Hermes installer. The tested official
+PortableGit shell works on the Windows ARM64 host and fails during MSYS
+initialization inside the selected Personal MXC boundary.
+
+The current integration path is the [finished-installer workflow](../../../.github/workflows/windows-native-installer-v2.yaml)
+and its [installed Hermes acceptance controller](../installer/qualify-installed-hermes.mts).
+Credentialed acceptance remains gated on the trusted controller running from
+`main`. The historical results below do not prove that path passed or authorize
+publication. The finished OpenClaw preview is a separate artifact.
 
 ## Exact inputs and evidence
 
