@@ -97,23 +97,10 @@ function ownedForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime):
 export function removeForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime): boolean {
   const volumes = ownedForceFreshReceiptVolumes(runtime);
   if (volumes === null) return false;
-  for (const volume of volumes) {
-    const removed = runtime.runDocker(["volume", "rm", "-f", volume], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
-    if (removed.status !== 0) {
-      runtime.error(`Managed-startup receipt volume '${volume}' could not be removed.`);
-      return false;
-    }
-    runtime.log(`Removed managed-startup receipt volume ${volume}`);
-  }
-  const remaining = ownedForceFreshReceiptVolumes(runtime);
-  if (remaining === null) return false;
-  const [retained] = remaining;
-  if (retained) {
+  const [unverified] = volumes;
+  if (unverified) {
     runtime.error(
-      `Managed-startup receipt volume '${retained}' remains after force-fresh cleanup.`,
+      `Preserved managed-startup receipt volume '${unverified}' because its Docker name and mutable label are not trusted ownership proof.`,
     );
     return false;
   }

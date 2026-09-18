@@ -1386,6 +1386,7 @@ spin() {
 }
 
 FORCE_FRESH_PREPARE_TIMEOUT_SECONDS=900
+FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS=900
 
 installer_command_group_is_alive() {
   local command_pid="$1"
@@ -1439,7 +1440,11 @@ run_bounded_installer_command() (
   ((pending_signal == 0)) || cleanup_bounded_installer_command "$pending_signal"
   while installer_command_group_is_alive "$command_pid"; do
     if ((ticks >= timeout_seconds * 10)); then
-      printf '[ERROR] Timed out during %s after %s seconds. Existing state was preserved; force-fresh cleanup did not start. Retry when package installation is healthy.\n' "$label" "$timeout_seconds" >&2
+      if [[ "${NEMOCLAW_FORCE_FRESH_CLEANUP_ACTIVE:-}" == "1" ]]; then
+        printf '[ERROR] Timed out during %s after %s seconds. Force-fresh cleanup is incomplete; remaining state was preserved for retry and OpenShell package removal did not start.\n' "$label" "$timeout_seconds" >&2
+      else
+        printf '[ERROR] Timed out during %s after %s seconds. Existing state was preserved; force-fresh cleanup did not start. Retry when package installation is healthy.\n' "$label" "$timeout_seconds" >&2
+      fi
       return 124
     fi
     sleep 0.1
@@ -3641,8 +3646,8 @@ run_preupgrade_backup() {
 
 force_fresh_install_has_existing_state() {
   local container_id container_image container_inventory container_label_inventory container_name
-  local receipt_volume_inventory user_bin volume_name volume_label volume_suffix
-  local existing_state=0 managed_docker_state=0
+  local receipt_volume_inventory user_bin volume_name volume_suffix
+  local existing_state=0
   _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
@@ -3694,23 +3699,14 @@ force_fresh_install_has_existing_state() {
       esac
       volume_suffix="${volume_name#nemoclaw-managed-startup-receipt-volume-}"
       [[ "${#volume_suffix}" -eq 32 && "$volume_suffix" =~ ^[0-9a-f]+$ ]] || continue
-      volume_label="$(
-        docker volume inspect \
-          --format '{{ index .Labels "io.nvidia.nemoclaw.managed-startup.receipt" }}' \
-          "$volume_name" 2>/dev/null
-      )" || return 2
-      if [[ "$volume_label" == "1" ]]; then
-        managed_docker_state=1
-      else
-        _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME="$volume_name"
-        return 3
-      fi
+      _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME="$volume_name"
+      return 3
     done <<<"$receipt_volume_inventory"
   fi
   if ((existing_state == 0)) && [[ -n "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]]; then
     return 4
   fi
-  ((existing_state == 0 && managed_docker_state == 0)) || return 0
+  ((existing_state == 0)) || return 0
   return 1
 }
 
@@ -3757,16 +3753,33 @@ prepare_force_fresh_uninstaller() {
 }
 
 run_force_fresh_uninstaller() {
-  local source_root="$1" node_bin
+  local source_root="$1" node_bin preflight_status=0 cleanup_status=0
   node_bin="$(command -v node 2>/dev/null || true)"
   [[ -n "$node_bin" && -x "$node_bin" ]] \
     || error "Node.js is required for the force-fresh uninstaller."
-  "$node_bin" "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
+  run_bounded_installer_command \
+    "Validating force-fresh OpenShell ownership" \
+    "$FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS" \
+    "$node_bin" "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
     --force-fresh-ownership-preflight \
-    || error "Force-fresh cleanup stopped because the staged canonical ownership preflight rejected a user-local OpenShell executable. Reconcile the reported binary, then rerun. No cleanup started."
-  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
+    || preflight_status=$?
+  if ((preflight_status == 124)); then
+    error "The staged canonical ownership preflight timed out. No cleanup started; retry when local process execution is healthy."
+  elif ((preflight_status != 0)); then
+    error "Force-fresh cleanup stopped because the staged canonical ownership preflight rejected a user-local OpenShell executable. Reconcile the reported binary, then rerun. No cleanup started."
+  fi
+  NEMOCLAW_FORCE_FRESH_CLEANUP_ACTIVE=1 run_bounded_installer_command \
+    "Running authoritative force-fresh cleanup" \
+    "$FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS" \
+    env NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
     "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
-    --yes --destroy-user-data --force-fresh-reset --all-gateway-ports
+    --yes --destroy-user-data --force-fresh-reset --all-gateway-ports \
+    || cleanup_status=$?
+  if ((cleanup_status == 124)); then
+    error "Authoritative force-fresh cleanup timed out and is incomplete. Inspect the remaining state, then rerun; OpenShell package removal did not start."
+  elif ((cleanup_status != 0)); then
+    return "$cleanup_status"
+  fi
 }
 
 preflight_macos_openshell_for_force_fresh_install() {
@@ -3821,7 +3834,7 @@ run_force_fresh_install_reset() {
       ;;
     1) info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install." ;;
     2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
-    3) error "Force-fresh cleanup found pre-label receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. NemoClaw cannot prove ownership of this legacy volume. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
+    3) error "Force-fresh cleanup found unverified receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. Docker names and mutable labels are not ownership proof. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
     4) error "Force-fresh cleanup found unverified Docker container ${_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER}. NemoClaw cannot prove this Docker-only resource belongs to the current installation. Inspect and reconcile it explicitly, then rerun. No cleanup started." ;;
     *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
   esac

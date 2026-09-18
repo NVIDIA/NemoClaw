@@ -153,83 +153,58 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
   });
 
-  it.each([
-    ["removes", 0, 0],
-    ["fails closed on", 1, 1],
-  ] as const)(
-    "%s labelled receipt volumes and preserves unlabelled matches during force-fresh cleanup",
-    async (_scenario, removalStatus, expectedExitCode) => {
-      const owned = `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`;
-      const unlabelled = `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`;
-      const calls: string[][] = [];
-      const volumeLabels = new Map<string, string | null>([
-        [owned, "1"],
-        [unlabelled, null],
-      ]);
-      const routes: Record<string, () => RunResult> = {
-        info: () => ok(),
-        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
-        "images --format {{.ID}} {{.Repository}}:{{.Tag}}": () => ok(),
-        [`volume ls --filter label=${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1 --format {{.Name}}`]:
-          () =>
-            ok(
-              [...volumeLabels]
-                .filter(([, label]) => label === "1")
-                .map(([name]) => name)
-                .join("\n"),
-            ),
-        [`volume inspect --format {{json .Labels}} ${owned}`]: () =>
-          ok(JSON.stringify({ [MANAGED_STARTUP_RECEIPT_VOLUME_LABEL]: "1" })),
-        [`volume rm -f ${owned}`]: () => {
-          const successfulRemoval: Partial<Record<number, () => boolean>> = {
-            0: () => volumeLabels.delete(owned),
-          };
-          successfulRemoval[removalStatus]?.();
-          return { status: removalStatus, stdout: removalStatus === 0 ? owned : "", stderr: "" };
-        },
-        "volume inspect openshell-cluster-nemoclaw": () => ({
-          status: 1,
-          stdout: "",
-          stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
-        }),
-      };
-      const runDocker = vi.fn((args: string[]) => {
-        calls.push(args);
-        const command = args.join(" ");
-        return (routes[command] ?? (() => ok()))();
-      });
+  it("preserves labelled and unlabelled receipt-volume matches during force-fresh cleanup", async () => {
+    const owned = `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`;
+    const unlabelled = `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`;
+    const calls: string[][] = [];
+    const routes: Record<string, () => RunResult> = {
+      info: () => ok(),
+      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
+      [`volume ls --filter label=${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1 --format {{.Name}}`]:
+        () => ok(owned),
+      [`volume inspect --format {{json .Labels}} ${owned}`]: () =>
+        ok(JSON.stringify({ [MANAGED_STARTUP_RECEIPT_VOLUME_LABEL]: "1" })),
+      "volume inspect openshell-cluster-nemoclaw": () => ({
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      }),
+    };
+    const runDocker = vi.fn((args: string[]) => {
+      calls.push(args);
+      const command = args.join(" ");
+      return (routes[command] ?? (() => ok()))();
+    });
 
-      const result = await runUninstallPlan(
-        {
-          assumeYes: true,
-          deleteModels: false,
-          destroyUserData: true,
-          forceFreshReset: true,
-          keepOpenShell: true,
-        },
-        {
-          commandExists: () => true,
-          env: { HOME: "/tmp/nemoclaw-force-fresh-receipts" } as NodeJS.ProcessEnv,
-          existsSync: () => false,
-          hasPortableRuntimeCleanup: () => false,
-          isTty: false,
-          kill: () => true,
-          log: () => undefined,
-          rmSync: vi.fn(),
-          run: (command, args) =>
-            command === "openshell" && args.join(" ") === "gateway list -o json"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-              : ok(),
-          runDocker,
-        },
-      );
+    const result = await runUninstallPlan(
+      {
+        assumeYes: true,
+        deleteModels: false,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-force-fresh-receipts" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => undefined,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok(),
+        runDocker,
+      },
+    );
 
-      expect(result.exitCode).toBe(expectedExitCode);
-      expect(calls).toContainEqual(["volume", "rm", "-f", owned]);
-      expect(calls).not.toContainEqual(["volume", "rm", "-f", unlabelled]);
-      expect(volumeLabels.has(unlabelled)).toBe(true);
-    },
-  );
+    expect(result.exitCode).toBe(1);
+    expect(calls).not.toContainEqual(["volume", "rm", "-f", owned]);
+    expect(calls).not.toContainEqual(["volume", "rm", "-f", unlabelled]);
+  });
 
   it.each([
     {

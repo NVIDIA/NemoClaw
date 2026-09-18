@@ -35,6 +35,15 @@ function callPayloadFunction(command: string, env: Record<string, string | undef
   });
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 it.each([
   ["public bootstrap", INSTALLER],
   ["versioned payload", INSTALLER_PAYLOAD],
@@ -148,8 +157,10 @@ esac
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
-it("detects labelled Docker receipt-volume-only state", () => {
+it("stops before cleanup for a labelled receipt-volume-only state", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-receipt-detect-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  const receiptVolume = "nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
@@ -157,29 +168,35 @@ case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
   "ps -a --format {{.ID}} {{.Image}} {{.Names}}") exit 0 ;;
-  "volume ls --format {{.Name}}")
-    printf 'nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
-    ;;
-  *)
-    if [[ "$1" == "volume" && "$2" == "inspect" ]]; then
-      printf '1\n'
-      exit 0
-    fi
-    exit 1
-    ;;
+  "volume ls --format {{.Name}}") printf '%s\n' "$RECEIPT_VOLUME" ;;
+  *) exit 1 ;;
 esac
 `,
   );
 
-  const result = callPayloadFunction("force_fresh_install_has_existing_state", {
-    HOME: tmp,
-    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-  });
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      RECEIPT_VOLUME: receiptVolume,
+    },
+  );
 
-  expect(result.status).toBe(0);
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    `unverified receipt volume ${receiptVolume}`,
+  );
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
-it("stops before cleanup for a pre-label receipt-volume-only state", () => {
+it("stops before cleanup for an unlabelled receipt-volume-only state", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-legacy-receipt-");
   const cleanupMarker = path.join(tmp, "cleanup-started");
   const legacyVolume = "nemoclaw-managed-startup-receipt-volume-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -218,7 +235,7 @@ esac
   );
 
   expect(result.status).not.toBe(0);
-  expect(`${result.stdout}${result.stderr}`).toContain(`pre-label receipt volume ${legacyVolume}`);
+  expect(`${result.stdout}${result.stderr}`).toContain(`unverified receipt volume ${legacyVolume}`);
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
@@ -568,6 +585,7 @@ it("stops before package removal when managed uninstall rejects partial state", 
 it("bounds staged uninstaller preparation before destructive cleanup", () => {
   const { root: tmp } = installerCheckout("nemoclaw-force-fresh-timeout-");
   const cleanupMarker = path.join(tmp, "cleanup-started");
+  const descendantPidFile = path.join(tmp, "descendant.pid");
   const startedAt = performance.now();
   const result = callPayloadFunction(
     `
@@ -575,12 +593,18 @@ it("bounds staged uninstaller preparation before destructive cleanup", () => {
         FORCE_FRESH_PREPARE_TIMEOUT_SECONDS=1
         force_fresh_install_has_existing_state() { return 0; }
         force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
-        bash() { trap '' TERM; while :; do sleep 1; done; }
+        bash() {
+          (trap '' TERM; while :; do sleep 1; done) &
+          child_pid=$!
+          printf '%s' "$child_pid" > "$DESCENDANT_PID_FILE"
+          trap '' TERM
+          wait "$child_pid"
+        }
         run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
         remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
         run_force_fresh_install_reset
       `,
-    { CLEANUP_MARKER: cleanupMarker, HOME: tmp },
+    { CLEANUP_MARKER: cleanupMarker, DESCENDANT_PID_FILE: descendantPidFile, HOME: tmp },
   );
   const elapsedMs = performance.now() - startedAt;
 
@@ -590,7 +614,58 @@ it("bounds staged uninstaller preparation before destructive cleanup", () => {
   expect(`${result.stdout}${result.stderr}`).toContain(
     "Force-fresh uninstaller preparation timed out before cleanup",
   );
+  expect(processExists(Number(fs.readFileSync(descendantPidFile, "utf8")))).toBe(false);
   expect(fs.existsSync(cleanupMarker)).toBe(false);
+}, 15_000);
+
+it("bounds and reaps timed-out authoritative cleanup before package removal", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout(
+    "nemoclaw-force-fresh-uninstall-timeout-",
+  );
+  const sourceRoot = path.join(tmp, "candidate");
+  const descendantPidFile = path.join(tmp, "cleanup-descendant.pid");
+  const packageMarker = path.join(tmp, "package-removal-started");
+  fs.mkdirSync(path.join(sourceRoot, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, "bin", "nemoclaw.js"), "// staged candidate\n");
+  writeExecutable(
+    path.join(fakeBin, "node"),
+    `#!/usr/bin/env bash
+case "$*" in
+  *--force-fresh-ownership-preflight) exit 0 ;;
+esac
+(trap '' TERM; while :; do sleep 1; done) &
+child_pid=$!
+printf '%s' "$child_pid" > "$DESCENDANT_PID_FILE"
+trap '' TERM
+wait "$child_pid"
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS=1
+      force_fresh_install_has_existing_state() { return 0; }
+      force_fresh_install_source_root() { printf '%s' "$SOURCE_ROOT"; }
+      prepare_force_fresh_uninstaller() { :; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$PACKAGE_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      DESCENDANT_PID_FILE: descendantPidFile,
+      HOME: tmp,
+      PACKAGE_MARKER: packageMarker,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      SOURCE_ROOT: sourceRoot,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "Authoritative force-fresh cleanup timed out and is incomplete",
+  );
+  expect(processExists(Number(fs.readFileSync(descendantPidFile, "utf8")))).toBe(false);
+  expect(fs.existsSync(packageMarker)).toBe(false);
 }, 15_000);
 
 it.each([
