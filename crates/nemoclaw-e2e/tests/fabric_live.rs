@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{
-    CancellationToken, Deployment,
+    CancellationToken, Deployment, OperationResult, Outcome,
     backend::Row,
     config::Document,
     openshell::{EnvironmentSecrets, OpenShell},
@@ -178,19 +178,10 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     // has not qualified its complete agent lifecycle.
     assert!(provider.service_ref.is_none());
     fs::create_dir_all(&directory).unwrap();
-    let save = |name: &str, value: &Value| {
-        fs::write(
-            directory.join(name),
-            serde_json::to_vec_pretty(value).unwrap(),
-        )
-        .unwrap()
-    };
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
-    save(
-        "apply.json",
-        &serde_json::to_value(deployment.apply(&document, &cancel).await.unwrap()).unwrap(),
-    );
+    let applied = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(applied.outcome, Outcome::Succeeded);
     let (before, binding) = bindings(&directory);
     let managed_before = managed_bindings(&directory);
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
@@ -204,10 +195,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         assert_eq!(
             String::from_utf8(denial).unwrap().trim(),
             "policy-denied-403"
-        );
-        save(
-            "policy-denial.json",
-            &json!({"externalEgressDenied":true,"proxyStatus":403}),
         );
     }
     let hosted = runtime_id(&client, &binding).await;
@@ -235,10 +222,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     }
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
-    save(
-        "unchanged-apply.json",
-        &serde_json::to_value(unchanged).unwrap(),
-    );
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
     assert!(
@@ -267,9 +250,9 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         )
         .await;
         assert!(String::from_utf8_lossy(&setting).contains("per-channel-peer"));
-        // Explicitly qualify inference through the Fabric-hosted runtime after apply.
+        // Check the Fabric-hosted agent before using the native interface.
         let reply = client.agent_response(&binding).await.unwrap();
-        save("managed-agent-probe.json", &json!({"response": reply}));
+        assert!(!reply.trim().is_empty());
         assert_eq!(runtime_id(&client, &binding).await, hosted);
         openclaw_reply(
             &client,
@@ -283,7 +266,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         // the hosted runtime by plan/apply or a new NemoClaw invocation API.
         exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind].map(String::from).to_vec()).await
     };
-    fs::write(directory.join("native-response.json"), &response).unwrap();
     assert!(
         confirmed_reply(
             &document
@@ -295,17 +277,11 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         "no confirmed successful native reply"
     );
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    save(
-        "destroy.json",
-        &serde_json::to_value(deployment.destroy(&cancel).await.unwrap()).unwrap(),
-    );
-    save(
-        "proof.json",
-        &json!({"passed":true,"deployment":document.metadata.uid,"harness":document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind,"resourceBindings":before,"managedRuntimeBindings":managed_before,"runtimeId":hosted,"unchangedApply":true,"exportReapply":true,"nativeResponse":true,"hostedRuntimePreserved":true,"destroyed":true}),
-    );
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
 
-fn upgrade_gate_configuration(document: &Document) -> bool {
+fn uses_independent_openclaw_inference(document: &Document) -> bool {
     document
         .sandbox_harness(&document.spec.sandboxes[0])
         .is_ok_and(|harness| harness.kind == "openclaw")
@@ -320,7 +296,7 @@ fn upgrade_gate_configuration(document: &Document) -> bool {
 }
 
 #[test]
-fn upgrade_gate_requires_inference_to_exist_independently_of_apply() {
+fn apply_exit_test_requires_independent_openclaw_inference() {
     for (input, accepted) in [
         (include_str!("../../../examples/fabric-openclaw.yaml"), true),
         (
@@ -332,7 +308,7 @@ fn upgrade_gate_requires_inference_to_exist_independently_of_apply() {
         (include_str!("../../../examples/fabric-hermes.yaml"), false),
     ] {
         assert_eq!(
-            upgrade_gate_configuration(&Document::parse(input.as_bytes()).unwrap()),
+            uses_independent_openclaw_inference(&Document::parse(input.as_bytes()).unwrap()),
             accepted
         );
     }
@@ -351,11 +327,10 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
     assert!(
-        upgrade_gate_configuration(&document),
+        uses_independent_openclaw_inference(&document),
         "use one OpenClaw agent and one independent inference provider"
     );
-    let verified = nemoclaw_sdk::bundle::Bundle::open(&bundle).unwrap();
-    fs::create_dir(&directory).expect("upgrade gate requires a fresh owned state directory");
+    fs::create_dir(&directory).expect("test requires a fresh owned state directory");
     let executable = bundle
         .join("bin")
         .join(nemoclaw_sdk::bundle::executable("nemoclaw"));
@@ -367,12 +342,13 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         .arg(&config)
         .output()
         .unwrap();
-    fs::write(directory.join("apply.stdout"), &apply.stdout).unwrap();
-    fs::write(directory.join("apply.stderr"), &apply.stderr).unwrap();
     assert!(
         apply.status.success(),
-        "apply failed; inspect the retained state and apply.stderr"
+        "apply failed: {}",
+        String::from_utf8_lossy(&apply.stderr)
     );
+    let applied: OperationResult = serde_json::from_slice(&apply.stdout).unwrap();
+    assert_eq!(applied.outcome, Outcome::Succeeded);
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
@@ -405,21 +381,6 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     );
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    deployment.destroy(&cancel).await.unwrap();
-    fs::write(
-        directory.join("upgrade-proof.json"),
-        serde_json::to_vec_pretty(&json!({
-            "passed": true,
-            "bundle": verified.manifest.version,
-            "deployment": document.metadata.uid,
-            "image": document.spec.sandboxes[0].image.ref_,
-            "runtimeId": hosted,
-            "resourceBindings": before,
-            "replyAfterApplyExit": true,
-            "exportReapply": true,
-            "destroyed": true
-        }))
-        .unwrap(),
-    )
-    .unwrap();
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }

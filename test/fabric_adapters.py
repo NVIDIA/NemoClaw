@@ -6,7 +6,6 @@ import asyncio
 import http.server
 import json
 import os
-import shutil
 import ssl
 import subprocess
 import sys
@@ -18,7 +17,6 @@ sys.path.insert(0, "/opt/nemoclaw")
 
 HARNESS = sys.argv[1]
 requests = []
-EVIDENCE = Path(os.environ.get("FABRIC_FIXTURE_EVIDENCE", "/evidence"))
 MARKER = os.environ.get("FABRIC_FIXTURE_MARKER", "FABRIC_FIXTURE_OK")
 
 
@@ -40,7 +38,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         requests.append({"path": self.path, "body": body})
-        (EVIDENCE / "requests.json").write_text(json.dumps(requests, indent=2))
         text = "FABRIC_FIXTURE_OK"
         if "/responses" in self.path:
             item = {
@@ -282,276 +279,267 @@ async def main():
     env = dict(os.environ, NEMOCLAW_AGENT_NAME="fixture", NEMOCLAW_FABRIC_HARNESS=HARNESS)
     if inference:
         env["NEMOCLAW_INFERENCE_CONFIG"] = json.dumps(inference)
-    with open("/evidence/host.log", "w") as log:
-        host = subprocess.Popen(
-            [sys.executable, "/opt/nemoclaw/fabric.py", "serve"], env=env, stdout=log, stderr=log
+    host = subprocess.Popen([sys.executable, "/opt/nemoclaw/fabric.py", "serve"], env=env)
+    try:
+        for _ in range(90):
+            if host.poll() is not None:
+                raise AssertionError(f"host exited with status {host.returncode}")
+            if Path("/sandbox/fabric.sock").exists():
+                break
+            await asyncio.sleep(1)
+        if HARNESS == "pi":
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "configure",
+                    "fixture",
+                    "pi",
+                    json.dumps(model),
+                ],
+                check=True,
+            )
+        startup_requests = len(requests)
+        interface_token = (
+            Path("/sandbox/.openclaw/interface-token").read_text()
+            if HARNESS == "openclaw" and os.environ.get("FABRIC_TEST_INTERFACES") == "1"
+            else None
         )
-        try:
-            for _ in range(90):
-                if host.poll() is not None:
-                    raise AssertionError("host exited: " + Path("/evidence/host.log").read_text())
-                if Path("/sandbox/fabric.sock").exists():
-                    break
-                await asyncio.sleep(1)
-            if HARNESS == "pi":
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "configure",
-                        "fixture",
-                        "pi",
-                        json.dumps(model),
-                    ],
-                    check=True,
-                )
-            startup_requests = len(requests)
-            interface_token = (
-                Path("/sandbox/.openclaw/interface-token").read_text()
-                if HARNESS == "openclaw" and os.environ.get("FABRIC_TEST_INTERFACES") == "1"
-                else None
+        for _ in range(2):
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    HARNESS,
+                    *extra,
+                ],
+                check=True,
             )
-            for _ in range(2):
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        HARNESS,
-                        *extra,
-                    ],
-                    check=True,
-                )
-            mismatch = subprocess.run(
-                [sys.executable, "/opt/nemoclaw/fabric.py", "check", "wrong-name", HARNESS]
+        mismatch = subprocess.run(
+            [sys.executable, "/opt/nemoclaw/fabric.py", "check", "wrong-name", HARNESS]
+        )
+        assert mismatch.returncode != 0, "readiness accepted different configuration"
+        if interface_token:
+            subprocess.run(
+                [sys.executable, "/opt/nemoclaw/interfaces.py", "devices", "list"], check=True
             )
-            assert mismatch.returncode != 0, "readiness accepted different configuration"
-            if interface_token:
-                subprocess.run(
-                    [sys.executable, "/opt/nemoclaw/interfaces.py", "devices", "list"], check=True
-                )
-                token_path = Path("/sandbox/.openclaw/interface-token")
-                token_path.write_text("0" * 64)
-                invalid = subprocess.run(
-                    [sys.executable, "/opt/nemoclaw/fabric.py", "check", "fixture", HARNESS, *extra]
-                )
-                assert invalid.returncode != 0, (
-                    "running gateway accepted incorrect access credential"
-                )
-                token_path.write_text(interface_token)
-                native_path = Path("/sandbox/.openclaw/openclaw.json")
-                retained = native_path.read_text()
-                changed = json.loads(retained)
-                changed["gateway"]["controlUi"]["dangerouslyDisableDeviceAuth"] = True
-                native_path.write_text(json.dumps(changed))
-                invalid = subprocess.run(
-                    [sys.executable, "/opt/nemoclaw/fabric.py", "check", "fixture", HARNESS, *extra]
-                )
-                assert invalid.returncode != 0, "readiness accepted weakened device authentication"
-                native_path.write_text(retained)
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        HARNESS,
-                        *extra,
-                    ],
-                    check=True,
-                )
-            assert len(requests) == startup_requests, "readiness made an inference request"
-            if HARNESS == "hermes" and not relay_enabled:
-                import urllib.error
-                import urllib.request
+            token_path = Path("/sandbox/.openclaw/interface-token")
+            token_path.write_text("0" * 64)
+            invalid = subprocess.run(
+                [sys.executable, "/opt/nemoclaw/fabric.py", "check", "fixture", HARNESS, *extra]
+            )
+            assert invalid.returncode != 0, "running gateway accepted incorrect access credential"
+            token_path.write_text(interface_token)
+            native_path = Path("/sandbox/.openclaw/openclaw.json")
+            retained = native_path.read_text()
+            changed = json.loads(retained)
+            changed["gateway"]["controlUi"]["dangerouslyDisableDeviceAuth"] = True
+            native_path.write_text(json.dumps(changed))
+            invalid = subprocess.run(
+                [sys.executable, "/opt/nemoclaw/fabric.py", "check", "fixture", HARNESS, *extra]
+            )
+            assert invalid.returncode != 0, "readiness accepted weakened device authentication"
+            native_path.write_text(retained)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    HARNESS,
+                    *extra,
+                ],
+                check=True,
+            )
+        assert len(requests) == startup_requests, "readiness made an inference request"
+        if HARNESS == "hermes" and not relay_enabled:
+            import urllib.error
+            import urllib.request
 
-                from hermes_adapter import interface_settings
+            from hermes_adapter import interface_settings
 
-                settings = interface_settings(inference)
-                retained_token = Path("/sandbox/.hermes/interface-token").read_text()
-                token_path = Path("/sandbox/.hermes/interface-token")
-                token_path.write_text("0" * 64)
-                invalid = subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        "hermes",
-                        *extra,
-                    ]
-                )
-                assert invalid.returncode != 0, "Hermes readiness accepted an incorrect token"
-                token_path.write_text(retained_token)
-                native_path = Path("/sandbox/.hermes/config.yaml")
-                original = native_path.read_text()
-                changed = json.loads(original)
-                changed["model"]["base_url"] = "https://unexpected.invalid"
-                native_path.write_text(json.dumps(changed))
-                invalid = subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        "hermes",
-                        *extra,
-                    ]
-                )
-                assert invalid.returncode != 0 and json.loads(native_path.read_text()) == changed
-                native_path.write_text(original)
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        "hermes",
-                        *extra,
-                    ],
-                    check=True,
-                )
+            settings = interface_settings(inference)
+            retained_token = Path("/sandbox/.hermes/interface-token").read_text()
+            token_path = Path("/sandbox/.hermes/interface-token")
+            token_path.write_text("0" * 64)
+            invalid = subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    "hermes",
+                    *extra,
+                ]
+            )
+            assert invalid.returncode != 0, "Hermes readiness accepted an incorrect token"
+            token_path.write_text(retained_token)
+            native_path = Path("/sandbox/.hermes/config.yaml")
+            original = native_path.read_text()
+            changed = json.loads(original)
+            changed["model"]["base_url"] = "https://unexpected.invalid"
+            native_path.write_text(json.dumps(changed))
+            invalid = subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    "hermes",
+                    *extra,
+                ]
+            )
+            assert invalid.returncode != 0 and json.loads(native_path.read_text()) == changed
+            native_path.write_text(original)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    "hermes",
+                    *extra,
+                ],
+                check=True,
+            )
 
-                try:
-                    urllib.request.urlopen(f"http://127.0.0.1:{settings['apiPort']}/v1/models")
-                except urllib.error.HTTPError as error:
-                    assert error.code == 401
-                else:
-                    raise AssertionError("Hermes API accepted unauthenticated access")
-                if settings["dashboard"]["enabled"]:
-                    with urllib.request.urlopen(
-                        f"http://127.0.0.1:{settings['dashboard']['port']}/"
-                    ) as response:
-                        assert response.status == 200 and b"<html" in response.read().lower()
-                    assert Path("/sandbox/.hermes/profiles/dashboard-home/config.yaml").exists()
-                    from aiohttp import ClientSession, WSServerHandshakeError
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{settings['apiPort']}/v1/models")
+            except urllib.error.HTTPError as error:
+                assert error.code == 401
+            else:
+                raise AssertionError("Hermes API accepted unauthenticated access")
+            if settings["dashboard"]["enabled"]:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{settings['dashboard']['port']}/"
+                ) as response:
+                    assert response.status == 200 and b"<html" in response.read().lower()
+                assert Path("/sandbox/.hermes/profiles/dashboard-home/config.yaml").exists()
+                from aiohttp import ClientSession, WSServerHandshakeError
 
-                    access_token = (
-                        Path("/sandbox/.hermes/profiles/dashboard-home/interface-token")
-                        .read_text()
-                        .strip()
-                    )
-                    async with ClientSession() as session:
-                        url = f"http://127.0.0.1:{settings['dashboard']['port']}/api/ws?token={access_token}"
-                        try:
-                            async with session.ws_connect(
-                                url, origin=f"http://127.0.0.1:{settings['dashboard']['port']}"
-                            ) as websocket:
-                                assert settings["dashboard"]["tui"]["enabled"], (
-                                    "disabled TUI accepted WebSocket"
-                                )
-                                await websocket.send_json(
-                                    {
-                                        "jsonrpc": "2.0",
-                                        "id": 1,
-                                        "method": "session.create",
-                                        "params": {},
-                                    }
-                                )
-                                while True:
-                                    event = await asyncio.wait_for(websocket.receive_json(), 20)
-                                    if event.get("id") == 1:
-                                        assert "result" in event, event
-                                        break
-                        except WSServerHandshakeError as error:
-                            assert (
-                                not settings["dashboard"]["tui"]["enabled"] and error.status == 403
+                access_token = (
+                    Path("/sandbox/.hermes/profiles/dashboard-home/interface-token")
+                    .read_text()
+                    .strip()
+                )
+                async with ClientSession() as session:
+                    url = f"http://127.0.0.1:{settings['dashboard']['port']}/api/ws?token={access_token}"
+                    try:
+                        async with session.ws_connect(
+                            url, origin=f"http://127.0.0.1:{settings['dashboard']['port']}"
+                        ) as websocket:
+                            assert settings["dashboard"]["tui"]["enabled"], (
+                                "disabled TUI accepted WebSocket"
                             )
-                else:
-                    import socket
-
-                    with socket.socket() as connection:
-                        assert (
-                            connection.connect_ex(("127.0.0.1", settings["dashboard"]["port"])) != 0
-                        )
-
-            if HARNESS == "hermes":
-                probe = subprocess.run(
-                    [sys.executable, "/opt/nemoclaw/fabric.py", "probe", "fixture", "hermes"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                assert json.loads(probe.stdout)["status"] == "succeeded"
-            requests.clear()
-            if HARNESS == "pi":
-                # Changing the model must stop the old runtime before reconfiguration.
+                            await websocket.send_json(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "id": 1,
+                                    "method": "session.create",
+                                    "params": {},
+                                }
+                            )
+                            while True:
+                                event = await asyncio.wait_for(websocket.receive_json(), 20)
+                                if event.get("id") == 1:
+                                    assert "result" in event, event
+                                    break
+                    except WSServerHandshakeError as error:
+                        assert not settings["dashboard"]["tui"]["enabled"] and error.status == 403
+            else:
                 import socket
 
-                def status():
-                    with socket.socket(socket.AF_UNIX) as connection:
-                        connection.connect("/sandbox/fabric.sock")
-                        connection.sendall(b'{"operation":"check"}\n')
-                        return json.loads(connection.makefile().readline())
+                with socket.socket() as connection:
+                    assert connection.connect_ex(("127.0.0.1", settings["dashboard"]["port"])) != 0
 
-                first = status()["runtime_id"]
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "configure",
-                        "fixture",
-                        "pi",
-                        json.dumps(model),
-                    ],
-                    check=True,
-                )
-                assert status()["runtime_id"] == first, "unchanged apply restarted Pi"
-                alternate = {
-                    **model,
-                    "model": "a-second-custom-model" if "piModel" in model else "gpt-4.1-mini",
-                }
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "prepare",
-                        "fixture",
-                        "pi",
-                        json.dumps(alternate),
-                    ],
-                    check=True,
-                )
-                assert not status()["ready"], "old Pi runtime remained active before route change"
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "configure",
-                        "fixture",
-                        "pi",
-                        json.dumps(alternate),
-                    ],
-                    check=True,
-                )
-                assert status()["runtime_id"] != first
-                assert status()["config"]["models"]["default"]["model"] == alternate["model"]
-                mismatch = subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "check",
-                        "fixture",
-                        "pi",
-                        json.dumps(model),
-                    ]
-                )
-                assert mismatch.returncode != 0, "readiness accepted a different route model"
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "/opt/nemoclaw/fabric.py",
-                        "configure",
-                        "fixture",
-                        "pi",
-                        json.dumps(model),
-                    ],
-                    check=True,
-                )
-        finally:
-            host.terminate()
-            host.wait(timeout=30)
+        if HARNESS == "hermes":
+            probe = subprocess.run(
+                [sys.executable, "/opt/nemoclaw/fabric.py", "probe", "fixture", "hermes"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert json.loads(probe.stdout)["status"] == "succeeded"
+        requests.clear()
+        if HARNESS == "pi":
+            # Changing the model must stop the old runtime before reconfiguration.
+            import socket
+
+            def status():
+                with socket.socket(socket.AF_UNIX) as connection:
+                    connection.connect("/sandbox/fabric.sock")
+                    connection.sendall(b'{"operation":"check"}\n')
+                    return json.loads(connection.makefile().readline())
+
+            first = status()["runtime_id"]
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "configure",
+                    "fixture",
+                    "pi",
+                    json.dumps(model),
+                ],
+                check=True,
+            )
+            assert status()["runtime_id"] == first, "unchanged apply restarted Pi"
+            alternate = {
+                **model,
+                "model": "a-second-custom-model" if "piModel" in model else "gpt-4.1-mini",
+            }
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "prepare",
+                    "fixture",
+                    "pi",
+                    json.dumps(alternate),
+                ],
+                check=True,
+            )
+            assert not status()["ready"], "old Pi runtime remained active before route change"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "configure",
+                    "fixture",
+                    "pi",
+                    json.dumps(alternate),
+                ],
+                check=True,
+            )
+            assert status()["runtime_id"] != first
+            assert status()["config"]["models"]["default"]["model"] == alternate["model"]
+            mismatch = subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "check",
+                    "fixture",
+                    "pi",
+                    json.dumps(model),
+                ]
+            )
+            assert mismatch.returncode != 0, "readiness accepted a different route model"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "/opt/nemoclaw/fabric.py",
+                    "configure",
+                    "fixture",
+                    "pi",
+                    json.dumps(model),
+                ],
+                check=True,
+            )
+    finally:
+        host.terminate()
+        host.wait(timeout=30)
     if HARNESS == "pi":
         subprocess.run(
             [
@@ -568,24 +556,15 @@ async def main():
         )
     if HARNESS == "hermes" and not relay_enabled:
         assert Path("/sandbox/.hermes/interface-token").read_text() == retained_token
-    results = []
     try:
         for _ in range(2):
             result = await runtime.invoke(input="Reply FABRIC_FIXTURE_OK, then finish the task.")
             mapping = result.to_mapping()
-            results.append(mapping)
-            Path("/evidence/results.json").write_text(json.dumps(results, indent=2))
             assert mapping["runtime_id"] == runtime.runtime_id, mapping
             assert mapping["status"] == "succeeded", mapping
             assert "FABRIC_FIXTURE_OK" in json.dumps(mapping.get("output")), mapping
     finally:
         await runtime.stop()
-        shutil.copytree("/sandbox/artifacts", "/evidence/artifacts", dirs_exist_ok=True)
-        for f in Path("/sandbox").rglob("*log*"):
-            if f.is_file() and "artifacts" not in str(f):
-                dest = Path("/evidence/native") / f.relative_to("/sandbox")
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(f, dest)
         server.shutdown()
     if api:
         expected_path = {
@@ -603,7 +582,6 @@ async def main():
         ), requests
     if HARNESS in ("mini-swe-agent", "nooa", "nooa-bench"):
         assert Path("/sandbox/workspace/tool-proof.txt").read_text() == "FABRIC_FIXTURE_OK"
-    relay_artifacts = []
     if relay_enabled:
         relay_dir = Path("/sandbox/artifacts/relay")
         event_files = sorted(relay_dir.glob("*/events.atof.jsonl"))
@@ -614,57 +592,8 @@ async def main():
         assert trajectories and all(path.stat().st_size > 0 for path in trajectories), (
             "Relay did not write ATIF trajectories"
         )
-        relay_artifacts = [
-            str(path.relative_to(relay_dir)) for path in (*event_files, *trajectories)
-        ]
         artifact_text = "\n".join(path.read_text() for path in (*event_files, *trajectories))
         assert "fixture-only" not in artifact_text, "Relay artifacts leaked the model credential"
-    Path("/evidence/proof.json").write_text(
-        json.dumps(
-            {
-                "harness": HARNESS,
-                "readiness_without_inference": True,
-                "authenticated_interfaces_verified": os.environ.get("FABRIC_TEST_INTERFACES")
-                == "1",
-                **(
-                    {
-                        "hermes_dashboard": settings["dashboard"],
-                        "hermes_api_port": settings["apiPort"],
-                    }
-                    if HARNESS == "hermes" and not relay_enabled
-                    else {}
-                ),
-                "tool_file_verified": HARNESS in ("mini-swe-agent", "nooa", "nooa-bench"),
-                "stopped": True,
-                "ordered_invocations": len(results),
-                "runtime_id": runtime.runtime_id,
-                "request_paths": sorted({r["path"] for r in requests}),
-                **(
-                    {
-                        "configured_model": model["model"],
-                        "request_models": sorted({r["body"]["model"] for r in requests}),
-                        "model_change_and_unchanged_apply_verified": True,
-                    }
-                    if HARNESS == "pi"
-                    else {}
-                ),
-                **(
-                    {
-                        "relay": {
-                            "in_process": True,
-                            "artifacts": relay_artifacts,
-                            "credential_leak": False,
-                        }
-                    }
-                    if relay_enabled
-                    else {}
-                ),
-                "network": "none; local TLS protocol fixture; no live model",
-            },
-            indent=2,
-        )
-        + "\n"
-    )
 
 
 if __name__ == "__main__":
