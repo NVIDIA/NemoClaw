@@ -42,7 +42,9 @@ const MAX_ARTIFACT_ENTRIES = 100_000;
 const MAX_PIN_PAYLOAD_BYTES = 32 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES = 512 * 1024;
 const MAX_COMMAND_ARGUMENT_BYTES = 1024 * 1024;
-const PIN_TIMEOUT_MS = 60_000;
+const PIN_TIMEOUT_BASE_MS = 60_000;
+const PIN_TIMEOUT_PER_ENTRY_MS = 15;
+const PIN_TIMEOUT_MAX_MS = 10 * 60_000;
 const PIN_RELEASE_TIMEOUT_MS = 5_000;
 const MAX_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const WINDOWS_SYSTEM_ROOT = "C:\\Windows";
@@ -64,6 +66,13 @@ export interface MxcWindowsOpenShellPinLease {
   isActive(): boolean;
   waitForLoss(): Promise<void>;
   release(): Promise<void>;
+}
+
+export function mxcWindowsOpenShellPinTimeoutMs(
+  request: Pick<MxcWindowsOpenShellPinRequest, "directories" | "files">,
+): number {
+  const entryCount = request.directories.length + request.files.length;
+  return Math.min(PIN_TIMEOUT_MAX_MS, PIN_TIMEOUT_BASE_MS + entryCount * PIN_TIMEOUT_PER_ENTRY_MS);
 }
 
 export interface MxcWindowsOpenShellExecutorRuntime {
@@ -596,7 +605,7 @@ export function acquireMxcWindowsOpenShellPins(
     };
     const timer = setTimeout(
       () => fail({ stage: "pin-acquire", errorClass: "timeout" }),
-      PIN_TIMEOUT_MS,
+      mxcWindowsOpenShellPinTimeoutMs(request),
     );
     child.once("error", () => fail());
     child.once("exit", () => {

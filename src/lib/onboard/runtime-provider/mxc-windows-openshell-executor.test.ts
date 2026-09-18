@@ -26,6 +26,7 @@ import type {
 import {
   createMxcWindowsOpenShellExecutor,
   MxcWindowsOpenShellExecutorError,
+  mxcWindowsOpenShellPinTimeoutMs,
   type MxcWindowsOpenShellArtifactTree,
   type MxcWindowsOpenShellExecutorRuntime,
 } from "./mxc-windows-openshell-executor";
@@ -161,6 +162,22 @@ function executor(
 }
 
 describe("inactive trusted Windows OpenShell executor", () => {
+  it("scales pin acquisition for large Windows artifact trees within a fixed bound (#10585)", () => {
+    expect(mxcWindowsOpenShellPinTimeoutMs({ directories: [], files: [] })).toBe(60_000);
+    expect(
+      mxcWindowsOpenShellPinTimeoutMs({
+        directories: Array.from({ length: 2_427 }, () => "directory"),
+        files: Array.from({ length: 33_817 }, () => ({ path: "file", sha256: "a" })),
+      }),
+    ).toBe(10 * 60_000);
+    expect(
+      mxcWindowsOpenShellPinTimeoutMs({
+        directories: Array.from({ length: 100_000 }, () => "directory"),
+        files: [],
+      }),
+    ).toBe(10 * 60_000);
+  });
+
   it.each([
     {
       stage: "attachment",
