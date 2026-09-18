@@ -14,12 +14,15 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeDockerApi } from "../fixtures/fake-docker-api.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
   type OpenClawTelegramState,
 } from "./channels-add-remove-helpers.ts";
+import { sendWithInstalledTelegramRuntime } from "./messaging-providers-telegram-runtime-proof.ts";
 
 // Preserve the user-visible contract: onboard OpenClaw without messaging,
 // add Telegram later, rebuild through the real CLI/OpenShell boundary, verify
@@ -57,8 +60,6 @@ interface RegistrySandboxEntry extends JsonRecord {
     plan?: JsonRecord;
   };
 }
-
-type EgressProbeStatus = "open" | "denied" | "inconclusive";
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;]*m/g, "");
@@ -296,7 +297,7 @@ async function readOpenClawTelegramState(
       "python3",
       "-c",
       [
-        "import json",
+        "import json, os, re",
         "data=json.load(open('/sandbox/.openclaw/openclaw.json'))",
         "channels=data.get('channels', {})",
         "plugins=data.get('plugins', {}).get('entries', {})",
@@ -304,7 +305,12 @@ async function readOpenClawTelegramState(
         "plugin=plugins.get('telegram', {})",
         "accounts=channel.get('accounts', {})",
         "account_values=list(accounts.values()) if isinstance(accounts, dict) else []",
-        "state={'channelPresent': 'telegram' in channels, 'pluginPresent': 'telegram' in plugins, 'channelEnabled': channel.get('enabled') is True, 'pluginEnabled': plugin.get('enabled') is True, 'accountPresent': len(account_values) > 0, 'accountEnabled': any(isinstance(account, dict) and account.get('enabled') is True for account in account_values), 'credentialPresent': any(isinstance(account, dict) and ('botToken' in account or 'token' in account) for account in account_values)}",
+        "runtime_token=os.environ.get('TELEGRAM_BOT_TOKEN', '')",
+        "runtime_state='revision-scoped' if re.fullmatch(r'openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN', runtime_token) else ('unexpected' if runtime_token else 'missing')",
+        "gateway_log=open('/tmp/gateway.log').read().splitlines()[-400:] if os.path.exists('/tmp/gateway.log') else []",
+        "gateway_output='\\n'.join(gateway_log)",
+        "gateway_ready='runtime credential is ready (revision-scoped)' in gateway_output and not re.search(r'TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed|credential placeholder mismatch|available from a non-placeholder source', gateway_output)",
+        "state={'channelPresent': 'telegram' in channels, 'pluginPresent': 'telegram' in plugins, 'channelEnabled': channel.get('enabled') is True, 'pluginEnabled': plugin.get('enabled') is True, 'accountPresent': len(account_values) > 0, 'accountEnabled': any(isinstance(account, dict) and account.get('enabled') is True for account in account_values), 'credentialPresent': any(isinstance(account, dict) and ('botToken' in account or 'token' in account) for account in account_values), 'runtimeCredentialState': runtime_state, 'gatewayCredentialReady': gateway_ready}",
         "print(json.dumps(state))",
       ].join("; "),
     ],
@@ -343,28 +349,24 @@ async function expectPolicyPreset(
   );
 }
 
-async function telegramEgressProbe(
-  sandbox: SandboxClient,
-  artifactName: string,
-): Promise<{ result: ShellProbeResult; status: EgressProbeStatus }> {
-  const source = [
-    `const url = ${JSON.stringify(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`)};`,
-    "fetch(url, { signal: AbortSignal.timeout(15000) })",
-    "  .then((response) => console.log(`STATUS_${response.status}`))",
-    "  .catch((error) => console.log(`ERROR_${error.cause?.code || error.code || error.message}`));",
-  ].join(" ");
-  const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", source], {
-    artifactName,
-    env: sandboxAccessEnv(),
-    timeoutMs: COMMAND_TIMEOUT_MS,
+function artifactFiles(root: string): string[] {
+  return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const candidate = path.join(root, entry.name);
+    if (entry.isDirectory()) return artifactFiles(candidate);
+    return entry.isFile() ? [candidate] : [];
   });
-  assertExitZero(result, "telegram egress probe");
-  const output = resultText(result);
-  if (/STATUS_[24][0-9][0-9]/.test(output)) return { result, status: "open" };
-  if (/policy_denied|engine:ssrf|forbidden by policy|CONNECT.*40[0-9]/i.test(output)) {
-    return { result, status: "denied" };
+}
+
+function scanArtifactCredentialLeak(root: string): void {
+  for (const file of artifactFiles(root)) {
+    const content = fs.readFileSync(file, "utf8");
+    if (
+      content.includes(TELEGRAM_TOKEN) ||
+      /openshell:resolve:env:|OPENSHELL-RESOLVE-ENV-/.test(content)
+    ) {
+      throw new Error(`Telegram credential material persisted in ${path.basename(file)}`);
+    }
   }
-  return { result, status: "inconclusive" };
 }
 
 test(
@@ -405,6 +407,7 @@ test(
     });
     const apiKey = BASELINE_API_KEY;
     const secretsToRedact = redactionValues(apiKey);
+    artifacts.addRedactionValues(secretsToRedact);
 
     await environment.assertReady({
       platform: "ubuntu-local",
@@ -421,6 +424,7 @@ test(
         "channels add telegram registers the bridge and persists a policy-free messaging.plan",
         "post-add rebuild reuses the gateway-stored inference credential when COMPATIBLE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
+        "the installed Telegram runtime sends through OpenShell with the configured token resolved only on the request path",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
         "an unrelated direct OpenShell policy edit survives channel add, remove, and both rebuilds",
         "post-remove rebuild does not use stale Telegram host env inputs that would stage a fresh channel add",
@@ -550,31 +554,63 @@ test(
       sandbox,
       "phase-4-openclaw-json-after-add",
     );
-    expect(openClawHasConfiguredTelegram(activeTelegram)).toBe(true);
-    expect(activeTelegram).toMatchObject({
-      accountEnabled: true,
-      accountPresent: true,
-      channelEnabled: true,
-      channelPresent: true,
-      pluginEnabled: true,
-      pluginPresent: true,
-    });
+    expect(
+      openClawHasConfiguredTelegram(activeTelegram) &&
+        activeTelegram.runtimeCredentialState === "revision-scoped" &&
+        activeTelegram.gatewayCredentialReady === true,
+    ).toBe(true);
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
     expectHostTelegramConfig("after add+rebuild");
     expectHostTelegramPlan("active", "after add+rebuild");
 
-    const egress = await telegramEgressProbe(sandbox, "phase-4-telegram-egress-probe");
-    if (egress.status === "denied") {
-      throw new Error(`egress to api.telegram.org was blocked:\n${resultText(egress.result)}`);
-    }
-    if (egress.status === "inconclusive") {
-      await artifacts.writeText(
-        "phase-4-telegram-egress-inconclusive.txt",
-        `Telegram egress probe was inconclusive; preserving the legacy soft-skip behavior.\n\n${resultText(
-          egress.result,
-        )}`,
-      );
-    }
+    const fakeTelegram = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "telegram",
+      imageScript: "fake-telegram-api.cjs",
+      containerPrefix: "nemoclaw-fake-telegram-add-remove",
+      portEnv: "FAKE_TELEGRAM_API_PORT",
+      captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+      expectedEnv: {
+        FAKE_TELEGRAM_API_EXPECTED_TOKEN: TELEGRAM_TOKEN,
+      },
+      env: channelEnv(),
+      redactionValues: secretsToRedact,
+    });
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      artifactName: "phase-4-apply-fake-telegram-policy",
+      endpoint: { port: fakeTelegram.port },
+      env: channelEnv(),
+      protocol: "rest",
+      providerName: PROVIDER_NAME,
+      redactionValues: secretsToRedact,
+      restMethods: ["POST"],
+      rewrite: "request-body-credential-rewrite",
+    });
+    const telegramMockTarget = "42424242";
+    const telegramMockText = "NemoClaw Telegram add/remove credential-resolution proof";
+    await sendWithInstalledTelegramRuntime(
+      sandbox,
+      fakeTelegram,
+      telegramMockTarget,
+      telegramMockText,
+      secretsToRedact,
+    );
+    const telegramCaptureText = fs.readFileSync(fakeTelegram.captureFile, "utf8");
+    const telegramCaptureRows = telegramCaptureText
+      .trim()
+      .split(/\n+/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const telegramRuntimeCapture = telegramCaptureRows
+      .filter((row) => row.event === "request" && row.endpoint === "sendMessage")
+      .at(-1);
+    expect(telegramRuntimeCapture).toMatchObject({
+      tokenMatchesExpected: true,
+      tokenLooksPlaceholder: false,
+      chatId: telegramMockTarget,
+      text: telegramMockText,
+    });
+    await artifacts.writeJson("phase-4-fake-telegram-requests.json", telegramCaptureRows);
+    scanArtifactCredentialLeak(artifacts.rootDir);
 
     progress.phase("remove Telegram and rebuild sandbox");
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
@@ -607,7 +643,10 @@ test(
       sandbox,
       "phase-6-openclaw-json-after-remove",
     );
-    expect(openClawHasConfiguredTelegram(removedTelegram)).toBe(false);
+    expect(
+      openClawHasConfiguredTelegram(removedTelegram) ||
+        removedTelegram.runtimeCredentialState !== "missing",
+    ).toBe(false);
     expect(removedTelegram).toMatchObject({
       accountEnabled: false,
       accountPresent: false,
@@ -630,5 +669,6 @@ test(
     assertExitZero(policyAfterChannelLifecycle, "read policy after channel lifecycle");
     expect(policyAfterChannelLifecycle.stdout).toContain("channels_host_edit_e2e");
     expectHostTelegramPlan("removed", "after remove+rebuild");
+    scanArtifactCredentialLeak(artifacts.rootDir);
   },
 );

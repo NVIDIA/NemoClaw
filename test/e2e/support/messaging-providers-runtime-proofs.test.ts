@@ -31,7 +31,6 @@ import {
   parseInstalledSlackProof,
   SLACK_RUNTIME_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import { resolveInstalledTelegramRuntimePath } from "../live/messaging-providers-telegram-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
@@ -577,6 +576,50 @@ describe("messaging provider installed-runtime proofs", () => {
       expect.any(String),
       "--wait",
       "e2e-hermes-discord",
+    ]);
+  });
+
+  it("limits a fake REST proof to its required methods", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-telegram-telegram-bridge";
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(
+                fakeEndpointPolicy(43_119, "rest", ["/usr/local/bin/node", "/usr/bin/node"]),
+              )
+            : successfulCommand();
+      },
+    } as unknown as HostCliClient;
+
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-telegram", {
+      endpoint: { port: "43119" },
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName,
+      env: { TELEGRAM_BOT_TOKEN: "test-fixture-token" },
+      redactionValues: ["test-fixture-token"],
+      artifactName: "apply-fake-telegram-policy",
+      restMethods: ["POST"],
+    });
+
+    expect(commands[1]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-telegram",
+      "--add-endpoint",
+      "host.openshell.internal:43119:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43119:POST:/**",
+      "--binary",
+      "/usr/local/bin/node",
+      "--binary",
+      "/usr/bin/node",
+      "--wait",
     ]);
   });
 
@@ -1199,79 +1242,6 @@ describe("messaging provider installed-runtime proofs", () => {
         root: fs.realpathSync(slackPackageRoot),
         prepared: "loaded",
         sent: "sent",
-      });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("loads Telegram through the real OpenClaw root with hoisted dependencies", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-runtime-root-"));
-    const installRoot = path.join(dir, "lib", "nemoclaw", "openclaw-runtime", "node_modules");
-    const openclawRoot = path.join(installRoot, "openclaw");
-    const globalNodeModules = path.join(dir, "lib", "node_modules");
-    const runtimeApi = path.join(openclawRoot, "dist", "extensions", "telegram", "runtime-api.js");
-
-    try {
-      fs.mkdirSync(path.dirname(runtimeApi), { recursive: true });
-      fs.writeFileSync(
-        path.join(openclawRoot, "package.json"),
-        JSON.stringify({ name: "openclaw", type: "module" }),
-      );
-      fs.writeFileSync(
-        runtimeApi,
-        'import uri from "../../../node_modules/ajv/index.js"; export const proof = uri;',
-      );
-      fs.mkdirSync(path.join(openclawRoot, "node_modules", "ajv"), { recursive: true });
-      fs.writeFileSync(
-        path.join(openclawRoot, "node_modules", "ajv", "package.json"),
-        JSON.stringify({ name: "ajv", type: "module" }),
-      );
-      fs.writeFileSync(
-        path.join(openclawRoot, "node_modules", "ajv", "index.js"),
-        'import uri from "fast-uri"; export default uri;',
-      );
-      fs.mkdirSync(path.join(installRoot, "fast-uri"), { recursive: true });
-      fs.writeFileSync(
-        path.join(installRoot, "fast-uri", "package.json"),
-        JSON.stringify({ name: "fast-uri", type: "module", exports: "./index.js" }),
-      );
-      fs.writeFileSync(path.join(installRoot, "fast-uri", "index.js"), 'export default "loaded";');
-      fs.mkdirSync(globalNodeModules, { recursive: true });
-      fs.symlinkSync(openclawRoot, path.join(globalNodeModules, "openclaw"), "dir");
-
-      const linkedRuntimeApi = path.join(
-        globalNodeModules,
-        "openclaw",
-        "dist",
-        "extensions",
-        "telegram",
-        "runtime-api.js",
-      );
-      const runtimePath = resolveInstalledTelegramRuntimePath(linkedRuntimeApi, fs.realpathSync);
-      const source = [
-        'import { pathToFileURL } from "node:url";',
-        "const runtimePath = process.env.NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH;",
-        "const runtime = await import(pathToFileURL(runtimePath).href);",
-        "process.stdout.write(JSON.stringify({ runtimePath, proof: runtime.proof }));",
-      ].join("\n");
-      const result = spawnSync(
-        process.execPath,
-        ["--preserve-symlinks", "--input-type=module", "-"],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NEMOCLAW_TEST_TELEGRAM_RUNTIME_PATH: runtimePath,
-          },
-          input: source,
-        },
-      );
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
-        runtimePath,
-        proof: "loaded",
       });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

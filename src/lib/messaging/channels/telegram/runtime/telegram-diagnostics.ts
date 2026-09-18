@@ -280,26 +280,46 @@ type TelegramHttpRequestLike = (
 
   function maybeLogCredentialPlaceholderDiagnostics(): void {
     if (credentialLogged) return;
-    credentialLogged = true;
     var prefix = "openshell:resolve:env:";
     var envToken = process.env.TELEGRAM_BOT_TOKEN || "";
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+    var account: TelegramJsonObject | null = null;
     var configToken = "";
     try {
       var fs = require("fs");
-      configToken = readTelegramBotToken(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      var config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      var root = asObject(config);
+      var channels = root ? asObject(root.channels) : null;
+      var channel = channels ? asObject(channels.telegram) : null;
+      if (!channel || channel.enabled === false) return;
+      account = readTelegramAccount(config);
+      configToken = readTelegramBotToken(config);
     } catch (_e) {
       return;
     }
-    if (!configToken || configToken.indexOf(prefix) !== 0) return;
+    if (!account || account.enabled === false) return;
+    credentialLogged = true;
     if (!envToken) {
       emit(
         "[telegram] [default] credential placeholder configured but TELEGRAM_BOT_TOKEN is missing from runtime env",
       );
       return;
     }
-    if (envToken.indexOf(prefix) !== 0) return;
-    if (configToken !== envToken) {
+    if (envToken === prefix + "TELEGRAM_BOT_TOKEN") {
+      emit(
+        "[telegram] [default] runtime TELEGRAM_BOT_TOKEN is an identityless canonical placeholder; a revision-scoped OpenShell credential is required",
+      );
+      return;
+    }
+    if (/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(envToken)) {
+      emit("[telegram] [default] runtime credential is ready (revision-scoped)");
+    } else if (envToken.indexOf(prefix) === 0) {
+      emit("[telegram] [default] runtime TELEGRAM_BOT_TOKEN placeholder is malformed");
+      return;
+    } else {
+      emit("[telegram] [default] runtime credential available from a non-placeholder source");
+    }
+    if (configToken.indexOf(prefix) === 0 && configToken !== envToken) {
       emit(
         "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder",
       );
@@ -379,7 +399,6 @@ type TelegramHttpRequestLike = (
   wrapHttp(http, "get");
   wrapHttp(https, "request");
   wrapHttp(https, "get");
-  process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
 
   // Defense in depth for #4314/#4390: if Telegram is configured but the
   // bridge module never logs "starting provider" and never hits the Bot
@@ -408,6 +427,7 @@ type TelegramHttpRequestLike = (
     return "";
   }
   if (!gatewayProcessFlavor()) return;
+  process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
   process.nextTick(maybeLogRuntimeConfigDiagnostics);
   var STARTUP_GRACE_MS = Number(process.env.NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS || "") || 15000;
   var noStartupTimer = setTimeout(function () {

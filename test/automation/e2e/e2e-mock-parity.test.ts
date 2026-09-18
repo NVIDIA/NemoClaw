@@ -11,9 +11,11 @@ import {
 
 const live = "test/e2e/live/example.test.ts";
 const liveHelper = "test/e2e/live/example-helper.ts";
+const sharedSource = "test/e2e/lib/example-proof.ts";
 const fast = "test/e2e/support/example.test.ts";
 const TAGGED_NEW_SOURCE = "// @module-tag e2e/credential-free\n";
-const exists = (file: string) => file === live || file === liveHelper || file === fast;
+const exists = (file: string) =>
+  file === live || file === liveHelper || file === sharedSource || file === fast;
 
 function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
   return { version: 1, entries };
@@ -165,6 +167,26 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
+  it("requires mapped fast coverage when a declared shared E2E source changes", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, sharedSources: [sharedSource], fast: [fast] }]),
+        changedFiles: [sharedSource],
+        fileExists: exists,
+      }),
+    ).toEqual([`${sharedSource}: change at least one fast PR test mapped from ${live}`]);
+  });
+
+  it("accepts a changed shared E2E source with a changed mapped fast test", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, sharedSources: [sharedSource], fast: [fast] }]),
+        changedFiles: [sharedSource, fast],
+        fileExists: exists,
+      }),
+    ).toEqual([]);
+  });
+
   it("rejects a changed live E2E helper without an owning manifest entry", () => {
     expect(
       validateMockParity({
@@ -173,7 +195,7 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([
-      `${liveHelper}: changed live E2E helper needs an owning entry in test/e2e/mock-parity.json`,
+      `${liveHelper}: changed E2E source needs an owning entry in test/e2e/mock-parity.json`,
     ]);
   });
 

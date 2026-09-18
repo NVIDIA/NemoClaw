@@ -16,6 +16,7 @@ export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 export type MockParityEntry = {
   live: string;
   liveSources?: string[];
+  sharedSources?: string[];
   fast?: string[];
   liveOnlyReason?: string;
 };
@@ -27,6 +28,7 @@ export type MockParityManifest = {
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
 const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.ts$/u;
+const SHARED_SOURCE = /^test\/e2e\/lib\/.+\.ts$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -145,6 +147,14 @@ export function validateMockParity(options: {
       errors.push(`${entry.live}: fast must be an array of test paths`);
       continue;
     }
+    if (
+      entry.sharedSources !== undefined &&
+      (!Array.isArray(entry.sharedSources) ||
+        entry.sharedSources.some((file) => typeof file !== "string"))
+    ) {
+      errors.push(`${entry.live}: sharedSources must be an array of shared E2E source paths`);
+      continue;
+    }
     if (entry.liveOnlyReason !== undefined && typeof entry.liveOnlyReason !== "string") {
       errors.push(`${entry.live}: liveOnlyReason must be a string`);
       continue;
@@ -165,6 +175,20 @@ export function validateMockParity(options: {
       }
       if (!fileExists(sourceFile)) {
         errors.push(`${entry.live}: live E2E helper does not exist: ${sourceFile}`);
+      }
+      const owners = sourceOwners.get(sourceFile) ?? [];
+      owners.push(entry);
+      sourceOwners.set(sourceFile, owners);
+    }
+    for (const sourceFile of new Set(entry.sharedSources ?? [])) {
+      if (!isSafeRepoPath(sourceFile) || !SHARED_SOURCE.test(sourceFile)) {
+        errors.push(
+          `${entry.live}: ${sourceFile} is not a test/e2e/lib/**/*.ts shared source file`,
+        );
+        continue;
+      }
+      if (!fileExists(sourceFile)) {
+        errors.push(`${entry.live}: shared E2E source does not exist: ${sourceFile}`);
       }
       const owners = sourceOwners.get(sourceFile) ?? [];
       owners.push(entry);
@@ -205,11 +229,13 @@ export function validateMockParity(options: {
     requireChangedFastTest(entry, liveFile);
   }
 
-  for (const helperFile of [...changedFileSet].filter((file) => LIVE_HELPER.test(file))) {
+  for (const helperFile of [...changedFileSet].filter(
+    (file) => LIVE_HELPER.test(file) || SHARED_SOURCE.test(file),
+  )) {
     const owners = sourceOwners.get(helperFile) ?? [];
     if (owners.length === 0) {
       errors.push(
-        `${helperFile}: changed live E2E helper needs an owning entry in ${DEFAULT_PARITY_MANIFEST}`,
+        `${helperFile}: changed E2E source needs an owning entry in ${DEFAULT_PARITY_MANIFEST}`,
       );
       continue;
     }
@@ -243,7 +269,13 @@ export function filterMockParityRelevantChangedFiles(
   sourceAtHead: (file: string) => string | null,
 ): string[] {
   return files.filter((file) => {
-    if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    if (
+      !LIVE_TEST.test(file) &&
+      !LIVE_HELPER.test(file) &&
+      !SHARED_SOURCE.test(file) &&
+      !isFastPrTest(file)
+    )
+      return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }
