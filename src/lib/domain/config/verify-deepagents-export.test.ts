@@ -4,7 +4,10 @@
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedSingletonSandbox,
+} from "../../../../test/support/config-export-document";
 import type { ObservedExportSnapshot } from "./export-evidence";
 import {
   dcodeImageRef,
@@ -62,20 +65,21 @@ describe("Deep Agents config export (#11860)", () => {
     ]);
     expect(sandbox.harness).toEqual({ kind: "deepagents" });
     expect(sandbox.runtime).toEqual({ provider: "docker" });
-    expect(sandbox.agents).toEqual([
-      {
-        name: "primary",
-        inference: {
-          routes: [
-            {
-              name: "primary",
-              providerRef: "hosted-openai-api",
-              overrides: { model: "gpt-5" },
-            },
-          ],
-        },
+    expect("agent" in sandbox).toBe(true);
+    const deepAgentsSandbox = exportedSingletonSandbox(sandbox);
+    expect(deepAgentsSandbox.image).toEqual({ ref: dcodeImageRef });
+    expect(deepAgentsSandbox.agent).toEqual({
+      name: "primary",
+      inference: {
+        routes: [
+          {
+            name: "primary",
+            providerRef: "hosted-openai-api",
+            overrides: { model: "gpt-5" },
+          },
+        ],
       },
-    ]);
+    });
     expect(sandbox.network.policy.explicit).toMatchObject({
       process: { run_as_user: "1000", run_as_group: "1000" },
       filesystem_policy: {

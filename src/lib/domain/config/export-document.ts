@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
-import type { V1Alpha1Export } from "../../config/v1alpha1-export";
+import type {
+  V1Alpha1Export,
+  V1Alpha1ExportAgent,
+  V1Alpha1ExportSandbox,
+} from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
 
 function providerLocalName(provider: string): string {
@@ -52,12 +56,6 @@ function agentSettings(source: VerifiedExportSource) {
   };
 }
 
-function harnessKind(
-  source: VerifiedExportSource,
-): V1Alpha1Export["spec"]["sandboxes"][number]["harness"]["kind"] {
-  return source.agent === "langchain-deepagents-code" ? "deepagents" : source.agent;
-}
-
 function exportAgent(
   source: VerifiedExportSource,
   providerName: string,
@@ -66,7 +64,7 @@ function exportAgent(
     primary: boolean;
     tools?: Readonly<{ allow: readonly "read"[] }>;
   }>,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"][number] {
+): V1Alpha1ExportAgent {
   const tools = agent.primary ? source.tools : agent.tools;
   return {
     name: agent.name,
@@ -93,7 +91,7 @@ function exportAgent(
 function exportAgents(
   source: VerifiedExportSource,
   providerName: string,
-): V1Alpha1Export["spec"]["sandboxes"][number]["agents"] {
+): readonly V1Alpha1ExportAgent[] {
   const primary = exportAgent(source, providerName, { name: "primary", primary: true });
   return [
     primary,
@@ -152,6 +150,40 @@ export function buildExportConfig(
   identity: ExportConfigBuildIdentity,
 ): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
+  const sandboxBase = {
+    name: source.sandboxName,
+    runtime: {
+      provider: "docker" as const,
+    },
+    network: {
+      policy: { explicit: targetPolicy(source) },
+      ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
+    },
+    ...(source.webSearch === undefined
+      ? {}
+      : {
+          integrations: {
+            "brave-search": {
+              kind: "webSearch" as const,
+              provider: source.webSearch.provider,
+              credential: source.webSearch.credential,
+            },
+          },
+        }),
+  };
+  const sandbox: V1Alpha1ExportSandbox =
+    source.agent === "langchain-deepagents-code"
+      ? {
+          ...sandboxBase,
+          image: { ref: source.runtime.imageRef },
+          harness: { kind: "deepagents", ...agentSettings(source) },
+          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
+        }
+      : {
+          ...sandboxBase,
+          harness: { kind: source.agent, ...agentSettings(source) },
+          agents: exportAgents(source, providerName),
+        };
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -162,31 +194,7 @@ export function buildExportConfig(
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
       inferenceProviders: [inferenceProvider(source, providerName)],
-      sandboxes: [
-        {
-          name: source.sandboxName,
-          runtime: {
-            provider: "docker" as const,
-          },
-          network: {
-            policy: { explicit: targetPolicy(source) },
-            ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
-          },
-          ...(source.webSearch === undefined
-            ? {}
-            : {
-                integrations: {
-                  "brave-search": {
-                    kind: "webSearch",
-                    provider: source.webSearch.provider,
-                    credential: source.webSearch.credential,
-                  },
-                },
-              }),
-          harness: { kind: harnessKind(source), ...agentSettings(source) },
-          agents: exportAgents(source, providerName),
-        },
-      ],
+      sandboxes: [sandbox],
     },
   } satisfies V1Alpha1Export;
   return candidate;

@@ -747,7 +747,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
         ...registry,
         sandboxes: {
           ...registry.sandboxes,
-          sandbox: { ...registry.sandboxes.sandbox!, model: registryModel },
+          other: { ...registry.sandboxes.sandbox!, name: "other", model: registryModel },
         },
       };
     };
@@ -777,6 +777,30 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     );
     expect(test.writes.at(-1)?.verifications).toContainEqual(
       expect.objectContaining({ id: "sourceRegistryUnchanged", passed: false }),
+    );
+  });
+
+  it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
+    const candidate = structuredClone(document());
+    const sandbox = candidate.spec.sandboxes[0]!;
+    const agents = Reflect.get(sandbox, "agents") as unknown[];
+    const image = { ref: IMAGE_REF };
+    Object.assign(sandbox, { harness: { kind: "deepagents" }, image, agent: agents[0] });
+    Reflect.deleteProperty(sandbox, "agents");
+    expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
+      image: { ref: IMAGE_REF },
+      harness: { kind: "deepagents" },
+      agent: { name: "primary" },
+    });
+    const missingImage = structuredClone(candidate);
+    Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
+    expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
+      "complete v1alpha1 export contract",
+    );
+    const missingEndpoint = structuredClone(candidate);
+    Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
+    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+      "complete v1alpha1 export contract",
     );
   });
 

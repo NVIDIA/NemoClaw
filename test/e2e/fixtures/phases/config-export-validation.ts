@@ -7,9 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import YAML from "yaml";
 import {
-  isV1Alpha1ExportName,
   V1ALPHA1_EXPORT_API_VERSION,
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
@@ -39,6 +40,9 @@ import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
+const { Type } = require("typebox") as typeof TypeBoxModule;
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
@@ -46,6 +50,174 @@ const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
 const INTERNAL_TRANSPORT_PATTERN = /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u;
 const INTERNAL_TRANSPORT_MARKERS = ["NEMOCLAW_", "openshell:resolve:env"] as const;
+const V1ALPHA1_NAME_PATTERN = "^[a-z][a-z0-9-]{0,39}$";
+const V1ALPHA1_UUID_PATTERN =
+  "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
+const V1ALPHA1_IMAGE_PATTERN = "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$";
+
+const NonEmptyStringSchema = Type.String({ minLength: 1 });
+const LocalNameSchema = Type.String({ pattern: V1ALPHA1_NAME_PATTERN });
+const UnknownRecordSchema = Type.Record(Type.String(), Type.Unknown());
+const CredentialSchema = Type.Object(
+  { env: NonEmptyStringSchema },
+  { additionalProperties: false },
+);
+const ExportRouteSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    providerRef: LocalNameSchema,
+    overrides: Type.Object({ model: NonEmptyStringSchema }, { additionalProperties: true }),
+  },
+  { additionalProperties: false },
+);
+const ExportAgentSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    inference: Type.Object(
+      { routes: Type.Array(ExportRouteSchema, { minItems: 1 }) },
+      { additionalProperties: false },
+    ),
+    auth: Type.Optional(
+      Type.Object({ method: Type.Literal("api-key") }, { additionalProperties: false }),
+    ),
+    tools: Type.Optional(
+      Type.Union([
+        Type.Object(
+          { disclosure: Type.Union([Type.Literal("direct"), Type.Literal("progressive")]) },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
+          { additionalProperties: false },
+        ),
+      ]),
+    ),
+    integrationRefs: Type.Optional(
+      Type.Array(Type.Literal("brave-search"), { minItems: 1, maxItems: 1 }),
+    ),
+  },
+  { additionalProperties: false },
+);
+const ExportHarnessFields = {
+  execution: Type.Optional(
+    Type.Object(
+      {
+        timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
+        heartbeatEvery: Type.Optional(NonEmptyStringSchema),
+      },
+      { additionalProperties: false, minProperties: 1 },
+    ),
+  ),
+  interfaces: Type.Optional(UnknownRecordSchema),
+  observability: Type.Optional(UnknownRecordSchema),
+};
+const ExportSandboxFields = {
+  name: LocalNameSchema,
+  runtime: Type.Object({ provider: Type.Literal("docker") }, { additionalProperties: false }),
+  network: Type.Object(
+    {
+      policy: Type.Object({ explicit: UnknownRecordSchema }, { additionalProperties: false }),
+      proxy: Type.Optional(
+        Type.Object(
+          { host: NonEmptyStringSchema, port: Type.Integer({ minimum: 1, maximum: 65_535 }) },
+          { additionalProperties: false },
+        ),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  integrations: Type.Optional(
+    Type.Object(
+      {
+        "brave-search": Type.Object(
+          {
+            kind: Type.Literal("webSearch"),
+            provider: Type.Literal("brave"),
+            credential: CredentialSchema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  ),
+};
+const DeepAgentsExportSandboxSchema = Type.Object(
+  {
+    ...ExportSandboxFields,
+    image: Type.Object(
+      { ref: Type.String({ pattern: V1ALPHA1_IMAGE_PATTERN }) },
+      { additionalProperties: false },
+    ),
+    harness: Type.Object(
+      { kind: Type.Literal("deepagents"), ...ExportHarnessFields },
+      { additionalProperties: false },
+    ),
+    agent: ExportAgentSchema,
+  },
+  { additionalProperties: false },
+);
+const LegacyExportSandboxSchema = Type.Object(
+  {
+    ...ExportSandboxFields,
+    harness: Type.Object(
+      {
+        kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
+        ...ExportHarnessFields,
+      },
+      { additionalProperties: false },
+    ),
+    agents: Type.Array(ExportAgentSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+const ConfigExportDocumentSchema = Type.Object(
+  {
+    apiVersion: Type.Literal(V1ALPHA1_EXPORT_API_VERSION),
+    kind: Type.Literal("NemoClawConfig"),
+    metadata: Type.Object(
+      {
+        name: LocalNameSchema,
+        uid: Type.String({ pattern: V1ALPHA1_UUID_PATTERN }),
+      },
+      { additionalProperties: false },
+    ),
+    spec: Type.Object(
+      {
+        gateway: Type.Object(
+          {
+            management: Type.Literal("managed"),
+            endpoint: NonEmptyStringSchema,
+          },
+          { additionalProperties: false },
+        ),
+        inferenceProviders: Type.Array(
+          Type.Object(
+            {
+              name: LocalNameSchema,
+              provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
+              api: Type.Union([
+                Type.Literal("anthropic-messages"),
+                Type.Literal("openai-completions"),
+                Type.Literal("openai-responses"),
+              ]),
+              endpoint: NonEmptyStringSchema,
+              credential: Type.Optional(CredentialSchema),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1 },
+        ),
+        sandboxes: Type.Array(
+          Type.Union([DeepAgentsExportSandboxSchema, LegacyExportSandboxSchema]),
+          { minItems: 1, maxItems: 1 },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export type ConfigExportClassification =
   | "success"
@@ -239,35 +411,12 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
-function requiredArray(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`exported configuration field '${field}' must be an array`);
-  }
-  return value;
-}
-
 export function parseConfigExport(raw: string): ConfigExportDocument {
-  const document = requiredRecord(YAML.parse(raw), "configuration");
-  if (document.apiVersion !== V1ALPHA1_EXPORT_API_VERSION) {
-    throw new Error("exported configuration must use the v1alpha1 API version");
+  const document: unknown = YAML.parse(raw);
+  if (!Check(ConfigExportDocumentSchema, document)) {
+    throw new Error("exported configuration must match the complete v1alpha1 export contract");
   }
-  if (document.kind !== "NemoClawConfig") {
-    throw new Error("exported configuration must have kind 'NemoClawConfig'");
-  }
-  const metadata = requiredRecord(document.metadata, "metadata");
-  if (!isV1Alpha1ExportName(metadata.name)) {
-    throw new Error("exported configuration metadata.name is invalid");
-  }
-  requiredString(metadata.uid, "metadata.uid");
-  const spec = requiredRecord(document.spec, "spec");
-  requiredRecord(spec.gateway, "spec.gateway");
-  if (requiredArray(spec.inferenceProviders, "spec.inferenceProviders").length === 0) {
-    throw new Error("exported configuration must declare an inference provider");
-  }
-  if (requiredArray(spec.sandboxes, "spec.sandboxes").length !== 1) {
-    throw new Error("exported configuration must declare exactly one sandbox");
-  }
-  return document as unknown as ConfigExportDocument;
+  return document as ConfigExportDocument;
 }
 
 function readRegistry(): ConfigExportRegistry {
@@ -422,7 +571,8 @@ async function readEffectivePolicyDocument(
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
-  const agent = sandbox?.agents[0];
+  const agent =
+    sandbox === undefined ? undefined : "agent" in sandbox ? sandbox.agent : sandbox.agents[0];
   const route = agent?.inference.routes[0];
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,
@@ -431,7 +581,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     sandboxName: sandbox?.name ?? null,
     agent: sandbox?.harness.kind ?? null,
     runtimeProvider: sandbox?.runtime.provider ?? null,
-    imageRef: null,
+    imageRef: sandbox !== undefined && "image" in sandbox ? sandbox.image.ref : null,
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
@@ -506,7 +656,10 @@ async function expectedSemantics(
     sandboxName: instance.sandboxName,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
     runtimeProvider: entry.openshellDriver ?? null,
-    imageRef: null,
+    imageRef:
+      entry.agent === "langchain-deepagents-code"
+        ? requiredString(entry.workload.reference, "registry workload reference")
+        : null,
     inferenceProviderName: exportedProviderName(entry.provider),
     inferenceProvider:
       entry.preferredInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
@@ -719,7 +872,7 @@ export class ConfigExportValidationPhaseFixture {
       expectation === "required" ? "observation" : "transport";
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
-    let registryBeforeExport: ConfigExportRegistryEntry | undefined;
+    let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
       if (expectation === "required") {
@@ -730,12 +883,11 @@ export class ConfigExportValidationPhaseFixture {
           this.secrets,
           this.dependencies,
         );
-        registryBeforeExport = structuredClone(
-          this.dependencies.loadRegistry().sandboxes[instance.sandboxName],
-        );
-        if (!registryBeforeExport) {
+        const registry = this.dependencies.loadRegistry();
+        if (!registry.sandboxes[instance.sandboxName]) {
           throw new Error("the live sandbox disappeared before config export");
         }
+        registryBeforeExport = structuredClone(registry.sandboxes);
       }
       failureStage = "transport";
       const result = await this.host.nemoclaw(
@@ -838,13 +990,12 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "verification";
         if (!expected) throw new Error("config export expectations were not captured");
         verifications = compareSemantics(expected, observed);
-        const registryAfterExport =
-          this.dependencies.loadRegistry().sandboxes[instance.sandboxName];
+        const registryAfterExport = this.dependencies.loadRegistry().sandboxes;
         verifications.push({
           id: "sourceRegistryUnchanged",
           passed: isDeepStrictEqual(registryAfterExport, registryBeforeExport),
           expected: registryBeforeExport,
-          actual: registryAfterExport ?? null,
+          actual: registryAfterExport,
         });
         const failed = verifications.filter((verification) => !verification.passed);
         if (failed.length > 0) {

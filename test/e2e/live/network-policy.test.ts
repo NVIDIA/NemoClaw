@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import YAML from "yaml";
-import { asExportedConfig } from "../../support/config-export-document.ts";
+import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -367,9 +367,10 @@ test(
     expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
     const document = asExportedConfig(YAML.parse(raw));
     const exportedSandbox = document.spec.sandboxes[0];
-    const [primary] = exportedSandbox.agents;
+    const agents = exportedAgentList(exportedSandbox);
+    const [primary] = agents;
     const primaryInference = JSON.stringify(primary?.inference);
-    const roster = exportedSandbox.agents.map((agent) => {
+    const roster = agents.map((agent) => {
       const toolsConfig = "tools" in agent ? agent.tools : undefined;
       const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
       const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
@@ -378,7 +379,7 @@ test(
     expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
       `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
     );
-    expect(document.spec.sandboxes[0]).not.toHaveProperty("image");
+    expect(exportedSandbox).not.toHaveProperty("image");
     const exportedProvider = document.spec.inferenceProviders[0];
     const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
     expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
@@ -416,7 +417,7 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: exportedSandbox.agents.map((agent) => agent.name),
+      agentNames: agents.map((agent) => agent.name),
       image: "v1-default",
       endpoint: exportedEndpoint,
       effectivePolicyMatches: true,

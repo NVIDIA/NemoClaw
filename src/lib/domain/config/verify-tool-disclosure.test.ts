@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
@@ -63,7 +66,7 @@ describe("managed tool-disclosure export", () => {
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!).toHaveProperty("tools", {
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toHaveProperty("tools", {
       disclosure: "direct",
     });
     expect(document.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
@@ -89,7 +92,8 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-    expect(sandbox.agents[0]!).toHaveProperty("tools", { disclosure: "direct" });
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]).toHaveProperty("tools", { disclosure: "direct" });
     expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
   });
 
@@ -99,9 +103,9 @@ describe("managed tool-disclosure export", () => {
       const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
       expect(result.outcome.ok).toBe(true);
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]).not.toHaveProperty(
-        "tools",
-      );
+      expect(
+        exportedAgentList(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!)[0],
+      ).not.toHaveProperty("tools");
     },
   );
 
@@ -197,12 +201,9 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]!).toHaveProperty(
-      "tools",
-      {
-        disclosure: "direct",
-      },
-    );
+    expect(
+      exportedAgentList(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!)[0],
+    ).toHaveProperty("tools", { disclosure: "direct" });
   });
 
   it("does not publish when tool selection changes during both observations", async () => {

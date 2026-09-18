@@ -491,8 +491,82 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     const result = spawnSync("bash", ["-n", dcodeApprovalCheck], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
     const script = fs.readFileSync(dcodeApprovalCheck, "utf8");
+    expect(script).toContain("trap restore_export_baseline_on_exit EXIT");
     expect(script).toContain("rebuild_named_sandbox disabled --no-observability");
-    expect(script).toContain('observability_registry_state)" = "disabled"');
+    expect(script).toContain('export_baseline_registry_state)" = "disabled:disabled"');
+  });
+
+  it("restores the DCode export baseline and preserves the triggering failure status", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-baseline-recovery-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const testDriver = path.join(tempDir, "restore-export-baseline");
+    const callLog = path.join(tempDir, "calls.log");
+    const registryPath = path.join(tempDir, ".nemoclaw", "sandboxes.json");
+    const disabledRegistry = JSON.stringify({
+      sandboxes: {
+        "deepagents-sandbox": {
+          agent: "langchain-deepagents-code",
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        },
+      },
+    });
+    try {
+      fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+      fs.writeFileSync(
+        registryPath,
+        JSON.stringify({
+          sandboxes: {
+            "deepagents-sandbox": {
+              agent: "langchain-deepagents-code",
+              dcodeAutoApprovalMode: "thread-opt-in",
+              observabilityEnabled: true,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          'printf \'%s\\n\' "$*" >>"$MOCK_CALL_LOG"',
+          `printf '%s\\n' '${disabledRegistry}' >"$MOCK_REGISTRY_FILE"`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeDcodeApprovalTestDriver(
+        testDriver,
+        `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+EXPORT_BASELINE_RECOVERY_ARMED=1
+cleanup_probe_files() { :; }
+trap restore_export_baseline_on_exit EXIT
+exit 37
+`,
+      );
+
+      const result = spawnSync("bash", [testDriver, mockCli], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: tempDir,
+          MOCK_CALL_LOG: callLog,
+          MOCK_REGISTRY_FILE: registryPath,
+        },
+      });
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(37);
+      expect(fs.readFileSync(callLog, "utf8").trim()).toBe(
+        "deepagents-sandbox rebuild --yes --dcode-auto-approval disabled --no-observability",
+      );
+      expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual(
+        JSON.parse(disabledRegistry),
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
   });
 
   it.each([
