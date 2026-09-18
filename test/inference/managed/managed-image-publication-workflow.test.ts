@@ -756,9 +756,9 @@ describe("complete managed-image publication workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
-
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
+        "src/lib/actions/sandbox/**",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
         "test/e2e/fixtures/gateway-runtime-start.ts",

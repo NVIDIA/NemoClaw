@@ -7,6 +7,7 @@ import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
+  qualifyLegacyHermesPortableLifecycleProfile,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -74,6 +75,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
   recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
   requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
@@ -197,10 +199,33 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   let result: SandboxLifecycleResult & { readonly hermesPortableVerified?: true };
   try {
+    const legacyHermesPortableProfile =
+      resolved.bundle.identity.id === "docker" &&
+      resolved.sandbox.portableLifecycleProfile === undefined &&
+      resolved.sandbox.agent === "hermes" &&
+      typeof resolved.sandbox.lifecycleGeneration === "string" &&
+      (deps.qualifyLegacyPortableProfile ?? qualifyLegacyHermesPortableLifecycleProfile)(
+        sandboxName,
+        {
+          env: input.environment,
+          readRegistry: (name) => input.readRegistry?.(name) ?? null,
+        },
+      );
+    if (
+      legacyHermesPortableProfile &&
+      !(deps.updateSandbox ?? registry.updateSandbox)(sandboxName, {
+        portableLifecycleProfile: "hermes",
+      })
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' has verified Hermes portable authority, but NemoClaw could not record its lifecycle profile.`,
+      );
+    }
     const portableAuthorityRecorded =
       resolved.bundle.identity.id === "docker" &&
-      ((resolved.sandbox.portableLifecycleProfile === "hermes" &&
-        resolved.sandbox.agent === "hermes") ||
+      ((legacyHermesPortableProfile && resolved.sandbox.agent === "hermes") ||
+        (resolved.sandbox.portableLifecycleProfile === "hermes" &&
+          resolved.sandbox.agent === "hermes") ||
         (resolved.sandbox.portableLifecycleProfile === "openclaw" &&
           resolved.sandbox.agent === "openclaw"));
     if (portableAuthorityRecorded && resolved.sandbox.agent === "hermes") {

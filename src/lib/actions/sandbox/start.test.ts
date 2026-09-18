@@ -38,6 +38,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const recoverPortableSandbox = vi.fn<NonNullable<SandboxStartDeps["recoverPortableSandbox"]>>(
     async () => ({ kind: "not-installed" }),
   );
+  const qualifyLegacyPortableProfile = vi.fn<
+    NonNullable<SandboxStartDeps["qualifyLegacyPortableProfile"]>
+  >(() => false);
   const requalifyPortableSandbox = vi.fn<NonNullable<SandboxStartDeps["requalifyPortableSandbox"]>>(
     async () => ({ kind: "not-hermes" }),
   );
@@ -72,6 +75,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     delayGatewayProcessProbe,
     getSandbox,
     openShellLifecycle,
+    qualifyLegacyPortableProfile,
     recoverPortableSandbox,
     requalifyPortableSandbox,
     updateSandbox,
@@ -90,6 +94,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     observer,
     order,
     probeGatewayProcess,
+    qualifyLegacyPortableProfile,
     recoverPortableSandbox,
     startOpenShellSandbox,
     updateSandbox,
@@ -195,6 +200,50 @@ describe("startSandbox native lifecycle", () => {
     expect(h.recoverPortableSandbox).toHaveBeenCalledOnce();
     expect(h.startOpenShellSandbox).not.toHaveBeenCalled();
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+  });
+
+  it("backfills only a receipt-qualified legacy Hermes portable profile", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.qualifyLegacyPortableProfile.mockReturnValue(true);
+    h.recoverPortableSandbox.mockResolvedValue({ kind: "recovered" });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", {
+      portableLifecycleProfile: "hermes",
+    });
+    expect(h.recoverPortableSandbox).toHaveBeenCalledOnce();
+    expect(h.startOpenShellSandbox).not.toHaveBeenCalled();
+  });
+
+  it("keeps unqualified Docker Hermes state on the standard OpenShell path", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "standard-generation",
+        openshellDriver: "docker",
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.qualifyLegacyPortableProfile).toHaveBeenCalledOnce();
+    expect(h.recoverPortableSandbox).not.toHaveBeenCalled();
+    expect(h.startOpenShellSandbox).toHaveBeenCalledOnce();
+    expect(h.updateSandbox).not.toHaveBeenCalledWith("my-sandbox", {
+      portableLifecycleProfile: "hermes",
+    });
   });
 
   it("propagates native gateway health failure", async () => {

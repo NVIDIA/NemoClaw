@@ -87,6 +87,9 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const stopPortableSandbox = vi.fn<NonNullable<SandboxStopDeps["stopPortableSandbox"]>>(
     async () => ({ kind: "not-installed" }),
   );
+  const qualifyLegacyPortableProfile = vi.fn<
+    NonNullable<SandboxStopDeps["qualifyLegacyPortableProfile"]>
+  >(() => false);
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
   const stopOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["stopSandbox"]>(
     stopOpenShellSandboxOverride ?? (async () => ({ kind: "accepted" })),
@@ -115,6 +118,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const deps: SandboxStopDeps = {
     getSandbox,
     openShellLifecycle,
+    qualifyLegacyPortableProfile,
     runtimeProviders,
     stopSandboxChannels,
     teardownSandboxDashboardForward,
@@ -140,6 +144,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     updateSandbox,
     getSandbox,
     log,
+    qualifyLegacyPortableProfile,
     stopSandboxChannels,
     stopPortableSandbox,
     stopOpenShellSandbox,
@@ -472,6 +477,29 @@ describe("stopSandbox", () => {
       expect.objectContaining({ env: process.env }),
     );
     expect(h.stopSandboxChannels).toHaveBeenCalledExactlyOnceWith("my-sandbox", expect.any(Object));
+    expect(h.stopOpenShellSandbox).not.toHaveBeenCalled();
+  });
+
+  it("backfills a receipt-qualified legacy Hermes profile before portable stop", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.qualifyLegacyPortableProfile.mockReturnValue(true);
+    h.stopPortableSandbox.mockResolvedValue({ kind: "stopped", portableAgent: "hermes" });
+
+    await expect(stopSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", {
+      portableLifecycleProfile: "hermes",
+    });
+    expect(h.stopPortableSandbox).toHaveBeenCalledOnce();
     expect(h.stopOpenShellSandbox).not.toHaveBeenCalled();
   });
 
