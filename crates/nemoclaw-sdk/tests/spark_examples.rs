@@ -21,7 +21,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
         ("deepagents-team.yaml", 1, 2, 2),
         ("shared-model.yaml", 1, 3, 3),
         ("two-models.yaml", 2, 1, 1),
-        ("local-and-oracle.yaml", 1, 1, 1),
+        ("local-and-hosted.yaml", 1, 1, 1),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples/spark")

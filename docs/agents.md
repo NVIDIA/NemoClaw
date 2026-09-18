@@ -40,13 +40,13 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 
 | Agent | Access and conversation behavior |
 |---|---|
-| OpenClaw | [Headless request](#run-one-headless-openclaw-request) or optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns one native gateway for the sandbox’s agent |
+| OpenClaw | [Headless request](#run-one-headless-openclaw-request) or optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns one OpenClaw gateway for the sandbox’s agent |
 | Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) can accompany explicitly declared interfaces |
 | Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request); starts a separate invocation runtime using the sandbox agent's route |
 | Pi | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request) and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
-Use the deployment's gateway and workspace for OpenShell access; [interface selection](interfaces.md#select-the-gateway-and-workspace) explains how to identify them.
+Use the deployment's OpenShell gateway and workspace for sandbox access; [interface selection](interfaces.md#select-the-gateway-and-workspace) explains how to identify them.
 NemoClaw has no `launch`, `connect`, or invocation command.
 Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
 Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
@@ -55,7 +55,7 @@ Native channel/plugin capabilities need their own prerequisites; see [integratio
 
 Declare one sandbox per agent, selecting its harness and inference separately.
 The [multiple-sandbox example](../examples/multiple-sandboxes.yaml) deploys two OpenClaw agents, two Deep Agents agents, and one Pi agent in five sandboxes.
-Shared harness, inference, and integration definitions reuse configuration or provider registrations; they do not share a native gateway or Fabric runtime.
+Shared harness, inference, and integration definitions reuse configuration or provider registrations; they do not share an OpenClaw gateway or Fabric runtime.
 Each Deep Agents instance selects one model and uses `/sandbox/workspace` and `/sandbox/artifacts` inside its own sandbox.
 Apply checks each sandbox’s hosted configuration and Fabric health separately.
 To invoke its agent through the SDK procedure below, pass the declared agent name to `configuration()`.
@@ -108,7 +108,7 @@ Neither result qualifies conversation recovery or every model/tool combination.
 ### Run One Headless OpenClaw Request
 
 Use an applied OpenClaw deployment with `harness.interfaces` omitted; for dashboard-enabled deployments, use the [authenticated dashboard](interfaces.md#openclaw-dashboard).
-This command uses the existing native gateway and a named conversation separate from Fabric's hosted conversation.
+This command uses the existing OpenClaw gateway and a named conversation separate from Fabric's hosted conversation.
 It can invoke the agent's tools, change workspace files, and incur model charges.
 Repeating the command continues this native conversation; its history remains in the sandbox until it is deleted.
 
@@ -126,7 +126,7 @@ openshell sandbox exec -n openclaw --timeout 360 --no-tty --no-login-shell \
 ```
 
 A new session uses the agent’s default model unless `--model` is supplied.
-For multiple declared routes, append `--model oracle` to select that model alias for the request; use your declared route name.
+For multiple declared routes, append `--model hosted` to select that model alias for the request; use your declared route name.
 Omitting `--deliver` keeps the reply in the terminal rather than delivering it through a native messaging channel.
 Verify JSON `status: "ok"`, an actual reply in `result.payloads[].text`, and no `result.meta.error`, `result.meta.aborted`, or payload `isError`.
 A gateway acknowledgment alone does not establish a completed agent response.
@@ -504,7 +504,7 @@ The [agent image builder](build.md#build-agent-images) runs the pinned toolchain
 Use the resulting immutable image reference in the sandbox's `image.ref`.
 See [the source notice](../image/NOTICE.md).
 
-Fabric's local OpenClaw adapter owns one native gateway for the sandbox’s sole agent.
+Fabric's local OpenClaw adapter owns one OpenClaw gateway for the sandbox’s sole agent.
 An uncertain invocation result stops that runtime and is never replayed automatically.
 Agent configuration readiness does not invoke the model.
 
