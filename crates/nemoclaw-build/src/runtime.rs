@@ -50,7 +50,11 @@ pub(super) async fn build_runtime(pins: &Pins, manifest: &Path) -> Result<()> {
         context.join("supervisor-source.tar.gz"),
         nemoclaw_build::source_archive(&files, recipe.source_date_epoch)?,
     )?;
-    let binary = build_retained_source(root, &context.join("supervisor-source.tar.gz"))?;
+    let binary = build_retained_source(
+        root,
+        &context.join("supervisor-source.tar.gz"),
+        target(&recipe.platform)?,
+    )?;
     for name in &recipe.files {
         let source = inputs.join(name);
         if !fs::symlink_metadata(&source)?.is_file() {
@@ -149,7 +153,16 @@ fn openshell_sources(files: &mut Vec<(String, PathBuf)>) -> Result<()> {
     Ok(())
 }
 
-fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
+fn build_retained_source(root: &Path, archive: &Path, rust_target: &str) -> Result<PathBuf> {
+    compile_retained_source(root, archive, rust_target, cargo())
+}
+
+fn compile_retained_source(
+    root: &Path,
+    archive: &Path,
+    rust_target: &str,
+    mut compiler: Command,
+) -> Result<PathBuf> {
     let source = tempfile::tempdir_in(root)?;
     tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(archive)?))
         .unpack(source.path())?;
@@ -161,7 +174,7 @@ fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
     // Compile the exact retained files, using their vendored dependency layout.
     // Neither dependency cache paths nor a parent repository version may leak
     // into the binary's inputs when the archive is rebuilt elsewhere.
-    run(cargo()
+    run(compiler
         .current_dir(&directory)
         .args([
             "build",
@@ -169,7 +182,7 @@ fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
             "--offline",
             "--release",
             "--target",
-            "aarch64-unknown-linux-gnu",
+            rust_target,
             "-p",
             "nemoclaw-runtime",
         ])
@@ -182,5 +195,35 @@ fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
         )
         .env("CFLAGS", format!("-ffile-prefix-map={prefix}=/workspace"))
         .env("CXXFLAGS", format!("-ffile-prefix-map={prefix}=/workspace")))?;
-    Ok(target.join("aarch64-unknown-linux-gnu/release/nemoclaw-runtime"))
+    Ok(target.join(rust_target).join("release/nemoclaw-runtime"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_compilation_returns_the_binary_for_the_selected_platform() {
+        for platform in ["linux_arm64", "linux_amd64"] {
+            let root = tempfile::tempdir().unwrap();
+            let input = root.path().join("input");
+            fs::write(&input, b"retained source").unwrap();
+            let archive = root.path().join("source.tar.gz");
+            fs::write(
+                &archive,
+                nemoclaw_build::source_archive(&[("input".into(), input)], 1234).unwrap(),
+            )
+            .unwrap();
+            let rust_target = target(platform).unwrap();
+            let mut compiler = Command::new("sh");
+            compiler.args(["-c", include_str!("runtime_fixture.sh"), "fixture-cargo"]);
+            let binary =
+                compile_retained_source(root.path(), &archive, rust_target, compiler).unwrap();
+            assert_eq!(
+                fs::read_to_string(binary).unwrap(),
+                rust_target,
+                "{platform}"
+            );
+        }
+    }
 }

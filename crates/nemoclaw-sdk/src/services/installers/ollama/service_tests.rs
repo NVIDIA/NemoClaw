@@ -11,13 +11,16 @@ struct State {
     lost_create: bool,
     fail_read: bool,
     creates: usize,
+    pulls: usize,
+    image_present: bool,
     starts: usize,
     deletes: usize,
 }
 #[tokio::test]
 async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_failure() {
-    let spec = ServiceSpec {
+    let mut spec = ServiceSpec {
         proxy: None,
+        image_pull_policy: None,
         name: "nc-0123456789abcdef-ollama".into(),
         owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
         generation: "b".repeat(32),
@@ -35,7 +38,8 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
         let mut state=shared.lock().unwrap();
         let (code,value)=match (request.method.as_str(),request.path.as_str()) {
             ("GET","/info")=>(200,json!({"ID":"engine"})),
-            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"image"})),
+            ("GET",path) if path.starts_with("/images/")=>if state.image_present {(200,json!({"Id":"image"}))} else {(404,json!({}))},
+            ("POST",path) if path.starts_with("/images/create?")=>{state.pulls+=1;state.image_present=true;(200,json!({"status":"complete"}))},
             ("GET",path) if path.starts_with("/containers/")=>if state.fail_read {(503,json!({}))} else {state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({})))},
             ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({}))),
             ("POST","/volumes/create")=>{let r:Value=serde_json::from_slice(&request.body).unwrap();let v=json!({"Name":r["Name"],"Labels":r["Labels"],"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/models/_data"});state.volume=Some(v.clone());(201,v)},
@@ -50,8 +54,16 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
         };Some((code,serde_json::to_vec(&value).unwrap()))
     }).await;
     let engine = Engine::connect(&fixture.endpoint).unwrap();
+    spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Never);
+    assert!(engine.ensure_ollama(&spec, "").await.is_err());
+    assert_eq!(state.lock().unwrap().pulls, 0);
+    assert_eq!(state.lock().unwrap().creates, 0);
+    assert!(state.lock().unwrap().volume.is_none());
+    spec.image_pull_policy = None;
     assert!(engine.ensure_ollama(&spec, "").await.is_err());
     let established = engine.ensure_ollama(&spec, "").await.unwrap();
+    assert_eq!(state.lock().unwrap().pulls, 1);
+    spec.image_pull_policy = Some(crate::config::ImagePullPolicy::Always);
     assert_eq!(established.id, "engine/container/created");
     assert!(established.running);
     assert_eq!(
@@ -62,6 +74,14 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
             .id,
         established.id
     );
+    assert_eq!(
+        state.lock().unwrap().pulls,
+        1,
+        "running container must not pull"
+    );
+    state.lock().unwrap().container.as_mut().unwrap()["State"]["Running"] = json!(false);
+    engine.ensure_ollama(&spec, &established.id).await.unwrap();
+    assert_eq!(state.lock().unwrap().pulls, 2, "restart must apply Always");
     use crate::backend::Backend;
     let backend = crate::services::installers::ollama::OllamaBackend::new(engine.clone());
     let row = [
@@ -124,5 +144,5 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
     assert!(engine.ensure_ollama(&spec, &established.id).await.is_err());
     let state = state.lock().unwrap();
     assert_eq!(state.creates, 2);
-    assert_eq!(state.starts, 2);
+    assert_eq!(state.starts, 3);
 }

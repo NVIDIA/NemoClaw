@@ -16,6 +16,8 @@ spec:
   services:
     local:
       kind: vllm
+      hardware:
+        profile: dgx-spark
       runtime:
         provider: docker
         engine: unix:///var/run/docker.sock

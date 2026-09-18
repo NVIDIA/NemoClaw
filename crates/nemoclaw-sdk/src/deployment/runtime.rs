@@ -242,7 +242,7 @@ impl Deployment {
         if !apply {
             if !checked.gateway_running && !store.bindings()?.is_empty() {
                 return Err(Error::Conflict(
-                    "runtime restart is planned but OpenShell observations are unavailable; apply unchanged intent to reconcile the runtime stage",
+                    "the managed gateway is not running, so plan cannot inspect OpenShell resources; run apply with the same configuration and state directory to restore the gateway",
                 ));
             }
             store.save(record)?;

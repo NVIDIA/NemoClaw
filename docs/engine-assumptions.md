@@ -32,7 +32,7 @@ The rootless Podman validation found that Podman 4.9.3 changes Docker-compatible
 Its gateway bindings use the retained network UUID together with container identity, volume creation time, and signing keys.
 They do not derive identity from the changing compatibility field, a socket path, or a hostname.
 This is a gateway-specific binding, not a hardware or general inference-engine identity.
-The earlier [native Podman evidence](validation/rust-podman-rootless-linux-arm64.json) covers an external OpenShell gateway and rootless sandbox path.
+The earlier [native Podman test results](validation/rust-podman-rootless-linux-arm64.json) cover an external OpenShell gateway and rootless sandbox path.
 
 ## Storage and Network Placement
 

@@ -122,6 +122,13 @@ fn available_memory_may_be_below_free_memory_after_kernel_reserves() {
 fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice() {
     let mut service = service();
     service.recipe = None;
+    service.hardware = Some(
+        crate::services::installers::vllm::ServiceHardware::Profile {
+            profile: crate::services::installers::vllm::HardwareProfile::DgxSpark,
+            architecture: None,
+            min_gpu_memory_bytes: None,
+        },
+    );
     service.memory.gpu_memory_gib = 20;
     service.memory.kv_cache_gib = 6;
     let mut capacity = Capacity {

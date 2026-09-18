@@ -189,8 +189,16 @@ impl Provider for NemoClawProvider {
             .map(|schema| Definition::new(schema.kind, schema.fields, schema.mutable))
             .collect();
         definitions.extend([
-            Definition::new("managed_gateway", &["spec", "running"], &["running"]),
-            Definition::new("gateway_storage", &["spec"], &[]),
+            Definition::new(
+                "managed_gateway",
+                &["spec", "running", "image_pull_policy"],
+                &["running", "image_pull_policy"],
+            ),
+            Definition::new(
+                "gateway_storage",
+                &["spec", "image_pull_policy"],
+                &["image_pull_policy"],
+            ),
             Definition::new(
                 "provider_profile",
                 &[

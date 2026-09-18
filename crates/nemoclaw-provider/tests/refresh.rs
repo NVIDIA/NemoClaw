@@ -36,6 +36,44 @@ fn state(row: Row) -> State {
 }
 
 #[tokio::test]
+async fn removing_image_pull_policy_restores_the_default_without_replacement() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "inference_service",
+            &["spec", "running", "image_pull_policy"],
+            &["running", "image_pull_policy"],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let prior: State = [
+        ("id", "physical"),
+        ("spec", "unchanged"),
+        ("running", "true"),
+        ("image_pull_policy", "Always"),
+    ]
+    .map(|(key, value)| (key.into(), Value::Value(value.into())))
+    .into();
+    let mut config = prior.clone();
+    config.insert("image_pull_policy".into(), Value::Null);
+    let mut diagnostics = Diagnostics::default();
+    let (planned, _, replacements) = resource
+        .plan_update(
+            &mut diagnostics,
+            prior.clone(),
+            prior.clone(),
+            config,
+            Value::Null,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+    assert!(diagnostics.errors.is_empty());
+    assert!(replacements.is_empty());
+    assert_eq!(planned["id"], prior["id"]);
+    assert_eq!(planned["image_pull_policy"], Value::Value(String::new()));
+}
+
+#[tokio::test]
 async fn failed_and_partial_observations_retain_protocol_state() {
     let mut partial = row();
     partial.remove("id");

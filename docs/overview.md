@@ -76,7 +76,7 @@ Unsupported replacement, changed ownership, and incomplete observations stop ope
 Export captures configuration, not a backup of native agent data.
 Read [state](state.md), [recovery](usage.md#updates-and-recovery), and [destroy behavior](usage.md#destroy) before changing or retiring a deployment.
 
-## Evidence and Limits
+## Tested Configurations and Limits
 
 The [configuration validator](../crates/nemoclaw-sdk/src/config/validation.rs), [SDK lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [CLI parser](../crates/nemoclaw-cli/src/args.rs) implement these boundaries.
 The [accepted scope](design/scope.md) defines the product contract; [validation records](validation/README.md) identify tested revisions and environments.

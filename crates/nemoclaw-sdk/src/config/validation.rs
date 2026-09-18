@@ -124,6 +124,7 @@ impl Document {
             require(
                 gateway.engine.is_empty()
                     && gateway.image.is_empty()
+                    && gateway.image_pull_policy.is_none()
                     && gateway.network_cidr.is_empty()
                     && gateway.network.is_none()
                     && gateway.storage.is_none(),

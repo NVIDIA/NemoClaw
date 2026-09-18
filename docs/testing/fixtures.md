@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Fixture Qualification
+# Run Integration Tests
 
 These tests use local protocol fixtures and temporary state.
 They do not provision live deployments.
@@ -21,9 +21,9 @@ These tests launch a fixture provider built by that crate and use temporary file
 They create no Docker, OpenShell, or inference resources.
 The fixture provider is not a production bundle component.
 
-Runtime bundle and live backend qualification remain separate acceptance gates.
+Test the runtime bundle and live serving backend separately.
 
-Build the production provider and qualify its full OpenShell graph against the local gRPC fixture:
+Build the production provider and test its full OpenShell resource graph against the local gRPC fixture:
 
 ```sh
 cargo build -p nemoclaw-provider --bin terraform-provider-nemoclaw
@@ -42,7 +42,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 
 CI runs the fixture lifecycle tests with `--test-threads=2`.
 Each Fabric harness is an independent ignored test with its own temporary state and gRPC fixture.
-To qualify one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
+To test one harness, append its test name, for example `-- --ignored harness_codex`; to run all harnesses with CI's concurrency bound, use `-- --ignored --test-threads=2`.
 
 These tests cover shared SDK/CLI state, interrupted creation, unchanged apply, readiness failure without replacement, failed observation without state loss, export/reapply, interrupted destroy, and retained workspace recovery.
 The multiple-provider fixture also verifies two independent deployments, each sandbox’s selected provider attachments, export/reapply, and drift in one deployment without changes to the other.
@@ -64,7 +64,7 @@ The `tls` test generates certificates and verifies both trust directions and bea
 
 The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64/x64, and Windows x64.
 CI's protocol and lifecycle fixtures do not establish local Docker, Podman, GPU, or real model availability on those platforms.
-Build logs and runtime evidence must be reported separately.
+Report build results separately from runtime test results.
 
 ## Runtime Boundaries
 
@@ -82,10 +82,10 @@ Cancellation must leave a neighboring process alive.
 The backend HTTP fixture rejects unavailable, unauthorized, and redirect responses before accepting readiness.
 The executable test rejects invalid `NEMOCLAW_RUNTIME_SPEC` input and the removed environment alias without starting model work.
 
-The recipe test checks declared serving arguments and capacity, and rejects unqualified model/backend/hardware combinations.
+The recipe test checks declared serving arguments and capacity, and rejects model/backend/hardware combinations outside the declared compatibility requirements.
 The [live image-change test](live.md#spark-and-fabric) requires plan and apply to replace only the inference process.
 Managed-resource fixtures check storage identity and explicit recovery; the recipe tests verify prepared data before reuse.
-A fixture process proves supervisor independence; it does not qualify another real serving backend.
+The fixture checks that the supervisor runs independently of the CLI; it does not test another real serving backend.
 
 ## SSH Service Fixtures
 
@@ -97,7 +97,7 @@ Its readiness and artifact manifests are simulated; it does not download or serv
 
 ## Inference API Fixtures
 
-From the repository root, use Docker, OpenSSL, Python 3, and a freshly built Fabric image on the qualified Linux ARM64 host.
+From the repository root, use Docker, OpenSSL, Python 3, and a freshly built Fabric image on a Linux ARM64 host.
 See [image prerequisites](../inference.md#build-an-image-with-the-configuration-interface).
 The fixture starts disposable containers with networking disabled and local TLS protocol servers; it uses no live credentials or model endpoints.
 OpenClaw's fixture adds an address to the container's loopback interface with `NET_ADMIN`, then runs the agent as UID 1000.
@@ -115,7 +115,7 @@ Hermes may make model-metadata requests during startup; these are separate from 
 The command exits successfully when the assertions pass and prints failures and subprocess output to the terminal.
 It removes its named container and temporary certificates, including after failure.
 Read the assertion failure and rerun after correcting the fixture or image.
-These tests do not qualify model quality, live upstream authentication, or inference through a real OpenShell gateway.
+These tests do not evaluate model quality or test live upstream authentication or inference through a real OpenShell gateway.
 
 ## OpenClaw Agent Tool Policies
 
@@ -217,7 +217,7 @@ python3 tools/fabric-adapter-experiment.py --harness hermes --interfaces --herme
 These offline containers check nondefault API/dashboard ports, authenticated native readiness, HTML delivery, browser WebSocket session creation or rejection, and the absence of a disabled dashboard listener.
 They also reject changed credentials and native route configuration without overwriting drift, then verify restored readiness and credential retention across restart.
 The fixture invokes the hosted probe and two Fabric turns against local model responses.
-It does not qualify browser rendering, interactive terminal behavior, or live OpenShell forwarding.
+It does not test browser rendering, interactive terminal behavior, or live OpenShell forwarding.
 
 Run `hermes_interfaces_sdk_export_reapply_and_drift` in the `deployment` test binary with a verified bundle to check retained interface intent through SDK apply, CLI export, reapply, drift rejection, and destroy.
 
@@ -240,4 +240,4 @@ That narrow credential assertion does not establish general redaction or product
 Expect exit status zero when the Relay assertions pass.
 The test checks traces inside its disposable container and removes that container afterward.
 On failure, read the assertion and subprocess output, correct the fixture/image mismatch, and rerun with an owned test image.
-This is an offline tracing check, not live Hermes/Relay or OpenShell qualification.
+This test checks tracing offline; live Hermes/Relay and OpenShell behavior need separate tests.

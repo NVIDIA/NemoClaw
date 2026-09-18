@@ -120,7 +120,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
 
 #[test]
 fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
-    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","NOTICE.md"],"downloads":{}}"#;
     let recipe = nemoclaw_build::RuntimeArtifact::parse(input).unwrap();
     assert_eq!(recipe.name, "fixture");
     assert_eq!(recipe.files, ["Dockerfile", "NOTICE.md"]);
@@ -140,7 +140,7 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
     let error = RuntimeArtifact::parse(b"{").err().unwrap();
     assert!(matches!(error, RuntimeArtifactError::Json(_)));
     assert!(error.source().unwrap().is::<serde_json::Error>());
-    let valid = serde_json::json!({"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
+    let valid = serde_json::json!({"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}});
     let mut invalid = valid.clone();
     invalid["name"] = "".into();
     assert!(matches!(
@@ -201,7 +201,7 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
 
 #[test]
 fn artifact_inputs_cannot_overwrite_the_retained_build_manifest() {
-    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
+    let input = br#"{"name":"fixture","platform":"linux_arm64","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile","build.json"],"downloads":{}}"#;
     assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }
 
@@ -217,4 +217,10 @@ fn runtime_artifacts_can_select_native_linux_amd64() {
     assert!(
         nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&invalid).unwrap()).is_err()
     );
+}
+
+#[test]
+fn runtime_artifacts_require_an_explicit_platform() {
+    let input = br#"{"name":"fixture","image":"local/fixture:test","sourceDateEpoch":1234,"files":["Dockerfile"],"downloads":{}}"#;
+    assert!(nemoclaw_build::RuntimeArtifact::parse(input).is_err());
 }

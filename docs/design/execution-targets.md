@@ -146,9 +146,9 @@ The live test and a delayed-delete fixture protect the correction.
 This result covers an external native OpenShell gateway and rootless Podman sandboxes on this Linux host.
 That earlier result did not qualify managed Podman resources.
 The [managed gateway contract](../usage.md#use-a-managed-podman-gateway) anchors identity in its retained owned network and signing keys.
-[New managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies Deep Agents inference and the lifecycle on local rootless Podman 5.8.7 with OpenShell `1fe79f539`.
+[New managed Podman test results](../validation/rust-managed-podman-linux-arm64.md) qualify Deep Agents inference and the lifecycle on local rootless Podman 5.8.7 with OpenShell `1fe79f539`.
 Managed Podman inference servers, rootful operation, remote placement, and other operating systems remain unqualified.
-See the [Podman evidence](../validation/rust-podman-rootless-linux-arm64.json).
+See the [Podman test results](../validation/rust-podman-rootless-linux-arm64.json).
 
 ### SSH Transport Validation
 
@@ -190,7 +190,7 @@ Fixture qualification covers read-only plan, insufficient and missing capacity, 
 Real loopback SSH qualifies the collector against this DGX Spark's Docker daemon.
 A separate-host GPU apply and an agent reply across that host boundary remain required before claiming live remote deployment qualification.
 
-The example requires preloaded pinned runtime images and a private routable IPv4 interface; the current managed model hardware profile remains Linux ARM64 DGX Spark.
+The example requires preloaded pinned runtime images and a private routable IPv4 interface; it selects the Linux ARM64 DGX Spark hardware contract.
 
 ### Volume Observation Correction
 

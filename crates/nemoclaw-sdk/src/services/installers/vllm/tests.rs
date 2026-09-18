@@ -38,6 +38,13 @@ fn vllm_emits_only_selected_recipe_options_and_preserves_basic_defaults() {
     );
     assert!(!args.iter().any(String::is_empty));
     service.recipe = None;
+    service.hardware = Some(
+        crate::services::installers::vllm::ServiceHardware::Profile {
+            profile: crate::services::installers::vllm::HardwareProfile::DgxSpark,
+            architecture: None,
+            min_gpu_memory_bytes: None,
+        },
+    );
     service.serving.tool_parser = "hermes".into();
     let args = arguments::arguments(&service, "/data/model", 121 * GIB).unwrap();
     assert!(args.iter().any(|v| v == "--enforce-eager"));

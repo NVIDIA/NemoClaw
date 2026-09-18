@@ -27,6 +27,7 @@ pub fn specification(
             .ok_or(Error::State("missing proxy generation"))?
             .clone(),
         image: proxy.runtime.image.clone(),
+        image_pull_policy: proxy.runtime.image_pull_policy,
         network: "host".into(),
         bind_address: proxy
             .endpoint
@@ -57,6 +58,7 @@ pub fn row_spec(row: &Row) -> Result<ServiceSpec, Error> {
         owner: get("owner")?,
         generation: get("generation")?,
         image: get("image")?,
+        image_pull_policy: crate::config::ImagePullPolicy::from_row(row)?,
         network: "host".into(),
         proxy: Some(ProxySettings {
             upstream: get("upstream")?,
@@ -77,7 +79,7 @@ pub fn targets(
 ) -> Result<Vec<Target>, Error> {
     let spec = specification(document, proxy, generations)?;
     let settings = spec.proxy.as_ref().unwrap();
-    let common: Row = [
+    let mut common: Row = [
         ("name", spec.name.clone()),
         ("owner", spec.owner.clone()),
         ("generation", spec.generation.clone()),
@@ -91,6 +93,9 @@ pub fn targets(
     .into_iter()
     .map(|(k, v)| (k.into(), v))
     .collect();
+    if let Some(policy) = spec.image_pull_policy {
+        common.insert("image_pull_policy".into(), policy.as_str().into());
+    }
     Ok([STORAGE, PROXY, MODEL]
         .into_iter()
         .map(|kind| {

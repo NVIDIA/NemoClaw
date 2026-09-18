@@ -77,13 +77,18 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 NVIDIA host; read-only remote host collection"]
+#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 or AMD64 NVIDIA host; read-only remote host collection"]
 async fn ssh_capacity_belongs_to_the_selected_docker_host() {
     use nemoclaw_sdk::hardware::{HostObserver, SshHost};
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     let observation = SshHost.observe(&engine).await.unwrap();
-    let daemon = engine.info().await.unwrap().id.unwrap();
-    let capacity = observation.for_engine(&daemon).unwrap();
-    assert_eq!(capacity.architecture, "arm64");
+    let info = engine.info().await.unwrap();
+    let capacity = observation.for_engine(info.id.as_deref().unwrap()).unwrap();
+    let expected = match info.architecture.as_deref().unwrap() {
+        "aarch64" | "arm64" => "arm64",
+        "x86_64" | "amd64" => "amd64",
+        other => panic!("unsupported test host architecture: {other}"),
+    };
+    assert_eq!(capacity.architecture, expected);
     assert!(capacity.total > 0 && capacity.disk_free > 0);
 }

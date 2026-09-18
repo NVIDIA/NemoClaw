@@ -19,7 +19,7 @@ use bollard::{
 use futures_util::StreamExt;
 use serde_json::json;
 #[async_trait::async_trait]
-trait CapacityGate: Sync {
+trait CapacityCheck: Sync {
     async fn check(
         &self,
         engine: &Engine,
@@ -29,7 +29,7 @@ trait CapacityGate: Sync {
 }
 struct HostCapacity;
 #[async_trait::async_trait]
-impl CapacityGate for HostCapacity {
+impl CapacityCheck for HostCapacity {
     async fn check(
         &self,
         engine: &Engine,
@@ -47,7 +47,7 @@ impl Engine {
         &self,
         spec: &Spec,
         id: &str,
-        capacity: &dyn CapacityGate,
+        capacity: &dyn CapacityCheck,
     ) -> Result<RuntimeObservation, Error> {
         let observed = match self.observe_runtime(spec, id).await {
             Err(Error::PartialRuntime) => None,
@@ -60,6 +60,9 @@ impl Engine {
         }
         if spec.process.is_some() {
             capacity.check(self, spec, observed.as_ref()).await?;
+        }
+        if observed.is_some() {
+            self.ensure_image(spec).await?;
         }
         if observed.is_none() {
             if !id.is_empty() {
@@ -112,23 +115,22 @@ impl Engine {
                 .map_err(|error| remote(&error))?;
         }
         self.observe_runtime(spec, id).await?.ok_or(Error::Conflict(
-            "started runtime is unobservable; retain intent",
+            "cannot observe the runtime after starting it; keep the state directory and run apply again with the same configuration",
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
-        let mut image = self.image(spec.image()).await?;
-        if image.is_none() {
-            if spec
-                .process
-                .as_ref()
-                .is_some_and(|process| !process.pull_image)
-            {
-                return Err(Error::Conflict("pinned service image is not loaded"));
-            }
-            self.pull_image(spec.image()).await?;
-            image = self.image(spec.image()).await?;
-        }
-        let image = image.ok_or(ObservationError::Incomplete)?;
+        use crate::config::ImagePullPolicy;
+        let policy = spec.process.as_ref().map_or_else(
+            || spec.gateway.image_pull_policy.unwrap_or_default(),
+            |process| {
+                process.image_pull_policy.unwrap_or(if process.pull_image {
+                    ImagePullPolicy::IfNotPresent
+                } else {
+                    ImagePullPolicy::Never
+                })
+            },
+        );
+        let image = self.acquire_image(spec.image(), policy).await?;
         if spec.process.is_some() {
             spec.validate_process_image(&image)?;
         } else {
@@ -147,7 +149,29 @@ impl Engine {
         }
         Ok(())
     }
+    pub(crate) async fn acquire_image(
+        &self,
+        reference: &str,
+        policy: crate::config::ImagePullPolicy,
+    ) -> Result<bollard::models::ImageInspect, Error> {
+        use crate::config::ImagePullPolicy;
+        let mut image = self.image(reference).await?;
+        if policy == ImagePullPolicy::Always
+            || (policy == ImagePullPolicy::IfNotPresent && image.is_none())
+        {
+            self.pull_image(reference).await?;
+            image = self.image(reference).await?;
+        }
+        image.ok_or(Error::Conflict(
+            "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling",
+        ))
+    }
     pub(crate) async fn pull_image(&self, image: &str) -> Result<(), Error> {
+        use crate::{
+            ByteProgress, DownloadPhase,
+            download::{Reporter, layer_id},
+        };
+        let mut progress = Reporter::new(image);
         let options = CreateImageOptions {
             from_image: Some(image.into()),
             ..Default::default()
@@ -160,10 +184,32 @@ impl Engine {
                     "pinned image pull failed; inspect retained engine state",
                 ));
             }
+            // Never forward registry text. Only known phases and digest-like IDs
+            // are progress; authoritative errors continue through the pull result.
+            let phase = match event.status.as_deref() {
+                Some("Downloading") => Some(DownloadPhase::Downloading),
+                Some("Extracting") => Some(DownloadPhase::Extracting),
+                Some("Verifying Checksum") => Some(DownloadPhase::Verifying),
+                Some("Pull complete" | "Already exists") => Some(DownloadPhase::Complete),
+                _ => None,
+            };
+            if let (Some(phase), Some(layer)) = (phase, layer_id(event.id.as_deref())) {
+                let bytes = event.progress_detail.and_then(|detail| {
+                    Some(ByteProgress {
+                        completed: u64::try_from(detail.current?).ok()?,
+                        total: detail
+                            .total
+                            .and_then(|total| u64::try_from(total).ok())
+                            .filter(|total| *total > 0),
+                    })
+                });
+                progress.report(Some(layer), phase, bytes);
+            }
         }
         if self.image(image).await?.is_none() {
             return Err(Error::Conflict("pinned image pull incomplete"));
         }
+        progress.complete();
         Ok(())
     }
     /// Observe an owned network, or check that its subnet is available for creation.

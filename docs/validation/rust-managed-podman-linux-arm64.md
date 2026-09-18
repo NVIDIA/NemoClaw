@@ -55,7 +55,7 @@ Apply reported unsupported Fabric health, consistent with the pinned Fabric cont
 
 ## Docker Regression Checks
 
-The [dependency upgrade gate](../testing/live.md#dependency-upgrade-gate) passed with bundle `0.1.0-dev.1a832af12797dc48` and the same independent Qwen service.
+The [dependency upgrade gate](../testing/live.md#dependency-upgrade-test) passed with bundle `0.1.0-dev.1a832af12797dc48` and the same independent Qwen service.
 It waited for apply to exit, obtained a real reply from the existing hosted OpenClaw runtime, preserved resource and runtime identities through export/reapply, and destroyed its owned workloads.
 Its OpenClaw image was `nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8`.
 

@@ -149,3 +149,47 @@ async fn readiness_waits_for_connection_refused_startup_but_never_retries_invent
         assert_eq!(requests.lock().unwrap().len(), 1);
     }
 }
+
+#[tokio::test]
+async fn model_download_reports_bytes_and_only_completes_after_inventory_verification() {
+    use crate::{ByteProgress, DownloadPhase, Progress, with_download_progress};
+    for verified in [false, true] {
+        let (client, _, task) = server(vec![
+            (200, "{\"models\":[]}".into()),
+            (200, "{\"status\":\"pulling abcdef\",\"digest\":\"sha256:abcdef\",\"completed\":50,\"total\":100}\n{\"status\":\"success\"}\n".into()),
+            (200, if verified { serde_json::json!({"models":[model()]}).to_string() } else { "{\"models\":[]}".into() }),
+        ]).await;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let result = with_download_progress(
+            "ollama_model.chat".into(),
+            Arc::new(move |event| {
+                if let Progress::Download(event) = event {
+                    seen.lock().unwrap().push(event);
+                }
+            }),
+            client.ensure("fixture:latest"),
+        )
+        .await;
+        task.await.unwrap();
+        assert_eq!(result.is_ok(), verified);
+        let events = events.lock().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.phase == DownloadPhase::Downloading
+                    && event.bytes
+                        == Some(ByteProgress {
+                            completed: 50,
+                            total: Some(100)
+                        })
+                    && event.layer.as_deref() == Some("sha256:abcdef"))
+        );
+        assert_eq!(
+            events
+                .iter()
+                .any(|event| event.phase == DownloadPhase::Complete && event.layer.is_none()),
+            verified
+        );
+    }
+}

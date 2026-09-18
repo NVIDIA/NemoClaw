@@ -3,11 +3,14 @@
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
 mod config;
 mod constraints;
+mod hardware_profile;
+mod service_hardware;
 use crate::Error;
 pub use config::{
-    Memory, Model, Service, ServiceAuthentication, ServiceContainer, ServiceHardware, ServiceIpc,
-    ServicePlacement, ServicePublication, Serving,
+    Memory, Model, Service, ServiceAuthentication, ServicePlacement, ServicePublication, Serving,
 };
+pub use hardware_profile::HardwareProfile;
+pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};
 pub(crate) mod arguments;
 mod artifacts;
 pub use artifacts::RuntimeStatus;
@@ -175,17 +178,7 @@ fn targets(
         || document.spec.gateway.bridge(),
         |publication| Ok(publication.bind_address.clone()),
     )?;
-    let architecture = service
-        .hardware
-        .as_ref()
-        .map(|hardware| hardware.architecture.clone())
-        .or_else(|| {
-            service
-                .recipe
-                .as_ref()
-                .map(|recipe| recipe.compatibility.architecture.clone())
-        })
-        .unwrap_or_else(|| "arm64".into());
+    let architecture = service.architecture()?.to_owned();
     let process = Process {
         engine: service.runtime.engine.clone(),
         image: service.runtime.image.clone(),
@@ -194,6 +187,7 @@ fn targets(
         architecture,
         image_labels,
         pull_image: false,
+        image_pull_policy: None,
         configuration: serde_json::to_string(&runtime_service)
             .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
         entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
@@ -238,10 +232,16 @@ fn targets(
         (STORAGE_KIND, storage.json()?),
         (SERVICE_KIND, spec.json()?),
     ] {
+        let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
+        if kind == SERVICE_KIND
+            && let Some(policy) = service.runtime.image_pull_policy
+        {
+            values.insert("image_pull_policy".into(), policy.as_str().into());
+        }
         result.push(Target {
             kind: kind.into(),
             address: address(kind, name),
-            values: crate::backend::Row::from([("spec".into(), encoded)]),
+            values,
         });
     }
     Ok((result, spec))

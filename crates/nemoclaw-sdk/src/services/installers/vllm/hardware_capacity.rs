@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host-reserve policy informed by MiaAI Lab's single-Spark start.sh (AGPL-3.0-or-later).
 // Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
-use super::Service;
-use crate::{
-    Error,
-    hardware::{Capacity, GIB},
-};
+use crate::hardware::{Capacity, GIB};
+use crate::{Error, services::installers::vllm::Service};
 pub fn check_capacity(
     service: &Service,
     c: &Capacity,
@@ -43,7 +40,7 @@ pub fn check_capacity(
 pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(), Error> {
     service.validate()?;
     check_compatibility(service, c)?;
-    if service.hardware.is_some() {
+    if service.dedicated_hardware().is_some() {
         let gpu = c
             .gpu_memory
             .as_ref()
@@ -92,7 +89,7 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
 
 /// Total memory used to translate the serving budget into vLLM's utilization setting.
 pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Error> {
-    if service.hardware.is_some() {
+    if service.dedicated_hardware().is_some() {
         capacity
             .gpu_memory
             .as_ref()
@@ -104,7 +101,14 @@ pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Err
 }
 
 fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
-    if let Some(required) = &service.hardware {
+    if let Some(super::ServiceHardware::Profile { profile, .. }) = &service.hardware
+        && !profile.matches_gpu(&c.gpu)
+    {
+        return Err(Error::Conflict(
+            "execution GPU does not match the declared hardware profile",
+        ));
+    }
+    if let Some(required) = service.dedicated_hardware() {
         let gpu = c
             .gpu_memory
             .as_ref()
@@ -132,8 +136,19 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
             ));
         }
         Ok(())
-    } else {
+    } else if matches!(
+        service.hardware,
+        Some(super::ServiceHardware::Profile {
+            profile: super::HardwareProfile::DgxSpark,
+            ..
+        })
+    ) {
         super::spark::check_compatibility(c)
+    } else {
+        Err(crate::config::ConfigError::new(
+            "declare exactly one of service.hardware or service.recipe",
+        )
+        .into())
     }
 }
 
@@ -145,10 +160,12 @@ pub fn check_service_budgets(services: &[(&Service, bool)], c: &Capacity) -> Res
     let mut new_budget = 0u64;
     let mut reserve = 0u64;
     let mut startup = 0u64;
-    let dedicated = services.first().is_some_and(|(s, _)| s.hardware.is_some());
+    let dedicated = services
+        .first()
+        .is_some_and(|(s, _)| s.dedicated_hardware().is_some());
     for &(service, starting) in services {
         check_memory(service, c, starting)?;
-        if service.hardware.is_some() != dedicated {
+        if service.dedicated_hardware().is_some() != dedicated {
             return Err(Error::Conflict(
                 "services sharing an engine must use the same GPU memory contract",
             ));

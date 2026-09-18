@@ -50,7 +50,8 @@ For Pi, see [model selection and updates](agents.md#pi-model-selection).
 The [multiple-provider example](../examples/multiple-providers.yaml) gives a researcher a hosted smart model and a local fast model; the writer selects only the local model.
 Each route selects its own `provider` or `providerRef`, with that provider's API and credential reference.
 The sandbox attaches the union of those selections, deduplicated by definition identity.
-Unused definitions add no resources, credential requirements, or network grants.
+Unused inference provider definitions add no resources, credential requirements, or network grants.
+Services declared under `spec.services` are installed and checked independently of provider selection.
 Selected definitions must have distinct provider names within their [definition scope](configuration-references.md).
 Different sandboxes can reuse local provider names.
 
@@ -65,13 +66,14 @@ Each agent runs in its own sandbox; its model-selection policy does not further 
 Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
-Multiple selected providers can each own a vLLM service, with independent storage and separate generated credentials when `service.authentication: bearer` is configured.
+Declare multiple named vLLM services with independent storage and separate generated credentials when `authentication: bearer` is configured.
+Providers reference a service by name with `serviceRef`; multiple providers can share the same service.
 Services on the same engine require distinct publication addresses and the same managed network CIDR.
 Plan checks their combined GPU budgets and startup memory; the runtime rechecks available memory before starting inference and keeps its memory watchdog active.
 An existing GPU process alone does not reject startup when measured capacity is sufficient.
-Managed Ollama and Ollama proxies still share a singleton lifecycle: at most one selected provider may use either mode.
+Use separate deployments for additional Ollama services or proxies: the current installers reuse deployment-level container names even though the parser accepts multiple definitions.
 Multiple sandboxes can share any selected provider.
-Managed vLLM resource identities now include the provider identity; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
+Managed vLLM resource identities include the service name; use a fresh deployment and the previous bundle for export or teardown of older singleton state.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures; live multi-provider qualification remains separate.
 
 ## Choose a Service Mode
@@ -79,10 +81,10 @@ The current tests establish configuration, compilation, API attachment, and drif
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../examples/inference-tuning.yaml), [Hermes authentication](../examples/hermes-auth.yaml) |
-| NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
-| Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
-| NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
-| The Docker daemon running vLLM is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
+| NemoClaw should run Ollama and manage its model lifecycle | Declare a service with `kind: ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
+| Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
+| NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
+| The Docker daemon running vLLM is reached through SSH | Set `runtime.engine` to the SSH endpoint, declare `placement`, and select a private `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
@@ -133,9 +135,9 @@ Follow the [agent image build prerequisites](build.md#build-agent-images), then 
 
 ```sh
 # On Linux ARM64:
-docker buildx bake openclaw --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 # For Hermes:
-docker buildx bake hermes --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load
 # On Linux AMD64:
 AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load
 ```
@@ -191,12 +193,12 @@ After an interrupted pull, retain the original YAML and state and explicitly rea
 Destroy removes the owned service and OpenShell registration while retaining model storage and the pre-existing network.
 See [state retention](state.md) before removing any retained data.
 
-The [service contract](../crates/nemoclaw-sdk/src/services/contract.rs), [Ollama installer](../crates/nemoclaw-sdk/src/services/installers/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/services/installers/ollama/models.rs), and [recovery evidence](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
+The [service contract](../crates/nemoclaw-sdk/src/services/contract.rs), [Ollama installer](../crates/nemoclaw-sdk/src/services/installers/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/services/installers/ollama/models.rs), and [recovery test results](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
 The [original live result](validation/rust-ollama-linux-arm64.json) used CPU inference and records the host-network port-publication failure; it does not qualify GPU execution.
 
 ## Authenticate a Managed vLLM Service
 
-Set `service.authentication: bearer` to generate a private key for a managed vLLM service.
+Set `authentication: bearer` under `spec.services.<name>` to generate a private key for a managed vLLM service.
 Omission preserves the existing unauthenticated serving behavior.
 Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest; older images lack the required authentication capability and are rejected before creation.
 Do not supply `inferenceProviders[].credential` for a managed service.
@@ -225,36 +227,43 @@ OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completion
 For Pi, omit provider `api` and supply `piModel` metadata when the model is absent from its registry; see the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
-Build the proxy image from the repository root:
+Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
 
 ```sh
-docker buildx bake ollama-proxy --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load
 docker image inspect nc-fabric:ollama-proxy --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable image reference below, choose an available private proxy address reachable by OpenShell, and replace the model digest with the lowercase 64-character value reported by Ollama's `/api/tags` API:
 
 ```yaml
-# Under spec.inferenceProviders:
-- name: local
-  provider: openai
-  management: external
-  endpoint: http://127.0.0.1:11434/v1
-  ollamaProxy:
+# Under spec:
+services:
+  local:
+    kind: ollamaProxy
     management: managed
-    engine: unix:///var/run/docker.sock
-    image: nc-fabric@sha256:REPLACE_WITH_IMAGE_DIGEST
+    runtime:
+      provider: docker
+      engine: unix:///var/run/docker.sock
+      image: nc-fabric@sha256:REPLACE_WITH_IMAGE_DIGEST
     endpoint: http://172.20.0.1:11435/v1
-    model:
-      management: external
-      digest: REPLACE_WITH_MODEL_DIGEST
+    upstream:
+      endpoint: http://127.0.0.1:11434/v1
+      model:
+        management: external
+        name: qwen3:4b
+        digest: REPLACE_WITH_MODEL_DIGEST
+inferenceProviders:
+  - name: local
+    provider: openai
+    serviceRef: local
 ```
 
-The provider's `endpoint` identifies the external daemon; `ollamaProxy.endpoint` identifies the managed proxy and supplies the native inference URL.
-The route's model must name the installed model including its tag, such as `qwen3:4b`.
+The service's `upstream.endpoint` identifies the external daemon; its `endpoint` identifies the managed proxy and supplies the native inference URL.
+The route's model must match `upstream.model.name`, including its tag, such as `qwen3:4b`.
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
-Do not also declare `service`, `ollama`, or `credential` on this provider.
-All three ownership declarations in this example are optional and preserve these same lifecycle choices when omitted.
+Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
+Both ownership declarations in this example are optional and preserve these same lifecycle choices when omitted.
 
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.
@@ -373,7 +382,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Phase | Current budget and setting |
 |---|---|
 | OpenClaw agent turn and native provider request | Selected harness's `execution.timeoutSeconds`; defaults to 600 seconds; see [execution defaults](agents.md#openclaw-execution-settings) |
-| Managed vLLM backend loading | `service.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
+| Managed vLLM backend loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Managed vLLM readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container, watchdog, and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
@@ -421,7 +430,7 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Workflow or claim | Documentation status |
 |---|---|
 | Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
-| Managed model router and model-pool lifecycle | **TBD** — requires implementation and lifecycle evidence |
+| Managed model router and model-pool lifecycle | **TBD** — requires an implementation and lifecycle test results |
 | Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
 | Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
 | Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
@@ -429,4 +438,4 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Gated model repositories, custom remote-code models, GGUF, and nested checkpoints in the generic managed backend | **TBD** — outside the current [managed-model contract](models.md) |
 
 These gaps do not prevent use of a separately verified external endpoint with an accepted API.
-They do prevent treating an old provider or platform guide as evidence for the current implementation.
+They do prevent treating an old provider or platform guide as verification of the current implementation.

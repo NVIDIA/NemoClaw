@@ -16,6 +16,8 @@ spec:
   services:
     fast:
       kind: vllm
+      hardware:
+        profile: dgx-spark
       runtime:
         provider: docker
         engine: unix:///var/run/docker.sock
@@ -42,6 +44,8 @@ spec:
         consecutiveSamples: 5
     smart:
       kind: vllm
+      hardware:
+        profile: dgx-spark
       runtime:
         provider: docker
         engine: unix:///var/run/docker.sock

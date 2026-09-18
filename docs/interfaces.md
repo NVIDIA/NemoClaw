@@ -70,7 +70,7 @@ Omitting `interfaces` preserves the headless OpenClaw gateway behavior.
 
 ## Build and Apply
 
-Build a fresh OpenClaw image from the repository root with `docker buildx bake openclaw --load`.
+Build a fresh OpenClaw image from the repository root with `AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load`, selecting `linux/amd64` instead on an AMD64 host.
 Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), including image availability on the sandbox compute daemon.
 Use its immutable digest in the [dashboard example](../examples/openclaw-dashboard.yaml), replacing the zero-digest placeholder, deployment UID, endpoint, and model values.
 Apply with the [desired-state workflow](usage.md).
@@ -182,7 +182,7 @@ It does not unify API and dashboard conversations.
 From the repository root, follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface) and run:
 
 ```sh
-docker buildx bake hermes --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load
 ```
 
 The build includes native dashboard and TUI assets; startup does not install Node dependencies or rebuild assets.

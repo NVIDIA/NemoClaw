@@ -256,7 +256,7 @@ pub(super) fn constrain(root: &mut Value) {
         {"title": "External gateway", "required": ["endpoint"], "properties": {
             "management": {"const": "external"}, "endpoint": {"pattern": "^https?://"},
             "engine": {"const": ""}, "image": {"const": ""}, "networkCIDR": {"const": ""}
-        }, "allOf": [forbid(&["network", "storage"])]}
+        }, "allOf": [forbid(&["network", "storage", "imagePullPolicy"])]}
     ]);
     gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
     gateway["then"] = forbid(&["credential", "tls"]);

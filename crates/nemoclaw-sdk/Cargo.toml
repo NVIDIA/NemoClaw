@@ -40,6 +40,7 @@ reqwest.workspace = true
 futures-util.workspace = true
 bollard.workspace = true
 tar.workspace = true
+interprocess = { version = "2.4.4", features = ["tokio"] }
 time.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -48,3 +49,6 @@ rustix.workspace = true
 [target.'cfg(unix)'.dependencies]
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1"

@@ -170,5 +170,5 @@ Use the version-specific index explicitly; header text alone does not verify MCP
 Complete rendered-page/legacy-route coverage and public-cutover verification remain **TBD**.
 
 Fern's [docs MCP server](https://buildwithfern.com/learn/docs/ai-features/mcp-server) requires Ask Fern to be enabled for the destination.
-Provisioning, search indexing, MCP access, and evidence that results stay within v1 are **TBD**.
+Provisioning, search indexing, MCP access, and checks that results stay within v1 are **TBD**.
 Do not advertise a working v1 search or MCP endpoint based only on a successful local build.

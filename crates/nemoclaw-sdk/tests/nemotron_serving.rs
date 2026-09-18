@@ -195,7 +195,12 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
     let runtime_service: Service =
         serde_json::from_str(spec.runtime_configuration().unwrap()).unwrap();
     assert_eq!(
-        runtime_service.hardware.as_ref().unwrap().architecture,
+        runtime_service
+            .hardware
+            .as_ref()
+            .unwrap()
+            .architecture()
+            .unwrap(),
         "amd64"
     );
     assert!(runtime_service.placement.is_none());

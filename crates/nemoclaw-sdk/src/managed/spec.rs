@@ -44,6 +44,9 @@ pub struct Process {
     #[serde(default)]
     pub image_labels: std::collections::BTreeMap<String, String>,
     pub pull_image: bool,
+    /// Mutable acquisition policy supplied by the provider, excluded from identity.
+    #[serde(skip)]
+    pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
     pub configuration: String,
     pub entrypoint: Vec<String>,
     #[serde(default)]
@@ -237,10 +240,13 @@ impl Spec {
     /// # Errors
     /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
+        let mut identity = self.clone();
+        identity.gateway.image_pull_policy = None;
+
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
             (GENERATION_LABEL.into(), self.generation.clone()),
-            (SPEC_LABEL.into(), hex(Sha256::digest(self.json()?))),
+            (SPEC_LABEL.into(), hex(Sha256::digest(identity.json()?))),
         ]
         .into())
     }

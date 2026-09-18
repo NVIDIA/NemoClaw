@@ -149,7 +149,7 @@ Do not replay an uncertain native invocation merely to reproduce a log entry.
 The [OpenClaw](../image/fabric/openclaw_adapter.py) and [Hermes](../image/fabric/hermes_adapter.py) adapters define these paths and append behavior.
 The experimental [Hermes Relay mode](agents.md#hermes-relay-tracing) without explicit `interfaces` uses another adapter; its trace artifacts do not imply that the local API process or `api.log` exists.
 
-Collection procedures for other harnesses, Hermes dashboard logs, and an inaccessible sandbox: **TBD** pending evidence for each process and access path.
+Collection procedures for other harnesses, Hermes dashboard logs, and an inaccessible sandbox: **TBD** pending verification of each process and access path.
 
 ## Traces and Web Search
 

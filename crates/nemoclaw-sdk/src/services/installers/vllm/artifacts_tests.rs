@@ -186,6 +186,9 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
                     crate::services::installers::vllm::configured_service(&observation.spec)
                         .unwrap();
                 service.recipe = None;
+                service.hardware = Some(
+                    serde_json::from_value(serde_json::json!({"profile":"dgx-spark"})).unwrap(),
+                );
                 service.model.repository = "owner/model".into();
                 service.model.revision = "a".repeat(40);
                 observation.spec.process.as_mut().unwrap().configuration =

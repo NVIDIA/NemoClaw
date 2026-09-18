@@ -137,6 +137,14 @@ pub struct Gateway {
     #[schemars(default)]
     /// Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.
     pub image: String,
+    #[serde(
+        rename = "imagePullPolicy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "super::ImagePullPolicy")]
+    /// Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container.
+    pub image_pull_policy: Option<super::ImagePullPolicy>,
     #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
     /// Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.

@@ -39,4 +39,4 @@ Public provider distribution and installation instructions: **TBD**.
 Supported user-authored HCL examples and their lifecycle/retention contract: **TBD**.
 Import, adoption, remote-state backends, and compatibility across provider releases: **TBD**.
 
-These sections need implementation and qualification evidence before they can recommend a direct-use workflow.
+These sections need verified implementations and test results before they can recommend a direct-use workflow.

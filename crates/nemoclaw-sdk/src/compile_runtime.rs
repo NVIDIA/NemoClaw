@@ -38,10 +38,16 @@ fn runtime_targets_with_plans(
     };
     let mut storage = gateway.clone();
     storage.layout = 0;
-    let target = |kind: &str, spec: String| Target {
-        kind: kind.into(),
-        address: format!("nemoclaw_{kind}.runtime"),
-        values: Row::from([("spec".into(), spec)]),
+    let target = |kind: &str, spec: String| {
+        let mut values = Row::from([("spec".into(), spec)]);
+        if let Some(policy) = document.spec.gateway.image_pull_policy {
+            values.insert("image_pull_policy".into(), policy.as_str().into());
+        }
+        Target {
+            kind: kind.into(),
+            address: format!("nemoclaw_{kind}.runtime"),
+            values,
+        }
     };
     let mut result = if document.spec.gateway.management == "managed" {
         vec![
@@ -70,6 +76,9 @@ pub fn compile_runtime(
     for target in runtime_targets_with_plans(document, generations, &service_plans)? {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
+        if let Some(policy) = target.values.get("image_pull_policy") {
+            attrs["image_pull_policy"] = json!(policy);
+        }
         if target.kind == GATEWAY_STORAGE_KIND
             || crate::services::resource_behavior(&target.kind).retained_storage
         {

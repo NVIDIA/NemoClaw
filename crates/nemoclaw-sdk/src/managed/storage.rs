@@ -103,7 +103,7 @@ impl Storage {
             return Ok(actual);
         }
         // A named create may return an existing volume. Re-observe after the
-        // mutation rather than treating its response as ownership evidence.
+        // mutation to verify that the volume has our ownership labels.
         engine
             .api
             .create_volume(VolumeCreateRequest {
@@ -115,7 +115,7 @@ impl Storage {
             .await
             .map_err(|error| remote(&error))?;
         self.observe(engine, id).await?.ok_or(Error::Conflict(
-            "created model storage is unobservable; retain intent and reconcile",
+            "cannot observe model storage after creation; keep the state directory and run apply again with the same configuration",
         ))
     }
 }

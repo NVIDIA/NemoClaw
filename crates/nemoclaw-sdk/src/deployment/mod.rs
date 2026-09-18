@@ -28,8 +28,9 @@ use std::{
 };
 pub use timing::StepOutcome;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
+    Download(crate::DownloadProgress),
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
         resource: &'static str,

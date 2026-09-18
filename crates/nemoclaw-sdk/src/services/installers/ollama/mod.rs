@@ -129,6 +129,7 @@ fn managed_specification(
             .ok_or(Error::State("missing Ollama generation"))?
             .clone(),
         image: service.runtime.image.clone(),
+        image_pull_policy: service.runtime.image_pull_policy,
         network: service.network.name().into(),
         bind_address: service
             .endpoint
@@ -148,7 +149,7 @@ fn managed_targets(
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
     let spec = managed_specification(document, service, generations)?;
-    let common = crate::backend::Row::from([
+    let mut common = crate::backend::Row::from([
         ("name".into(), spec.name),
         ("owner".into(), spec.owner),
         ("generation".into(), spec.generation),
@@ -157,6 +158,9 @@ fn managed_targets(
         ("network".into(), spec.network),
         ("bind_address".into(), spec.bind_address),
     ]);
+    if let Some(policy) = spec.image_pull_policy {
+        common.insert("image_pull_policy".into(), policy.as_str().into());
+    }
     let mut running = common.clone();
     running.insert("running".into(), "true".into());
     Ok(vec![
@@ -333,9 +337,11 @@ impl OllamaProxy {
         document: &Document,
         generations: &Generations,
     ) -> Result<String, Error> {
+        let mut spec = proxy::specification(document, self, generations)?;
+        spec.image_pull_policy = None;
         Ok(crate::services::authentication::Source::OllamaProxy {
             engine: self.runtime.engine.clone(),
-            spec: Box::new(proxy::specification(document, self, generations)?),
+            spec: Box::new(spec),
         }
         .json()?)
     }

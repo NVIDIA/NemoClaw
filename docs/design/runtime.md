@@ -17,8 +17,12 @@ Keeping those decisions separate lets an ordinary fixture process exercise the s
 The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2) removed its need for a complete DGX Spark service configuration.
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
-Direct hardware checks use recipe-declared compatibility or the qualified Spark defaults for ordinary models.
-Both paths retain the qualified Spark memory-policy bounds.
+Direct hardware checks use recipe-declared compatibility or an explicit `spec.services.<name>.hardware` contract for ordinary models.
+The named `dgx-spark` profile retains its GB10 and host-memory requirements.
+Other named profiles validate GPU family and dedicated memory independently of CPU architecture; GPU-only profiles require an explicit host architecture, while Grace system profiles fix ARM64.
+Custom dedicated GPU requirements retain their Linux AMD64 contract.
+Hardware identity does not select device placement or parallelism: current collectors require one GPU and the backend uses tensor parallel size 1.
+All paths retain resident memory protection; see [hardware profiles](../models.md#choose-a-hardware-profile) for configuration and qualification limits.
 
 For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
 Changing a memory threshold should not change the model snapshot's identity.
@@ -94,8 +98,8 @@ Within the existing crates:
 | Launch arguments and readiness probe | Backend modules |
 
 The recipe selects a qualified backend/hardware combination.
-The existing YAML backend identifier remains unchanged for compatibility; this refactor does not add supported combinations or an arbitrary launch-argument mechanism.
-A new hardware profile or backend normally adds a module and qualification evidence.
+The named service selects its installer with `kind: vllm`; this does not add supported combinations or an arbitrary launch-argument mechanism.
+A new hardware profile or backend normally adds a module and records test results for the new configuration.
 
 A crate is justified by a dependency or deployment boundary, not a new GPU name.
 
@@ -165,4 +169,4 @@ With the corrected settings, Qwen3-4B passed actual Fabric OpenClaw replies, unc
 Resource identities and snapshot completion records stayed stable during recovery; intentional destroy retained storage, and a later apply reused it.
 The same generic runtime image served both tested models.
 
-See the [retained evidence](../validation/rust-selected-model-linux-arm64.json).
+See the [recorded test results](../validation/rust-selected-model-linux-arm64.json).

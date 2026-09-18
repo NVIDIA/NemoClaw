@@ -42,6 +42,7 @@ impl OllamaBackend {
                 owner: field("owner")?,
                 generation: field("generation")?,
                 image: field("image")?,
+                image_pull_policy: crate::config::ImagePullPolicy::from_row(row)?,
                 network: field("network")?,
                 bind_address: field("bind_address")?,
             };
@@ -172,6 +173,8 @@ impl Backend for OllamaBackend {
             owner: field("owner")?,
             generation: field("generation")?,
             image: field("image")?,
+            image_pull_policy: crate::config::ImagePullPolicy::from_row(prior)
+                .map_err(|error| diagnostic(&error))?,
             network: field("network")?,
             bind_address: field("bind_address")?,
         };

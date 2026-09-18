@@ -143,6 +143,7 @@ impl Models {
             stream: true,
         })
         .expect("pull request");
+        let mut progress = crate::download::Reporter::new(name);
         let mut response = self
             .request(reqwest::Method::POST, "/api/pull", Some(body))
             .await?;
@@ -151,7 +152,7 @@ impl Models {
         while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
             for byte in chunk {
                 if byte == b'\n' {
-                    event(&line, &mut complete)?;
+                    event(&line, &mut complete, &mut progress)?;
                     line.clear();
                 } else {
                     if line.len() >= 1 << 20 {
@@ -164,25 +165,39 @@ impl Models {
             }
         }
         if !line.is_empty() {
-            event(&line, &mut complete)?;
+            event(&line, &mut complete, &mut progress)?;
         }
         if !complete {
             return Err(Error::Conflict(
                 "Ollama pull interrupted; retain storage and reapply the same configuration",
             ));
         }
-        self.read(name).await?.ok_or(Error::Conflict(
+        let model = self.read(name).await?.ok_or(Error::Conflict(
             "Ollama pull claimed success without a confirmed model",
-        ))
+        ))?;
+        progress.complete();
+        Ok(model)
     }
 }
-fn event(line: &[u8], complete: &mut bool) -> Result<(), Error> {
+fn event(
+    line: &[u8],
+    complete: &mut bool,
+    progress: &mut crate::download::Reporter,
+) -> Result<(), Error> {
+    use crate::{ByteProgress, DownloadPhase};
     #[derive(Deserialize)]
     struct Event {
         #[serde(default)]
         status: String,
         #[serde(default)]
         error: String,
+        // Optional progress fields do not change whether the pull succeeds.
+        #[serde(default)]
+        digest: serde_json::Value,
+        #[serde(default)]
+        completed: serde_json::Value,
+        #[serde(default)]
+        total: serde_json::Value,
     }
     let event: Event = serde_json::from_slice(line)
         .map_err(|_| Error::State("Ollama pull response is incomplete"))?;
@@ -192,6 +207,20 @@ fn event(line: &[u8], complete: &mut bool) -> Result<(), Error> {
         ));
     }
     *complete = event.status == "success";
+    if event.status.starts_with("pulling ") {
+        if let Some(layer) = crate::download::layer_id(event.digest.as_str()) {
+            progress.report(
+                Some(layer),
+                DownloadPhase::Downloading,
+                event.completed.as_u64().map(|completed| ByteProgress {
+                    completed,
+                    total: event.total.as_u64().filter(|total| *total > 0),
+                }),
+            );
+        }
+    } else if event.status == "verifying sha256 digest" {
+        progress.report(None, DownloadPhase::Verifying, None);
+    }
     Ok(())
 }
 fn transport(error: &reqwest::Error) -> Error {

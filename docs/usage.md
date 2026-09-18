@@ -10,11 +10,13 @@ Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share
 [OpenClaw and Pi agents](agents.md) can select multiple model choices.
 Each sandbox declares one `agent` and hosts one Fabric runtime; each Deep Agents instance selects one model.
 Use separate sandboxes for additional agents, with shared inference definitions when they use the same providers.
-Multiple selected providers can own independent managed vLLM services.
-Managed Ollama and its proxy still share a singleton lifecycle; see [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
+Declare managed packages under `spec.services`, then select their connections with `inferenceProviders[].serviceRef`.
+Every declared service is installed and checked during apply, even without an inference consumer.
+Multiple vLLM services can run independently.
+See [managed inference dependencies](inference.md#combine-local-and-hosted-providers) for Ollama deployment limits.
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
-Apply creates or changes runtime resources and can download model data.
+Apply creates or changes runtime resources and can download container images and model data.
 It checks configuration and readiness without sending generation requests.
 If you omit `--state-dir`, the CLI uses `.nemoclaw` in the working directory.
 
@@ -39,14 +41,14 @@ Plan prints a text preview; use `nemoclaw plan -o json deployment.yaml` for scri
 Apply and destroy emit JSON; export emits YAML.
 See [CLI output](reference/cli.md#output-and-failure) for formats and exit codes.
 
-Plan observes resources without creating containers, downloading models, preparing data, or invoking inference.
+Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
 A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
 Apply always creates its own checked plan; a previous public plan is not an approval artifact.
 
 Verify inference and a native agent reply separately; see [verification levels](inference.md#verify-the-result).
 
 For model-specific preparation supplied by a pinned image, see [inline recipes](recipes.md).
-Ordinary models can omit `service.recipe`.
+Ordinary vLLM models select `spec.services.<name>.hardware` instead of a recipe.
 
 ## Use a Managed Podman Gateway
 
@@ -106,11 +108,12 @@ Use the [YAML field reference](reference/configuration.md) to check field names,
 
 Unknown fields, duplicate keys, inline secrets, and unsupported combinations are rejected.
 Images must use immutable SHA-256 references.
-Managed DGX Spark declares `inferenceProviders[].service` instead of `endpoint`, with a pinned model, backend, serving settings, and memory policy.
+Managed DGX Spark declares a named service with `kind: vllm`, an explicit hardware profile or recipe, a pinned model, serving settings, and memory policy.
+Its inference provider uses `serviceRef` instead of `endpoint`.
 
 The checked-in [DGX Spark example](../examples/spark/spark-inline.yaml) declares preparation tools in an inline recipe and uses the resident memory supervisor.
 Follow [managed Ollama](inference.md#run-managed-ollama) for its endpoint, local engine, network, model, and recovery requirements.
-Use [`ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
+Use a service with [`kind: ollamaProxy`](inference.md#use-external-ollama-through-a-managed-proxy) to keep the daemon and installed model external while managing an authenticated proxy.
 Gateway and inference ownership are independent of the harness; the selected service must still support its request API.
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
@@ -132,9 +135,44 @@ The isolated policy permits inference routing without general network egress.
 
 The isolated preset uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
 Unavailable Landlock restrictions are not enforced.
-The [validation evidence](validation/README.md) records policy tests, not a security qualification.
+The [recorded test results](validation/README.md) cover policy tests, not a security qualification.
 
 Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
+
+## Control Container Image Downloads
+
+Set `imagePullPolicy` beside `image` under `spec.gateway` or `spec.services.<name>.runtime`.
+The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
+The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `runtime.engine`.
+Images still require immutable SHA-256 references.
+
+| Policy | Before container creation or restart |
+|---|---|
+| `Always` | Contact the registry even when the image is cached; a failed pull fails apply |
+| `IfNotPresent` | Use the cached image, or pull it when absent |
+| `Never` | Use the cached image; fail when it is absent |
+
+Omission preserves existing behavior: `IfNotPresent` for the gateway, Ollama, and Ollama proxy; `Never` for a vLLM service.
+Locally built images can use `Never` without requiring a registry copy.
+For a published vLLM runtime, add this field under `spec.services.<name>.runtime`, alongside its existing `provider`, `engine`, and `image` settings:
+
+```yaml
+imagePullPolicy: IfNotPresent
+```
+
+The gateway policy also applies to its credential initializer container.
+Changing the policy does not replace or restart a running container; apply records the policy for its next creation or restart.
+Export preserves the setting.
+Downloaded images stay in the selected engine's image store and survive destroy.
+
+Plan never pulls images and does not establish registry availability.
+Image compatibility checks still run during apply.
+If pulling fails, retain the state directory, restore registry access, and reapply the same configuration.
+With `Never`, load the pinned image into the selected engine before reapplying.
+
+This setting does not control model downloads or sandbox images acquired by OpenShell.
+The pinned OpenShell API has no per-sandbox pull-policy field; external gateways and sandboxes reject this YAML field.
+Registry credential configuration is unchanged: NemoClaw does not supply credentials to the image-pull request.
 
 ## Resource Ownership
 
@@ -151,24 +189,23 @@ Paths below are relative to `spec`:
 
 | Object | Ownership when omitted | Accepted declaration |
 |---|---|---|
-| `inferenceProviders[]` | Managed with `service` or `ollama`; external with `endpoint`, including `ollamaProxy` | `management: managed` or `external`, matching that form |
-| `inferenceProviders[].service` and `.ollama` | Managed server | `management: managed` |
-| `gateway.storage`, `inferenceProviders[].service.storage`, `.ollama.storage` | Managed storage | `{management: managed}` |
-| `gateway.network`, `inferenceProviders[].service.placement.network` | Managed network, configured by the existing sibling `networkCIDR` | `{management: managed}` |
-| `inferenceProviders[].service.model` | Managed model download and preparation | `management: managed` alongside repository and revision |
-| `inferenceProviders[].ollama.model` | Managed installation of the route's model | `{management: managed}` |
-| `inferenceProviders[].ollamaProxy` | Managed authenticated proxy | `management: managed` |
-| `inferenceProviders[].ollamaProxy.model` | Existing external model installation | `management: external` alongside its digest |
-| `inferenceProviders[].ollama.network` | Existing external network | Network name, or `{management: external, name: NETWORK}` |
+| `inferenceProviders[]` | Managed with `serviceRef`; external with `endpoint` | `management: managed` or `external`, matching that form |
+| `services.<name>` | Managed vLLM server, Ollama server, or Ollama proxy | `management: managed` |
+| `gateway.storage`, `services.<name>.storage` for vLLM or Ollama | Managed storage | `{management: managed}` |
+| `gateway.network`, `services.<name>.placement.network` for vLLM | Managed network, configured by the existing sibling CIDR setting | `{management: managed}` |
+| `services.<name>.model` for vLLM | Managed model download and preparation | `management: managed` alongside repository and revision |
+| `services.<name>.model` for Ollama | Managed installation of the route's model | `management: managed` alongside its name |
+| `services.<name>.upstream.model` for an Ollama proxy | Existing external model installation | `management: external` alongside its digest |
+| `services.<name>.network` for Ollama | Existing external network | Network name, or `{management: external, name: NETWORK}` |
 | `sandboxes[].network.proxy` | Existing external HTTP proxy | `management: external` alongside host and port |
 
 External gateways cannot declare managed storage or networks.
 In the Ollama network object, `management` can also be omitted; `name` is required.
 The declarations do not grant permissions, change retention, adopt existing resources, or enable new lifecycle modes.
-External model installations are supported through `ollamaProxy.model`.
+External model installations are supported through `upstream.model` on a service with `kind: ollamaProxy`.
 External volumes, managed Ollama networks, and managed general-purpose HTTP egress proxies are rejected.
 
-For example, under `inferenceProviders[].ollama`, either network form selects the same existing network:
+For example, under a service with `kind: ollama`, either network form selects the same existing network:
 
 ```yaml
 network: nc-prototype-slice
@@ -182,9 +219,11 @@ storage:
   management: managed
 model:
   management: managed
+  name: qwen3:4b
 ```
 
-Use an existing network on the configured Ollama engine and keep the other Ollama settings and route model from your deployment.
+Use an existing network on the configured Ollama engine and keep the other Ollama settings from your deployment.
+Set `model.name` to its selected model tag and use that same tag on the inference route.
 Run `nemoclaw plan` with the same state directory to verify that adding declarations proposes no resource changes, then apply and export using the commands above.
 Finish any interrupted apply with its original YAML before changing declarations.
 Ownership checks and failure handling still apply, and managed model storage still survives destroy.

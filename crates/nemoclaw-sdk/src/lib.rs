@@ -134,3 +134,9 @@ pub mod managed;
 pub mod hardware;
 
 mod tofu_ui;
+
+mod download;
+pub use download::{
+    ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
+    with_provider_download_progress,
+};

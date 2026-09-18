@@ -32,7 +32,7 @@ The [design decision](docs/design/scope.md) defines the accepted scope.
 
 ## Review the Assigned Change
 
-Review changed text unless the task requests a broader audit; preserve accurate historical evidence and upstream notices.
+Review changed text unless the task requests a broader audit; preserve accurate historical records and upstream notices.
 Complete the assigned review and inspect adjacent material when needed to understand a consequential ambiguity.
 For each finding, cite the text, explain its effect, and suggest a concrete correction.
 Group repeated findings and separate writing preferences from errors affecting behavior, security, data safety, tests, or release claims.

@@ -13,6 +13,8 @@ spec:
   services:
     qwen:
       kind: vllm
+      hardware:
+        profile: dgx-spark
       runtime:
         provider: docker
         engine: ssh://gpu-box

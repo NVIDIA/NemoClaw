@@ -15,9 +15,12 @@ pub(super) fn validate_runtime(runtime: &ServiceRuntime) -> Result<(), crate::co
             && !runtime
                 .engine
                 .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-            && crate::docker::Engine::validate_endpoint(&runtime.engine).is_ok()
-            && IMAGE.is_match(&runtime.image),
-        "managed service requires Docker, an explicit engine, and an immutable image",
+            && crate::docker::Engine::validate_endpoint(&runtime.engine).is_ok(),
+        "managed service requires Docker and an explicit engine",
+    )?;
+    crate::config::validation::require(
+        IMAGE.is_match(&runtime.image),
+        "service image must be pinned by a SHA-256 digest",
     )
 }
 
@@ -35,6 +38,14 @@ pub struct ServiceRuntime {
     #[serde(rename = "image")]
     /// Immutable image reference used by the package installer.
     pub image: String,
+    /// Image acquisition before create or restart. Omission means Never for vLLM and IfNotPresent for Ollama and its proxy.
+    #[serde(
+        rename = "imagePullPolicy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "crate::config::ImagePullPolicy")]
+    pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
 }
 
 /// OpenTofu stage that executes an installer plan.

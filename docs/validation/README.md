@@ -1,22 +1,23 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Validation Evidence
+# Recorded Test Results
 
-These records qualify specific behaviors, revisions, and environments of NemoClaw.
+These records describe tests of specific behaviors, revisions, and environments of NemoClaw.
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
 The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as ordinary v1 parsing of a manually curated, redacted raw v0 export followed by a new v1 lifecycle.
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
-The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
+The scenario requires an explicitly configured live run on native Linux.
+Before reporting it as tested, review and retain the matching input and redacted lifecycle results here.
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.
 The [harness and provider expansion](rust-harness-expansion-linux-arm64.md) records passing Docker-backed native inference, feature-specific limits, and the managed Podman blocker at that revision.
 The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md) records the upstream TLS fix, real Deep Agents inference, lifecycle checks, and Docker upgrade results.
 
-| Contract | Evidence |
+| Behavior | Tests and Results |
 |---|---|
 | SDK and CLI plan/apply/export/destroy; ownership, identity, drift, partial creation, failed observations, interrupted destroy | Workspace behavioral tests and real OpenTofu protocol/lifecycle tests in [native platform qualification](rust-native-platforms.json) |
 | Strict schema, defaults, resource addresses, digests and agent launch contracts | Checked-in fixtures in `crates/nemoclaw-sdk/tests/fixtures` and behavioral tests for maintained YAML examples |
@@ -48,10 +49,10 @@ Native bundle tests do not establish Podman or GPU compatibility across all oper
 The selected-model validation additionally qualifies Fabric OpenClaw with a managed gateway and managed vLLM inference.
 It does not extend that live result to every Fabric harness or model.
 
-[SSH engine transport evidence](rust-ssh-linux-arm64.json) covers real loopback SSH identity, failure classification and artifact transfers.
-It does not qualify remote managed deployment.
+[SSH engine transport test results](rust-ssh-linux-arm64.json) cover real loopback SSH identity, failure classification and artifact transfers.
+They do not qualify remote managed deployment.
 
-[Remote service evidence](rust-remote-service-linux-arm64.json) records the bundled SSH model lifecycle fixtures and real read-only host collector.
+[Remote service test results](rust-remote-service-linux-arm64.json) describe the bundled SSH model lifecycle fixtures and real read-only host collector.
 A separate-host GPU apply and agent reply remain an explicit qualification gate.
 
 [Live two-daemon qualification](rust-dual-daemon-linux-arm64.json) exercises an SSH-managed Qwen3-4B service with native rootless Podman OpenClaw, real replies, policy denial, retained downloads, protection-trip recovery, engine retarget rejection, no-op/export and destroy.
@@ -63,4 +64,4 @@ It also records the deterministic verification and provider failure boundaries.
 [Built-in recipe removal](rust-recipe-removal-linux-arm64.json) records rebuilt runtime artifacts, rejected compatibility paths, and agent replies from both the inline recipe and ordinary vLLM.
 The record identifies the tested source revision and retained-data checks.
 
-The [initial runtime artifact build](rust-runtime-artifact-linux-arm64.json) records an intermediate build without superseding the lifecycle evidence above.
+The [initial runtime artifact build](rust-runtime-artifact-linux-arm64.json) records an intermediate build without superseding the lifecycle test results above.

@@ -22,6 +22,44 @@ fn input() -> Value {
     value
 }
 #[test]
+fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
+    let gens: Generations = ["workspace", "provider", "sandbox", "ollama"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value = input();
+    let original = Document::parse(value.to_string().as_bytes()).unwrap();
+    let before = compile(&original, &gens, "0.1.0").unwrap();
+    for policy in ["Always", "IfNotPresent", "Never"] {
+        value["spec"]["services"]["ollama-auth"]["runtime"]["imagePullPolicy"] = json!(policy);
+        assert!(
+            jsonschema::validator_for(&input_schema())
+                .unwrap()
+                .is_valid(&value)
+        );
+        let document = Document::parse(value.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+            document
+        );
+        let mut after = compile(&document, &gens, "0.1.0").unwrap();
+        for (kind, name) in [
+            ("nemoclaw_ollama_proxy", "ollama-auth"),
+            ("nemoclaw_ollama_proxy_storage", "ollama-auth"),
+            ("nemoclaw_ollama_external_model", "ollama-auth"),
+        ] {
+            assert_eq!(
+                after["resource"][kind][name]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("image_pull_policy")
+                    .unwrap(),
+                policy
+            );
+        }
+        assert_eq!(after, before);
+    }
+}
+#[test]
 fn external_ollama_compiles_only_proxy_and_external_model_observation() {
     let value = input();
     let doc =

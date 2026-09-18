@@ -242,3 +242,40 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
         );
     }
 }
+
+#[test]
+fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids() {
+    let address = "nemoclaw_sandbox.assistant";
+    let plan: Plan = serde_json::from_value(json!({
+        "resource_drift":[{
+            "address": address, "change": {"actions":["update"], "before":{"id":"saved-id"}}
+        }],
+        "resource_changes":[{
+            "address": address, "change": {"actions":["delete"], "before":{"id":"saved-id"}}
+        }]
+    }))
+    .unwrap();
+    let allowed = [(address.into(), Row::new())].into();
+    let bindings = [(
+        address.into(),
+        StateBinding {
+            id: "saved-id".into(),
+            ..Default::default()
+        },
+    )]
+    .into();
+    let retained = BTreeSet::new();
+    assert_eq!(
+        check_destroy_plan(&plan, &BTreeMap::new(), &bindings, &retained)
+            .unwrap_err()
+            .to_string(),
+        "destroy plan reports changes to an undeclared resource"
+    );
+    assert_eq!(
+        check_destroy_plan(&plan, &allowed, &BTreeMap::new(), &retained)
+            .unwrap_err()
+            .to_string(),
+        "destroy plan reports changes to a resource without a saved ID"
+    );
+    assert!(check_destroy_plan(&plan, &allowed, &bindings, &retained).is_ok());
+}

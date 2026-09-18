@@ -11,9 +11,10 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
     if let Some(recipe) = &service.recipe {
         return recipe.resources.gpu_memory_bytes;
     }
-    if let (Some(hardware), Some(ratio)) =
-        (&service.hardware, &service.memory.gpu_memory_utilization)
-    {
+    if let (Some(hardware), Some(ratio)) = (
+        service.dedicated_hardware(),
+        &service.memory.gpu_memory_utilization,
+    ) {
         return (hardware.min_gpu_memory_bytes as f64 * ratio.as_f64().unwrap_or(0.0)).floor()
             as u64;
     }

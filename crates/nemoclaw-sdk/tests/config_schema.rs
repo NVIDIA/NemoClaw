@@ -49,6 +49,44 @@ fn agrees_at(
 }
 
 #[test]
+fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, path) in [
+        ("spark/spark-inline.yaml", "/spec/gateway"),
+        ("spark/spark-inline.yaml", "/spec/services/qwen/runtime"),
+        (
+            "managed-ollama.yaml",
+            "/spec/services/ollama-server/runtime",
+        ),
+    ] {
+        for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
+            let mut value = input(file);
+            value.pointer_mut(path).unwrap()["imagePullPolicy"] = json!(policy);
+            let accepted = matches!(policy, "Always" | "IfNotPresent" | "Never");
+            agrees(&validator, &value, accepted);
+            if accepted {
+                let document = Document::parse(value.to_string().as_bytes()).unwrap();
+                let exported = document.yaml().unwrap();
+                assert_eq!(Document::parse(exported.as_bytes()).unwrap(), document);
+                assert_eq!(
+                    serde_json::to_value(document)
+                        .unwrap()
+                        .pointer(path)
+                        .unwrap()["imagePullPolicy"],
+                    policy
+                );
+            }
+        }
+    }
+    let mut external = input("local.yaml");
+    external["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
+    agrees(&validator, &external, false);
+    let mut sandbox = input("local.yaml");
+    sandbox["spec"]["sandboxes"][0]["imagePullPolicy"] = json!("Never");
+    agrees(&validator, &sandbox, false);
+}
+
+#[test]
 fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let original = input("local.yaml");

@@ -17,6 +17,8 @@ pub use crate::services::{ServiceDefinition, ServiceRuntime};
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
+mod image_pull_policy;
+pub use image_pull_policy::ImagePullPolicy;
 mod management;
 pub use management::*;
 mod network;

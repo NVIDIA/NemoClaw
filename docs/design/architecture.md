@@ -180,7 +180,7 @@ Native bundles and protocol/lifecycle fixtures pass on Linux ARM64/x64, macOS AR
 Managed gateway and GPU execution are qualified on Linux ARM64.
 
 Native CLI availability does not establish container or GPU backend support on every platform.
-[Managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies the local rootless Linux ARM64 gateway and sandbox topology; inference remains independently hosted.
+[Managed Podman test results](../validation/rust-managed-podman-linux-arm64.md) qualify the local rootless Linux ARM64 gateway and sandbox topology; inference remains independently hosted.
 
 The model runtime retains the recipe archive, original and patched sources, preparation tools, licenses, supervisor source and vendored dependency licenses.
 The builder normalizes timestamps and rejects changing source inputs during a build.
@@ -210,7 +210,7 @@ Managed apply also exposed an async allocation cost that the release CLI hid: co
 Public plan/apply now heap-allocate their orchestration future, with a tested per-operation stack-size budget.
 SDK qualification must exercise its public API directly as well as its CLI consumer.
 
-## Acceptance Evidence
+## Recorded Test Results
 
 [Validation records](../validation/) distinguish deterministic failure tests, protocol qualification, native runtime execution, and remaining platform limits.
 Gateway lifecycle validation passed initial create, no-op, retained-storage destroy, and explicit recovery.
@@ -227,4 +227,4 @@ Live qualification also found a compatibility boundary absent from YAML shape: H
 Its Ollama/Qwen3 path passed a short native response; that does not establish long-context capability.
 Do not falsify model metadata or widen isolation policy to make readiness pass.
 
-Backend/agent compatibility needs evidence beyond successful provider registration.
+Backend/agent compatibility requires successful inference tests in addition to provider registration.

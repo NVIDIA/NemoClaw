@@ -139,7 +139,7 @@ Paths:
 
 - `spec.sandboxes[].agent.tools`
 
-Accepted input: object or object.
+Accepted input: object.
 
 ### Alternative 1
 
@@ -261,6 +261,23 @@ Paths:
 Accepted input: string.
 
 Constraints: `"127.0.0.1"` or `"0.0.0.0"`.
+
+## DedicatedHardware
+
+Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
+| `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
+| `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
+| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
 
 ## ExplicitPolicy
 
@@ -389,11 +406,26 @@ Paths:
 | `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
 | `engine` | string | No | — | Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
 | `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container. |
 | `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
 | `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
 | `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+
+## HardwareProfile
+
+GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
+
+Guide: [Managed models](../models.md).
+
+Paths:
+
+- `spec.services.{key}.hardware.profile`
+
+Accepted input: string.
+
+Constraints: `"dgx-spark"` or `"dgx-station"` or `"gb200"` or `"gb300"` or `"gh200"` or `"h100"` or `"h200"` or `"a100"` or `"a10"` or `"a10g"` or `"a40"` or `"l4"` or `"l40"` or `"l40s"` or `"t4"` or `"rtx-6000-ada"` or `"rtx-pro-6000-blackwell"` or `"rtx-3090"` or `"rtx-4090"` or `"rtx-5090"`.
 
 ## Harness
 
@@ -495,6 +527,21 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `ref` | string | No | `"nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
+
+## ImagePullPolicy
+
+Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.
+
+Guide: [Container image downloads](../usage.md#control-container-image-downloads).
+
+Paths:
+
+- `spec.gateway.imagePullPolicy`
+- `spec.services.{key}.runtime.imagePullPolicy`
+
+Accepted input: string.
+
+Constraints: `"Always"` or `"IfNotPresent"` or `"Never"`.
 
 ## Inference
 
@@ -653,7 +700,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].management`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.management`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"managed"` or `"external"`.
 
@@ -1234,7 +1281,7 @@ Paths:
 
 - `spec.services.{key}`
 
-Accepted input: object or object or object.
+Accepted input: object.
 
 ### Alternative 1
 
@@ -1273,21 +1320,21 @@ Managed vLLM runtime and immutable model snapshot.
 |---|---|---|---|---|
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
-| `hardware` | [ServiceHardware](#servicehardware) | No | — | Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract. |
+| `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit execution hardware requirements. Required without an inline recipe; excludes recipe. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
-| `recipe` | [InlineRecipe](#inlinerecipe) | No | — | Optional inline preparation and serving contract supplied by the pinned runtime image. |
+| `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and immutable NemoClaw vLLM runtime image. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
 | `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged. |
 
 ## ServiceHardware
 
-Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
 
 Guide: [Managed models](../models.md).
 
@@ -1295,12 +1342,18 @@ Paths:
 
 - `spec.services.{key}.hardware`
 
+Accepted input: [DedicatedHardware](#dedicatedhardware) or object.
+
+### Alternative 2
+
+A named hardware contract with fixed compatibility requirements.
+
+
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
-| `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
-| `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
-| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `architecture` | string | No | — | Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value. Constraints: `"amd64"` or `"arm64"`. |
+| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for dgx-spark. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | GPU family. dgx-spark uses unified memory; all other profiles require observable dedicated GPU memory. Driver major 580 or newer is required. |
 
 ## ServiceIpc
 
@@ -1360,6 +1413,7 @@ Paths:
 |---|---|---|---|---|
 | `engine` | string | Yes | — | Explicit Docker endpoint used to install, observe, and remove the service. Constraints: pattern `^(unix:///\|ssh://)`. |
 | `image` | string | Yes | — | Immutable image reference used by the package installer. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before create or restart. Omission means Never for vLLM and IfNotPresent for Ollama and its proxy. |
 | `provider` | string | Yes | — | Supported container runner. The initial service contract uses Docker. Constraints: `"docker"`. |
 
 ## Serving
@@ -1471,6 +1525,6 @@ Paths:
 
 - `spec.sandboxes[].agent.tools.disclosure`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.
