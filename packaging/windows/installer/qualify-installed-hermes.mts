@@ -150,6 +150,20 @@ export function hermesInstalledToolCommand(nonce: string) {
   return `set -euo pipefail; f=nemoclaw-${nonce}.txt; printf '%s\\n' '${sentinel}' > "$f"; test "$(cat "$f")" = '${sentinel}'; rg --fixed-strings '${sentinel}' "$f"; rm -- "$f"; test ! -e "$f"; python -c 'import pathlib,tempfile; t=tempfile.TemporaryDirectory(); p=pathlib.Path(t.name)/"proof"; p.write_text("${sentinel}"); assert p.read_text()=="${sentinel}"; t.cleanup(); print("${sentinel}")'; printf '%s\\n' '${sentinel}'`;
 }
 
+export function hermesTranscriptRoute(id: string, profile: string, poll: number) {
+  assert(id.length > 0 && id.length <= 128, "Hermes stored session identity is invalid");
+  assert(profile.length > 0 && profile.length <= 128, "Hermes profile identity is invalid");
+  assert(Number.isSafeInteger(poll) && poll > 0, "Hermes transcript poll identity is invalid");
+  return (
+    "/api/sessions/" +
+    encodeURIComponent(id) +
+    "/messages?limit=500&order=latest&profile=" +
+    encodeURIComponent(profile) +
+    "&poll=" +
+    poll
+  );
+}
+
 export function createHermesPtyState() {
   let channel: string | null = null,
     sessionId: string | null = null,
@@ -800,6 +814,7 @@ async function main() {
         }) => {
           const response = await fetch(route, {
             headers: token ? { "X-Hermes-Session-Token": token } : {},
+            cache: "no-store",
             signal: AbortSignal.timeout(5000),
           });
           if (allowNotFound && response.status === 404) return null;
@@ -823,19 +838,17 @@ async function main() {
       messagingRequested: false,
       tavilyLiveLookup: "not-tested-user-waiver",
     };
+    let transcriptPoll = 0;
     const sessionMessages = async () => {
       const id = pty.storedSessionId(),
         profile = pty.profileName();
       if (!id || !profile) return [];
       // Hermes deliberately creates the stored row on the first prompt, so
       // the first bounded transcript poll can precede that row.
-      const detail = await api(
-        "/api/sessions/" +
-          encodeURIComponent(id) +
-          "/messages?limit=500&order=latest&profile=" +
-          encodeURIComponent(profile),
-        true,
-      );
+      // This is a live evidence read, not dashboard hydration. A unique URL
+      // plus no-store prevents Chromium's HTTP cache from freezing the first
+      // completed turn while later PTY turns continue and settle.
+      const detail = await api(hermesTranscriptRoute(id, profile, ++transcriptPoll), true);
       if (detail === null) return [];
       assert.equal(detail.session_id, id);
       assert(Array.isArray(detail.messages));

@@ -20,6 +20,7 @@ import {
   finalHermesTurn,
   hermesTurnIndex,
   hermesMessagesAfter,
+  hermesTranscriptRoute,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -277,6 +278,18 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
   state.beginIdle(mark);
   state.receive("actual-pty", event("message.start", 9));
   assert.throws(() => state.assertHealthy(), /idle sample/u);
+});
+
+test("live Hermes transcript polls cannot reuse a completed-turn URL", () => {
+  assert.equal(
+    hermesTranscriptRoute("saved-real", "profile real", 1),
+    "/api/sessions/saved-real/messages?limit=500&order=latest&profile=profile%20real&poll=1",
+  );
+  assert.notEqual(
+    hermesTranscriptRoute("saved-real", "profile real", 1),
+    hermesTranscriptRoute("saved-real", "profile real", 2),
+  );
+  assert.throws(() => hermesTranscriptRoute("saved-real", "profile-real", 0), /poll identity/u);
 });
 
 test("closing one same-channel PTY connection preserves the remaining live connection", () => {
