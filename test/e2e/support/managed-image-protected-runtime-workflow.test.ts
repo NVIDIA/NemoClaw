@@ -246,6 +246,56 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects an additional step outside the reviewed topology", () => {
+    const value = workflow();
+    const steps = multiarchJob(value).steps as Array<Record<string, unknown>>;
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    steps.splice(steps.indexOf(boundary) + 1, 0, {
+      name: "Build full candidate plugin",
+      shell: "bash",
+      run: "npm --prefix nemoclaw run build",
+    });
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup must preserve the reviewed step topology",
+        "managed-image-multiarch-startup must preserve the reviewed step execution surface",
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "a full CLI build appended to another step",
+      (value: WorkflowRecord) => {
+        const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+        activation.run = [String(activation.run), "npm \\", "  run build:cli"].join("\n");
+      },
+    ],
+    ...[
+      'npm run "build:cli"',
+      'npm run build:"cli"',
+      'npm --prefix nemoclaw run "build"',
+      "npm --prefix=nemoclaw run build",
+    ].map(
+      (command) =>
+        [
+          `an alternate full build command appended to another step: ${command}`,
+          (value: WorkflowRecord) => {
+            const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+            activation.run = `${String(activation.run)}\n${command}`;
+          },
+        ] as const,
+    ),
+  ])("rejects %s", (_description, mutate) => {
+    const value = workflow();
+    mutate(value);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must preserve the reviewed step execution surface",
+    );
+  });
+
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
   it.each([
     [

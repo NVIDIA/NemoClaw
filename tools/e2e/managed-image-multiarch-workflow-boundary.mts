@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
@@ -37,6 +38,34 @@ const REGISTRY_IMAGE =
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_HERMES_RESOLVER_ROOT = ".trusted-hermes-resolver";
 const REVIEWED_HERMES_PLATFORM_ACTION = `./${TRUSTED_HERMES_RESOLVER_ROOT}/.github/actions/resolve-reviewed-hermes-platform`;
+const REVIEWED_STEP_NAMES = [
+  "Bind protected E2E correlation identity",
+  "Validate protected exact-head dispatch",
+  "Checkout protected managed-image candidate source",
+  "Validate trusted Hermes resolver checkout path",
+  "Checkout trusted Hermes resolver",
+  "Authenticate to Docker Hub",
+  "Set up protected managed-image Buildx",
+  "Prepare E2E workspace",
+  "Build shared policy boundary",
+  "Validate candidate activation contract",
+  "Resolve reviewed Hermes platform base image",
+  "Remove trusted Hermes resolver checkout",
+  "Resolve digest-pinned platform base images",
+  "Start isolated protected managed-image registry",
+  "Build exact all-agent protected managed images",
+  "Run every exact managed-image contract directly",
+  "Remove isolated protected managed-image registry",
+  "Validate protected managed-image evidence",
+  "Validate OpenClaw managed-image security boundary",
+  "Validate managed-image glibc probe lifecycle",
+  "Remove protected managed-image cohort resources",
+  "Publish exact amd64 protected runtime build cache",
+  "Upload protected managed-image evidence",
+  "Clean up Docker auth",
+] as const;
+const REVIEWED_STEP_SURFACE_SHA256 =
+  "bf3781d88d21c6b81a6ba7d42262e8332363008078b0ad4ee85fbe2cfb40e6e8";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -196,6 +225,18 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   });
 
   const steps = workflowSteps(job.steps);
+  if (
+    !isDeepStrictEqual(
+      steps.map((step) => step.name),
+      REVIEWED_STEP_NAMES,
+    )
+  ) {
+    errors.push(`${JOB_ID} must preserve the reviewed step topology`);
+  }
+  const stepSurfaceSha256 = createHash("sha256").update(JSON.stringify(steps)).digest("hex");
+  if (stepSurfaceSha256 !== REVIEWED_STEP_SURFACE_SHA256) {
+    errors.push(`${JOB_ID} must preserve the reviewed step execution surface`);
+  }
   const guard = requireStep(errors, steps, "Validate protected exact-head dispatch");
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
     BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
