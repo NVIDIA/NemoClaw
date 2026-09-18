@@ -500,6 +500,7 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/adapters/config/live-export-source-ollama.test.ts",
         "src/lib/domain/config/export-document.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",

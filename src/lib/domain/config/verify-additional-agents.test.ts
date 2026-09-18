@@ -246,6 +246,29 @@ describe("read-only secondary-agent export", () => {
     },
   );
 
+  it("rejects a vLLM roster from a different managed serving profile (#11859)", async () => {
+    const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
+    const registry = {
+      ...observed.registry,
+      provider: "vllm-local",
+      servingProfileProvenance: servingProfileProvenance(
+        loadServingCatalog(),
+        "vllm.linux-amd64-nvidia.single.nemotron-3-nano-4b-fp8",
+      ),
+    };
+    const result = await exportSnapshots([{ ...observed, registry }]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        findings: expect.arrayContaining([
+          expect.objectContaining({ field: "spec.sandboxes[].agents", category: "unsupported" }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it("rejects a reordered roster across both observation pairs (#11854)", async () => {
     const researcher = { id: "researcher", tools: { allow: ["read"] } };
     const reviewer = { id: "reviewer", tools: { allow: ["read"] } };
