@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
+  preflightForceFreshUserLocalOpenShellOwnership,
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
   type UninstallRunDeps,
@@ -20,6 +24,42 @@ const EXECUTABLE_NAMES = [
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
+
+it("rejects an unverified user-local OpenShell binary before cleanup", () => {
+  const home = "/tmp/nemoclaw-force-fresh-ownership-preflight";
+  const target = `${home}/.local/bin/openshell`;
+  const errors: string[] = [];
+
+  expect(
+    preflightForceFreshUserLocalOpenShellOwnership({
+      env: { HOME: home } as NodeJS.ProcessEnv,
+      error: (message) => errors.push(message),
+      existsSync: (candidate) => candidate === target,
+      isManagedOpenShellBinary: () => false,
+    }),
+  ).toBe(false);
+  expect(errors).toEqual([
+    `Force-fresh ownership preflight rejected ${target}: its managed OpenShell install manifest is absent or does not match. No cleanup started.`,
+  ]);
+});
+
+it("rejects a malformed managed-install manifest through the canonical parser", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ownership-preflight-"));
+  onTestFinished(() => fs.rmSync(home, { force: true, recursive: true }));
+  const userBin = path.join(home, "bin");
+  fs.mkdirSync(userBin);
+  fs.writeFileSync(path.join(userBin, "openshell"), "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(userBin, ".nemoclaw-openshell-managed-v1"), "malformed\n", {
+    mode: 0o600,
+  });
+
+  expect(
+    preflightForceFreshUserLocalOpenShellOwnership({
+      env: { HOME: home, XDG_BIN_HOME: userBin } as NodeJS.ProcessEnv,
+      error: () => undefined,
+    }),
+  ).toBe(false);
+});
 
 async function runUninstallPlan(deps: UninstallRunDeps, forceFreshReset = false) {
   return await runUninstallPlanBase(

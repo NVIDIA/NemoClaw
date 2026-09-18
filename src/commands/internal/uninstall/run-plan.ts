@@ -7,7 +7,10 @@ import {
   runUninstallAllGatewayPorts,
 } from "../../../lib/actions/uninstall/all-gateway-ports";
 import { backupAllUnderPortableHostFence } from "../../../lib/actions/maintenance";
-import { runUninstallPlanProduction } from "../../../lib/actions/uninstall/run-plan";
+import {
+  preflightForceFreshUserLocalOpenShellOwnership,
+  runUninstallPlanProduction,
+} from "../../../lib/actions/uninstall/run-plan";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { GATEWAY_PORT } from "../../../lib/core/ports";
@@ -30,6 +33,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
         "Uninstall every gateway port on this host, not only the port NEMOCLAW_GATEWAY_PORT selects",
     }),
     "all-gateway-ports-child": Flags.boolean({ hidden: true }),
+    "force-fresh-ownership-preflight": Flags.boolean({ hidden: true }),
     "force-fresh-reset": Flags.boolean({ hidden: true }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
     "delete-models": Flags.boolean({
@@ -48,6 +52,12 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(InternalUninstallRunPlanCommand);
+    if (flags["force-fresh-ownership-preflight"]) {
+      this.applyExitResult({
+        exitCode: preflightForceFreshUserLocalOpenShellOwnership() ? 0 : 1,
+      });
+      return;
+    }
     const options = {
       assumeYes: flags.yes ?? false,
       deleteModels: flags["delete-models"] ?? false,

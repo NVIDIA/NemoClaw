@@ -38,17 +38,20 @@ function callPayloadFunction(command: string, env: Record<string, string | undef
 it.each([
   ["public bootstrap", INSTALLER],
   ["versioned payload", INSTALLER_PAYLOAD],
-])("documents the macOS-only destructive option in the %s help", (_surface, installer) => {
-  const result = spawnSync("bash", [installer, "--help"], {
-    cwd: path.join(import.meta.dirname, "../.."),
-    encoding: "utf-8",
-  });
+])(
+  "documents the Apple silicon macOS-only destructive option in the %s help",
+  (_surface, installer) => {
+    const result = spawnSync("bash", [installer, "--help"], {
+      cwd: path.join(import.meta.dirname, "../.."),
+      encoding: "utf-8",
+    });
 
-  expect(result.status).toBe(0);
-  const output = `${result.stdout}${result.stderr}`;
-  expect(output).toMatch(/--force-fresh-install .*macOS only/u);
-  expect(output).toMatch(/NEMOCLAW_FORCE_FRESH_INSTALL=1 .*macOS only/u);
-});
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/--force-fresh-install .*Apple silicon macOS only/u);
+    expect(output).toMatch(/NEMOCLAW_FORCE_FRESH_INSTALL=1 .*Apple silicon macOS only/u);
+  },
+);
 
 it("detects a Homebrew-only OpenShell installation", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-detect-");
@@ -255,7 +258,7 @@ it("runs destructive cleanup through the staged candidate CLI", () => {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-printf 'destroy=%s args=%s\n' "\${NEMOCLAW_UNINSTALL_DESTROY_USER_DATA:-}" "$*" > "$FORCE_FRESH_LOG"
+printf 'destroy=%s args=%s\n' "\${NEMOCLAW_UNINSTALL_DESTROY_USER_DATA:-}" "$*" >> "$FORCE_FRESH_LOG"
 `,
   );
 
@@ -267,7 +270,8 @@ printf 'destroy=%s args=%s\n' "\${NEMOCLAW_UNINSTALL_DESTROY_USER_DATA:-}" "$*" 
 
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   expect(fs.readFileSync(logPath, "utf-8")).toBe(
-    `destroy=1 args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --yes --destroy-user-data --force-fresh-reset --all-gateway-ports\n`,
+    `destroy= args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --force-fresh-ownership-preflight\n` +
+      `destroy=1 args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --yes --destroy-user-data --force-fresh-reset --all-gateway-ports\n`,
   );
 });
 
@@ -492,29 +496,53 @@ it("routes a managed helper from XDG_BIN_HOME through the staged uninstaller", (
 });
 
 it("lets the staged uninstaller reject a malformed ownership manifest before package removal", () => {
-  const { root: tmp } = installerCheckout("nemoclaw-force-fresh-malformed-manifest-");
+  const { root: tmp, binDir: fakeBin } = installerCheckout(
+    "nemoclaw-force-fresh-malformed-manifest-",
+  );
   const userBin = path.join(tmp, "xdg-bin");
   const packageMarker = path.join(tmp, "package-removal-started");
+  const preflightLog = path.join(tmp, "preflight.log");
+  const sourceRoot = path.join(tmp, "candidate");
+  fs.mkdirSync(path.join(sourceRoot, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, "bin", "nemoclaw.js"), "// staged candidate\n");
   fs.mkdirSync(userBin, { recursive: true });
   writeExecutable(path.join(userBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
   fs.writeFileSync(path.join(userBin, ".nemoclaw-openshell-managed-v1"), "malformed\n", {
     mode: 0o600,
   });
+  writeExecutable(
+    path.join(fakeBin, "node"),
+    `#!/usr/bin/env bash
+printf '%s\n' "$*" > "$PREFLIGHT_LOG"
+case "$*" in
+  *--force-fresh-ownership-preflight) exit 9 ;;
+  *) touch "$PACKAGE_MARKER"; exit 0 ;;
+esac
+`,
+  );
 
   const result = callPayloadFunction(
     `
       warn() { :; }
-      force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
+      force_fresh_install_source_root() { printf '%s' "$SOURCE_ROOT"; }
       prepare_force_fresh_uninstaller() { :; }
-      run_force_fresh_uninstaller() { printf 'canonical-ownership-rejected\\n'; return 9; }
       remove_macos_openshell_for_force_fresh_install() { touch "$PACKAGE_MARKER"; }
       run_force_fresh_install_reset
     `,
-    { HOME: tmp, PACKAGE_MARKER: packageMarker, XDG_BIN_HOME: userBin },
+    {
+      HOME: tmp,
+      PACKAGE_MARKER: packageMarker,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      PREFLIGHT_LOG: preflightLog,
+      SOURCE_ROOT: sourceRoot,
+      XDG_BIN_HOME: userBin,
+    },
   );
 
   expect(result.status).not.toBe(0);
-  expect(result.stdout).toContain("canonical-ownership-rejected");
+  expect(fs.readFileSync(preflightLog, "utf8")).toContain(
+    "internal uninstall run-plan --force-fresh-ownership-preflight",
+  );
   expect(fs.existsSync(packageMarker)).toBe(false);
 });
 
@@ -601,7 +629,7 @@ it.each([
     warn() { :; }
     finalize_install() { :; }
     clear_station_resume_after_completed_onboarding() { :; }
-    uname() { printf 'Darwin'; }
+    uname() { [[ "$1" == "-m" ]] && printf 'arm64' || printf 'Darwin'; }
     main ${forceFreshArg} --non-interactive --yes-i-accept-third-party-software
     record "fresh:$FRESH:$NEMOCLAW_FORCE_FRESH_INSTALL"
     printf '%s' "$order"
@@ -653,7 +681,21 @@ it("rejects force-fresh installation outside macOS", () => {
 
   expect(result.status).not.toBe(0);
   expect(`${result.stdout}${result.stderr}`).toContain(
-    "--force-fresh-install currently supports macOS only",
+    "--force-fresh-install currently supports Apple silicon macOS only",
+  );
+});
+
+it("rejects force-fresh installation on Intel macOS", () => {
+  const result = callPayloadFunction(`
+    error() { printf '%s' "$*" >&2; return 1; }
+    uname() { [[ "$1" == "-s" ]] && printf 'Darwin' || printf 'x86_64'; }
+    FORCE_FRESH_INSTALL=1
+    validate_force_fresh_install_platform
+  `);
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "--force-fresh-install currently supports Apple silicon macOS only",
   );
 });
 

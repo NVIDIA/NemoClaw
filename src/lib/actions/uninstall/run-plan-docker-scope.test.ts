@@ -233,50 +233,21 @@ describe("uninstall Docker resource scope", () => {
 
   it.each([
     {
-      containerInventory: "owned-id nemoclaw-sandbox:test openshell-owned",
-      failureCommand: ["rm", "-f", "owned-id"],
-      imageInventory: "",
-      plannedVolumeInspection: {
-        status: 1,
-        stdout: "",
-        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
-      },
-      scenario: "container removal fails",
-    },
-    {
-      containerInventory: "",
       failureCommand: ["volume", "rm", "-f", "openshell-cluster-nemoclaw"],
-      imageInventory: "",
       plannedVolumeInspection: ok(),
       scenario: "planned-volume removal fails",
     },
     {
-      containerInventory: "",
       failureCommand: ["volume", "inspect", "openshell-cluster-nemoclaw"],
-      imageInventory: "",
       plannedVolumeInspection: { status: 1, stdout: "", stderr: "permission denied" },
       scenario: "planned-volume inspection is inconclusive",
     },
-    {
-      containerInventory: "",
-      failureCommand: ["rmi", "-f", "owned-image"],
-      imageInventory: "owned-image ghcr.io/nvidia/nemoclaw/openclaw-sandbox:test",
-      plannedVolumeInspection: {
-        status: 1,
-        stdout: "",
-        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
-      },
-      scenario: "owned image removal fails",
-    },
   ] as const)(
     "fails force-fresh cleanup when $scenario",
-    async ({ containerInventory, failureCommand, imageInventory, plannedVolumeInspection }) => {
+    async ({ failureCommand, plannedVolumeInspection }) => {
       const routes: Record<string, RunResult> = {
         info: ok(),
-        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(containerInventory),
-        "images --format {{.ID}} {{.Repository}}:{{.Tag}}": ok(imageInventory),
-        "rm -f owned-id": { status: 1, stdout: "", stderr: "busy" },
-        "rmi -f owned-image": { status: 1, stdout: "", stderr: "busy" },
+        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(),
         "volume inspect openshell-cluster-nemoclaw": plannedVolumeInspection,
         "volume rm -f openshell-cluster-nemoclaw": {
           status: 1,
@@ -321,4 +292,52 @@ describe("uninstall Docker resource scope", () => {
       );
     },
   );
+
+  it("preserves a convention-matching container and images during force-fresh cleanup", async () => {
+    const calls: string[][] = [];
+    const routes: Record<string, RunResult> = {
+      info: ok(),
+      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(
+        "foreign-id registry.example.com/unrelated:latest openshell-foreign",
+      ),
+      "volume inspect openshell-cluster-nemoclaw": {
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      },
+    };
+    const runDocker = vi.fn((args: string[]): RunResult => {
+      calls.push(args);
+      return routes[args.join(" ")] ?? ok();
+    });
+
+    const result = await runUninstallPlan(
+      {
+        assumeYes: true,
+        deleteModels: false,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-force-fresh-foreign-container" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => undefined,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            : ok(),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(calls).not.toContainEqual(["rm", "-f", "foreign-id"]);
+    expect(calls.some((args) => args[0] === "rmi")).toBe(false);
+  });
 });

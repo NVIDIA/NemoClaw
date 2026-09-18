@@ -1087,7 +1087,7 @@ usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
-  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (macOS only)\n"
+  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
@@ -1101,7 +1101,7 @@ usage() {
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
-  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (macOS only)\n"
+  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (Apple silicon macOS only)\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
@@ -3761,6 +3761,9 @@ run_force_fresh_uninstaller() {
   node_bin="$(command -v node 2>/dev/null || true)"
   [[ -n "$node_bin" && -x "$node_bin" ]] \
     || error "Node.js is required for the force-fresh uninstaller."
+  "$node_bin" "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
+    --force-fresh-ownership-preflight \
+    || error "Force-fresh cleanup stopped because the staged canonical ownership preflight rejected a user-local OpenShell executable. Reconcile the reported binary, then rerun. No cleanup started."
   NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
     "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
     --yes --destroy-user-data --force-fresh-reset --all-gateway-ports
@@ -3831,8 +3834,8 @@ run_force_fresh_install_reset() {
 
 validate_force_fresh_install_platform() {
   truthy_env "${FORCE_FRESH_INSTALL:-}" || return 0
-  [[ "$(uname -s)" == "Darwin" ]] \
-    || error "--force-fresh-install currently supports macOS only."
+  [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] \
+    || error "--force-fresh-install currently supports Apple silicon macOS only."
 }
 
 # Return nonzero when OpenShell is absent or its version command fails.

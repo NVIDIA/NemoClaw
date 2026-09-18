@@ -925,6 +925,25 @@ function defaultManagedOpenShellBinaryOwnership(target: string, userBin: string)
   );
 }
 
+export function preflightForceFreshUserLocalOpenShellOwnership(
+  deps: UninstallRunDeps = {},
+): boolean {
+  const runtime = buildRuntime(deps);
+  const userBin = path.resolve(
+    runtime.env.XDG_BIN_HOME || path.join(runtime.env.HOME || os.homedir(), ".local", "bin"),
+  );
+  let accepted = true;
+  for (const binary of MANAGED_OPENSHELL_BINARY_NAMES) {
+    const target = path.join(userBin, binary);
+    if (!runtime.existsSync(target) || runtime.isManagedOpenShellBinary(target, userBin)) continue;
+    runtime.error(
+      `Force-fresh ownership preflight rejected ${target}: its managed OpenShell install manifest is absent or does not match. No cleanup started.`,
+    );
+    accepted = false;
+  }
+  return accepted;
+}
+
 function removeForceFreshUserLocalOpenShell(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -2360,7 +2379,11 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): boolean {
+function removeDockerContainers(
+  runtime: UninstallRuntime,
+  gatewayName?: string,
+  allowConventionRemoval = true,
+): boolean {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
@@ -2399,6 +2422,12 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
     return true;
+  }
+  if (!allowConventionRemoval) {
+    runtime.warn(
+      `Force-fresh cleanup preserved convention-matching Docker container ${ids[0]} because no trusted host state binds that container ID to this installation.`,
+    );
+    return false;
   }
   let removedAll = true;
   for (const id of [...new Set(ids)]) {
@@ -2529,10 +2558,17 @@ function executeDockerResourceStep(
   const removedContainers = removeDockerContainers(
     runtime,
     scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
+    !options.forceFreshReset,
   );
+  if (options.forceFreshReset && !removedContainers) {
+    runtime.error("Force-fresh cleanup found a Docker container without verified ownership.");
+    return false;
+  }
   let removedImages = true;
   if (scopedToSelectedGateway) {
     runtime.log("Sibling gateways remain; kept shared Docker images.");
+  } else if (options.forceFreshReset) {
+    runtime.log("Kept Docker images because repository naming is not force-fresh ownership proof.");
   } else {
     removedImages = removeDockerImages(runtime);
   }
