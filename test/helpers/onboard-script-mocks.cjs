@@ -1258,11 +1258,20 @@ function mockManagedStateVolumeOnboardLifecycle() {
   const managedWorkloadOnboard = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
   );
+  const managedStartupRootApply = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/provider-root-apply.ts"),
+  );
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
     roots,
     materializeSandboxCreatePlan: (input, materialize) => materialize(input),
     commit: () => {},
   });
+  managedStartupRootApply.applyProviderManagedStartupRootRequest = () => null;
+  managedStartupRootApply.finalizeProviderManagedStartupSharedState = ({ supervisorReady }) => ({
+    supervisorReady,
+    failure: null,
+  });
+  managedStartupRootApply.releaseProviderManagedStartupHold = () => {};
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {
