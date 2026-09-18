@@ -3922,6 +3922,9 @@ export function createPodmanHostLocalInferenceRuntime(
 
     let created: ManagedContainer | null = null;
     let acknowledgedCleanupCandidate: ManagedContainer | null = null;
+    const publishPreflightOptions = options.inspectPublishedPort
+      ? { inspect: options.inspectPublishedPort }
+      : {};
     const receipt = withRollback(
       () => {
         phase = "start";
@@ -3929,7 +3932,8 @@ export function createPodmanHostLocalInferenceRuntime(
         assertInferencePublishPortsFree(
           spec.endpoint.port,
           spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
-          options.inspectPublishedPort,
+          spec.service,
+          publishPreflightOptions,
         );
         const translatedArgs = translatedRunArguments(spec, authority);
         const result =
@@ -3947,11 +3951,14 @@ export function createPodmanHostLocalInferenceRuntime(
               })());
         const foundId = lookupContainerId(engine, spec.containerName);
         if (foundId === null) {
-          assertInferencePublishPortsFree(
-            spec.endpoint.port,
-            spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
-            options.inspectPublishedPort,
-          );
+          if (result.status !== 0 || result.error) {
+            assertInferencePublishPortsFree(
+              spec.endpoint.port,
+              spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+              spec.service,
+              publishPreflightOptions,
+            );
+          }
           throw new Error(
             `Podman host-local inference container start failed without an owned runtime: ${redactedCommandEvidence(sensitiveRedactor, result)}`,
           );
@@ -3962,6 +3969,14 @@ export function createPodmanHostLocalInferenceRuntime(
           spec,
           foundId,
         );
+        if (result.status !== 0 || result.error) {
+          assertInferencePublishPortsFree(
+            spec.endpoint.port,
+            spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+            spec.service,
+            publishPreflightOptions,
+          );
+        }
         if (result.status === 0 && !result.error) {
           const reportedId = exactContainerId(result.stdout.trim());
           if (reportedId !== foundId) {

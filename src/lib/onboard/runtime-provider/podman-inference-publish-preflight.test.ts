@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  assertInferencePublishPortsFree,
   firstOccupiedInferencePublish,
+  type InferencePublishCommandRunner,
   lsofListenArguments,
   lsofListenerArgvCandidates,
   occupiedFromBindProbeStatus,
@@ -16,12 +18,15 @@ import {
 describe("Podman inference publish preflight", () => {
   it("names a host Ollama listener and refuses reuse (#11723)", () => {
     expect(
-      occupiedInferencePublishMessage({
-        address: "127.0.0.1",
-        port: 11434,
-        process: "ollama",
-        pid: 4242,
-      }),
+      occupiedInferencePublishMessage(
+        {
+          address: "127.0.0.1",
+          port: 11434,
+          process: "ollama",
+          pid: 4242,
+        },
+        "ollama",
+      ),
     ).toBe(
       "Port 11434 on 127.0.0.1 is already in use by ollama (PID 4242). Portable onboarding starts its own Podman Ollama and does not reuse a host Ollama process. Stop that host service, then rerun onboarding.",
     );
@@ -29,28 +34,53 @@ describe("Podman inference publish preflight", () => {
 
   it("names a leftover listener and points at uninstall (#11723)", () => {
     expect(
-      occupiedInferencePublishMessage({
-        address: "127.0.0.1",
-        port: 11434,
-        process: "rootlessport",
-        pid: null,
-      }),
+      occupiedInferencePublishMessage(
+        {
+          address: "127.0.0.1",
+          port: 11434,
+          process: "rootlessport",
+          pid: null,
+        },
+        "ollama",
+      ),
     ).toBe(
-      "Port 11434 on 127.0.0.1 is already in use by rootlessport. Stop that listener or the leftover NemoClaw Podman Ollama container (uninstall or destroy the owning sandbox), then rerun onboarding.",
+      "Port 11434 on 127.0.0.1 is already in use by rootlessport. Stop that listener or uninstall the NemoClaw sandbox that owns a leftover managed Ollama container, then rerun onboarding.",
     );
   });
 
-  it("names an unnamed listener without leftover-only uninstall (#11723)", () => {
+  it("names an unnamed listener and points at uninstall (#11723)", () => {
     expect(
-      occupiedInferencePublishMessage({
-        address: "127.0.0.1",
-        port: 11434,
-        process: "unknown",
-        pid: null,
-      }),
+      occupiedInferencePublishMessage(
+        {
+          address: "127.0.0.1",
+          port: 11434,
+          process: "unknown",
+          pid: null,
+        },
+        "ollama",
+      ),
     ).toBe(
-      "Port 11434 on 127.0.0.1 is already in use by unknown. Stop a host Ollama service or leftover Portable Ollama container on that port, then rerun onboarding.",
+      "Port 11434 on 127.0.0.1 is already in use by unknown. Stop that listener or uninstall the NemoClaw sandbox that owns a leftover managed Ollama container, then rerun onboarding.",
     );
+  });
+
+  it.each([
+    ["nim", "NIM"],
+    ["vllm", "vLLM"],
+  ] as const)("gives %s-specific remediation without naming Ollama", (service, label) => {
+    const message = occupiedInferencePublishMessage(
+      {
+        address: "127.0.0.1",
+        port: 8000,
+        process: "rootlessport",
+        pid: 17,
+      },
+      service,
+    );
+
+    expect(message).toContain(`leftover managed ${label} container`);
+    expect(message).not.toContain("Ollama");
+    expect(message).not.toContain("destroy");
   });
 
   it("parses one lsof LISTEN row after the header (#11723)", () => {
@@ -67,6 +97,21 @@ describe("Podman inference publish preflight", () => {
       address: "127.0.0.1",
       port: 11434,
       process: "ollama",
+      pid: 31385,
+    });
+  });
+
+  it("replaces an lsof process name containing terminal controls (#11723)", () => {
+    expect(
+      parseLsofListener(
+        "olla\u001bma 31385 ollama 4u IPv4 75487 0t0 TCP 127.0.0.1:11434 (LISTEN)",
+        "127.0.0.1",
+        11434,
+      ),
+    ).toEqual({
+      address: "127.0.0.1",
+      port: 11434,
+      process: "unknown",
       pid: 31385,
     });
   });
@@ -127,5 +172,39 @@ describe("Podman inference publish preflight", () => {
             : null,
       ),
     ).toEqual({ address: "169.254.2.2", port: 11434, process: "unknown", pid: null });
+  });
+
+  it("uses the default host inspector to reject a named loopback listener (#11723)", () => {
+    const runCommand = vi.fn<InferencePublishCommandRunner>().mockReturnValueOnce({
+      status: 0,
+      stdout:
+        "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nollama 31385 ollama 4u IPv4 75487 0t0 TCP 127.0.0.1:11434 (LISTEN)",
+    });
+
+    expect(() =>
+      assertInferencePublishPortsFree(11434, "169.254.2.2", "ollama", {
+        inspectionDependencies: { runCommand },
+      }),
+    ).toThrow("already in use by ollama (PID 31385)");
+    expect(runCommand).toHaveBeenCalledWith(
+      ["/usr/bin/lsof", "-nP", "-iTCP@127.0.0.1:11434", "-sTCP:LISTEN"],
+      5_000,
+    );
+  });
+
+  it("fails closed when the default loopback bind probe is inconclusive (#11723)", () => {
+    const runCommand = vi
+      .fn<InferencePublishCommandRunner>()
+      .mockReturnValueOnce({ error: new Error("missing lsof"), status: null })
+      .mockReturnValueOnce({ error: new Error("missing sudo"), status: null })
+      .mockReturnValueOnce({ status: 2 });
+
+    expect(() =>
+      assertInferencePublishPortsFree(11434, "169.254.2.2", "ollama", {
+        inspectionDependencies: { runCommand },
+      }),
+    ).toThrow("Cannot bind the inference publish target 127.0.0.1:11434.");
+    expect(runCommand).toHaveBeenCalledTimes(3);
+    expect(runCommand.mock.calls[2]?.[0]?.[0]).toBe(process.execPath);
   });
 });

@@ -185,7 +185,9 @@ describe("Podman managed Ollama lifecycle", () => {
         address === occupied.address && port === occupied.port ? occupied : null,
     });
 
-    expect(() => prepareManagedOllama(fixture)).toThrow(occupiedInferencePublishMessage(occupied));
+    expect(() => prepareManagedOllama(fixture)).toThrow(
+      occupiedInferencePublishMessage(occupied, "ollama"),
+    );
     expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
   });
 
@@ -208,8 +210,35 @@ describe("Podman managed Ollama lifecycle", () => {
     occupancy.events = fixture.harness.events;
     fixture.harness.state.runFailsWithoutContainer = true;
 
-    expect(() => prepareManagedOllama(fixture)).toThrow(occupiedInferencePublishMessage(occupied));
+    expect(() => prepareManagedOllama(fixture)).toThrow(
+      occupiedInferencePublishMessage(occupied, "ollama"),
+    );
     expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(true);
+  });
+
+  it("names a post-preflight occupant when failed create leaves an owned runtime (#11723)", () => {
+    const occupied = {
+      address: "127.0.0.1",
+      port: 11434,
+      process: "rootlessport",
+      pid: 5150,
+    } as const;
+    const occupancy = { events: [] as string[] };
+    const fixture = managedOllamaFixture({
+      inspectPublishedPort: (address, port) =>
+        occupancy.events.some((event) => event.startsWith("podman:run ")) &&
+        address === occupied.address &&
+        port === occupied.port
+          ? occupied
+          : null,
+    });
+    occupancy.events = fixture.harness.events;
+    fixture.harness.state.runLostAcknowledgement = true;
+
+    expect(() => prepareManagedOllama(fixture)).toThrow(
+      occupiedInferencePublishMessage(occupied, "ollama"),
+    );
+    expect(fixture.harness.events.some((event) => event.startsWith("podman:rm "))).toBe(true);
   });
 
   it("creates and rolls back a receipt-owned runtime for fresh Portable Hermes (#9596)", () => {
