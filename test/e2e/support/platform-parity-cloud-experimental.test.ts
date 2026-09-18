@@ -718,9 +718,9 @@ assert_status_mode disabled
         "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
         "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
         "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
         "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
         "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       ]);
 
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;

@@ -410,9 +410,10 @@ launchers to fail without publishing a file before restoring the registry. The a
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
-Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore the
-disabled baseline. The installed CLI must emit a v1alpha1 document with the `deepagents` harness,
-hosted OpenAI-compatible route, credential reference, and independently observed effective policy.
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
 The fixture compares the registry before and after export, and state validation confirms that the
 sandbox remains ready after the read-only command.
 
