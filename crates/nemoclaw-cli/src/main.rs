@@ -5,6 +5,7 @@ mod args;
 mod authoring;
 mod credentials;
 mod dispatch;
+mod formatting;
 mod io;
 #[cfg(test)]
 mod parity;
@@ -29,6 +30,7 @@ async fn interrupt() {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let output_format = cli.command.output_format();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     let signals = tokio::spawn(async move {
@@ -44,7 +46,7 @@ async fn main() -> ExitCode {
     match result {
         Ok(dispatch::CommandResult::OnboardExit) => ExitCode::SUCCESS,
         Ok(result) => {
-            match result.render().and_then(|output| {
+            match formatting::render(result, output_format).and_then(|output| {
                 io::write_output(
                     output_path.as_deref(),
                     output.as_bytes(),
@@ -60,7 +62,7 @@ async fn main() -> ExitCode {
             }
         }
         Err(error) => {
-            eprintln!("{}", dispatch::render_error(error.as_ref()));
+            eprintln!("{}", formatting::render_error(error.as_ref()));
             ExitCode::FAILURE
         }
     }

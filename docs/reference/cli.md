@@ -13,8 +13,8 @@ The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and
 |---|---|---|
 | `nemoclaw onboard` | Interactive answers and review | Writes desired-state YAML, resolves credentials, previews a plan, asks separately before apply, and runs the ordinary SDK apply |
 | `nemoclaw onboard --generate-only` | Interactive answers, or direct flags with `--non-interactive` | Writes parser-validated desired-state YAML and stops before credential or lifecycle setup |
-| `nemoclaw plan FILE` | YAML path or `-` for stdin | JSON preview; observes resources without mutating runtime resources |
-| `nemoclaw plan --destroy` | Retained state; no YAML | JSON preview of workload deletion and retention |
+| `nemoclaw plan FILE` | YAML path or `-` for stdin | Text preview; observes resources without mutating runtime resources |
+| `nemoclaw plan --destroy` | Retained state; no YAML | Text preview of workload deletion and retention |
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | JSON result; computes a checked plan and applies it |
 | `nemoclaw export` | Retained state; no YAML | Observed YAML after configuration and ownership checks |
 | `nemoclaw destroy` | Retained state; no YAML | JSON result; removes owned workloads under the retention rules |
@@ -57,6 +57,7 @@ Credential values are not written to desired state, output, diagnostics, or depl
 | `--verbose`, `-v` | All commands | Report completed-step timings and outcomes on stderr |
 | `--generate-only` | `onboard` | Publish YAML and stop before credential fulfillment, plan, or apply |
 | `--output FILE`, `-o FILE` | `onboard`, `export` | Write YAML to a file; onboarding defaults to `deployment.yaml` |
+| `--output FORMAT`, `-o FORMAT` | `plan` | Select `text` (default) or `json` for the preview, including `--destroy` |
 | `--non-interactive` | `onboard` | Use direct flags/defaults, require environment credentials in composed mode, and apply without a confirmation prompt |
 | `--non-interactive` | `plan`, `apply` | Resolve credential references from nonempty environment variables and fail instead of prompting when any remain unresolved |
 | `--edit FILE` | `onboard` | Review and semantically edit existing generated YAML; excludes `--non-interactive` and direct-answer flags |
@@ -73,7 +74,11 @@ Export and destroy do not accept a YAML path.
 
 ## Output and Failure
 
-Successful plan, apply, and destroy operations write JSON to stdout.
+Successful plan operations write text to stdout by default, including when redirected.
+Use `nemoclaw plan -o json FILE` or `nemoclaw plan --destroy -o json` for the existing JSON result structure; scripts that parse plan output must select this format explicitly.
+The text preview lists each resource's actions and address, any reported retained resources, and any deferred work.
+Deferred work means the plan is incomplete, even when no resource changes are currently planned.
+Apply and destroy write JSON to stdout.
 Export writes YAML to stdout or the selected output file.
 Onboarding writes YAML only to its selected output file and reports credential references, the composed plan preview, prompts, and errors on stderr.
 It atomically replaces an existing selected file; a failed publication does not expose a partial document.
@@ -92,7 +97,7 @@ Redirected stderr contains errors only unless `--verbose` enables progress outpu
 With `--verbose`, completed bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed time on stderr.
 For example, `bundle.verify succeeded 92ms` reports one bundle verification.
 Timing events contain no configuration values, credentials, or error diagnostics; ordinary errors are reported separately.
-Stdout retains its JSON or YAML format.
+Progress messages do not change the selected stdout format.
 
 The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the JSON fields:
 
