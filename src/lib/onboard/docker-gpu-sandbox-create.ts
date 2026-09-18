@@ -291,6 +291,11 @@ export function createDockerGpuSandboxCreatePatch(
     }
   };
 
+  const selectedMode = (): DockerGpuPatchMode | null =>
+    managedBootstrapCutover?.selectedMode ?? result?.mode ?? null;
+  const failureContext = (): DockerGpuPatchFailureContext =>
+    managedBootstrapCutover?.failureContext ?? buildFailureContext(options.sandboxName, result);
+
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
     const failure = patchError instanceof Error ? patchError : new Error(String(patchError));
@@ -302,12 +307,12 @@ export function createDockerGpuSandboxCreatePatch(
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
       dockerCapture: options.deps.dockerCapture,
       additionalSummaryLines: routeAdapter.additionalSummaryLines,
+      // Carry the selected post-create operation into the failure printer so a
+      // startup-command (non-GPU) failure never wears GPU failure wording (#12080).
+      selectedMode: selectedMode(),
+      context: failureContext(),
     });
   };
-  const selectedMode = (): DockerGpuPatchMode | null =>
-    managedBootstrapCutover?.selectedMode ?? result?.mode ?? null;
-  const failureContext = (): DockerGpuPatchFailureContext =>
-    managedBootstrapCutover?.failureContext ?? buildFailureContext(options.sandboxName, result);
 
   return {
     maybeApplyDuringCreate() {

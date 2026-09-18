@@ -196,6 +196,25 @@ function classificationMatchesSelectedMode(
   return classification.selectedModeKind === selectedMode.kind;
 }
 
+/**
+ * Whether the selected post-create operation is a GPU handling step. The
+ * `startup-command` mode is the non-GPU restart-persistence recreation, so a
+ * failure in that operation must not wear GPU failure wording (#12080).
+ */
+function selectedOperationIsGpu(selectedMode: DockerGpuPatchMode | null): boolean {
+  return selectedMode === null || selectedMode.kind !== "startup-command";
+}
+
+const GPU_ESCAPE_HATCH_LINES: readonly string[] = [
+  "NEMOCLAW_DOCKER_GPU_PATCH=1  use only the Docker GPU compatibility path.",
+  "NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; Jetson also defaults to the compatibility path).",
+  "NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
+];
+
+const NO_GPU_NEXT_ACTION_LINES: readonly string[] = [
+  "Rebuild the sandbox image, then rerun onboarding to recreate it.",
+];
+
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
@@ -213,6 +232,7 @@ export function printDockerGpuPatchFailureAndExit(
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
   const selectedMode = deps.selectedMode || context?.selectedMode || null;
+  const gpuInvolved = selectedOperationIsGpu(selectedMode);
   const inspectDeps = snapshotInspectDeps(deps);
   const snapshot = captureDockerGpuPatchSandboxSnapshot(
     sandboxName,
@@ -246,7 +266,9 @@ export function printDockerGpuPatchFailureAndExit(
       ? createDockerGpuDiagnosticRedactor().redactText(error.message)
       : "";
   console.error("");
-  console.error("  Docker GPU patch failed.");
+  console.error(
+    gpuInvolved ? "  Docker GPU patch failed." : "  Docker startup-command patch failed.",
+  );
   if (errorMessage) {
     console.error(`  ${errorMessage}`);
   }
@@ -254,14 +276,13 @@ export function printDockerGpuPatchFailureAndExit(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  console.error("  Escape hatches:");
-  console.error("    NEMOCLAW_DOCKER_GPU_PATCH=1  use only the Docker GPU compatibility path.");
-  console.error(
-    "    NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; Jetson also defaults to the compatibility path).",
-  );
-  console.error(
-    "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
-  );
+  if (gpuInvolved) {
+    console.error("  Escape hatches:");
+    for (const line of GPU_ESCAPE_HATCH_LINES) console.error(`    ${line}`);
+  } else {
+    console.error("  Next action:");
+    for (const line of NO_GPU_NEXT_ACTION_LINES) console.error(`    ${line}`);
+  }
   printDockerGpuPatchCleanup(context, diagnostics);
   process.exit(1);
 }
@@ -524,14 +545,18 @@ export function classifyDockerGpuPatchFailure(
   const hints: string[] = [];
   let kind: DockerGpuPatchFailureKind = "unknown";
   let headline: string;
+  const gpuOperation = selectedOperationIsGpu(selectedMode);
+  const operationNoun = gpuOperation
+    ? "Patched GPU container"
+    : "Startup-command replacement container";
   if (containerFailed) {
     kind = "patched_container_failed";
     const exit = snapshot.patchedContainerState?.ExitCode;
     const opt = selectedMode ? ` (${selectedMode.label})` : "";
     headline =
       typeof exit === "number" && exit !== 0
-        ? `Patched GPU container exited with code ${exit}${opt}.`
-        : `Patched GPU container is not running${opt}.`;
+        ? `${operationNoun} exited with code ${exit}${opt}.`
+        : `${operationNoun} is not running${opt}.`;
     if (
       exit === SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE &&
       options.managedStartupCommandMissing === true
@@ -540,7 +565,9 @@ export function classifyDockerGpuPatchFailure(
     }
   } else if (sandboxInErrorPhase) {
     kind = "sandbox_error_phase";
-    headline = `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`;
+    headline = gpuOperation
+      ? `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`
+      : `OpenShell sandbox entered ${snapshot.sandboxPhase} phase during startup-command restart persistence.`;
   } else if (healthyContainerInDeletingPhase) {
     kind = "sandbox_deleting_phase";
     headline =
@@ -568,7 +595,9 @@ export function classifyDockerGpuPatchFailure(
     kind = "proof_failure";
     headline = "GPU proof failed inside an executable sandbox.";
   } else {
-    headline = "Docker GPU patch did not complete successfully.";
+    headline = gpuOperation
+      ? "Docker GPU patch did not complete successfully."
+      : "Docker startup-command patch did not complete successfully.";
   }
 
   if (options.proofError) {
