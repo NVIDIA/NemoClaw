@@ -500,6 +500,22 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(report.provenance.observedAt).toBe(observedAt);
   });
 
+  it("uses collection completion as provenance when no start is supplied (#10670)", () => {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      collectedAt,
+      now: () => new Date("2026-08-31T12:00:01.000Z"),
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.provenance.observedAt).toBe(collectedAt);
+  });
+
   function slowMetadataAdmission(reuseDelay: number) {
     const collectedAt = "2026-08-31T12:00:00.000Z";
     let currentTime = Date.parse(collectedAt) + reuseDelay;

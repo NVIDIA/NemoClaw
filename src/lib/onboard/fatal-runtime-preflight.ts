@@ -574,7 +574,7 @@ export function assertOnboardHostReadiness(
   // The window is anchored to collection completion, as #9325 established.
   // `collectedAt` is when the caller's probes finished, so any later delay
   // before this gate is still charged; `observedAt` is provenance (#10670).
-  const observedAt = options.observedAt ?? collected.observedAt;
+  const observedAt = options.observedAt ?? options.collectedAt ?? collected.observedAt;
   const completedAt = options.collectedAt ?? collected.completedAt;
   const observedAtMs = Date.parse(observedAt);
   const completedAtMs = Date.parse(completedAt);
