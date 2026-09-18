@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { MCP_PROBE_CONTROL_BEARER } from "../../../src/lib/actions/sandbox/mcp-bridge-resolution-probe.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import {
   assertManagedMcpPolicySurvivedRemoval,
   buildMcpDnsRebindingProbeScript,
@@ -21,7 +23,10 @@ import {
   setupDnsRebindingHostsFixture,
 } from "./mcp-bridge-sandbox.ts";
 import { startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
-import { assertAuthenticatedMcpToolDiscovery } from "./mcp-bridge-tool-discovery.ts";
+import {
+  assertAuthenticatedMcpDiscovery,
+  buildMcpStatusRequestEvidence,
+} from "./mcp-bridge-tool-discovery.ts";
 import { startRoutedPrivateRelay } from "../fixtures/routed-private-relay.ts";
 
 const SERVER_POLICY_KEY = "mcp_bridge_fake";
@@ -54,7 +59,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       adapter: McpDnsRebindingAdapter,
     ) => Promise<void>;
     mutationTimeoutMs: number;
-    progress: Parameters<typeof assertAuthenticatedMcpToolDiscovery>[2]["progress"];
+    progress: Pick<TestProgress, "event">;
     sandboxName: string;
     secretPaths: string[];
     survivingMcpUrl: string;
@@ -128,8 +133,12 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     add,
     `${options.artifactPrefix} registers a routed-private MCP endpoint with explicit trust`,
   );
+  const trustedPrivateRequestOffset = rebindMcp.requests.length;
+  options.progress.event(
+    "Probe credentials and discover tools through the trusted-private MCP route",
+  );
   const status = await host.nemoclaw(
-    [options.sandboxName, "mcp", "status", REBIND_SERVER_NAME, "--json"],
+    [options.sandboxName, "mcp", "status", REBIND_SERVER_NAME, "--probe", "--tools", "--json"],
     {
       artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-status-after-add`,
       env: {
@@ -140,21 +149,46 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       timeoutMs: 60_000,
     },
   );
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-status-requests.json`,
+    buildMcpStatusRequestEvidence(
+      rebindMcp.requests.slice(trustedPrivateRequestOffset),
+      REBIND_HOST_SECRET,
+      MCP_PROBE_CONTROL_BEARER,
+    ),
+  );
   expectExitZero(status, `${options.artifactPrefix} inspects trusted-private route after add`);
-  expect(JSON.parse(status.stdout)).toMatchObject({
-    support: { supported: true, adapter: options.adapter },
-    server: REBIND_SERVER_NAME,
-    url: rebindMcpUrl,
-    env: { names: [REBIND_CREDENTIAL_KEY], ready: true, missing: [] },
-    provider: { attached: true, credentialReady: true },
-    policy: { present: true },
-    adapter: { registered: true },
-    trustedPrivateTarget: {
-      host: REBIND_HOSTNAME,
-      recordedPins: [trustedPrivateAddress],
-      currentPins: [trustedPrivateAddress],
-      state: "match",
+  const controlProbe = rebindMcp.requests
+    .slice(trustedPrivateRequestOffset)
+    .find((request) => request.auth === `Bearer ${MCP_PROBE_CONTROL_BEARER}`);
+  expect({ status: JSON.parse(status.stdout), controlProbe }).toMatchObject({
+    status: {
+      support: { adapter: options.adapter },
+      trustedPrivateTarget: {
+        host: REBIND_HOSTNAME,
+        recordedPins: [trustedPrivateAddress],
+        currentPins: [trustedPrivateAddress],
+        state: "match",
+      },
+      toolDiscovery: {
+        ok: true,
+        count: 2,
+        tools: ["fake_echo", "fake_status"],
+        truncated: false,
+        commandStatus: 0,
+      },
     },
+    controlProbe: {
+      method: "POST",
+      path: "/mcp",
+      rpcMethod: "initialize",
+      responseStatus: 401,
+    },
+  });
+  await assertAuthenticatedMcpDiscovery(rebindMcp, {
+    requestOffset: trustedPrivateRequestOffset,
+    expectedSecret: REBIND_HOST_SECRET,
+    label: `${options.artifactPrefix} trusted-private status discovery`,
   });
   const rebindingPolicy = await captureManagedMcpPolicy(sandbox, {
     artifactName: `${options.artifactPrefix}-mcp-trusted-private-policy-pinned-address`,
@@ -174,15 +208,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     [REBIND_HOST_SECRET],
     `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
   );
-  await assertAuthenticatedMcpToolDiscovery(host, rebindMcp, {
-    artifacts: options.artifacts,
-    sandboxName: options.sandboxName,
-    artifactPrefix: `${options.artifactPrefix}-trusted-private`,
-    credentialKey: REBIND_CREDENTIAL_KEY,
-    hostSecret: REBIND_HOST_SECRET,
-    progress: options.progress,
-    serverName: REBIND_SERVER_NAME,
-  });
   const requestsBeforeRebindingDenial = rebindMcp.requests.length;
 
   // OpenShell must retain the exact private address admitted at add time. A

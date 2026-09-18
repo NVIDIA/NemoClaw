@@ -106,7 +106,7 @@ export function getChatCompletionsProbePayload(
       ...payload,
       temperature: 1,
       top_p: 0.95,
-      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
     };
   }
 
