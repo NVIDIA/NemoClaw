@@ -9,7 +9,6 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
-import { MANAGED_STARTUP_RECEIPT_VOLUME_LABEL } from "../../onboard/managed-startup/docker-receipt-transfer";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -153,17 +152,21 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).toContainEqual(["rmi", "-f", "i-openshell"]);
   });
 
-  it("preserves labelled and unlabelled receipt-volume matches during force-fresh cleanup", async () => {
-    const owned = `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`;
-    const unlabelled = `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`;
+  it.each([
+    {
+      kind: "labelled",
+      volume: `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`,
+    },
+    {
+      kind: "unlabelled",
+      volume: `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`,
+    },
+  ])("preserves an $kind receipt-volume match during force-fresh cleanup", async ({ volume }) => {
     const calls: string[][] = [];
     const routes: Record<string, () => RunResult> = {
       info: () => ok(),
       "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
-      [`volume ls --filter label=${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1 --format {{.Name}}`]:
-        () => ok(owned),
-      [`volume inspect --format {{json .Labels}} ${owned}`]: () =>
-        ok(JSON.stringify({ [MANAGED_STARTUP_RECEIPT_VOLUME_LABEL]: "1" })),
+      "volume ls --format {{.Name}}": () => ok(volume),
       "volume inspect openshell-cluster-nemoclaw": () => ({
         status: 1,
         stdout: "",
@@ -202,8 +205,8 @@ describe("uninstall Docker resource scope", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(calls).not.toContainEqual(["volume", "rm", "-f", owned]);
-    expect(calls).not.toContainEqual(["volume", "rm", "-f", unlabelled]);
+    expect(calls).toContainEqual(["volume", "ls", "--format", "{{.Name}}"]);
+    expect(calls).not.toContainEqual(["volume", "rm", "-f", volume]);
   });
 
   it.each([
