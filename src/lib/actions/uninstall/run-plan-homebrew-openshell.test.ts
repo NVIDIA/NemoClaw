@@ -44,6 +44,7 @@ async function uninstallOpenShell(options: {
   brewAvailable: boolean;
   brewStatus: number | null;
   forceFreshReset?: boolean;
+  managedUserLocal?: boolean;
   platform?: NodeJS.Platform;
 }) {
   const home = "/tmp/nemoclaw-uninstall-test";
@@ -64,6 +65,7 @@ async function uninstallOpenShell(options: {
       env: { HOME: home } as NodeJS.ProcessEnv,
       existsSync: (target) => existing.has(String(target)),
       hasPortableRuntimeCleanup: () => false,
+      isManagedOpenShellBinary: () => options.managedUserLocal ?? false,
       isTty: true,
       log: (line) => logs.push(line),
       platform: options.platform ?? "darwin",
@@ -107,6 +109,7 @@ it("lets force-fresh remove only managed user-local OpenShell binaries", async (
     brewAvailable: true,
     brewStatus: 0,
     forceFreshReset: true,
+    managedUserLocal: true,
   });
   const userLocal = executablePaths.filter((target) => target.includes("/.local/bin/"));
   const system = executablePaths.filter((target) => target.startsWith("/usr/local/bin/"));
@@ -114,6 +117,19 @@ it("lets force-fresh remove only managed user-local OpenShell binaries", async (
   expect(result.exitCode).toBe(0);
   expect(new Set(removed)).toEqual(new Set(userLocal));
   expect(new Set(remaining)).toEqual(new Set(system));
+});
+
+it("retains unverified user-local OpenShell binaries during force-fresh cleanup", async () => {
+  const { executablePaths, remaining, removed, result } = await uninstallOpenShell({
+    brewAvailable: true,
+    brewStatus: 0,
+    forceFreshReset: true,
+    managedUserLocal: false,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(removed).toEqual([]);
+  expect(new Set(remaining)).toEqual(new Set(executablePaths));
 });
 
 it.each([

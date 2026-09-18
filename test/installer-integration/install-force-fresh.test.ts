@@ -222,7 +222,7 @@ exit 0
   const result = callPayloadFunction("remove_macos_openshell_for_force_fresh_install", {
     FORCE_FRESH_LOG: logPath,
     HOME: tmp,
-    PATH: `${localBin}:${fakeBin}:${TEST_SYSTEM_PATH}`,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
   });
 
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -255,6 +255,23 @@ exit 7
 
   expect(result.status).not.toBe(0);
   expect(`${result.stdout}${result.stderr}`).toContain("Homebrew could not remove OpenShell");
+});
+
+it("rejects a remaining OpenShell executable outside managed and Homebrew paths", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-foreign-bin-");
+  const foreignBin = path.join(tmp, "foreign", "bin");
+  fs.mkdirSync(foreignBin, { recursive: true });
+  writeExecutable(path.join(foreignBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+
+  const result = callPayloadFunction("remove_macos_openshell_for_force_fresh_install", {
+    HOME: tmp,
+    PATH: `${foreignBin}:${fakeBin}:${TEST_SYSTEM_PATH}`,
+  });
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    `remaining OpenShell executable at ${path.join(foreignBin, "openshell")}`,
+  );
 });
 
 it("runs cleanup before selecting fresh onboarding", () => {

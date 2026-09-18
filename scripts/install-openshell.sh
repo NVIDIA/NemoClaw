@@ -1031,6 +1031,26 @@ install_bins() {
   fi
 }
 
+write_managed_user_install_manifest() {
+  local dir="$1" binary digest manifest
+  manifest="$tmpdir/nemoclaw-openshell-managed-v1"
+  : >"$manifest"
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    case "$binary" in
+      openshell) ;;
+      *) [ -x "$tmpdir/$binary" ] || continue ;;
+    esac
+    [ -x "$dir/$binary" ] || continue
+    digest="$($SHA_CMD "$dir/$binary" | awk '{print $1}')" \
+      || fail "Could not hash the installed $binary binary."
+    [[ "$digest" =~ ^[a-f0-9]{64}$ ]] \
+      || fail "The installed $binary binary returned an invalid SHA-256 digest."
+    printf '%s  %s\n' "$digest" "$binary" >>"$manifest"
+  done
+  [ -s "$manifest" ] || fail "The managed OpenShell install manifest is empty."
+  install -m 600 "$manifest" "$dir/.nemoclaw-openshell-managed-v1"
+}
+
 if [ -w "$target_dir" ]; then
   install_bins "$target_dir"
 elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
@@ -1057,5 +1077,8 @@ fi
 required_driver_bins_installed_in_dir "$target_dir" \
   || fail "OpenShell release '$RELEASE_TAG' did not install the required Docker-driver binaries."
 require_openshell_messaging_features "$target_dir/openshell"
+if [ "$target_dir" = "${XDG_BIN_HOME:-$HOME/.local/bin}" ]; then
+  write_managed_user_install_manifest "$target_dir"
+fi
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

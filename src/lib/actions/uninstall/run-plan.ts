@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -174,6 +174,7 @@ export interface UninstallRunDeps {
   fs?: FileSystemDeps;
   getTrustedActiveOpenShellGatewayUserServiceIdentity?: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree?: (port: number) => boolean;
+  isManagedOpenShellBinary?: (target: string, userBin: string) => boolean;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
@@ -536,6 +537,7 @@ interface UninstallRuntime {
   existsSync: (target: string) => boolean;
   getTrustedActiveOpenShellGatewayUserServiceIdentity: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree: ((port: number) => boolean) | undefined;
+  isManagedOpenShellBinary: (target: string, userBin: string) => boolean;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
@@ -588,6 +590,8 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
       deps.getTrustedActiveOpenShellGatewayUserServiceIdentity ??
       getTrustedActiveOpenShellGatewayUserServiceIdentity,
     isPortFree: deps.isPortFree,
+    isManagedOpenShellBinary:
+      deps.isManagedOpenShellBinary ?? defaultManagedOpenShellBinaryOwnership,
     // Side-effect-free TTY check + EAGAIN-tolerant reader; the
     // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
     isTty: deps.isTty ?? isStdinTty(),
@@ -856,6 +860,71 @@ function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
   );
 }
 
+const MANAGED_OPENSHELL_INSTALL_MANIFEST = ".nemoclaw-openshell-managed-v1";
+const MANAGED_OPENSHELL_BINARY_NAMES = new Set([
+  "openshell",
+  "openshell-gateway",
+  "openshell-sandbox",
+  "openshell-driver-vm",
+]);
+
+function managedOpenShellManifest(userBin: string): ReadonlyMap<string, string> | null {
+  let opened: OpenRegularFile | null = null;
+  try {
+    opened = openRegularFileNoFollow(path.join(userBin, MANAGED_OPENSHELL_INSTALL_MANIFEST));
+    const owner = process.getuid?.();
+    const stat = opened.stat();
+    if (owner === undefined || stat.uid !== owner || (stat.mode & 0o022) !== 0) return null;
+    const entries = new Map<string, string>();
+    for (const line of opened.readUtf8(2_048).trim().split(/\r?\n/u)) {
+      const match = /^([a-f0-9]{64})  (openshell(?:-gateway|-sandbox|-driver-vm)?)$/u.exec(line);
+      const digest = match?.[1];
+      const binary = match?.[2];
+      if (!digest || !binary || entries.has(binary)) return null;
+      entries.set(binary, digest);
+    }
+    return entries.size > 0 ? entries : null;
+  } catch {
+    return null;
+  } finally {
+    opened?.close();
+  }
+}
+
+function regularFileSha256(target: string): { digest: string; uid: number } | null {
+  let opened: OpenRegularFile | null = null;
+  try {
+    opened = openRegularFileNoFollow(target);
+    const stat = opened.stat();
+    return {
+      digest: createHash("sha256")
+        .update(opened.readBytes(256 * 1024 * 1024))
+        .digest("hex"),
+      uid: stat.uid,
+    };
+  } catch {
+    return null;
+  } finally {
+    opened?.close();
+  }
+}
+
+function defaultManagedOpenShellBinaryOwnership(target: string, userBin: string): boolean {
+  const binary = path.basename(target);
+  if (
+    path.dirname(path.resolve(target)) !== path.resolve(userBin) ||
+    !MANAGED_OPENSHELL_BINARY_NAMES.has(binary)
+  ) {
+    return false;
+  }
+  const expected = managedOpenShellManifest(userBin)?.get(binary);
+  const actual = regularFileSha256(target);
+  const owner = process.getuid?.();
+  return Boolean(
+    expected && actual && owner !== undefined && actual.uid === owner && actual.digest === expected,
+  );
+}
+
 function removeForceFreshUserLocalOpenShell(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -863,9 +932,22 @@ function removeForceFreshUserLocalOpenShell(
   const userBin = path.resolve(
     runtime.env.XDG_BIN_HOME || path.join(runtime.env.HOME || os.homedir(), ".local", "bin"),
   );
+  let removed = 0;
+  let retained = false;
   try {
     for (const target of paths.openshellInstallPaths) {
-      if (path.dirname(path.resolve(target)) === userBin) removePath(target, runtime);
+      if (path.dirname(path.resolve(target)) !== userBin || !runtime.existsSync(target)) continue;
+      if (!runtime.isManagedOpenShellBinary(target, userBin)) {
+        retained = true;
+        runtime.warn(
+          `Leaving ${target} in place because its managed OpenShell install manifest is absent or does not match.`,
+        );
+        continue;
+      }
+      if (removePath(target, runtime)) removed += 1;
+    }
+    if (removed > 0 && !retained) {
+      removePath(path.join(userBin, MANAGED_OPENSHELL_INSTALL_MANIFEST), runtime);
     }
     return true;
   } catch (error) {
