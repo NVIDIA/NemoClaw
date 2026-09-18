@@ -1616,7 +1616,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1686,7 +1692,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
