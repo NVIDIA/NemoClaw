@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => {
     policy: "absent" as "absent" | "bound" | "capability",
     provider: false,
     providerIdentityChanged: false,
+    readinessDelayObservations: 0,
     registerFailure: "relay" as "generic" | "relay",
     revision: "v7",
+    useRealAdapterFlow: false,
   };
   return {
     applyGeneratedPolicy: vi.fn(),
@@ -26,10 +28,23 @@ const mocks = vi.hoisted(() => {
     observeSandboxOnGateway: vi.fn(),
     registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
     removeGeneratedPolicy: vi.fn(),
+    runOpenshellProviderCommand: vi.fn(),
     state,
     unregisterAgentAdapter: vi.fn(),
+    waitForMcpBridgeConditionAsync: vi.fn(async (condition: () => Promise<boolean>) => {
+      let matched = false;
+      for (let attempt = 0; attempt < 12 && !matched; attempt += 1) {
+        matched = await condition();
+      }
+      return matched;
+    }),
   };
 });
+
+vi.mock("../../adapters/openshell/provider-command", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/provider-command")>()),
+  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+}));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
   withMcpLifecycleLock: (_sandbox: string, operation: () => unknown) => operation(),
@@ -47,16 +62,33 @@ vi.mock("../../onboard/sandbox-recreate-probe", () => ({
   observeSandboxOnGateway: mocks.observeSandboxOnGateway,
 }));
 
-vi.mock("./mcp-bridge-adapters", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./mcp-bridge-adapters")>()),
-  assertAgentMcpMutationRuntimeCapability: vi.fn(),
-  inspectAgentAdapterRegistration: mocks.inspectAgentAdapterRegistration,
-  inspectHermesMcpReloadFinality: mocks.inspectHermesMcpReloadFinality,
-  observeStableMcpCredentialRevision: mocks.observeStableMcpCredentialRevision,
-  registerAgentAdapterAtCurrentCredentialRevision:
-    mocks.registerAgentAdapterAtCurrentCredentialRevision,
-  reloadOpenClawGatewayAfterMcpMutation: vi.fn(),
-  unregisterAgentAdapter: mocks.unregisterAgentAdapter,
+vi.mock("./mcp-bridge-adapters", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./mcp-bridge-adapters")>();
+  return {
+    ...original,
+    assertAgentMcpMutationRuntimeCapability: vi.fn(),
+    inspectAgentAdapterRegistration: mocks.inspectAgentAdapterRegistration,
+    inspectHermesMcpReloadFinality: (
+      ...args: Parameters<typeof original.inspectHermesMcpReloadFinality>
+    ) =>
+      mocks.state.useRealAdapterFlow
+        ? original.inspectHermesMcpReloadFinality(...args)
+        : mocks.inspectHermesMcpReloadFinality(...args),
+    observeStableMcpCredentialRevision: mocks.observeStableMcpCredentialRevision,
+    registerAgentAdapterAtCurrentCredentialRevision: (
+      ...args: Parameters<typeof original.registerAgentAdapterAtCurrentCredentialRevision>
+    ) =>
+      mocks.state.useRealAdapterFlow
+        ? original.registerAgentAdapterAtCurrentCredentialRevision(...args)
+        : mocks.registerAgentAdapterAtCurrentCredentialRevision(...args),
+    reloadOpenClawGatewayAfterMcpMutation: vi.fn(),
+    unregisterAgentAdapter: mocks.unregisterAgentAdapter,
+  };
+});
+
+vi.mock("./mcp-bridge/timing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge/timing")>()),
+  waitForMcpBridgeConditionAsync: mocks.waitForMcpBridgeConditionAsync,
 }));
 
 vi.mock("./mcp-bridge-status", async (importOriginal) => ({
@@ -196,8 +228,10 @@ describe("Hermes MCP add reload finality", () => {
       policy: "absent",
       provider: false,
       providerIdentityChanged: false,
+      readinessDelayObservations: 0,
       registerFailure: "relay",
       revision: "v7",
+      useRealAdapterFlow: false,
     });
     process.env.GITHUB_TOKEN = "host-only-secret";
     delete process.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS;
@@ -222,13 +256,18 @@ describe("Hermes MCP add reload finality", () => {
     );
     mocks.observeMcpCredentialRevision.mockImplementation(() => mocks.state.revision);
     mocks.observeStableMcpCredentialRevision.mockImplementation(async () => mocks.state.revision);
+    mocks.runOpenshellProviderCommand.mockReset();
     let identityObservations = 0;
     mocks.observeSandboxOnGateway.mockImplementation(() => {
       identityObservations += 1;
       return {
         liveIdentityFingerprint:
           mocks.state.identityChanged && identityObservations > 1 ? "b".repeat(64) : "a".repeat(64),
-        state: "ready",
+        state:
+          identityObservations > 1 &&
+          identityObservations <= 1 + mocks.state.readinessDelayObservations
+            ? "not_ready"
+            : "ready",
       };
     });
     mocks.registerAgentAdapterAtCurrentCredentialRevision.mockImplementation(() => {
@@ -259,6 +298,73 @@ describe("Hermes MCP add reload finality", () => {
     expect(mocks.detachProvider).not.toHaveBeenCalled();
   });
 
+  it("waits for the same sandbox identity to return ready before proving finality", async () => {
+    mocks.state.readinessDelayObservations = 2;
+
+    await expect(runAdd()).resolves.toBeUndefined();
+
+    expect(mocks.observeSandboxOnGateway).toHaveBeenCalledTimes(5);
+    expect(mocks.inspectHermesMcpReloadFinality).toHaveBeenCalledOnce();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("hands the exact relay loss to the real adapter finality inspection", async () => {
+    mocks.state.useRealAdapterFlow = true;
+    const relayLoss = `Error: × code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"\n`;
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
+      switch (args.find((arg) => arg === "add" || arg === "reconcile")) {
+        case "add":
+          mocks.state.adapter = true;
+          return { status: 1, stdout: "", stderr: relayLoss };
+        case "reconcile":
+          return {
+            status: 0,
+            stdout: '{"ok":true,"state":"committed"}\n',
+            stderr: "",
+          };
+        default:
+          throw new Error(`unexpected Hermes MCP command: ${JSON.stringify(args)}`);
+      }
+    });
+
+    await expect(runAdd()).resolves.toBeUndefined();
+
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["add"]),
+    );
+    expect(mocks.runOpenshellProviderCommand.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining(["reconcile"]),
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("keeps cleanup suppressed when the real adapter cannot prove relay-loss finality", async () => {
+    mocks.state.useRealAdapterFlow = true;
+    const relayLoss = `Error: × code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"\n`;
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
+      switch (args.find((arg) => arg === "add" || arg === "reconcile")) {
+        case "add":
+          return { status: 1, stdout: "", stderr: relayLoss };
+        case "reconcile":
+          return { status: 2, stdout: "", stderr: "config mismatch" };
+        default:
+          throw new Error(`unexpected Hermes MCP command: ${JSON.stringify(args)}`);
+      }
+    });
+
+    await expect(runAdd()).rejects.toThrow(/outcome.*unknown.*did not roll back or repeat/iu);
+
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(3);
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
   it("rolls back external state only after the helper proves exact absence", async () => {
     mocks.state.finality = "absent";
 
@@ -280,6 +386,10 @@ describe("Hermes MCP add reload finality", () => {
       },
     ],
     ["the sandbox identity changes", () => (mocks.state.identityChanged = true)],
+    [
+      "the same sandbox identity does not return ready",
+      () => (mocks.state.readinessDelayObservations = 20),
+    ],
     ["the credential revision changes", () => (mocks.state.revision = "v8")],
     [
       "the credential revision drifts from v7 to v8 after two matching observations",

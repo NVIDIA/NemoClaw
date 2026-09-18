@@ -1467,6 +1467,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
+    && check_metadata /etc/nemoclaw/hermes-mcp-transaction.lock 'root:root 444' \
     && check_metadata /opt/hermes/plugins/nemoclaw 'root:root 755' \
     && check_metadata /opt/hermes/plugins/nemoclaw/__init__.py 'root:root 444' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \

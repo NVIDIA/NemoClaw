@@ -15,6 +15,7 @@ import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/c
 import {
   assertAgentMcpMutationRuntimeCapability,
   HermesMcpReloadRelayLossError,
+  type HermesMcpReloadFinalityInspection,
   inspectAgentAdapterRegistration,
   inspectHermesMcpReloadFinality,
   observeStableMcpCredentialRevision,
@@ -79,6 +80,9 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
+
+const HERMES_MCP_RECONCILE_READY_TIMEOUT_SECONDS = 30;
 
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
   return (
@@ -202,11 +206,6 @@ type McpAddRecovery = {
   resuming: boolean;
 };
 
-type HermesMcpAddFinality =
-  | { state: "absent" }
-  | { state: "committed" }
-  | { state: "unknown"; detail: string };
-
 function observeHermesMcpAddSandboxIdentity(
   sandboxName: string,
   sandbox: ReturnType<typeof getSandboxOrThrow>,
@@ -240,6 +239,56 @@ function observeHermesMcpAddSandboxIdentity(
     );
   }
   return observation.liveIdentityFingerprint;
+}
+
+async function waitForHermesMcpAddSandboxIdentity(
+  sandboxName: string,
+  sandbox: ReturnType<typeof getSandboxOrThrow>,
+  baselineIdentity: string,
+  runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+): Promise<string> {
+  let readyIdentity: string | undefined;
+  const ready = await waitForMcpBridgeConditionAsync(
+    async () => {
+      if (
+        !sandbox.gatewayName ||
+        typeof sandbox.gatewayPort !== "number" ||
+        !Number.isInteger(sandbox.gatewayPort)
+      ) {
+        throw new McpBridgeError(
+          `Hermes MCP add cannot bind reload reconciliation to the recorded sandbox identity for '${sandboxName}'.`,
+        );
+      }
+      const observation = observeSandboxOnGateway(
+        {
+          sandboxName,
+          gatewayName: sandbox.gatewayName,
+          gatewayPort: sandbox.gatewayPort,
+        },
+        undefined,
+        runtimeSelection,
+      );
+      if (
+        observation.state === "missing" ||
+        observation.liveIdentityFingerprint !== baselineIdentity
+      ) {
+        throw new McpBridgeError(
+          `Hermes MCP add found that sandbox '${sandboxName}' changed identity or disappeared during reload reconciliation.`,
+        );
+      }
+      if (observation.state !== "ready") return false;
+      readyIdentity = observation.liveIdentityFingerprint;
+      return true;
+    },
+    HERMES_MCP_RECONCILE_READY_TIMEOUT_SECONDS,
+    1_000,
+  );
+  if (!ready || !readyIdentity) {
+    throw new McpBridgeError(
+      `Hermes MCP add found that sandbox '${sandboxName}' did not return to ready state after the reload relay loss.`,
+    );
+  }
+  return readyIdentity;
 }
 
 async function inspectMcpAddRecovery(
@@ -375,8 +424,14 @@ async function reconcileHermesMcpAddAfterRelayLoss(
   baselineIdentity: string,
   relayLoss: HermesMcpReloadRelayLossError,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
-): Promise<HermesMcpAddFinality> {
+): Promise<HermesMcpReloadFinalityInspection> {
   try {
+    await waitForHermesMcpAddSandboxIdentity(
+      sandboxName,
+      sandbox,
+      baselineIdentity,
+      providerRuntimeSelection,
+    );
     const nativeFinality = inspectHermesMcpReloadFinality(
       sandboxName,
       entry,
@@ -881,16 +936,16 @@ async function addMcpBridgeUnlocked(
         error,
         providerRuntimeSelection,
       );
-      if (finality.state === "committed") {
-        adapterWasRegistered = true;
-      } else if (finality.state === "absent") {
-        adapterMutationAttempted = false;
-        throw error;
-      } else {
+      if (finality.state === "unknown") {
         rollbackAuthorized = false;
         throw new McpBridgeError(
           `Hermes MCP add outcome for '${entry.server}' is unknown after the expected reload relay loss. NemoClaw did not roll back or repeat the mutation. ${finality.detail}`,
         );
+      } else if (finality.state === "committed") {
+        adapterWasRegistered = true;
+      } else {
+        adapterMutationAttempted = false;
+        throw error;
       }
     }
     await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
