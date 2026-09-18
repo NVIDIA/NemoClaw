@@ -1659,8 +1659,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hermesPortable: agentCreateInput.hermesPortableLifecycle,
         requestedExtraProviders: createIntent?.extraProviders,
         resolvedIntent: createIntent?.resolved,
-        planOrdinaryExtraProviders: () =>
-          planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+        planOrdinaryExtraProviders: () => planRegisteredExtraProviders(GATEWAY_NAME, runOpenshell),
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;

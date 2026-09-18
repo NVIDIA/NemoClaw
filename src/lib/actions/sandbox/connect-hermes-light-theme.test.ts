@@ -8,6 +8,11 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../../adapters/openshell/sandbox-command";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { NEMOCLAW_HERMES_LIGHT_SKIN_NAME } from "../../domain/sandbox/connect-env";
 
 const REDACTED_URL_CANARY = "https://user:secret@example.test/hermes";
@@ -20,26 +25,42 @@ function connectCalls(harness: ConnectHarness, sandboxName = "alpha") {
   );
 }
 
+function bufferedRequest(call: unknown[]): OpenShellSandboxBufferedCommandRequest | undefined {
+  return call[0] as OpenShellSandboxBufferedCommandRequest | undefined;
+}
+
 function execScript(call: unknown[]): string {
-  return String((call[1] as { input?: string } | undefined)?.input ?? "");
+  return String(bufferedRequest(call)?.input ?? "");
 }
 
 function skinWriteCalls(harness: ConnectHarness, sandboxName = "alpha") {
-  return harness.runOpenshellSpy.mock.calls.filter(
-    (call) =>
-      Array.isArray(call[0]) &&
-      call[0].join(" ") === `sandbox exec --name ${sandboxName} -- sh -s` &&
-      execScript(call).includes('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"'),
-  );
+  return harness.sandboxRunBufferedSpy.mock.calls.filter((call) => {
+    const request = bufferedRequest(call);
+    return (
+      request?.sandboxName === sandboxName &&
+      request.command.join(" ") === "sh -s" &&
+      execScript(call).includes('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"')
+    );
+  });
 }
 
 function skinRemoveCalls(harness: ConnectHarness, sandboxName = "alpha") {
-  return harness.runOpenshellSpy.mock.calls.filter(
-    (call) =>
-      Array.isArray(call[0]) &&
-      call[0].join(" ") === `sandbox exec --name ${sandboxName} -- sh -s` &&
-      execScript(call).includes('rm -f "$skin_dir/nemoclaw-light.yaml"'),
-  );
+  return harness.sandboxRunBufferedSpy.mock.calls.filter((call) => {
+    const request = bufferedRequest(call);
+    return (
+      request?.sandboxName === sandboxName &&
+      request.command.join(" ") === "sh -s" &&
+      execScript(call).includes('rm -f "$skin_dir/nemoclaw-light.yaml"')
+    );
+  });
+}
+
+function failedCommand(message: string): OpenShellSandboxBufferedCommandCompletion {
+  return {
+    outcome: { kind: "failed", error: { kind: "invocation", message } },
+    stdout: "",
+    stderr: "",
+  };
 }
 
 function warningText(harness: ConnectHarness): string {
@@ -173,11 +194,12 @@ describe("Hermes sandbox connect light terminal skin", () => {
         runtime: { kind: "terminal", interactive_command: "hermes" },
       },
     });
-    harness.runOpenshellSpy.mockImplementation((_args: unknown, opts: unknown) => {
-      const script = String((opts as { input?: string } | undefined)?.input ?? "");
+    const runBuffered = harness.sandboxRunBufferedSpy.getMockImplementation();
+    harness.sandboxRunBufferedSpy.mockImplementation(async (request) => {
+      const script = String(request.input ?? "");
       return script.includes('rm -f "$skin_dir/nemoclaw-light.yaml"')
-        ? { status: 2, error: new Error(`remove failed ${REDACTED_URL_CANARY}`) }
-        : { status: 0 };
+        ? failedCommand(`remove failed ${REDACTED_URL_CANARY}`)
+        : await runBuffered?.(request);
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -284,10 +306,13 @@ describe("Hermes sandbox connect light terminal skin", () => {
         runtime: { kind: "terminal", interactive_command: "hermes" },
       },
     });
-    harness.runOpenshellSpy.mockImplementation((args: unknown) =>
-      Array.isArray(args) && args.slice(0, 6).join(" ") === "sandbox exec --name alpha -- sh"
-        ? { status: 2, error: new Error(`write failed ${REDACTED_URL_CANARY}`) }
-        : { status: 0 },
+    const runBuffered = harness.sandboxRunBufferedSpy.getMockImplementation();
+    harness.sandboxRunBufferedSpy.mockImplementation(async (request) =>
+      request.sandboxName === "alpha" &&
+      request.command.join(" ") === "sh -s" &&
+      String(request.input ?? "").includes('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"')
+        ? failedCommand(`write failed ${REDACTED_URL_CANARY}`)
+        : await runBuffered?.(request),
     );
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -333,14 +358,15 @@ describe("Hermes sandbox connect light terminal skin", () => {
         runtime: { kind: "terminal", interactive_command: "hermes" },
       },
     });
+    const runBuffered = harness.sandboxRunBufferedSpy.getMockImplementation();
     harness.writeSandboxConfigSpy.mockImplementationOnce(() => {
       throw new Error(`update failed ${REDACTED_URL_CANARY}`);
     });
-    harness.runOpenshellSpy.mockImplementation((_args: unknown, opts: unknown) => {
-      const script = String((opts as { input?: string } | undefined)?.input ?? "");
+    harness.sandboxRunBufferedSpy.mockImplementation(async (request) => {
+      const script = String(request.input ?? "");
       return script.includes('rm -f "$skin_dir/nemoclaw-light.yaml"')
-        ? { status: 2, error: new Error(`remove failed ${REDACTED_URL_CANARY}`) }
-        : { status: 0 };
+        ? failedCommand(`remove failed ${REDACTED_URL_CANARY}`)
+        : await runBuffered?.(request);
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -368,14 +394,16 @@ describe("Hermes sandbox connect light terminal skin", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     const skinWriteCall = skinWriteCalls(harness)[0];
-    expect(skinWriteCall?.[0]).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-s"]);
-    expect(((skinWriteCall?.[0] ?? []) as string[]).every((part) => !/[\n\r]/.test(part))).toBe(
-      true,
-    );
-    const opts = skinWriteCall?.[1] as { input?: string; stdio?: unknown } | undefined;
-    expect(opts?.input ?? "").toContain('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"');
-    expect(opts?.input ?? "").toContain("\n");
-    expect(opts?.stdio).toEqual(["pipe", "ignore", "ignore"]);
+    const request = bufferedRequest(skinWriteCall ?? []);
+    expect(request).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["sh", "-s"],
+      timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    expect(request?.command.every((part) => !/[\n\r]/.test(part))).toBe(true);
+    expect(request?.input ?? "").toContain('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"');
+    expect(request?.input ?? "").toContain("\n");
     expectConnectSucceeded(harness, exitSpy);
   });
 });

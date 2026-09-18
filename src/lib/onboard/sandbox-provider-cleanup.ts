@@ -13,6 +13,7 @@ export {
   applyExtraProviderReconciliation,
   type ExtraProviderReconciliationPlan,
   planRegisteredExtraProviders,
+  planRegisteredExtraProvidersWithCliRunner,
   type ReconcileExtraProvidersDeps,
 } from "./extra-provider-reconciliation";
 export function removeManagedHermesStateVolume(

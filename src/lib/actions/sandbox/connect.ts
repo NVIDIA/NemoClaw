@@ -3090,7 +3090,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
     return { ...buildHermesPortableCommandAuthority(sandboxName), gatewayName };
   };
   requalifyPortableDisposition();
-  if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  if (!hermesPortable) {
+    await prepareHermesLightTerminalSkin(sandboxName, agent, process.env, sandboxCommandExecutor);
+  }
   requalifyPortableDisposition();
   const portableAuthority = hermesPortable ? await requalifyHermesPortableForConnect() : null;
   return {
