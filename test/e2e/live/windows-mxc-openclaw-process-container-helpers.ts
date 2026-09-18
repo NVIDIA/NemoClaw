@@ -2125,8 +2125,12 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
   const preparedRoot = fs.mkdtempSync(
     path.join(inputs.workDirectory, "nemoclaw-mxc-openclaw-archive-"),
   );
-  const archiveCopyPath = path.join(preparedRoot, path.basename(inputs.openClaw.archivePath));
-  const artifactRoot = path.join(preparedRoot, "artifact");
+  // OpenShell's native bootstrap requires the artifact root itself to be a
+  // direct child of the drive root. Keep the verified archive copy beside the
+  // extracted tree so it is never exposed through the sandbox filesystem
+  // policy.
+  const artifactRoot = preparedRoot;
+  const archiveCopyPath = `${preparedRoot}.zip`;
   let released = false;
   try {
     await copyWindowsMxcOpenClawArchiveWithSha256(
@@ -2134,7 +2138,6 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       archiveCopyPath,
       inputs.expected.openClawArchiveSha256,
     );
-    fs.mkdirSync(artifactRoot, { recursive: false });
     const owner = await runCommand(
       whoamiPath,
       [],
@@ -2218,11 +2221,13 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       release: () => {
         if (released) return;
         fs.rmSync(preparedRoot, { force: true, recursive: true });
+        fs.rmSync(archiveCopyPath, { force: true });
         released = true;
       },
     });
   } catch (error) {
     fs.rmSync(preparedRoot, { force: true, recursive: true });
+    fs.rmSync(archiveCopyPath, { force: true });
     throw error;
   }
 }
