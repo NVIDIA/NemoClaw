@@ -86,6 +86,7 @@ import {
 import {
   collectRedactedOpenShellSandboxLogs,
   printGatewayWedgeDiagnostics,
+  sanitizeWedgeLogLine,
 } from "./gateway-wedge-diagnostics";
 import {
   buildSandboxExecMarkedCommand,
@@ -311,6 +312,10 @@ function openClawMaintenanceMarkerContent(window: OpenClawPostRestoreDoctorWindo
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
   collectFailureLogs?: typeof collectRedactedOpenShellSandboxLogs;
+  collectRuntimeFailureLogs?: (
+    sandboxName: string,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) => Promise<string[]>;
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
@@ -353,6 +358,26 @@ async function executeOpenClawDoctorGateCommand(
     );
   } catch {
     return null;
+  }
+}
+
+async function collectOpenClawRuntimeFailureLogs(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+): Promise<string[]> {
+  try {
+    const result = await executeOpenClawDoctorGateCommand(
+      deps,
+      sandboxName,
+      "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+      15_000,
+      runtimeSelection,
+    );
+    if (!result?.stdout.trim()) return [];
+    return result.stdout.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
+  } catch {
+    return [];
   }
 }
 
@@ -1039,20 +1064,32 @@ export async function finishOpenClawPostRestoreDoctor(
     },
   );
   if (completed) return { ok: true };
+  const runtimeFailureLogs = await (
+    deps.collectRuntimeFailureLogs ??
+    ((name, selection) => collectOpenClawRuntimeFailureLogs(name, selection, deps))
+  )(sandboxName, runtimeSelection);
   const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
     sandboxName,
     runtimeSelection
       ? namedOpenShellGateway(runtimeSelection.gatewayName)
       : selectedOpenShellGateway(),
   );
-  const logDetail =
-    failureLogs.length > 0
-      ? `\nRecent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`
-      : "";
+  const logDetail = [
+    ...(runtimeFailureLogs.length > 0
+      ? [
+          `Recent redacted OpenClaw gateway log:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+    ...(failureLogs.length > 0
+      ? [
+          `Recent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+  ];
   return {
     ok: false,
     stage: "restart",
-    detail: `the released sandbox did not return a healthy gateway${logDetail}`,
+    detail: `the released sandbox did not return a healthy gateway${logDetail.length > 0 ? `\n${logDetail.join("\n")}` : ""}`,
   };
 }
 

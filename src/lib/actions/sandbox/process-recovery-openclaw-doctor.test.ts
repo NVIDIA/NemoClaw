@@ -676,6 +676,9 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "[setup] OpenClaw post-upgrade offline restore released gateway launch",
       "[gateway] startup failed after restored-state validation",
     ]);
+    const collectRuntimeFailureLogs = vi.fn(async () => [
+      "gateway startup failed: restored plugin state is invalid",
+    ]);
 
     await expect(
       finishOpenClawPostRestoreDoctor(
@@ -686,6 +689,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         {
           captureOpenshell: vi.fn() as never,
           collectFailureLogs,
+          collectRuntimeFailureLogs,
           executeSandboxExecCommand: execute,
           now: () => now,
           sleep: vi.fn(async () => {
@@ -696,7 +700,13 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     ).resolves.toEqual({
       ok: false,
       stage: "restart",
-      detail: expect.stringContaining("[gateway] startup failed after restored-state validation"),
+      detail: expect.stringMatching(
+        /gateway startup failed: restored plugin state is invalid[\s\S]*\[gateway\] startup failed after restored-state validation/u,
+      ),
+    });
+    expect(collectRuntimeFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
     });
     expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
       kind: "named",
