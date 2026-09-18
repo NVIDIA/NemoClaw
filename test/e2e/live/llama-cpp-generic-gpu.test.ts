@@ -90,7 +90,13 @@ function loadGpuSetting() {
  */
 function operatorLoopbackRunArgv(
   recipe: ReturnType<typeof loadGpuSetting>["recipe"],
-  bindings: { containerName: string; keyHostPath: string; modelHostPath: string },
+  bindings: {
+    containerName: string;
+    keyHostPath: string;
+    modelHostPath: string;
+    runtimeGid: number;
+    runtimeUid: number;
+  },
 ): string[] {
   const { model, runtime, serve } = recipe.spec;
   const modelFile = model.files[0]!;
@@ -119,6 +125,8 @@ function operatorLoopbackRunArgv(
     "--detach",
     "--name",
     bindings.containerName,
+    "--user",
+    `${String(bindings.runtimeUid)}:${String(bindings.runtimeGid)}`,
     "--publish",
     `127.0.0.1:${String(serve.port)}:${String(serve.port)}`,
     "--gpus",
@@ -498,6 +506,7 @@ NODE`),
     const operatorKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), `${TARGET_ID}-operator-`));
     const operatorKeyPath = path.join(operatorKeyDir, "api-key");
     fs.writeFileSync(operatorKeyPath, operatorApiKey, { mode: 0o600 });
+    const operatorKeyIdentity = fs.statSync(operatorKeyPath);
     const operatorEngine = runtimeProvider.hostLocalInference.createOperation({
       env: destroyEnv,
     }).engine;
@@ -528,6 +537,8 @@ NODE`),
         containerName: operatorContainerName,
         keyHostPath: operatorKeyPath,
         modelHostPath: modelCacheEntry,
+        runtimeGid: operatorKeyIdentity.gid,
+        runtimeUid: operatorKeyIdentity.uid,
       }),
       120_000,
     );
