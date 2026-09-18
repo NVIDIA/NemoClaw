@@ -47,6 +47,8 @@ export interface SandboxCreateLaunchInput {
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
+  /** Reuse the durable hold identity when resuming one verified incomplete create. */
+  managedBootstrapIdentity?: string | null;
 }
 
 export interface SandboxCreateLaunch {
@@ -117,8 +119,15 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // lets the real exit code flow through to run().
   const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
   const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  if (
+    input.managedBootstrapIdentity !== undefined &&
+    input.managedBootstrapIdentity !== null &&
+    !/^[a-f0-9]{64}$/u.test(input.managedBootstrapIdentity)
+  ) {
+    throw new Error("Managed startup resume requires one exact bootstrap identity.");
+  }
   const managedBootstrapIdentity = managedStartupRootApplyRequest
-    ? randomBytes(32).toString("hex")
+    ? (input.managedBootstrapIdentity ?? randomBytes(32).toString("hex"))
     : null;
   // Keep the raw profile and CA payload out of OpenShell's create argv and
   // sandbox environment; the verified host apply and release handshake owns them.

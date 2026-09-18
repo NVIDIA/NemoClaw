@@ -315,6 +315,7 @@ describe("stopSandbox", () => {
     expect(h.stopOpenShellSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName: "my-sandbox" }),
     );
+    expect(h.stopPortableSandbox).not.toHaveBeenCalled();
     expect(h.stopSandboxChannels.mock.invocationCallOrder[0]).toBeLessThan(
       h.stopOpenShellSandbox.mock.invocationCallOrder[0],
     );

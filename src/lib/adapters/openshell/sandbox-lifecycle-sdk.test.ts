@@ -26,6 +26,15 @@ function harness() {
 }
 
 describe("OpenShell SDK sandbox lifecycle", () => {
+  it("observes one immutable sandbox identity for legacy registration migration", async () => {
+    const { lifecycle } = harness();
+
+    await expect(lifecycle.identifySandbox?.({ sandboxName: "alpha", target })).resolves.toEqual({
+      kind: "accepted",
+      sandboxIdentityFingerprint,
+    });
+  });
+
   it("starts and stops the named sandbox through typed SDK RPCs", async () => {
     const { connect, get, lifecycle, startSandbox, stopSandbox, waitReady } = harness();
 

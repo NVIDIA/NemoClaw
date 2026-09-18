@@ -2478,6 +2478,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 : hermesDashboardState,
               hermesApiPort: hermesApiPortReservationScope.effectivePort,
               manageDashboard,
+              managedBootstrapIdentity:
+                acceptedTargetPendingIdentity?.managedBootstrapIdentity ?? null,
               openshellShellCommand,
               openshellArgv,
             },
@@ -2896,6 +2898,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             createAttemptNonce: identity.createAttemptNonce,
+            ...(managedBootstrapIdentity ? { managedBootstrapIdentity } : {}),
             route: identity.route,
           };
         },

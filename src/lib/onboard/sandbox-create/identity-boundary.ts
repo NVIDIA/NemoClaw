@@ -59,6 +59,9 @@ export function pendingSandboxCreateIdentityForBoundary(
     lifecycleGeneration: boundary.lifecycleGeneration,
     sandboxIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
     ...(boundary.createAttemptNonce ? { createAttemptNonce: boundary.createAttemptNonce } : {}),
+    ...(boundary.managedBootstrapIdentity
+      ? { managedBootstrapIdentity: boundary.managedBootstrapIdentity }
+      : {}),
     route: boundary.route,
   };
   if (!prior) return identity;
@@ -92,6 +95,9 @@ export function sandboxCreateBoundaryFromPendingIdentity(
     lifecycleGeneration: identity.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: identity.sandboxIdentityFingerprint,
     ...(identity.createAttemptNonce ? { createAttemptNonce: identity.createAttemptNonce } : {}),
+    ...(identity.managedBootstrapIdentity
+      ? { managedBootstrapIdentity: identity.managedBootstrapIdentity }
+      : {}),
     route: identity.route,
   };
 }

@@ -1263,13 +1263,6 @@ function mockManagedStateVolumeOnboardLifecycle() {
     materializeSandboxCreatePlan: (input, materialize) => materialize(input),
     commit: () => {},
   });
-  const managedStartupRootApply = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-startup/docker-root-apply.ts"),
-  );
-  managedStartupRootApply.resolveDockerManagedStartupContainer = () =>
-    ONBOARD_SANDBOX_OLD_CONTAINER_ID;
-  managedStartupRootApply.applyDockerManagedStartupRootRequest = () => null;
-  managedStartupRootApply.releaseDockerManagedStartupHold = () => {};
 }
 
 function mockIsolatedDockerSandboxLifecycleFromRunner() {

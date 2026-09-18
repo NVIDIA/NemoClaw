@@ -333,25 +333,27 @@ async function stopSandboxWithinLifecycleFence(
     readonly hermesPortableVerified?: true;
   };
   try {
-    const portable =
-      resolved.bundle.identity.id === "docker"
-        ? await (deps.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle)(
-            sandboxName,
-            {
-              agent: resolved.sandbox.agent,
-              gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
-              lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
-              openshellDriver: resolved.sandbox.openshellDriver,
-              provider: resolved.sandbox.provider,
-            },
-            beforeStop,
-            {
-              env: input.environment,
-              log,
-              readRegistry: (name) => input.readRegistry?.(name) ?? null,
-            },
-          )
-        : ({ kind: "not-installed" } as const);
+    const portableAuthorityRecorded =
+      resolved.bundle.identity.id === "docker" &&
+      typeof resolved.sandbox.lifecycleGeneration === "string";
+    const portable = portableAuthorityRecorded
+      ? await (deps.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle)(
+          sandboxName,
+          {
+            agent: resolved.sandbox.agent,
+            gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
+            lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
+            openshellDriver: resolved.sandbox.openshellDriver,
+            provider: resolved.sandbox.provider,
+          },
+          beforeStop,
+          {
+            env: input.environment,
+            log,
+            readRegistry: (name) => input.readRegistry?.(name) ?? null,
+          },
+        )
+      : ({ kind: "not-installed" } as const);
     if (portable.kind === "already-stopped" || portable.kind === "stopped") {
       const registryHermes = resolved.sandbox.agent === "hermes";
       const portableHermes = portable.portableAgent === "hermes";
@@ -365,7 +367,15 @@ async function stopSandboxWithinLifecycleFence(
       };
     } else {
       beforeStop();
-      outcome = await mutateStandardSandboxLifecycle("stop", input, deps);
+      outcome = await mutateStandardSandboxLifecycle("stop", input, {
+        ...deps,
+        persistSandboxIdentity:
+          deps.persistSandboxIdentity ??
+          ((name, fingerprint) =>
+            (deps.updateSandbox ?? registry.updateSandbox)(name, {
+              lifecycleLiveIdentityFingerprint: fingerprint,
+            })),
+      });
     }
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };

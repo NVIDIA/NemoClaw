@@ -197,36 +197,46 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   let result: SandboxLifecycleResult & { readonly hermesPortableVerified?: true };
   try {
-    if (resolved.bundle.identity.id === "docker" && resolved.sandbox.agent === "hermes") {
+    const portableAuthorityRecorded =
+      resolved.bundle.identity.id === "docker" &&
+      typeof resolved.sandbox.lifecycleGeneration === "string";
+    if (portableAuthorityRecorded && resolved.sandbox.agent === "hermes") {
       await (deps.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority)(sandboxName, {
         env: input.environment,
         readRegistry: (name) => input.readRegistry?.(name) ?? null,
       });
     }
-    const portable =
-      resolved.bundle.identity.id === "docker"
-        ? await (deps.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle)(
-            sandboxName,
-            {
-              agent: resolved.sandbox.agent,
-              gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
-              lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
-              openshellDriver: resolved.sandbox.openshellDriver,
-              provider: resolved.sandbox.provider,
-            },
-            {
-              env: input.environment,
-              log,
-              readRegistry: (name) => input.readRegistry?.(name) ?? null,
-            },
-          )
-        : ({ kind: "not-installed" } as const);
+    const portable = portableAuthorityRecorded
+      ? await (deps.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle)(
+          sandboxName,
+          {
+            agent: resolved.sandbox.agent,
+            gatewayName: resolved.sandbox.gatewayName ?? "nemoclaw",
+            lifecycleGeneration: resolved.sandbox.lifecycleGeneration,
+            openshellDriver: resolved.sandbox.openshellDriver,
+            provider: resolved.sandbox.provider,
+          },
+          {
+            env: input.environment,
+            log,
+            readRegistry: (name) => input.readRegistry?.(name) ?? null,
+          },
+        )
+      : ({ kind: "not-installed" } as const);
     result =
       portable.kind !== "not-installed"
         ? resolved.sandbox.agent === "hermes"
           ? { exitCode: 0, hermesPortableVerified: true }
           : { exitCode: 0 }
-        : await mutateStandardSandboxLifecycle("start", input, deps);
+        : await mutateStandardSandboxLifecycle("start", input, {
+            ...deps,
+            persistSandboxIdentity:
+              deps.persistSandboxIdentity ??
+              ((name, fingerprint) =>
+                (deps.updateSandbox ?? registry.updateSandbox)(name, {
+                  lifecycleLiveIdentityFingerprint: fingerprint,
+                })),
+          });
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }

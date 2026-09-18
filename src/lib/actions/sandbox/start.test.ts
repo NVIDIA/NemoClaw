@@ -152,6 +152,7 @@ describe("startSandbox native lifecycle", () => {
     });
 
     expect(h.order).toEqual(["openshell-start", "openshell-ready", "native-health"]);
+    expect(h.recoverPortableSandbox).not.toHaveBeenCalled();
     expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", {
       stopped: false,
     });

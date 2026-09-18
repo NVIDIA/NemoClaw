@@ -760,6 +760,7 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
+        "src/lib/adapters/openshell/**",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -800,7 +801,6 @@ describe("complete managed-image publication workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrPodmanActivation(workflow);
     const steps = activation.steps ?? [];
-
     expect(activation["runs-on"]).toBe("ubuntu-26.04");
     expect(activation.permissions).toEqual({ contents: "read" });
     expect(activation.env).toMatchObject({

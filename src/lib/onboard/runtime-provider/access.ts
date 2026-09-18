@@ -28,12 +28,6 @@ export type {
 } from "./contract";
 export type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 export {
-  applyDockerManagedStartupRootRequest,
-  releaseDockerManagedStartupHold,
-  resolveDockerManagedStartupContainer,
-  type DockerManagedStartupTransaction,
-} from "../managed-startup/docker-root-apply";
-export {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
   releaseProviderManagedStartupHold,

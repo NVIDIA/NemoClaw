@@ -7,12 +7,6 @@ import type {
   RuntimeProviderPrivilegedSandboxControl,
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
-import {
-  applyDockerManagedStartupRootRequest,
-  type DockerManagedStartupTransaction,
-  releaseDockerManagedStartupHold,
-  resolveDockerManagedStartupContainer,
-} from "./docker-root-apply";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -31,7 +25,11 @@ const FIXED_ROOT_ENV = [
   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 ] as const;
 
-export interface ProviderManagedStartupTransaction extends DockerManagedStartupTransaction {
+export interface ProviderManagedStartupTransaction {
+  readonly agent: ManagedStartupRootApplyRequest["agent"];
+  readonly bootstrapIdentity: string;
+  readonly containerId: string;
+  readonly image: string;
   readonly providerId: "docker" | "podman";
 }
 
@@ -240,18 +238,6 @@ export function applyProviderManagedStartupRootRequest(input: {
   if (!/^[a-f0-9]{64}$/u.test(input.bootstrapIdentity)) {
     throw new Error("Managed startup requires one exact bootstrap identity.");
   }
-  if (input.runtimeProvider.identity.id === "docker") {
-    const containerId = resolveDockerManagedStartupContainer({
-      sandboxName: input.sandboxName,
-      sandboxId: input.sandboxId,
-    });
-    const transaction = applyDockerManagedStartupRootRequest({
-      bootstrapIdentity: input.bootstrapIdentity,
-      containerId,
-      request: input.request,
-    });
-    return transaction ? { ...transaction, providerId: "docker" } : null;
-  }
   const pinned = inspectExactCreatedRuntime({
     bundle: input.runtimeProvider,
     sandboxName: input.sandboxName,
@@ -378,13 +364,6 @@ export function releaseProviderManagedStartupHold(input: {
 }): void {
   if (!/^[a-f0-9]{64}$/u.test(input.profileFingerprint)) {
     throw new Error("Managed startup release requires one exact profile fingerprint.");
-  }
-  if (input.runtimeProvider.identity.id === "docker") {
-    releaseDockerManagedStartupHold({
-      transaction: input.transaction,
-      profileFingerprint: input.profileFingerprint,
-    });
-    return;
   }
   const runtime = inspectExactTransactionRuntime({
     runtimeProvider: input.runtimeProvider,

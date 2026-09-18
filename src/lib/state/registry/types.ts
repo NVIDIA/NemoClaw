@@ -19,6 +19,8 @@ export interface PendingSandboxCreateIdentity {
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  /** Exact managed-startup hold identity reused by an interrupted create resume. */
+  readonly managedBootstrapIdentity?: string;
   readonly route: "none" | "native" | "compatibility";
   /** The exact final handoff crossed its durable commit fence. */
   readonly exactFinalHandoffCommitStarted?: true;

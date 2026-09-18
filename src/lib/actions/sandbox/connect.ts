@@ -2847,6 +2847,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
               : await probeTiming!.measureAsync("lifecycle", () =>
                   startStoppedSandboxContainerForProbeRecovery(sandboxName, {
                     getSandbox: registry.getSandbox,
+                    persistSandboxIdentity: (name, fingerprint) =>
+                      registry.updateSandbox(name, {
+                        lifecycleLiveIdentityFingerprint: fingerprint,
+                      }),
                   }),
                 );
             if (

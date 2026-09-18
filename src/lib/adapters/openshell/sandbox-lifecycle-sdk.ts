@@ -14,11 +14,24 @@ export type MutateOpenShellSandboxRequest = Readonly<{
   timeoutMs?: number;
 }>;
 
+export type IdentifyOpenShellSandboxRequest = Readonly<{
+  sandboxName: string;
+  target: Extract<OpenShellGatewayTarget, { kind: "named" }>;
+  timeoutMs?: number;
+}>;
+
 export type OpenShellSandboxMutationSubmission =
   | Readonly<{ kind: "accepted" }>
   | Readonly<{ kind: "failed"; error: OpenShellSandboxError }>;
 
+export type OpenShellSandboxIdentitySubmission =
+  | Readonly<{ kind: "accepted"; sandboxIdentityFingerprint: string }>
+  | Readonly<{ kind: "failed"; error: OpenShellSandboxError }>;
+
 export interface OpenShellSandboxStateLifecycle {
+  identifySandbox?(
+    request: IdentifyOpenShellSandboxRequest,
+  ): Promise<OpenShellSandboxIdentitySubmission>;
   startSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
   stopSandbox(request: MutateOpenShellSandboxRequest): Promise<OpenShellSandboxMutationSubmission>;
 }
@@ -54,6 +67,41 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
 }>;
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
+
+async function identify(
+  request: IdentifyOpenShellSandboxRequest,
+  connect: (target: OpenShellGatewayTarget, options: CallOptions) => Promise<SdkClient>,
+): Promise<OpenShellSandboxIdentitySubmission> {
+  if (
+    !isValidName(request.sandboxName) ||
+    !isValidName(request.target.gatewayName) ||
+    (request.timeoutMs !== undefined &&
+      (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0))
+  ) {
+    return { kind: "failed", error: { kind: "schema", message: "Invalid sandbox request." } };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    request.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS,
+  );
+  try {
+    const client = await connect(request.target, { signal: controller.signal });
+    const observed = await client.sandbox.get(request.sandboxName, { signal: controller.signal });
+    const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(observed.id);
+    if (!sandboxIdentityFingerprint) {
+      return {
+        kind: "failed",
+        error: { kind: "schema", message: "OpenShell returned an invalid sandbox identity." },
+      };
+    }
+    return { kind: "accepted", sandboxIdentityFingerprint };
+  } catch (error) {
+    return { kind: "failed", error: lifecycleError(error, controller.signal.aborted) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxError {
   if (timedOut) {
@@ -230,6 +278,7 @@ export function createSdkOpenShellSandboxStateLifecycle(
   const waitForStopPoll =
     deps.waitForStopPoll ?? ((signal: AbortSignal) => delay(250, undefined, { signal }));
   return {
+    identifySandbox: (request) => identify(request, connect),
     startSandbox: (request) => mutate("start", request, connect, waitForStopPoll),
     stopSandbox: (request) => mutate("stop", request, connect, waitForStopPoll),
   };

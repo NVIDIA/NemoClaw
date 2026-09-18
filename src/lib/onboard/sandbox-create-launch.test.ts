@@ -288,6 +288,7 @@ describe("prepareSandboxCreateLaunch", () => {
         agent: agentName,
         encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agentName)),
       });
+      const managedBootstrapIdentity = "f".repeat(64);
       const result = prepareSandboxCreateLaunch({
         agent: loadAgent(agentName),
         chatUiUrl: "",
@@ -301,6 +302,7 @@ describe("prepareSandboxCreateLaunch", () => {
         openshellShellCommand: (args) => args.join(" "),
         openshellArgv: (args) => ["openshell", ...args],
         buildEnv: () => ({}),
+        managedBootstrapIdentity,
         managedStartupRootApplyRequest: request,
       });
 
@@ -318,9 +320,10 @@ describe("prepareSandboxCreateLaunch", () => {
         "--profile-fingerprint",
         request.profileFingerprint,
         "--bootstrap-identity",
-        expect.stringMatching(/^[a-f0-9]{64}$/u),
+        managedBootstrapIdentity,
         "--",
       ]);
+      expect(result.managedBootstrapIdentity).toBe(managedBootstrapIdentity);
       expect(result.envArgs.join("\n")).not.toContain(request.encodedProfile);
     },
   );

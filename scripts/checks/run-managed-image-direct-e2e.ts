@@ -14,12 +14,11 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
-import {
-  applyDockerManagedStartupRootRequest,
-  releaseDockerManagedStartupHold,
-} from "../../src/lib/onboard/managed-startup/docker-root-apply.ts";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "../../src/lib/onboard/managed-startup/image-runtime.ts";
-import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
+import {
+  createManagedStartupRootApplyRequest,
+  serializeManagedStartupRootApplyRequest,
+} from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -73,9 +72,15 @@ export function parseManagedImageDirectE2eInputs(
   return { agent: agent as ShippedManagedImageAgent, image, platform };
 }
 
-function docker(args: readonly string[], ignoreError = false, timeoutMs = 180_000): CommandResult {
+function docker(
+  args: readonly string[],
+  ignoreError = false,
+  timeoutMs = 180_000,
+  input?: string,
+): CommandResult {
   const result = spawnSync("docker", [...args], {
     encoding: "utf8",
+    ...(input === undefined ? {} : { input }),
     killSignal: "SIGKILL",
     maxBuffer: 16 * 1024 * 1024,
     timeout: timeoutMs,
@@ -166,14 +171,39 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker run did not return one exact container identity");
     }
-    const transaction = applyDockerManagedStartupRootRequest({
+    const transaction = {
+      agent: rootApplyRequest.agent,
       bootstrapIdentity,
       containerId,
-      request: rootApplyRequest,
-    });
-    if (!transaction) {
-      throw new Error("direct managed startup did not create one fresh shared-state transaction");
-    }
+    };
+    docker(
+      [
+        "exec",
+        "--interactive",
+        "--user",
+        "0:0",
+        "--workdir",
+        "/",
+        containerId,
+        "/usr/bin/env",
+        "-i",
+        "HOME=/root",
+        "LANG=C.UTF-8",
+        "LC_ALL=C.UTF-8",
+        "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/local/bin/node",
+        MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+        "--apply-root-stdin",
+        "--agent",
+        transaction.agent,
+        "--bootstrap-identity",
+        transaction.bootstrapIdentity,
+      ],
+      false,
+      300_000,
+      serializeManagedStartupRootApplyRequest(rootApplyRequest),
+    );
     docker([
       "exec",
       "--user",
@@ -199,10 +229,27 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "--bootstrap-identity",
       transaction.bootstrapIdentity,
     ]);
-    releaseDockerManagedStartupHold({
-      transaction,
-      profileFingerprint: rootApplyRequest.profileFingerprint,
-    });
+    docker([
+      "exec",
+      "--user",
+      "0:0",
+      "--workdir",
+      "/",
+      transaction.containerId,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "/usr/local/bin/node",
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--release-startup-hold",
+      "--agent",
+      transaction.agent,
+      "--profile-fingerprint",
+      rootApplyRequest.profileFingerprint,
+      "--bootstrap-identity",
+      transaction.bootstrapIdentity,
+    ]);
     waitForNativeStartup(containerId);
     const inspected = JSON.parse(docker(["inspect", "--type", "container", containerId]).stdout) as
       | Array<{ Id?: string; Image?: string; State?: { Running?: boolean } }>
