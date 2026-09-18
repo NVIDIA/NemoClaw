@@ -189,6 +189,41 @@ export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
   );
 }
 
+function errorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function finalizeDockerEngine27ReceiptProbe(
+  primaryError: unknown | null,
+  cleanupDaemon: () => void,
+  cleanupFixture: () => void,
+): void {
+  const cleanupErrors: unknown[] = [];
+  try {
+    cleanupDaemon();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    cleanupFixture();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (primaryError !== null) {
+    if (cleanupErrors.length === 0) throw primaryError;
+    throw new AggregateError(
+      [primaryError, ...cleanupErrors],
+      `Docker Engine 27 receipt probe failed: ${errorDetail(primaryError)}; cleanup also failed: ${cleanupErrors.map(errorDetail).join("; ")}`,
+    );
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      cleanupErrors,
+      `Docker Engine 27 receipt probe cleanup failed: ${cleanupErrors.map(errorDetail).join("; ")}`,
+    );
+  }
+}
+
 async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<void> {
   const suffix = randomUUID().replaceAll("-", "");
   const legacySeed = `nemoclaw-receipt-legacy-seed-${suffix}`;
@@ -196,6 +231,7 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-receipt-engine27-"));
   const fixtureReceipt = path.join(fixtureRoot, "receipt");
   const daemonReceipt = `/nemoclaw-receipt-${suffix}`;
+  let primaryError: unknown | null = null;
   let successfulVolume: string | null = null;
 
   fs.mkdirSync(fixtureReceipt, { mode: 0o700 });
@@ -363,13 +399,19 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
     );
     requireAbsent(innerDocker(["container", "inspect", failedSeed]), "failed receipt seed");
     requireAbsent(innerDocker(["volume", "inspect", failedVolume]), "failed receipt volume");
-  } finally {
-    innerDocker(["rm", "-f", legacySeed]);
-    innerDocker(["volume", "rm", legacyVolume]);
-    if (successfulVolume) innerDocker(["volume", "rm", successfulVolume]);
-    cleanupDockerEngine27ReceiptDaemon(daemonName);
-    fs.rmSync(fixtureRoot, { force: true, recursive: true });
+  } catch (error) {
+    primaryError = error;
   }
+  finalizeDockerEngine27ReceiptProbe(
+    primaryError,
+    () => {
+      innerDocker(["rm", "-f", legacySeed]);
+      innerDocker(["volume", "rm", legacyVolume]);
+      if (successfulVolume) innerDocker(["volume", "rm", successfulVolume]);
+      cleanupDockerEngine27ReceiptDaemon(daemonName);
+    },
+    () => fs.rmSync(fixtureRoot, { force: true, recursive: true }),
+  );
 }
 
 function parseDaemonName(args: readonly string[]): string {

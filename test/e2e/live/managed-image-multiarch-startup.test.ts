@@ -85,38 +85,32 @@ test(
         },
       );
     });
-    const docker27Result =
-      dispatch.platform === "linux/amd64"
-        ? await shellProbe.run(
-            trustedShellCommand({
-              command: process.execPath,
-              args: [
-                "--import",
-                "tsx",
-                "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
-                "--daemon-name",
-                docker27DaemonName,
-              ],
-              reason: "verify the Docker Engine 27 receipt archive-copy boundary",
-            }),
-            {
-              artifactName: "docker-engine-27-receipt-transfer",
-              cwd: dispatch.workspace,
-              env: {
-                ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
-                ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
-              },
-              timeoutMs: 30 * 60_000,
-            },
-          )
-        : null;
+    const docker27Result = await shellProbe.run(
+      trustedShellCommand({
+        command: process.execPath,
+        args: [
+          "--import",
+          "tsx",
+          "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+          "--daemon-name",
+          docker27DaemonName,
+        ],
+        reason: "verify the Docker Engine 27 receipt archive-copy boundary",
+      }),
+      {
+        artifactName: "docker-engine-27-receipt-transfer",
+        cwd: dispatch.workspace,
+        env: {
+          ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
+          ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+        },
+        timeoutMs: 30 * 60_000,
+      },
+    );
 
     expect(
-      (docker27Result === null
-        ? dispatch.platform === "linux/arm64"
-        : docker27Result.exitCode === 0 &&
-          !docker27Result.timedOut &&
-          dispatch.platform === "linux/amd64") &&
+      docker27Result.exitCode === 0 &&
+        !docker27Result.timedOut &&
         evidence.contractSha256 ===
           `sha256:${createHash("sha256").update(contractBytes).digest("hex")}` &&
         JSON.stringify(evidence.contracts) === JSON.stringify(contracts),

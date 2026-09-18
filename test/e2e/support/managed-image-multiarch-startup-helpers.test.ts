@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS,
   DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+  finalizeDockerEngine27ReceiptProbe,
   validateDockerEngine27SeedIsolation,
 } from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
 import {
@@ -44,6 +45,21 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("preserves the probe failure and attempts fixture cleanup after daemon cleanup fails", () => {
+    const cleanupFixture = vi.fn();
+
+    expect(() =>
+      finalizeDockerEngine27ReceiptProbe(
+        new Error("receipt transfer failed"),
+        () => {
+          throw new Error("daemon cleanup failed");
+        },
+        cleanupFixture,
+      ),
+    ).toThrow(/receipt transfer failed.*daemon cleanup failed/u);
+    expect(cleanupFixture).toHaveBeenCalledOnce();
+  });
+
   it("isolates Docker 27 daemon ownership across matrix platforms", () => {
     const amd64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/amd64");
     const arm64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/arm64");
