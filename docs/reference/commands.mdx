@@ -3927,7 +3927,7 @@ The experimental voice gateway has no Hermes or Deep Agents Code equivalent.
 
 ## Environment Variables
 
-NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults. Set them before running `$$nemoclaw onboard` or any command that starts services. All ports must be non-privileged integers between 1024 and 65535, unless a variable's own description gives a narrower range.
+NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults. Set them before running `$$nemoclaw onboard` or any command that starts services. For `NEMOCLAW_GATEWAY_PORT`, `NEMOCLAW_DASHBOARD_PORT`, `NEMOCLAW_HERMES_API_PORT`, `NEMOCLAW_HERMES_DASHBOARD_PORT`, `NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT`, `NEMOCLAW_VLLM_PORT`, `NEMOCLAW_OLLAMA_PORT`, `NEMOCLAW_OLLAMA_PROXY_PORT`, and the three runtime-adapter port overrides, the value after whitespace trimming must use canonical decimal notation with no leading zero. Service ports must be from 1024 through 65535; `NEMOCLAW_HERMES_API_PORT` must be from 8642 through 8652.
 
 ### CLI Logging
 
@@ -3997,12 +3997,15 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`. The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. If `8642` is already held by another sandbox or by a non-OpenShell host listener, onboarding scans `8642` through `8652` and uses the next free API port. Set `NEMOCLAW_HERMES_API_PORT=<N>` before you onboard a new sandbox to pin a port from `8642` through `8652`. If another sandbox or host listener holds the pinned port, onboarding exits instead of selecting a different port. The sandbox relay binds the port when the sandbox starts, so set this variable for an existing sandbox only together with `--recreate-sandbox`. For an existing sandbox, a different value without `--recreate-sandbox` exits before the host forward changes. Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.
+For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`. The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. If `8642` is already held by another sandbox or by a non-OpenShell host listener, onboarding scans `8642` through `8652` and uses the next free API port. Set `NEMOCLAW_HERMES_API_PORT=<N>` before you onboard a new sandbox to pin a port from `8642` through `8652`. If another sandbox or host listener holds the pinned port, onboarding exits instead of selecting a different port. The sandbox relay binds the port when the sandbox starts, so set this variable for an existing sandbox only together with `--recreate-sandbox`. For an existing sandbox, a different value without `--recreate-sandbox` exits before the host forward changes. Set `NEMOCLAW_HERMES_DASHBOARD=1` to enable the optional Hermes dashboard. The dashboard port overrides apply only when this variable is enabled. Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want the optional in-browser TUI tab.
 
 | Variable                        | Default | Service                                   |
 | ------------------------------- | ------- | ----------------------------------------- |
 | `NEMOCLAW_DASHBOARD_PORT`       | 18789   | Hermes built-in dashboard forward port    |
 | `NEMOCLAW_HERMES_API_PORT`      | 8642    | Hermes OpenAI-compatible API forward port |
+| `NEMOCLAW_HERMES_DASHBOARD`     | 0       | Enable the optional Hermes dashboard      |
+| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 18789   | Hermes dashboard forward port; when set, it must match `NEMOCLAW_DASHBOARD_PORT` |
+| `NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT` | 19119 | Hermes dashboard backend port        |
 | `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0       | Optional Hermes in-browser TUI tab        |
 
 </AgentOnly>
