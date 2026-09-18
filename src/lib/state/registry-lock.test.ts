@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { shellQuote } from "../core/shell-quote";
 import {
   acquireProcessBoundLockAt,
   classifyExistingLock,
@@ -434,6 +435,123 @@ describe("process-bound registry locking", () => {
         maxRetries: 2,
       }),
     ).toBe("acquired");
+  });
+});
+
+// Exhausting the budget used to report only that it ran out, leaving the
+// documented `onboard --resume` recovery with nothing to act on (#10461).
+describe("registry lock exhaustion remediation", () => {
+  it("names a live owner and how to take the lock from it", () => {
+    const test = fixture("nemoclaw-live-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps(),
+        maxRetries: 1,
+      }),
+    ).toThrow(`Owner PID 4242 is still running; wait for it to finish, or stop it and remove it with: rm -rf ${shellQuote(test.lockDir)}`);
+  });
+
+  // A recycled PID belongs to an unrelated process. Reporting it as the owner
+  // would send the operator to stop the wrong one.
+  it("does not present a reused PID as the owner to stop", () => {
+    const test = fixture("nemoclaw-recycled-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+    // Original while the contender waits, reused by the time the budget ends.
+    const identities = vi.fn(() =>
+      identities.mock.calls.length <= 2 ? PROCESS_IDENTITY : RECYCLED_IDENTITY,
+    );
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ readProcessIdentity: identities }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`PID 4242 now belongs to an unrelated process, so the recorded owner is gone and the lock is stale; remove it with: rm -rf ${shellQuote(test.lockDir)}`);
+  });
+
+  it("does not claim ownership it cannot confirm", () => {
+    const test = fixture("nemoclaw-unverifiable-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ readProcessIdentity: () => null }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`PID 4242 exists but cannot be confirmed as the recorded owner; confirm it before stopping it, then remove it with: rm -rf ${shellQuote(test.lockDir)}`);
+  });
+
+  // The operator copies this command into a shell, so a path carrying shell
+  // syntax must stay a path.
+  it("quotes a lock path that carries shell syntax", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shell-quote-remediation-"));
+    temporaryDirectories.push(homeDir);
+    const registryFile = path.join(homeDir, "a$(touch pwned)'b", "sandboxes.json");
+    const lockDir = `${registryFile}.lock`;
+    fs.mkdirSync(lockDir, { mode: 0o700, recursive: true });
+    markStale(lockDir);
+
+    const thrown = ((): Error => {
+      try {
+        withRegistryLockAt(registryFile, () => undefined, {
+          ...exactDeps({ now: () => LOCK_MTIME }),
+          maxRetries: 1,
+        });
+        return new Error("expected contention");
+      } catch (error) {
+        return error as Error;
+      }
+    })();
+
+    expect(thrown.message).toContain(`rm -rf ${shellQuote(lockDir)}`);
+    expect(thrown.message).not.toContain(`rm -rf "`);
+    expect(fs.existsSync(path.join(homeDir, "pwned"))).toBe(false);
+  });
+
+  it("reports a stale lock when the owner exits while the contender waits", () => {
+    const test = fixture("nemoclaw-dead-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+    // Alive for the retry loop, gone by the time the budget runs out.
+    const liveness = vi.fn(() => liveness.mock.calls.length <= 1);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ isProcessAlive: liveness, readProcessIdentity: () => null }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`Owner PID 4242 is no longer running, so the lock is stale; remove it with: rm -rf ${shellQuote(test.lockDir)}`);
+  });
+
+  it("reports an ownerless lock directory", () => {
+    const test = fixture("nemoclaw-ownerless-remediation-");
+    fs.mkdirSync(test.lockDir, { mode: 0o700, recursive: true });
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ now: () => LOCK_MTIME }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`The lock records no owner; remove it with: rm -rf ${shellQuote(test.lockDir)}`);
+  });
+
+  it("still reports the retry count alongside the remediation", () => {
+    const test = fixture("nemoclaw-retry-count-remediation-");
+    fs.mkdirSync(test.lockDir, { mode: 0o700, recursive: true });
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ now: () => LOCK_MTIME }),
+        maxRetries: 1,
+      }),
+    ).toThrow(/after 1 retries\./);
   });
 });
 
