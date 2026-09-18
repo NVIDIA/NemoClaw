@@ -1,0 +1,135 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
+
+vi.mock("../../messaging-channel-setup", () => ({
+  detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
+}));
+
+let home: string;
+beforeEach(async () => {
+  home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-host-local-resume-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await fs.rm(home, { recursive: true, force: true });
+});
+
+async function resumedHostLocalSandbox() {
+  const { handleSandboxState } = await import("./sandbox");
+  const { baseOptions, createDeps } = await import("./sandbox-test-fixtures");
+  const { createSession } = await import("../../../state/onboard-session");
+  const registry = await import("../../../state/registry");
+  const { normalizeInferenceSelection } = await import("../../../inference/selection");
+  const { qualifyPendingSandboxCreateReservation } =
+    await import("../../../state/registry/route-reservation");
+  const { createSandboxHostLocalInferenceProvenance } =
+    await import("../../../state/registry/host-local-inference");
+  const session = createSession({ sandboxName: "saved" });
+  session.steps.sandbox.status = "complete";
+  const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
+  const route = {
+    provider: "llama-cpp-local",
+    model: "llama-cpp-model",
+    endpointUrl: "https://inference.local/v1",
+    endpointSource: "inference-set" as const,
+    credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    openshellDriver: "docker",
+    hostLocalInferenceReceipt,
+    hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+      "saved",
+      hostLocalInferenceReceipt,
+    ),
+  };
+  registry.restoreSandboxEntry({ name: "saved", ...route });
+  const original = registry.getSandbox("saved");
+  const admitted = new Error("create admission reached");
+  const createSandbox = vi.fn(async () => {
+    qualifyPendingSandboxCreateReservation(
+      {
+        sandboxName: "saved",
+        gatewayName: route.gatewayName,
+        sessionId: session.sessionId,
+        selection: normalizeInferenceSelection(route),
+      },
+      registry.getSandbox("saved"),
+    );
+    throw admitted;
+  });
+  const { deps } = createDeps(
+    {
+      createSandbox,
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: registry.getSandbox,
+      reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+    },
+    session,
+  );
+  const options = { ...baseOptions(deps, session), ...route, resume: true, sandboxName: "saved" };
+  return {
+    run: () => handleSandboxState(options),
+    options,
+    registry,
+    route,
+    session,
+    createSandbox,
+    admitted,
+    original,
+  };
+}
+
+it("reserves the exact published host-local route before resumed create admission", async () => {
+  const test = await resumedHostLocalSandbox();
+  await expect(test.run()).rejects.toBe(test.admitted);
+  expect(test.createSandbox).toHaveBeenCalledOnce();
+  expect(test.registry.getSandbox("saved")).toMatchObject({
+    ...test.route,
+    pendingRouteReservation: true,
+    reservationSessionId: test.session.sessionId,
+  });
+});
+
+it("rejects a changed host-local route before create and preserves its authority", async () => {
+  const test = await resumedHostLocalSandbox();
+  test.options.model = "different-model";
+  await expect(test.run()).rejects.toThrow(
+    "Cannot change an explicit host-local inference lifecycle reservation",
+  );
+  expect(test.createSandbox).not.toHaveBeenCalled();
+  expect(test.registry.getSandbox("saved")).toEqual(test.original);
+});
+
+it("does not take over a pending reservation owned by another session", async () => {
+  const test = await resumedHostLocalSandbox();
+  test.registry.reserveSandboxInferenceRoute("saved", {
+    ...test.route,
+    reservationSessionId: "another-session",
+  });
+  const before = test.registry.getSandbox("saved");
+  await expect(test.run()).rejects.toThrow(
+    "The sandbox create route reservation is not owned by this onboarding session",
+  );
+  expect(test.registry.getSandbox("saved")).toEqual(before);
+});
+
+it("rejects host-local authority without a recorded gateway port", async () => {
+  const test = await resumedHostLocalSandbox();
+  test.registry.restoreSandboxEntry({ name: "saved", ...test.route, gatewayPort: null });
+  const before = test.registry.getSandbox("saved");
+  await expect(test.run()).rejects.toThrow(
+    "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+  );
+  expect(test.createSandbox).not.toHaveBeenCalled();
+  expect(test.registry.getSandbox("saved")).toEqual(before);
+});

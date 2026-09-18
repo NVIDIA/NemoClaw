@@ -377,6 +377,7 @@ export interface SandboxStateOptions<
       runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
+    reserveSandboxInferenceRoute: typeof import("../../../state/registry").reserveSandboxInferenceRoute;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -1176,6 +1177,37 @@ class SandboxStateFlow<
     this.deps.error(message);
     this.deps.exitProcess(1);
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
+  private reserveHostLocalCreateRoute(sandboxName: string): void {
+    const sessionId = this.options.session?.sessionId;
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (
+      !sessionId ||
+      entry?.hostLocalInferenceProvenance === undefined ||
+      entry.pendingRouteReservation === true
+    ) {
+      return;
+    }
+    // Preserve the receipt's exact runtime authority. The registry rejects any
+    // changed selection rather than replacing an explicit host-local lifecycle.
+    const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
+      provider: this.options.provider,
+      model: this.options.model,
+      endpointUrl: this.options.endpointUrl,
+      endpointSource: this.options.endpointSource ?? null,
+      credentialEnv: this.options.credentialEnv,
+      preferredInferenceApi: this.options.preferredInferenceApi,
+      gatewayName: this.options.gatewayName,
+      gatewayPort: entry.gatewayPort ?? undefined,
+      openshellDriver: entry.openshellDriver ?? undefined,
+      hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      reservationSessionId: sessionId,
+    });
+    if (!reserved) {
+      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+    }
   }
 
   private finalizeInferenceRouteReservation(
@@ -2192,6 +2224,7 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
+        this.reserveHostLocalCreateRoute(requestedSandboxName);
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
           this.options.provider,
