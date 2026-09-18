@@ -5,9 +5,9 @@
     "nemoclaw/src/commands/migration-state.test.ts": 1288,
     "src/lib/inference/nim.test.ts": 2063,
     "src/lib/onboard/preflight.test.ts": 1875,
-    "test/generation/generate-openclaw-config.test.ts": 1862,
+    "test/generation/generate-openclaw-config.test.ts": 1849,
     "test/installer-integration/install-preflight.test.ts": 2995,
-    "test/agents/openclaw/runtime/nemoclaw-start.test.ts": 4337,
+    "test/agents/openclaw/runtime/nemoclaw-start.test.ts": 4309,
     "test/onboarding/onboard-messaging.test.ts": 1960,
     "test/onboarding/onboard-selection.test.ts": 4126
   }

@@ -17,6 +17,7 @@ import {
   validClient,
   validPaired,
   validPending,
+  writeCurrentGatewayCallFixtureDist,
   writeFixtureDist,
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
@@ -200,6 +201,56 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       expect(() => runtime.resolveDeviceIdentityForGatewayCall()).toThrow(
         "forced pairing expected device identity is unavailable",
       );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("loads a current-layout forced identity without relying on an ambient fs binding", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-current-identity-fd-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      const apply = runPatch(dist);
+      expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "call-current-fixture.js"), "utf8");
+      expect(source).toContain('const nemoclawFs = process.getBuiltinModule("node:fs");');
+      expect(source).not.toMatch(/\bfs\.(?:fstatSync|readSync)\b/u);
+      const runtime = runFixture<{
+        getCreatedIdentityCount(): number;
+        identityDescriptorReads(): Array<{ fd: number; position: number }>;
+        resolveDeviceIdentityForGatewayCall(sharedStateMode: string): {
+          deviceId: string;
+          privateKeyPem: string;
+          publicKeyPem: string;
+        };
+        setForceDevicePairing(value: boolean): void;
+        setForcedIdentityDescriptor(value: unknown): void;
+      }>(
+        source,
+        "({ getCreatedIdentityCount, identityDescriptorReads, resolveDeviceIdentityForGatewayCall, setForceDevicePairing, setForcedIdentityDescriptor })",
+      );
+      runtime.setForceDevicePairing(true);
+      expect(runtime.resolveDeviceIdentityForGatewayCall("read-only")).toEqual({
+        deviceId: "ordinary-device",
+      });
+      expect(runtime.getCreatedIdentityCount()).toBe(1);
+
+      runtime.setForcedIdentityDescriptor({
+        deviceId: "a".repeat(64),
+        privateKeyPem: "clone-private-key",
+        publicKeyPem: "clone-public-key",
+        version: 1,
+      });
+
+      expect(runtime.resolveDeviceIdentityForGatewayCall("read-only")).toEqual({
+        deviceId: "a".repeat(64),
+        privateKeyPem: "clone-private-key",
+        publicKeyPem: "clone-public-key",
+      });
+      expect(runtime.identityDescriptorReads()).toEqual([{ fd: 43, position: 0 }]);
+      expect(runtime.getCreatedIdentityCount()).toBe(1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

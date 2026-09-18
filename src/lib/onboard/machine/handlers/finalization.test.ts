@@ -761,6 +761,9 @@ describe("secret-boundary refusal during finalization", () => {
   ])(
     "pauses $phase before successful handoff on a recovery refusal (#11758)",
     async ({ phase, run }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => null,
+      } as never);
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: vi.fn(async () => ({
           checked: true,
@@ -771,6 +774,7 @@ describe("secret-boundary refusal during finalization", () => {
           secretBoundaryReason: "unexpected-marker" as const,
         })),
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
       });
       const { deps, calls } = createDeps({
         checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,

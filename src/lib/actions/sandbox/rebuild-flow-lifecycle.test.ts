@@ -367,15 +367,14 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });
-    expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
-      "alpha",
-      "openclaw doctor --fix",
-      300_000,
-      {
-        localDockerFallbackPolicy: "never",
-        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    expect(harness.runOpenClawPostRestoreDoctorSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      kind: "backup",
+      runtimeSelection: {
+        gatewayName: "nemoclaw",
+        workspace: "default",
       },
-    );
+    });
     expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
       "alpha",
       "mutable-rebuild",
