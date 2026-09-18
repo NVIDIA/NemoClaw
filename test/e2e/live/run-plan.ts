@@ -14,6 +14,31 @@ export interface LiveTargetRunPlan {
   e2eCloudExperimentalChecks?: string[];
 }
 
+const PROGRESS_PHASE_PREFIX = [
+  "resolve the target contract and run plan",
+  "confirm the target environment is ready",
+  "prepare the target lifecycle prerequisites",
+  "onboard the registry-selected sandbox",
+  "execute the target lifecycle boundary",
+] as const;
+
+const PROGRESS_PHASE_SUFFIX = ["record target completion evidence"] as const;
+
+export function liveTargetProgressPhases(plan: LiveTargetRunPlan): readonly string[] {
+  const validationPhases = plan.e2eCloudExperimentalChecks?.length
+    ? [
+        "run target-specific cloud checks",
+        "validate the exported sandbox configuration",
+        "verify the expected sandbox state",
+      ]
+    : [
+        "verify the expected sandbox state",
+        "validate the exported sandbox configuration",
+        "run target-specific cloud checks",
+      ];
+  return [...PROGRESS_PHASE_PREFIX, ...validationPhases, ...PROGRESS_PHASE_SUFFIX];
+}
+
 export function buildLiveTargetRunPlan(target: TargetDefinition): LiveTargetRunPlan {
   const plan: LiveTargetRunPlan = {
     targetId: target.id,

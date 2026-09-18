@@ -22,7 +22,7 @@ import {
   dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
-import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import { buildLiveTargetRunPlan, liveTargetProgressPhases } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
   "dcode-rebuild-invalid-credential",
@@ -51,19 +51,10 @@ const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
   (targetId): targetId is string => targetId !== undefined,
 );
 requireTargets(SELECTED_TARGET_IDS);
-const REGISTRY_TARGET_PHASES = [
-  "resolve the target contract and run plan",
-  "confirm the target environment is ready",
-  "prepare the target lifecycle prerequisites",
-  "onboard the registry-selected sandbox",
-  "execute the target lifecycle boundary",
-  "verify the expected sandbox state",
-  "validate the exported sandbox configuration",
-  "run target-specific cloud checks",
-  "record target completion evidence",
-] as const;
-
 for (const [targetIndex, target] of listTargets().entries()) {
+  const runPlan = buildLiveTargetRunPlan(target);
+  const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
+  const runChecksFirst = checkScripts.length > 0;
   const timeoutContract = liveTargetTimeoutContract(
     target.environment.lifecycle,
     target.configExport.expectation,
@@ -74,7 +65,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
     {
       meta: {
         e2eArtifactRootId: target.id,
-        e2ePhases: REGISTRY_TARGET_PHASES,
+        e2ePhases: liveTargetProgressPhases(runPlan),
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
@@ -111,7 +102,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         pendingRuntimeSuites: target.suiteIds,
       });
 
-      const runPlan = buildLiveTargetRunPlan(target);
       await artifacts.writeJson("run-plan.json", runPlan);
 
       progress.phase("confirm the target environment is ready");
@@ -157,7 +147,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
             : await lifecycle.simulate(lifecycleProfile, instance);
       }
 
-      const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
       let validation!: Awaited<ReturnType<typeof stateValidation.from>>;
       let configExport!: Awaited<ReturnType<typeof configExportValidation.from>>;
       const validateState = async () => {
@@ -179,7 +168,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
           secrets,
         });
       };
-      const runChecksFirst = checkScripts.length > 0;
       await (runChecksFirst ? undefined : validateState());
       await (runChecksFirst ? undefined : validateConfigExport());
       await runCloudChecks();
