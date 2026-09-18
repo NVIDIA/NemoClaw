@@ -175,10 +175,11 @@ describe("managed vLLM export pipeline", () => {
           writeStdout: output,
         },
       );
-      expect(result).toMatchObject({
+      expect(result).toEqual({
         ok: false,
         failure: {
           kind: "observation",
+          attempts: 1,
           findings: [
             {
               field: "spec.inferenceProviders",
