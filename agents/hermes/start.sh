@@ -2945,10 +2945,12 @@ launch_hermes_gateway_current_user() {
 
 # With --external-supervisor, Hermes 0.21.3 handles SIGUSR1 by exiting with
 # EX_TEMPFAIL (75). In the non-root OpenShell topology, this entrypoint remains
-# alive and relaunches the gateway immediately for that status. A clean stop is
-# held until the privileged recovery transaction has restored its cron gate;
-# other failures propagate to OpenShell unchanged.
+# alive and relaunches the gateway immediately for that status. A clean stop or
+# the exact SIGTERM status used by host recovery is held until the privileged
+# recovery transaction has restored its cron gate; other failures propagate to
+# OpenShell unchanged.
 readonly HERMES_SERVICE_RESTART_STATUS=75
+readonly HERMES_GATEWAY_RECOVERY_SIGTERM_STATUS=143
 readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
 readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1
 
@@ -3117,7 +3119,8 @@ supervise_hermes_service_restarts_current_user() {
   while :; do
     gateway_status=0
     wait "$GATEWAY_PID" || gateway_status=$?
-    if [ "$gateway_status" -eq 0 ]; then
+    if [ "$gateway_status" -eq 0 ] \
+      || [ "$gateway_status" -eq "$HERMES_GATEWAY_RECOVERY_SIGTERM_STATUS" ]; then
       wait_for_hermes_gateway_recovery_request || return $?
     elif [ "$gateway_status" -eq "$HERMES_SERVICE_RESTART_STATUS" ]; then
       echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2

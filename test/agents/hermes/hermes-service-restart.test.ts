@@ -15,6 +15,7 @@ function runSupervisor(firstExit: number, finalExit: number) {
   const script = [
     "set -uo pipefail",
     "readonly HERMES_SERVICE_RESTART_STATUS=75",
+    "readonly HERMES_GATEWAY_RECOVERY_SIGTERM_STATUS=143",
     "GATEWAY_PID=100",
     "wait_count=0",
     "launch_count=0",
@@ -254,7 +255,17 @@ describe("Hermes native service restart supervision", () => {
     expect(result.stderr).not.toContain("service-managed restart");
   });
 
-  it.each([1, 74, 76])("does not relaunch for non-restart exit %i", (exitCode) => {
+  it("holds a SIGTERM exit until gated host recovery requests a relaunch", () => {
+    const result = runSupervisor(143, 9);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(
+      "status=9 waits=2 launches=1 marks=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=1 gateway=101",
+    );
+    expect(result.stderr).not.toContain("service-managed restart");
+  });
+
+  it.each([1, 74, 76, 137])("does not relaunch for non-restart exit %i", (exitCode) => {
     const result = runSupervisor(exitCode, 9);
 
     expect(result.status, result.stderr).toBe(0);
