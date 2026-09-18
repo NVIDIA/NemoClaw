@@ -250,7 +250,7 @@ impl AuthoredDocument {
 }
 
 impl Answers {
-    pub(crate) fn first_slice() -> Self {
+    pub(crate) fn onboarding_defaults() -> Self {
         Self {
             deployment_name: "openclaw-nvidia-hosted".into(),
             sandbox_name: "assistant".into(),
@@ -942,8 +942,10 @@ mod tests {
         let capabilities = Capabilities::available();
         for scenario in scenarios {
             assert!(!scenario.variation.is_empty());
-            let direct_answers =
-                Answers::from_direct(Answers::first_slice(), scenario.direct_inputs.clone());
+            let direct_answers = Answers::from_direct(
+                Answers::onboarding_defaults(),
+                scenario.direct_inputs.clone(),
+            );
             let interactive_answers =
                 Answers::from_interactive(scenario.interactive_inputs.clone());
             assert_eq!(direct_answers, interactive_answers, "{}", scenario.name);

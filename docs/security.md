@@ -57,7 +57,7 @@ A complete credential-rotation runbook for every credential type: **TBD**.
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
 Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
-Onboarding publishes only environment-variable references before requesting any values.
+Onboarding saves credential references in YAML before requesting their values.
 Generation-only onboarding never resolves credentials.
 In composed interactive onboarding, accepting the authored YAML does not authorize apply: inspect the secret-free plan preview and answer the separate apply prompt.
 `--non-interactive` is an explicit automation choice that requires environment-provided credentials and proceeds from a successful plan to apply without prompting.

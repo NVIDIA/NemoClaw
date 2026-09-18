@@ -15,7 +15,7 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [deepagents-team.yaml](deepagents-team.yaml) | Two Deep Agents with Nemotron 3.5 Lightning 30B-A3B NVFP4 | Two sandboxes, one shared model service, separate agent workspaces and tool settings |
 | [shared-model.yaml](shared-model.yaml) | Pi, OpenClaw, and Deep Agents with Qwen3.6-35B-A3B NVFP4 | Three sandboxes reuse one managed model service |
 | [two-models.yaml](two-models.yaml) | Pi with Qwen3-4B and Qwen3.6-27B NVFP4 | Fast/smart route selection with two independently managed services |
-| [local-and-oracle.yaml](local-and-oracle.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus an external oracle; the local route is the default |
+| [local-and-hosted.yaml](local-and-hosted.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus a hosted model; the local route is the default |
 | [vllm.yaml](vllm.yaml) | OpenClaw with Qwen3-4B | The original ordinary-vLLM example |
 | [spark-inline.yaml](spark-inline.yaml) | OpenClaw with Qwen3.8-Flash-Next-NVFP4 | Model preparation, CPU offloading, and an inline serving recipe |
 | [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; the current OpenShell Podman pin has the [TLS initialization blocker](https://github.com/NVIDIA/OpenShell/issues/3427) |
@@ -50,8 +50,8 @@ The remote example also requires [SSH placement setup](../../docs/remote-service
 Copy the selected example, assign a fresh deployment UUID, and replace its local image digests with those reported by your builds.
 The committed local digests identify development artifacts; build the images before applying the examples on another machine.
 Keep the model repository revisions pinned.
-For `local-and-oracle.yaml`, replace `https://oracle.example/v1` and `replace-with-your-hosted-model`, then supply `ORACLE_API_KEY` in the caller's environment.
-The example assumes an OpenAI-compatible hosted Chat Completions endpoint; real oracle requests may incur charges.
+For `local-and-hosted.yaml`, replace `https://hosted.example/v1` and `replace-with-your-hosted-model`, then supply `HOSTED_API_KEY` in the caller's environment.
+The example assumes an OpenAI-compatible hosted Chat Completions endpoint; hosted model requests may incur charges.
 See [credential handling](../../docs/usage.md#configuration-and-credentials).
 
 ```sh
@@ -66,8 +66,8 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/spark-demo/state .local/s
 
 Apply checks startup and configuration; it does not generate an answer.
 Use the [Deep Agents/Pi request procedure](../../docs/agents.md#run-one-deep-agents-or-pi-request) or [headless OpenClaw request procedure](../../docs/agents.md#run-one-headless-openclaw-request) to ask each agent a question.
-The procedures explain how to select Pi’s `fast`/`smart` routes and OpenClaw’s `local`/`oracle` routes.
-The [qualification record](../../docs/validation/spark-examples-linux-arm64.md) identifies the hosted-oracle checks still pending.
+The procedures explain how to select Pi’s `fast`/`smart` routes and OpenClaw’s `local`/`hosted` routes.
+The [qualification record](../../docs/validation/spark-examples-linux-arm64.md) identifies the hosted-model checks still pending.
 An unchanged apply should report no infrastructure changes.
 If startup fails, retain the state and inspect the [model supervisor's status and logs](../../docs/models.md#diagnose-and-recover-a-stopped-runtime) before retrying the original configuration.
 Destroy the owned workloads when finished:
@@ -77,7 +77,7 @@ dist/linux_arm64/bin/nemoclaw destroy --state-dir .local/spark-demo/state
 ```
 
 Destroy retains managed model downloads and gateway storage under the [retention contract](../../docs/state.md#deletion-and-retention).
-It does not remove the external oracle or its account credentials.
+It does not remove the hosted model or its account credentials.
 
 ## Model Sources and Adaptation
 

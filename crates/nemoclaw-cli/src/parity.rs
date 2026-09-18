@@ -1153,7 +1153,7 @@ mod tests {
             .unwrap()
             .project(
                 &Capabilities::available(),
-                &Answers::from_direct(Answers::first_slice(), inputs),
+                &Answers::from_direct(Answers::onboarding_defaults(), inputs),
             )
             .unwrap()
     }

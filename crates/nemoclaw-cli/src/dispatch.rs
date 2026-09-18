@@ -262,7 +262,7 @@ async fn author<R: tokio::io::AsyncBufRead + Unpin>(
         credential_env,
     } = values;
     let capabilities = Capabilities::available();
-    let defaults = Answers::first_slice();
+    let defaults = Answers::onboarding_defaults();
     if non_interactive {
         let answers = Answers::from_direct(
             defaults,
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composed_journey_declines_only_after_plan_and_never_calls_apply() {
+    async fn onboarding_declines_only_after_plan_and_never_calls_apply() {
         use std::{cell::RefCell, rc::Rc};
 
         let events = Rc::new(RefCell::new(Vec::new()));

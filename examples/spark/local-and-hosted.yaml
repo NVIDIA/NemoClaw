@@ -6,7 +6,7 @@
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: spark-local-and-oracle
+  name: spark-local-and-hosted
   uid: 23323bf7-b237-4407-b08d-8b5e0947ab7e
 spec:
   gateway:
@@ -39,11 +39,11 @@ spec:
         minFreeGiB: 3
         freeGateGiB: 12
         consecutiveSamples: 5
-  - name: oracle
+  - name: hosted
     provider: openai
-    endpoint: https://oracle.example/v1
+    endpoint: https://hosted.example/v1
     credential:
-      env: ORACLE_API_KEY
+      env: HOSTED_API_KEY
   sandboxes:
   - name: assistant
     image:
@@ -66,8 +66,8 @@ spec:
             model: nvidia/Qwen3.8-27B-NVFP4
             contextWindow: 32768
             maxTokens: 2048
-        - name: oracle
-          providerRef: oracle
+        - name: hosted
+          providerRef: hosted
           overrides:
             model: replace-with-your-hosted-model
             contextWindow: 32768
