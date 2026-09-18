@@ -149,6 +149,24 @@ type SandboxForwardRecoveryOptions = {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
+type InstallerLegacyForwardRetirementDeps = {
+  getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
+  getSandbox?: typeof registry.getSandbox;
+  hasGatewayRuntime?: typeof agentRuntime.hasGatewayRuntime;
+  listSandboxes?: typeof registry.listSandboxes;
+  forwardAdapterForAuthority?: (
+    authority: OpenShellForwardRuntimeAuthority,
+  ) => Pick<OpenShellForwardAdapter, "retireLegacyForward">;
+  resolveForwardRuntimeAuthority?: typeof forwardRuntimeAuthority;
+  resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
+};
+
+export type InstallerLegacyForwardRetirementSummary = Readonly<{
+  retired: number;
+  unchanged: number;
+  skipped: number;
+}>;
+
 function selectedForwardRuntime(
   gatewayName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
@@ -219,6 +237,77 @@ function assertSandboxForwardAuthorityCurrent(
     throw new Error("Sandbox gateway changed during forward observation");
   }
   assertForwardGatewayAuthorityCurrent(gatewayName, expected);
+}
+
+/**
+ * Retire exact legacy dashboard forwards before an incompatible gateway upgrade.
+ */
+export async function retireRegisteredLegacyDashboardForwards(
+  deps: InstallerLegacyForwardRetirementDeps = {},
+): Promise<InstallerLegacyForwardRetirementSummary> {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const getRegisteredAgent = deps.getRegisteredAgent ?? agentRuntime.getRegisteredAgent;
+  const hasGatewayRuntime = deps.hasGatewayRuntime ?? agentRuntime.hasGatewayRuntime;
+  const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
+  const resolveRuntime = deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority;
+  const adapterForAuthority =
+    deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority;
+  const sandboxes = [...(deps.listSandboxes ?? registry.listSandboxes)().sandboxes].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  let retired = 0;
+  let unchanged = 0;
+  let skipped = 0;
+
+  for (const sandbox of sandboxes) {
+    const registeredAgent = sandbox.agent ? getRegisteredAgent(sandbox) : null;
+    if (registeredAgent && !hasGatewayRuntime(registeredAgent)) {
+      skipped += 1;
+      continue;
+    }
+
+    const sandboxName = sandbox.name;
+    const dashboardPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
+    const gatewayName = resolveSandboxGatewayName(sandbox);
+    const { authority, runtime } = resolveRuntime(gatewayName);
+    const dashboardBind = resolveDashboardForwardBind(sandbox, {
+      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wsl: isWsl(),
+    });
+    const forward = sandboxForwardIdentity(runtime, sandboxName, dashboardPort, dashboardBind);
+    const assertCurrent = async (): Promise<void> => {
+      const current = getSandbox(sandboxName);
+      if (
+        !current ||
+        resolveSandboxGatewayName(current) !== gatewayName ||
+        resolvePort(sandboxName, { getSandbox: () => current }) !== dashboardPort
+      ) {
+        throw new Error("Sandbox forward registration changed during installer retirement");
+      }
+      const currentRuntime = resolveRuntime(gatewayName);
+      if (!sameForwardGatewayAuthority(currentRuntime.authority, authority)) {
+        throw new Error("OpenShell forward authority changed during installer retirement");
+      }
+    };
+    const result = await adapterForAuthority(runtime).retireLegacyForward({
+      forward,
+      assertCurrent,
+      authorize: async () => assertCurrent(),
+    });
+    if (result.state === "retired") {
+      retired += 1;
+      continue;
+    }
+    if (result.state === "not_needed") {
+      unchanged += 1;
+      continue;
+    }
+    throw new Error(
+      `Could not prove legacy dashboard forward retirement for sandbox '${sandboxName}'.`,
+    );
+  }
+
+  return { retired, unchanged, skipped };
 }
 
 function forwardRuntimeAuthority(
