@@ -256,8 +256,15 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
-  requireStep(errors, steps, "Prepare E2E workspace");
+  const prepare = requireStep(errors, steps, "Prepare E2E workspace");
   const restore = requireStep(errors, steps, "Restore exact-commit CLI artifact");
+  for (const step of [prepare, restore]) {
+    for (const key of ["if", "continue-on-error", "shell", "working-directory"]) {
+      if (step && Object.hasOwn(step, key)) {
+        errors.push(`${JOB_ID} step '${step.name}' must not override ${key}`);
+      }
+    }
+  }
   if (
     restore?.uses !==
     "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef"
@@ -446,6 +453,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "--reporter=test/e2e/risk-signal-reporter.ts",
   ]);
   requireStep(errors, steps, "Upload protected managed-image evidence");
+  requireStep(errors, steps, "Authenticate to Docker Hub");
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [
     "Validate protected exact-head dispatch",
@@ -454,6 +462,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Checkout trusted Hermes resolver",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
+    "Authenticate to Docker Hub",
+    "Set up protected managed-image Buildx",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",
     "Remove trusted Hermes resolver checkout",

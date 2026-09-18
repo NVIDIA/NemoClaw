@@ -141,6 +141,41 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it.each([
+    ["Prepare E2E workspace", "if", "false"],
+    ["Prepare E2E workspace", "continue-on-error", true],
+    ["Prepare E2E workspace", "shell", "bash"],
+    ["Prepare E2E workspace", "working-directory", "/tmp"],
+    ["Restore exact-commit CLI artifact", "if", "false"],
+    ["Restore exact-commit CLI artifact", "continue-on-error", true],
+    ["Restore exact-commit CLI artifact", "shell", "bash"],
+    ["Restore exact-commit CLI artifact", "working-directory", "/tmp"],
+  ] as const)("rejects protected artifact step %s override %s", (name, key, override) => {
+    const candidate = workflow();
+    namedMultiarchStep(candidate, name)[key] = override;
+
+    expect(validateManagedImageMultiarchWorkflow(candidate)).toContain(
+      `managed-image-multiarch-startup step '${name}' must not override ${key}`,
+    );
+  });
+
+  it("rejects Docker authentication before protected CLI restoration", () => {
+    const candidate = workflow();
+    const job = multiarchJob(candidate);
+    const auth = namedMultiarchStep(candidate, "Authenticate to Docker Hub");
+    const steps = (job.steps as Array<Record<string, unknown>>).filter((step) => step !== auth);
+    steps.splice(
+      steps.indexOf(namedMultiarchStep(candidate, "Restore exact-commit CLI artifact")),
+      0,
+      auth,
+    );
+    job.steps = steps;
+
+    expect(validateManagedImageMultiarchWorkflow(candidate)).toContain(
+      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+  });
+
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
   it.each([
     [
