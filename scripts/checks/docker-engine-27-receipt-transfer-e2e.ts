@@ -407,7 +407,7 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
     let failedSeed = "";
     let failedVolume = "";
     const failingDockerRun = (args: readonly string[]): CommandResult => {
-      if (args[0] === "volume" && args[1] === "create") failedVolume = String(args[2] ?? "");
+      if (args[0] === "volume" && args[1] === "create") failedVolume = String(args.at(-1) ?? "");
       if (args[0] === "create") failedSeed = seedName(args);
       return innerDocker(args);
     };

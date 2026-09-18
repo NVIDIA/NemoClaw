@@ -34,16 +34,19 @@ function callPayloadFunction(command: string, env: Record<string, string | undef
   });
 }
 
-it("documents the destructive force-fresh install option", () => {
-  const result = spawnSync("bash", [INSTALLER, "--help"], {
+it.each([
+  ["public bootstrap", INSTALLER],
+  ["versioned payload", INSTALLER_PAYLOAD],
+])("documents the macOS-only destructive option in the %s help", (_surface, installer) => {
+  const result = spawnSync("bash", [installer, "--help"], {
     cwd: path.join(import.meta.dirname, "../.."),
     encoding: "utf-8",
   });
 
   expect(result.status).toBe(0);
   const output = `${result.stdout}${result.stderr}`;
-  expect(output).toContain("--force-fresh-install");
-  expect(output).toContain("NEMOCLAW_FORCE_FRESH_INSTALL=1");
+  expect(output).toMatch(/--force-fresh-install .*macOS only/u);
+  expect(output).toMatch(/NEMOCLAW_FORCE_FRESH_INSTALL=1 .*macOS only/u);
 });
 
 it("detects a Homebrew-only OpenShell installation", () => {
@@ -95,6 +98,7 @@ it("does not treat an unlabeled prefix-matching Docker container as owned state"
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "volume ls --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
 `,
@@ -106,6 +110,56 @@ esac
   });
 
   expect(result.status).not.toBe(0);
+});
+
+it("detects labelled Docker receipt-volume-only state", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-receipt-detect-");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "volume ls --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 --format {{.Name}}")
+    printf 'nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction("force_fresh_install_has_existing_state", {
+    HOME: tmp,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+  });
+
+  expect(result.status).toBe(0);
+});
+
+it("stops before cleanup when Docker is installed but unavailable", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout(
+    "nemoclaw-force-fresh-docker-unavailable-",
+  );
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(path.join(fakeBin, "docker"), "#!/usr/bin/env bash\nexit 1\n");
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("Docker is installed but unavailable");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
 it("runs destructive cleanup through the staged candidate CLI", () => {
@@ -290,8 +344,14 @@ it("bounds staged uninstaller preparation before destructive cleanup", () => {
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 }, 15_000);
 
-it("routes the public force-fresh flag through reset before CLI installation", () => {
-  const run = runInstallerSourcedBody(`
+it.each([
+  ["flag", "--force-fresh-install", {}],
+  ["environment variable", "", { NEMOCLAW_FORCE_FRESH_INSTALL: "1" }],
+] as const)(
+  "routes the public force-fresh %s through reset before CLI installation",
+  (_source, forceFreshArg, extraEnv) => {
+    const run = runInstallerSourcedBody(
+      `
     set -e
     order=""
     record() { order="\${order}$1 "; }
@@ -321,15 +381,19 @@ it("routes the public force-fresh flag through reset before CLI installation", (
     finalize_install() { :; }
     clear_station_resume_after_completed_onboarding() { :; }
     uname() { printf 'Darwin'; }
-    main --force-fresh-install --non-interactive --yes-i-accept-third-party-software
+    main ${forceFreshArg} --non-interactive --yes-i-accept-third-party-software
+    record "fresh:$FRESH:$NEMOCLAW_FORCE_FRESH_INSTALL"
     printf '%s' "$order"
-  `);
-  onTestFinished(run.remove);
+  `,
+      { extraEnv: { ...extraEnv } },
+    );
+    onTestFinished(run.remove);
 
-  expect(run.result.status, run.output).toBe(0);
-  expect(run.result.stdout.trim()).toBe("reset install");
-  expect(run.result.stdout).not.toContain("legacy-backup");
-});
+    expect(run.result.status, run.output).toBe(0);
+    expect(run.result.stdout.trim()).toBe("reset install fresh:1:1");
+    expect(run.result.stdout).not.toContain("legacy-backup");
+  },
+);
 
 it("continues force-fresh installation when Homebrew fails after the pinned runtime lands", () => {
   const result = callPayloadFunction(`

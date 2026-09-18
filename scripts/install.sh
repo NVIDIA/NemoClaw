@@ -1056,7 +1056,7 @@ usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
-  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall\n"
+  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (macOS only)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
@@ -1070,7 +1070,7 @@ usage() {
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
-  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install\n"
+  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (macOS only)\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
@@ -3569,6 +3569,7 @@ run_preupgrade_backup() {
 }
 
 force_fresh_install_has_existing_state() {
+  local container_inventory receipt_volume_inventory volume_name
   if [[ -e "$(nemoclaw_state_root)" ]] \
     || [[ -e "${HOME}/.config/nemoclaw" ]] \
     || [[ -e "${HOME}/.config/openshell" ]] \
@@ -3586,11 +3587,20 @@ force_fresh_install_has_existing_state() {
     && brew list --formula nvidia/openshell/openshell >/dev/null 2>&1; then
     return 0
   fi
-  if command_exists docker \
-    && docker info >/dev/null 2>&1 \
-    && docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract 2>/dev/null \
-    | grep -q .; then
-    return 0
+  if command_exists docker; then
+    docker info >/dev/null 2>&1 || return 2
+    container_inventory="$(
+      docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract 2>/dev/null
+    )" || return 2
+    [[ -z "$container_inventory" ]] || return 0
+    receipt_volume_inventory="$(
+      docker volume ls \
+        --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 \
+        --format '{{.Name}}' 2>/dev/null
+    )" || return 2
+    while IFS= read -r volume_name; do
+      [[ "$volume_name" =~ ^nemoclaw-managed-startup-receipt-volume-[0-9a-f]{32}$ ]] && return 0
+    done <<<"$receipt_volume_inventory"
   fi
   return 1
 }
@@ -3661,16 +3671,20 @@ remove_macos_openshell_for_force_fresh_install() {
 }
 
 run_force_fresh_install_reset() {
-  local source_root
+  local source_root existing_state_status=0
   warn "Force-fresh install selected. NemoClaw will destroy all NemoClaw/OpenShell sandboxes, gateways, credentials, configuration, and recovery state on this host. Model caches are kept."
-  if force_fresh_install_has_existing_state; then
-    source_root="$(force_fresh_install_source_root)"
-    prepare_force_fresh_uninstaller "$source_root"
-    run_force_fresh_uninstaller "$source_root" \
-      || error "Force-fresh cleanup stopped because the authoritative whole-host uninstall did not complete. The installer preserved remaining state for a safe retry."
-  else
-    info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install."
-  fi
+  force_fresh_install_has_existing_state || existing_state_status=$?
+  case "$existing_state_status" in
+    0)
+      source_root="$(force_fresh_install_source_root)"
+      prepare_force_fresh_uninstaller "$source_root"
+      run_force_fresh_uninstaller "$source_root" \
+        || error "Force-fresh cleanup stopped because the authoritative whole-host uninstall did not complete. The installer preserved remaining state for a safe retry."
+      ;;
+    1) info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install." ;;
+    2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
+    *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
+  esac
   remove_macos_openshell_for_force_fresh_install
   FRESH=1
   export NEMOCLAW_FRESH=1

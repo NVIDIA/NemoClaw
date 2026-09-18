@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupDockerDaemonReceiptBestEffort,
   dockerDaemonReceiptMount,
+  MANAGED_STARTUP_RECEIPT_VOLUME_LABEL,
   transferDockerReceiptToDaemon,
 } from "./docker-receipt-transfer";
 
@@ -51,6 +52,9 @@ describe("Docker daemon receipt transfer", () => {
     });
 
     expect(calls.map((args) => args[0])).toEqual(["volume", "create", "cp", "rm"]);
+    expect(calls[0]).toEqual(
+      expect.arrayContaining(["--label", `${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`]),
+    );
     const seedArgs = calls[1] ?? [];
     expect(seedArgs).toEqual(
       expect.arrayContaining([

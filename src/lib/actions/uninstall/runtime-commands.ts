@@ -14,7 +14,10 @@ import {
 } from "../../domain/uninstall/messaging";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
-import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import {
+  MANAGED_STARTUP_RECEIPT_VOLUME_LABEL,
+  MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX,
+} from "../../onboard/managed-startup/docker-receipt-transfer";
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -43,19 +46,57 @@ function nonEmptyLines(output: string): string[] {
     .filter(Boolean);
 }
 
-export function removeForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime): boolean {
-  const inventory = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
-    env: runtime.env,
-  });
+function ownedForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime): string[] | null {
+  const inventory = runtime.runDocker(
+    [
+      "volume",
+      "ls",
+      "--filter",
+      `label=${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`,
+      "--format",
+      "{{.Name}}",
+    ],
+    { env: runtime.env },
+  );
   if (inventory.status !== 0) {
     runtime.error(
       "Could not inventory managed-startup receipt volumes during force-fresh cleanup.",
     );
-    return false;
+    return null;
   }
   const volumes = nonEmptyLines(inventory.stdout).filter((name) =>
     MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
   );
+  for (const volume of volumes) {
+    const inspected = runtime.runDocker(
+      ["volume", "inspect", "--format", "{{json .Labels}}", volume],
+      { env: runtime.env },
+    );
+    if (inspected.status !== 0) {
+      runtime.error(`Could not inspect managed-startup receipt volume '${volume}'.`);
+      return null;
+    }
+    try {
+      const labels: unknown = JSON.parse(inspected.stdout);
+      if (
+        typeof labels !== "object" ||
+        labels === null ||
+        Reflect.get(labels, MANAGED_STARTUP_RECEIPT_VOLUME_LABEL) !== "1"
+      ) {
+        runtime.error(`Managed-startup receipt volume '${volume}' has invalid ownership metadata.`);
+        return null;
+      }
+    } catch {
+      runtime.error(`Managed-startup receipt volume '${volume}' has invalid ownership metadata.`);
+      return null;
+    }
+  }
+  return volumes;
+}
+
+export function removeForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupRuntime): boolean {
+  const volumes = ownedForceFreshReceiptVolumes(runtime);
+  if (volumes === null) return false;
   for (const volume of volumes) {
     const removed = runtime.runDocker(["volume", "rm", "-f", volume], {
       env: runtime.env,
@@ -67,16 +108,9 @@ export function removeForceFreshReceiptVolumes(runtime: ForceFreshDockerCleanupR
     }
     runtime.log(`Removed managed-startup receipt volume ${volume}`);
   }
-  const remaining = runtime.runDocker(["volume", "ls", "--format", "{{.Name}}"], {
-    env: runtime.env,
-  });
-  if (remaining.status !== 0) {
-    runtime.error("Could not verify managed-startup receipt volume cleanup.");
-    return false;
-  }
-  const retained = nonEmptyLines(remaining.stdout).find((name) =>
-    MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN.test(name),
-  );
+  const remaining = ownedForceFreshReceiptVolumes(runtime);
+  if (remaining === null) return false;
+  const [retained] = remaining;
   if (retained) {
     runtime.error(
       `Managed-startup receipt volume '${retained}' remains after force-fresh cleanup.`,

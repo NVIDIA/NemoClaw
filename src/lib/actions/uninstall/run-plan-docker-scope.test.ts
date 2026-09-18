@@ -9,6 +9,7 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+import { MANAGED_STARTUP_RECEIPT_VOLUME_LABEL } from "../../onboard/managed-startup/docker-receipt-transfer";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -156,20 +157,31 @@ describe("uninstall Docker resource scope", () => {
     ["removes", 0, 0],
     ["fails closed on", 1, 1],
   ] as const)(
-    "%s retained managed-startup receipt volumes during force-fresh cleanup",
+    "%s labelled receipt volumes and preserves unlabelled matches during force-fresh cleanup",
     async (_scenario, removalStatus, expectedExitCode) => {
       const owned = `nemoclaw-managed-startup-receipt-volume-${"a".repeat(32)}`;
-      const unrelated = "nemoclaw-managed-startup-receipt-volume-user-data";
+      const unlabelled = `nemoclaw-managed-startup-receipt-volume-${"b".repeat(32)}`;
       const calls: string[][] = [];
-      let ownedPresent = true;
+      const volumeLabels = new Map<string, string | null>([
+        [owned, "1"],
+        [unlabelled, null],
+      ]);
       const routes: Record<string, () => RunResult> = {
         info: () => ok(),
         "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
         "images --format {{.ID}} {{.Repository}}:{{.Tag}}": () => ok(),
-        "volume ls --format {{.Name}}": () =>
-          ok(`${ownedPresent ? `${owned}\n` : ""}${unrelated}\n`),
+        [`volume ls --filter label=${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1 --format {{.Name}}`]:
+          () =>
+            ok(
+              [...volumeLabels]
+                .filter(([, label]) => label === "1")
+                .map(([name]) => name)
+                .join("\n"),
+            ),
+        [`volume inspect --format {{json .Labels}} ${owned}`]: () =>
+          ok(JSON.stringify({ [MANAGED_STARTUP_RECEIPT_VOLUME_LABEL]: "1" })),
         [`volume rm -f ${owned}`]: () => {
-          ownedPresent = removalStatus === 0 ? false : ownedPresent;
+          removalStatus === 0 ? volumeLabels.delete(owned) : false;
           return { status: removalStatus, stdout: removalStatus === 0 ? owned : "", stderr: "" };
         },
         "volume inspect openshell-cluster-nemoclaw": () => ({
@@ -211,7 +223,8 @@ describe("uninstall Docker resource scope", () => {
 
       expect(result.exitCode).toBe(expectedExitCode);
       expect(calls).toContainEqual(["volume", "rm", "-f", owned]);
-      expect(calls).not.toContainEqual(["volume", "rm", "-f", unrelated]);
+      expect(calls).not.toContainEqual(["volume", "rm", "-f", unlabelled]);
+      expect(volumeLabels.has(unlabelled)).toBe(true);
     },
   );
 });

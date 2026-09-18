@@ -11,6 +11,7 @@ import { cleanupTempDir } from "../temp-files";
 const RECEIPT_VOLUME_DIRECTORY = "/run/nemoclaw/managed-startup-receipt-transfer";
 const RECEIPT_SEED_PREFIX = "nemoclaw-managed-startup-receipt-seed";
 export const MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX = "nemoclaw-managed-startup-receipt-volume";
+export const MANAGED_STARTUP_RECEIPT_VOLUME_LABEL = "io.nvidia.nemoclaw.managed-startup.receipt";
 
 export type DockerDaemonReceipt = {
   readonly hostPath: string;
@@ -105,7 +106,10 @@ export function transferDockerReceiptToDaemon(
   let volumeCreated = false;
   let seedCreated = false;
   try {
-    const volume = dockerRun(["volume", "create", volumeName], options.dockerOptions);
+    const volume = dockerRun(
+      ["volume", "create", "--label", `${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`, volumeName],
+      options.dockerOptions,
+    );
     if (!hasZeroDockerExitStatus(volume)) {
       throw new Error(`Could not create managed-startup receipt volume: ${commandDetail(volume)}`);
     }
