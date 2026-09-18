@@ -262,7 +262,9 @@ exec_installer_from_ref() {
   clone_nemoclaw_ref "$ref" "$source_root"
   selected_commit="$(git -C "$source_root" rev-parse HEAD)"
 
-  guard_implicit_maintained_downgrade "$source_root" "$ref"
+  if ! bootstrap_force_fresh_install_requested "$@"; then
+    guard_implicit_maintained_downgrade "$source_root" "$ref"
+  fi
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"
@@ -282,6 +284,17 @@ exec_installer_from_ref() {
 
   verify_downloaded_script "$legacy_script" "legacy installer"
   NEMOCLAW_INSTALL_TAG="$ref" bash "$legacy_script" "$@"
+}
+
+bootstrap_force_fresh_install_requested() {
+  local arg
+  case "${NEMOCLAW_FORCE_FRESH_INSTALL:-}" in
+    1 | true | TRUE | yes | YES | y | Y) return 0 ;;
+  esac
+  for arg in "$@"; do
+    [[ "$arg" == "--force-fresh-install" ]] && return 0
+  done
+  return 1
 }
 
 require_supported_platform() {
@@ -313,6 +326,7 @@ bootstrap_usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
@@ -326,6 +340,7 @@ bootstrap_usage() {
   printf "                                 Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                                 and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
+  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NO_EXPRESS=1        Skip express install prompt on supported platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME        Sandbox name to create/use\n"
