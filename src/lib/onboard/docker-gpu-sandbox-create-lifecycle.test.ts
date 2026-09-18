@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
@@ -25,10 +26,10 @@ function deferredCreateResult(): DockerGpuPatchResult {
 
 function makeDeps() {
   return {
-    runOpenshell: vi.fn(() => ({ status: 0 })),
-    runCaptureOpenshell: vi.fn(() => ""),
-    sleep: vi.fn(),
-    dockerCapture: vi.fn(() => ""),
+    runOpenshell: vi.fn<NonNullable<DockerGpuPatchDeps["runOpenshell"]>>(() => ({ status: 0 })),
+    runCaptureOpenshell: vi.fn<NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>>(() => ""),
+    sleep: vi.fn<NonNullable<DockerGpuPatchDeps["sleep"]>>(),
+    dockerCapture: vi.fn<NonNullable<DockerGpuPatchDeps["dockerCapture"]>>(() => ""),
   };
 }
 
@@ -418,6 +419,90 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(context.rolledBack).toBe(true);
     expect(context.newContainerId).toBe("new-container-id");
     expect(context.backupContainerName).toBe(result.backupContainerName);
+  });
+
+  it("reconciles one stale OpenShell Error row after the exact replacement supervisor installs (#11905)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const inspectResponses = new Map([
+      ["{{json .State}}", JSON.stringify({ Running: true, Status: "running" })],
+      ["{{.Name}}", `/${result.originalName}\n`],
+    ]);
+    deps.dockerCapture.mockImplementation(
+      (args: readonly string[]) => inspectResponses.get(String(args[2] ?? "")) ?? "",
+    );
+    const dockerLogs = vi.fn(() => "OpenShell Sandbox Supervisor success\n");
+    const waitForSupervisor = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const finalizeBackup = vi.fn();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: { ...deps, dockerLogs },
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(finalizeBackup).not.toHaveBeenCalled();
+    expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile a stale row without exact replacement supervisor evidence (#11905)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    deps.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args.includes("{{json .State}}")
+        ? JSON.stringify({ Running: true, Status: "running" })
+        : `/${result.originalName}\n`,
+    );
+    const waitForSupervisor = vi.fn(async () => false);
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: { ...deps, dockerLogs: vi.fn(() => "supervisor still starting\n") },
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        capturePreRollbackDiagnostics: vi.fn(() => null),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      { result, supervisorReady: false },
+      expect.anything(),
+    );
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
   it("reports rolledBack=false in diagnostics when rollback itself fails", async () => {

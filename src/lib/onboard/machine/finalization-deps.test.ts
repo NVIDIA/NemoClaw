@@ -859,6 +859,35 @@ describe("finalization process-recovery refusal propagation", () => {
     expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
   });
 
+  it("accepts a just-recreated native gateway that settles before restart", async () => {
+    const waitForRecoveredSandboxGateway = vi.fn(async () => true);
+    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+      })),
+      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      waitForRecoveredSandboxGateway,
+    });
+    const restartSandboxGateway = vi.fn();
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRestart").mockReturnValue({
+      restartSandboxGateway,
+    });
+
+    await expect(
+      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+    ).resolves.toBe(true);
+    expect(waitForRecoveredSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      initialManagedHealthPassed: false,
+      managedProbeImpl: expect.any(Function),
+      timeoutSeconds: 10,
+    });
+    expect(restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
   it("allows checked terminal recovery without a gateway process (#11758)", async () => {
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(async () => ({

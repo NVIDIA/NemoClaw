@@ -26,7 +26,10 @@ export {
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
->;
+> &
+  Partial<
+    Pick<typeof import("../../actions/sandbox/process-recovery"), "waitForRecoveredSandboxGateway">
+  >;
 type GatewayRestartDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
   "restartSandboxGateway"
@@ -391,6 +394,23 @@ export const finalizationHandlerDeps = {
       ("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
     ) {
       return false;
+    }
+    // A recreated OpenShell sandbox can accept inference before its native
+    // gateway process becomes visible to the process observer. Give that
+    // already-started gateway one bounded health-settlement window before
+    // issuing a restart command. The affected resume/rebuild path reached
+    // finalization less than a second after sandbox recreation and otherwise
+    // failed through a service-oriented native restart command.
+    if (
+      processRecovery.waitForRecoveredSandboxGateway &&
+      (await processRecovery.waitForRecoveredSandboxGateway(name, {
+        quiet: true,
+        initialManagedHealthPassed: false,
+        managedProbeImpl: () => null,
+        timeoutSeconds: 10,
+      }))
+    ) {
+      return true;
     }
     // Native managed agents intentionally have no legacy supervisor recovery
     // owner. During onboarding finalization, recover a stopped native gateway

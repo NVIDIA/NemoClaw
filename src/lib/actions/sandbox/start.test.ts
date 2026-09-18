@@ -514,5 +514,33 @@ describe("startSandbox native lifecycle", () => {
       exitCode: 1,
     });
     expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain("HTTP 401");
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+  });
+
+  it("retries a transient HTTP 503 while a restarted inference route settles", async () => {
+    const probeInferenceInvocation = vi
+      .fn<NonNullable<SandboxStartDeps["probeInferenceInvocation"]>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 503",
+        httpStatus: 503,
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const delayInferenceProbe = vi.fn(async () => {});
+    const h = harness({ delayInferenceProbe, probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "pi",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledTimes(2);
+    expect(delayInferenceProbe).toHaveBeenCalledExactlyOnceWith(2_000);
+    expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain(
+      "Inference route is still settling after start",
+    );
   });
 });

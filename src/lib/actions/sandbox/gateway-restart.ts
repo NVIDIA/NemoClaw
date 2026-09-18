@@ -140,7 +140,7 @@ export function isExpectedHermesRestartRelayClose(
   const output = gatewayRestartOutput(result).replace(/\s+/gu, " ");
   return (
     output.includes("code: 'The service is currently unavailable'") &&
-    output.includes("exec relay closed before the command reported an exit status")
+    /exec relay closed(?:\s*│)?\s*before the command reported an exit status/u.test(output)
   );
 }
 

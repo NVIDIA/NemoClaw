@@ -2599,7 +2599,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = initialEntryOptions.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
-    opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
+    opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT?.trim() ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
