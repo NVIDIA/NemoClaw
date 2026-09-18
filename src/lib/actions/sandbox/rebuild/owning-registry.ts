@@ -333,7 +333,13 @@ export function findRebuildRecoveryStorageRoot(
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       const backupPath = path.join(sandboxBackupRoot, entry.name);
-      if (!readRebuildRecoveryRoute(input, backupPath)) continue;
+      const route = readRebuildRecoveryRoute(input, backupPath);
+      if (!route) continue;
+      if (route.gatewayPort !== state.gatewayPort) {
+        throw new Error(
+          `Rebuild recovery gateway port ${String(route.gatewayPort)} does not match state root port ${String(state.gatewayPort)}. Recovery remains at '${backupPath}'.`,
+        );
+      }
       matches.push({
         backupPath,
         gatewayPort: state.gatewayPort,
