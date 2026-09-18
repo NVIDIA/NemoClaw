@@ -3546,8 +3546,113 @@ run_force_fresh_uninstaller() {
     || error "Node.js is required for the force-fresh uninstaller."
   NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
     "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
-    --yes --destroy-user-data --all-gateway-ports \
-    || error "Force-fresh cleanup did not complete. Rerun the same force-fresh installer command."
+    --yes --destroy-user-data --all-gateway-ports
+}
+
+remove_force_fresh_state_path() {
+  local target="$1"
+  case "$target" in
+    "${HOME}/.nemoclaw" | "${HOME}/.config/nemoclaw" | "${HOME}/.config/openshell" | "${HOME}/.local/state/nemoclaw") ;;
+    *) error "Refusing force-fresh cleanup outside the supported user state roots: ${target}" ;;
+  esac
+  if [[ -L "$target" ]]; then
+    rm -f -- "$target"
+  else
+    rm -rf -- "$target"
+  fi
+}
+
+remove_force_fresh_docker_resources() {
+  docker info >/dev/null 2>&1 \
+    || error "Docker is not reachable. Start Colima, then rerun the force-fresh installer."
+
+  local container_inventory volume_inventory network_inventory image_inventory
+  container_inventory="$(docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}')" \
+    || error "Could not inspect Docker containers during force-fresh cleanup."
+  volume_inventory="$(docker volume ls --format '{{.Name}}')" \
+    || error "Could not inspect Docker volumes during force-fresh cleanup."
+  network_inventory="$(docker network ls --format '{{.ID}} {{.Name}}')" \
+    || error "Could not inspect Docker networks during force-fresh cleanup."
+  image_inventory="$(docker images --format '{{.ID}} {{.Repository}}')" \
+    || error "Could not inspect Docker images during force-fresh cleanup."
+
+  local id image name
+  while read -r id image name; do
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || continue
+    case "$name" in
+      openshell-* | nemoclaw-*) docker rm -f "$id" >/dev/null ;;
+      *)
+        case "$image" in
+          nemoclaw-* | openshell/* | ghcr.io/nvidia/nemoclaw | ghcr.io/nvidia/nemoclaw/* | ghcr.io/nvidia/nemoclaw-*)
+            docker rm -f "$id" >/dev/null
+            ;;
+        esac
+        ;;
+    esac
+  done <<<"$container_inventory"
+
+  local resource
+  while IFS= read -r resource; do
+    case "$resource" in
+      openshell-* | nemoclaw-*) docker volume rm -f -- "$resource" >/dev/null ;;
+    esac
+  done <<<"$volume_inventory"
+  while read -r id name; do
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || continue
+    case "$name" in
+      openshell-* | nemoclaw-*) docker network rm "$id" >/dev/null ;;
+    esac
+  done <<<"$network_inventory"
+  local removed_image_ids=" "
+  while read -r id image; do
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || continue
+    case "$removed_image_ids" in
+      *" $id "*) continue ;;
+    esac
+    case "$image" in
+      nemoclaw-* | openshell/* | ghcr.io/nvidia/nemoclaw | ghcr.io/nvidia/nemoclaw/* | ghcr.io/nvidia/nemoclaw-*)
+        docker rmi -f "$id" >/dev/null
+        removed_image_ids="${removed_image_ids}${id} "
+        ;;
+    esac
+  done <<<"$image_inventory"
+}
+
+remove_force_fresh_openshell_resources() {
+  if command_exists openshell; then
+    local gateway_name
+    # shellcheck disable=SC2016 # JavaScript template literal is evaluated by Node.js.
+    while IFS= read -r gateway_name; do
+      [[ "$gateway_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$ ]] || continue
+      openshell sandbox delete --all -g "$gateway_name" >/dev/null 2>&1 || true
+    done < <(openshell gateway list -o json 2>/dev/null | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const rows = JSON.parse(input);
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+      if (row && typeof row.name === "string") process.stdout.write(`${row.name}\n`);
+    }
+  } catch {}
+});
+')
+  fi
+  pkill -TERM -x openshell-gateway >/dev/null 2>&1 || true
+  sleep 1
+  pkill -KILL -x openshell-gateway >/dev/null 2>&1 || true
+}
+
+remove_force_fresh_install_state() {
+  remove_force_fresh_openshell_resources
+  remove_force_fresh_docker_resources
+  npm uninstall -g nemoclaw >/dev/null 2>&1 || true
+  remove_force_fresh_state_path "${HOME}/.nemoclaw"
+  remove_force_fresh_state_path "${HOME}/.config/nemoclaw"
+  remove_force_fresh_state_path "${HOME}/.config/openshell"
+  remove_force_fresh_state_path "${HOME}/.local/state/nemoclaw"
 }
 
 remove_macos_openshell_for_force_fresh_install() {
@@ -3574,7 +3679,10 @@ run_force_fresh_install_reset() {
   if force_fresh_install_has_existing_state; then
     source_root="$(force_fresh_install_source_root)"
     prepare_force_fresh_uninstaller "$source_root"
-    run_force_fresh_uninstaller "$source_root"
+    if ! run_force_fresh_uninstaller "$source_root"; then
+      warn "Managed uninstall could not reconcile all partial state; continuing with the explicit force-fresh cleanup."
+    fi
+    remove_force_fresh_install_state
     remove_macos_openshell_for_force_fresh_install
   else
     info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install."
