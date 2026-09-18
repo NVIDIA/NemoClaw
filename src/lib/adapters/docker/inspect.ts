@@ -8,6 +8,13 @@ export type DockerSandboxIdentityRow = {
   managedBy: string;
   workspace: string;
   sandboxId: string;
+  /**
+   * Alternate driver-specific ownership marker (e.g. OpenShell's Podman
+   * driver labels containers `openshell.managed=true` instead of the Docker
+   * driver's `openshell.ai/managed-by=openshell`). Empty when the caller did
+   * not request an alternate marker.
+   */
+  managedAlt: string;
 };
 
 export type DockerSandboxIdentityObservation =
@@ -19,6 +26,15 @@ type DockerSandboxIdentityInspect = (
   opts?: DockerRunOptions,
 ) => Partial<Pick<ReturnType<typeof dockerRun>, "error" | "status" | "stderr" | "stdout">>;
 
+/**
+ * Literal final column. `run()` trims captured stdout, so a row whose last
+ * column is empty would silently lose that field and be rejected as
+ * malformed. The alternate ownership marker is empty for every container the
+ * Docker driver labels, so without this terminator destroy would fail closed
+ * on the ordinary case. Keeping it non-empty makes the row width independent
+ * of which labels a driver happens to stamp.
+ */
+const IDENTITY_ROW_TERMINATOR = "end";
 const DOCKER_IDENTITY_PROBE_TIMEOUT_MS = 30_000;
 const DOCKER_IDENTITY_PROBE_MAX_BUFFER_BYTES = 256 * 1024;
 const IDENTITY_VALUE_MAX_LENGTH = 256;
@@ -37,14 +53,21 @@ function isExactBoundedIdentityText(value: string): boolean {
 /** Inspect and parse the exact Docker rows used by sandbox destroy. */
 export function inspectDockerSandboxIdentities(
   sandboxNameLabel: string,
-  labelKeys: { managedBy: string; workspace: string; sandboxId: string },
+  labelKeys: { managedBy: string; workspace: string; sandboxId: string; managedAlt?: string },
   inspect: DockerSandboxIdentityInspect = dockerRun,
 ): DockerSandboxIdentityObservation {
+  // managedAlt queries a second, driver-specific label key so a container can
+  // still be recognized as owned when the requesting driver does not stamp
+  // labelKeys.managedBy (e.g. OpenShell's Podman driver labels containers
+  // `openshell.managed=true` instead of `openshell.ai/managed-by=openshell`).
+  const altLabelKey = labelKeys.managedAlt ?? labelKeys.managedBy;
   const format = [
     "{{.ID}}",
     `{{.Label "${labelKeys.managedBy}"}}`,
     `{{.Label "${labelKeys.workspace}"}}`,
     `{{.Label "${labelKeys.sandboxId}"}}`,
+    `{{.Label "${altLabelKey}"}}`,
+    IDENTITY_ROW_TERMINATOR,
   ].join("\t");
   const result = inspect(
     ["ps", "-a", "--no-trunc", "--filter", `label=${sandboxNameLabel}`, "--format", format],
@@ -70,15 +93,23 @@ export function inspectDockerSandboxIdentities(
     if (rawLine.length === 0) continue;
     const fields = rawLine.split("\t");
     if (
-      fields.length !== 4 ||
+      fields.length !== 6 ||
+      fields[5] !== IDENTITY_ROW_TERMINATOR ||
       !DOCKER_CONTAINER_ID_PATTERN.test(fields[0] ?? "") ||
       !fields.every(isExactBoundedIdentityText)
     ) {
       malformedRows += 1;
       continue;
     }
-    const [id, managedBy, workspace, sandboxId] = fields as [string, string, string, string];
-    rows.push({ id, managedBy, workspace, sandboxId });
+    const [id, managedBy, workspace, sandboxId, managedAlt] = fields as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    rows.push({ id, managedBy, workspace, sandboxId, managedAlt });
   }
   return { status: "observed", rows, malformedRows };
 }
