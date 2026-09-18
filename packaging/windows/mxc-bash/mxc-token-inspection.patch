@@ -1,0 +1,2100 @@
+diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/backends/appcontainer/common/src/appcontainer_runner.rs
+--- a/src/backends/appcontainer/common/src/appcontainer_runner.rs
++++ b/src/backends/appcontainer/common/src/appcontainer_runner.rs
+@@ -773,16 +773,40 @@
+             }
+         }
+
++        // Select the existing CI-only prototype before first workload creation;
++        // later child overrides left the effective policy unchanged in the last run.
++        let working_directory = crate::working_directory::launch_working_directory(request);
++        let msys_root_layout = crate::msys_token_inspection::root_image_layout_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++        )
++        .map_err(|error| WxcError::Process(format!("MSYS root image placement: {error}")))?;
++        let desktop_creation = crate::msys_token_inspection::private_desktop_creation_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++            request.policy.ui.disable,
++        ).map_err(|error| WxcError::Process(format!("Hermes desktop admission: {error}")))?;
++
+         // --- Allocate and initialize attribute list ---
+         let attr_count = compute_attr_count(
+             request.policy.least_privilege_mode,
+-            request.policy.ui.disable,
++            request.policy.ui.disable || msys_root_layout,
+             pipe_mode,
+         );
+
+         // Lifetime spans the attribute list and CreateProcessW:
+         // PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY stores a pointer into this u64.
+-        let mitigation_value: u64 = process_mitigation::win32k_disable_value();
++        let mitigation_value: u64 = if request.policy.ui.disable {
++            process_mitigation::win32k_disable_value()
++        } else {
++            0
++        } | if msys_root_layout {
++            crate::msys_token_inspection::ROOT_IMAGE_PLACEMENT
++        } else {
++            0
++        };
+
+         let mut attr_list_size: usize = 0;
+
+@@ -860,7 +884,7 @@
+
+         // 3. MITIGATION_POLICY (Win32k syscall disable) -- applied by the kernel
+         // before the child runs any user-mode code, so there is no race window.
+-        if request.policy.ui.disable {
++        if mitigation_value != 0 {
+             unsafe {
+                 UpdateProcThreadAttribute(
+                     attr_list,
+@@ -878,7 +902,9 @@
+                     ))
+                 })?;
+             }
+-            logger.log_line("Win32k mitigation applied to child process");
++            if request.policy.ui.disable {
++                logger.log_line("Win32k mitigation applied to child process");
++            }
+         }
+
+         // --- Setup handle passthrough / capture (pipe mode only) ---
+@@ -1013,7 +1039,6 @@
+
+         // Resolved via the shared helper so both Windows launch paths agree and
+         // neither can pass a NULL cwd (see `working_directory`).
+-        let working_directory = crate::working_directory::launch_working_directory(request);
+         logger.log_line(&format!(
+             "working directory: {}",
+             working_directory.describe()
+@@ -1107,11 +1132,28 @@
+         // that returns an error in this block must terminate first.
+         let job = match (|| -> Result<UiJobObject, WxcError> {
+             let job = UiJobObject::new()?;
+-            let restrictions = ui_policy::resolve_ui_restrictions(
++            let mut restrictions = ui_policy::resolve_ui_restrictions(
+                 &request.policy.ui,
+                 &request.policy.base_process_ui,
+             );
++            let before = crate::job_object::to_job_object_uilimit_mask(&restrictions)
++                & crate::job_object::supported_ui_limit_mask();
+             job.set_ui_limits(&restrictions)?;
++            if desktop_creation {
++                let actual_before = crate::msys_token_inspection::read_private_desktop_mask(
++                    HANDLE(job.handle_value() as *mut std::ffi::c_void),
++                ).map_err(|error| WxcError::Process(format!("Hermes original UI mask: {error}")))?;
++                if actual_before != before {
++                    return Err(WxcError::Process("The original UI job mask did not match its policy".into()));
++                }
++                // Windows bundles CreateDesktop and SwitchDesktop in this bit.
++                // Every other UI restriction, including EXITWINDOWS, is retained.
++                restrictions.block_desktop_switching = false;
++                job.set_ui_limits(&restrictions)?;
++                crate::msys_token_inspection::verify_private_desktop_mask(
++                    HANDLE(job.handle_value() as *mut std::ffi::c_void), before,
++                ).map_err(|error| WxcError::Process(format!("Hermes desktop mask: {error}")))?;
++            }
+             job.assign_process(process_handle.get())?;
+             Ok(job)
+         })() {
+@@ -1124,6 +1166,34 @@
+                     let _ = TerminateProcess(process_handle.get(), u32::MAX);
+                 }
+                 return Err(e);
++            }
++        };
++
++        if msys_root_layout {
++            crate::msys_token_inspection::log_root_image_layout(
++                process_handle.get(),
++                pi.dwProcessId,
++                mitigation_value,
++            );
++        }
++
++        // The CI-only diagnostic keeps query-only duplicates of this exact job
++        // and root process; the guest cannot supply either authority handle.
++        let msys_token_inspection = match crate::msys_token_inspection::start_if_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++            &self.get_principal_id(),
++            HANDLE(job.handle_value() as *mut std::ffi::c_void),
++            process_handle.get(),
++            desktop_creation,
++        ) {
++            Ok(owner) => owner,
++            Err(error) => {
++                job.terminate_and_wait(u32::MAX).map_err(|cleanup| WxcError::Process(
++                    format!("MSYS token inspection failed: {error}; suspended job cleanup failed: {cleanup}"),
++                ))?;
++                return Err(WxcError::Process(format!("MSYS token inspection failed: {error}")));
+             }
+         };
+
+@@ -1216,6 +1286,7 @@
+         Ok(SpawnedChild {
+             process: process_handle,
+             thread: thread_handle,
++            msys_token_inspection,
+             job,
+             pid: pi.dwProcessId,
+             capture_session,
+@@ -1264,6 +1335,9 @@
+     process: OwnedHandle,
+     thread: OwnedHandle,
+     job: UiJobObject,
++    // Primary process/thread/job handles close before the observer joins and
++    // releases its query duplicates; its owned desktop handles close last.
++    msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
+     /// OS process id of the child.
+     pid: u32,
+     /// Live guarded WPR capture session for `captureDenials`, started
+@@ -1647,6 +1721,7 @@
+     process: SendOwnedHandle,
+     _thread: SendOwnedHandle,
+     job: crate::job_object::UiJobObject,
++    _msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
+     pid: u32,
+     stdin: Option<PipeWriter>,
+     stdout: Option<InterruptiblePipeReader>,
+@@ -1695,6 +1770,13 @@
+ unsafe impl Send for AppContainerSandboxProcess {}
+
+ impl AppContainerSandboxProcess {
++    fn observe_desktop_teardown(&self) {
++        if self._msys_token_inspection.as_ref().is_some_and(|owner| owner.has_desktops()) {
++            crate::msys_token_readback::desktop_teardown_snapshot(
++                HANDLE(self.job.handle_value() as *mut std::ffi::c_void), self.process.get(),
++            );
++        }
++    }
+     fn new(
+         mut child: SpawnedChild,
+         prepared: Prepared,
+@@ -1711,6 +1793,7 @@
+         Self {
+             process,
+             _thread: thread,
++            _msys_token_inspection: child.msys_token_inspection.take(),
+             job: child.job,
+             pid: child.pid,
+             stdin,
+@@ -1921,6 +2004,7 @@
+                 "failed to terminate sandbox job during drop: {error}"
+             ));
+             self.release_guarded_capture_after_termination_failure();
++            self.observe_desktop_teardown();
+             return;
+         }
+         unsafe {
+@@ -1931,6 +2015,7 @@
+                 "captureDenials teardown failed during drop: {error}"
+             ));
+         }
++        self.observe_desktop_teardown();
+     }
+ }
+
+diff --git a/src/backends/appcontainer/common/src/lib.rs b/src/backends/appcontainer/common/src/lib.rs
+--- a/src/backends/appcontainer/common/src/lib.rs
++++ b/src/backends/appcontainer/common/src/lib.rs
+@@ -30,6 +30,10 @@
+ #[cfg(target_os = "windows")]
+ pub mod job_object;
+ #[cfg(target_os = "windows")]
++mod msys_token_inspection;
++#[cfg(target_os = "windows")]
++mod msys_token_readback;
++#[cfg(target_os = "windows")]
+ pub mod launch_diagnostics;
+ #[cfg(target_os = "windows")]
+ pub mod network_manager;
+diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src/backends/appcontainer/common/src/msys_token_inspection.rs
+new file mode 100644
+--- /dev/null
++++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
+@@ -0,0 +1,433 @@
++// Copyright (c) NVIDIA Corporation.
++// Licensed under the MIT License.
++// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
++// The worker never grants process/job/filesystem rights or resumes a child.
++use std::os::windows::ffi::OsStrExt;
++use std::path::{Path, PathBuf};
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::thread::{self, JoinHandle};
++use windows::Win32::Foundation::{CloseHandle, DUPLICATE_HANDLE_OPTIONS, DuplicateHandle, HANDLE};
++use windows::Win32::Storage::FileSystem::{
++    BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_DIRECTORY,
++    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
++    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
++    GetFileInformationByHandle, OPEN_EXISTING,
++};
++use windows::Win32::System::Threading::{
++    GetCurrentProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
++};
++use windows::core::PCWSTR;
++
++struct QueryHandle(HANDLE);
++impl QueryHandle {
++    fn get(&self) -> HANDLE {
++        self.0
++    }
++}
++// Each duplicate has exactly one owning thread and is never published to the
++// guest. Windows kernel handles are process-global, not thread-affine.
++unsafe impl Send for QueryHandle {}
++impl Drop for QueryHandle {
++    fn drop(&mut self) {
++        unsafe {
++            let _ = CloseHandle(self.0);
++        }
++    }
++}
++fn duplicate(source: HANDLE, rights: u32) -> Result<QueryHandle, String> {
++    let mut handle = HANDLE::default();
++    unsafe {
++        DuplicateHandle(
++            GetCurrentProcess(),
++            source,
++            GetCurrentProcess(),
++            &mut handle,
++            rights,
++            false,
++            DUPLICATE_HANDLE_OPTIONS(0),
++        )
++    }
++    .map_err(|error| format!("inspection handle duplication failed: {error}"))?;
++    Ok(QueryHandle(handle))
++}
++fn pin_directory(path: &Path) -> Result<QueryHandle, String> {
++    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
++    let handle = unsafe {
++        CreateFileW(
++            PCWSTR(wide.as_ptr()),
++            FILE_READ_ATTRIBUTES.0 | FILE_TRAVERSE.0,
++            FILE_SHARE_READ | FILE_SHARE_WRITE,
++            None,
++            OPEN_EXISTING,
++            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
++            None,
++        )
++    }
++    .map_err(|error| format!("inspection root open failed: {error}"))?;
++    let owned = QueryHandle(handle);
++    let mut info = BY_HANDLE_FILE_INFORMATION::default();
++    unsafe { GetFileInformationByHandle(handle, &mut info) }
++        .map_err(|error| format!("inspection root information failed: {error}"))?;
++    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
++        || info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0
++    {
++        return Err("inspection root is not an ordinary directory".into());
++    }
++    Ok(owned)
++}
++fn trusted_root(cwd: &str, writable: &[String], container: &str) -> Result<PathBuf, String> {
++    // The host-owned request, not guest JSON, selects this only prototype root.
++    // Keep the containing drive root outside the guest writable capability.
++    let bytes = cwd.as_bytes();
++    let prefix = "\\NemoClawMsysProof-";
++    let role = ["start", "a", "b", "d"]
++        .into_iter()
++        .find(|role| container.ends_with(&format!("-{role}")))
++        .ok_or("Unexpected inspection role")?;
++    let suffix = format!("-state-{role}");
++    let valid = bytes.len() == 2 + prefix.len() + 12 + suffix.len()
++        && bytes[0].is_ascii_alphabetic()
++        && bytes[1] == b':'
++        && cwd[2..].starts_with(prefix)
++        && cwd.ends_with(&suffix)
++        && cwd.as_bytes()[2 + prefix.len()..2 + prefix.len() + 12]
++            .iter()
++            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
++    if !valid || writable.len() != 1 || writable[0] != cwd {
++        return Err("inspection root differs from the host-owned prototype writable path".into());
++    }
++    if container.len() != 16 + role.len()
++        || !container.starts_with("nm-")
++        || !container.as_bytes()[3..15]
++            .iter()
++            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
++    {
++        return Err("inspection container differs from the host-owned prototype identity".into());
++    }
++    Ok(PathBuf::from(cwd))
++}
++
++fn normalized_state_path(path: &str) -> Result<String, String> {
++    let path = path.replace('/', "\\");
++    let path = path.strip_suffix('\\').unwrap_or(&path);
++    let parts: Vec<_> = path.split('\\').collect();
++    if parts.len() < 2
++        || parts[0].len() != 2
++        || !parts[0].as_bytes()[0].is_ascii_alphabetic()
++        || parts[0].as_bytes()[1] != b':'
++        || parts[1..].iter().any(|part| {
++            part.is_empty()
++                || matches!(*part, "." | "..")
++                || part.ends_with(['.', ' '])
++                || part
++                    .chars()
++                    .any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
++        })
++    {
++        return Err("Hermes state path is not an unambiguous drive-root path".into());
++    }
++    Ok(path.to_ascii_lowercase())
++}
++
++fn installed_root(
++    cwd: &str,
++    writable: &[String],
++    expected: &str,
++) -> Result<(PathBuf, Vec<String>), String> {
++    let expected = normalized_state_path(expected)?;
++    if normalized_state_path(cwd)? != expected || writable.is_empty() {
++        return Err("Hermes state differs from the actual host account's leased root".into());
++    }
++    let prefix = format!("{expected}\\");
++    let mut descendants = Vec::new();
++    let mut root_present = false;
++    for entry in writable {
++        let path = normalized_state_path(entry)?;
++        if path == expected {
++            root_present = true;
++        } else if let Some(relative) = path.strip_prefix(&prefix) {
++            descendants.push(relative.to_owned());
++        } else {
++            return Err("Hermes writable capability is outside its leased state root".into());
++        }
++    }
++    if !root_present {
++        return Err("Hermes leased state root is not the writable owner".into());
++    }
++    Ok((PathBuf::from(cwd), descendants))
++}
++
++fn private_desktop_admission(
++    requested: Option<&str>,
++    github_actions: bool,
++    inspection: &str,
++    cwd: &str,
++    writable: &[String],
++    container: &str,
++    ui_disabled: bool,
++) -> Result<bool, String> {
++    let Some(value) = requested else { return Ok(false) };
++    if value != "1" || !github_actions || inspection != "repair-query" || ui_disabled
++        || !(container.ends_with("-start") || container.ends_with("-d"))
++    {
++        return Err("private desktop creation requires the explicit Hermes CI request".into());
++    }
++    trusted_root(cwd, writable, container)?;
++    Ok(true)
++}
++
++pub(crate) fn private_desktop_creation_requested(
++    cwd: &str, writable: &[String], container: &str, ui_disabled: bool,
++) -> Result<bool, String> {
++    let requested = std::env::var("NEMOCLAW_HERMES_PRIVATE_DESKTOP").ok();
++    let inspection = std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").unwrap_or_default();
++    if requested.as_deref() == Some("1") && inspection == "hermes-query" {
++        if ui_disabled {
++            return Err("installed Hermes desktop creation requires its UI-compatible policy".into());
++        }
++        // The dedicated gateway holds the runtime/state owners. Derive the
++        // account identity from the actual host token, never guest variables.
++        let (root, descendants) = installed_root(
++            cwd, writable, &crate::msys_token_readback::host_hermes_root()?,
++        )?;
++        let directory = pin_directory(&root)?;
++        for relative in &descendants {
++            crate::msys_token_readback::verify_owned_descendant(directory.get(), relative)?;
++        }
++        return Ok(true);
++    }
++    let selected = private_desktop_admission(
++        requested.as_deref(),
++        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
++        &inspection,
++        cwd, writable, container, ui_disabled,
++    )?;
++    if selected {
++        // Prove the already host-selected state is an ordinary owned directory
++        // before any child is created. Guest environment is not consulted.
++        let _root = pin_directory(Path::new(cwd))?;
++    }
++    Ok(selected)
++}
++
++pub(crate) fn read_private_desktop_mask(job: HANDLE) -> Result<u32, String> {
++    use windows::Win32::System::JobObjects::{
++        QueryInformationJobObject, JobObjectBasicUIRestrictions,
++        JOBOBJECT_BASIC_UI_RESTRICTIONS,
++    };
++    let mut actual = JOBOBJECT_BASIC_UI_RESTRICTIONS::default();
++    unsafe {
++        QueryInformationJobObject(
++            Some(job), JobObjectBasicUIRestrictions,
++            &mut actual as *mut _ as *mut std::ffi::c_void,
++            std::mem::size_of_val(&actual) as u32, None,
++        )
++    }.map_err(|error| format!("job UI readback failed: {error}"))?;
++    Ok(actual.UIRestrictionsClass.0)
++}
++
++pub(crate) fn verify_private_desktop_mask(job: HANDLE, before: u32) -> Result<(), String> {
++    let after = read_private_desktop_mask(job)?;
++    let record = serde_json::json!({
++        "schemaVersion":1, "classification":"admitted-Hermes-desktop-creation",
++        "beforeMask":before, "afterMask":after, "removedMask":before ^ after,
++        "bundledCreateAndSwitch":true, "logoutRestrictionPreserved":after & 0x80 != 0,
++        "everyOtherUiBitPreserved":after == before & !0x40,
++        "hostDesktopGrantsAdded":false, "childResumed":false
++    });
++    eprintln!("NEMOCLAW_HERMES_DESKTOP_MASK={record}");
++    if before & 0xc0 != 0xc0 || after != before & !0x40 {
++        return Err("effective job UI mask did not preserve every other restriction".into());
++    }
++    Ok(())
++}
++
++pub(crate) fn root_image_layout_requested(
++    cwd: &str,
++    writable: &[String],
++    container: &str,
++) -> Result<bool, String> {
++    match std::env::var("NEMOCLAW_MSYS_IMAGE_LAYOUT") {
++        Err(std::env::VarError::NotPresent) => return Ok(false),
++        Ok(value) if value == "preferred" => (),
++        _ => return Err("invalid host MSYS image-layout opt-in".into()),
++    }
++    // The unmodified negative baseline must retain its original root policy.
++    if container.ends_with("-base") {
++        return Ok(false);
++    }
++    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
++        || std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() != Ok("repair-query")
++    {
++        return Err("MSYS root image placement requires the opted-in CI prototype".into());
++    }
++    trusted_root(cwd, writable, container)?;
++    Ok(true)
++}
++
++// PROCESS_CREATION_MITIGATION_POLICY_FORCE_RELOCATE_IMAGES_ALWAYS_OFF.
++// Other mitigation choices remain at the original caller-selected values.
++pub(crate) const ROOT_IMAGE_PLACEMENT: u64 = 0x0000_0000_0000_0200;
++
++#[link(name = "kernel32")]
++unsafe extern "system" {
++    #[link_name = "GetProcessMitigationPolicy"]
++    fn query_aslr_policy(
++        process: *mut std::ffi::c_void,
++        policy: i32,
++        buffer: *mut std::ffi::c_void,
++        length: usize,
++    ) -> i32;
++}
++
++fn effective_aslr(process: HANDLE) -> (bool, u32, i32) {
++    // ProcessASLRPolicy is1; its Windows policy structure is a single DWORD.
++    let mut flags: u32 = 0;
++    let known = unsafe {
++        query_aslr_policy(
++            process.0,
++            1,
++            &mut flags as *mut _ as *mut _,
++            size_of::<u32>(),
++        )
++    } != 0;
++    let error = if known {
++        0
++    } else {
++        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
++    };
++    (known, flags, error)
++}
++
++pub(crate) fn log_root_image_layout(root_process: HANDLE, root_pid: u32, policy: u64) {
++    let host = effective_aslr(unsafe { GetCurrentProcess() });
++    let root = effective_aslr(root_process);
++    let record = serde_json::json!({
++        "schemaVersion":1, "classification":"initial-MXC-canonical-Bash-image-layout",
++        "creationPolicy":format!("0x{policy:016x}"), "rootPid":root_pid,
++        "hostAslrKnown":host.0, "hostAslrFlags":host.1, "hostAslrError":host.2,
++        "rootAslrKnown":root.0, "rootAslrFlags":root.1, "rootAslrError":root.2,
++        "rootResumed":false
++    });
++    eprintln!("NEMOCLAW_MSYS_ROOT_IMAGE_LAYOUT={record}");
++}
++
++fn diagnostic_desktop_requested(private_desktop: bool, container: &str) -> bool {
++    private_desktop && (container.ends_with("-d") || container.ends_with("-start"))
++        && std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
++        && std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() == Ok("repair-query")
++}
++
++pub(crate) struct OwnerGuard {
++    stop: Arc<AtomicBool>,
++    worker: Option<JoinHandle<()>>,
++    // The runner terminates/drains before its fields drop. Primary handles
++    // close first; this Drop joins the observer (releasing query duplicates)
++    // before the desktop vector drops and performs its actual absence check.
++    _desktops: Vec<crate::msys_token_readback::PrivateDesktop>,
++}
++impl OwnerGuard {
++    pub(crate) fn has_desktops(&self) -> bool { !self._desktops.is_empty() }
++}
++impl Drop for OwnerGuard {
++    fn drop(&mut self) {
++        self.stop.store(true, Ordering::Release);
++        if let Some(worker) = self.worker.take() {
++            if worker.join().is_err() {
++                eprintln!(
++                    "NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={{\"status\":\"owner-thread-panicked\"}}"
++                );
++            }
++        }
++    }
++}
++
++pub(crate) fn start_if_requested(
++    cwd: &str,
++    writable: &[String],
++    container: &str,
++    expected_sid: &str,
++    job: HANDLE,
++    root_process: HANDLE,
++    private_desktop: bool,
++) -> Result<Option<OwnerGuard>, String> {
++    let (repair, installed) = match std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION") {
++        Err(std::env::VarError::NotPresent) => return Ok(None),
++        Ok(value) if value == "1" => (false, false),
++        Ok(value) if value == "repair-query" => (true, false),
++        Ok(value) if value == "hermes-query" => (true, true),
++        _ => return Err("invalid host token-inspection opt-in".into()),
++    };
++    if !installed && (container.ends_with("-base") || (!repair && !container.ends_with("-start"))) {
++        return Ok(None);
++    }
++    let (root, descendants) = if installed {
++        // This environment belongs to the dedicated host Hermes gateway. The
++        // installed caller holds both runtime and native-state leases; guest
++        // environment/request text never selects the host account or job.
++        installed_root(
++            cwd,
++            writable,
++            &crate::msys_token_readback::host_hermes_root()?,
++        )?
++    } else {
++        (trusted_root(cwd, writable, container)?, Vec::new())
++    };
++    if !expected_sid.starts_with("S-1-15-2-") || expected_sid.len() > 184 {
++        return Err("inspection expected AppContainer identity is invalid".into());
++    }
++    let directory = pin_directory(&root)?;
++    for relative in &descendants {
++        crate::msys_token_readback::verify_owned_descendant(directory.get(), relative)?;
++    }
++    // The installed gateway holds the runtime/state leases. Its actual account
++    // root is pinned and every writable descendant has been validated above.
++    // Reuse the same owned desktops; the explicit CI admission is unchanged.
++    let desktops = if (private_desktop && installed)
++        || diagnostic_desktop_requested(private_desktop, container) {
++        crate::msys_token_readback::prepare_private_desktops(job, root_process, expected_sid)?
++    } else { Vec::new() };
++    // JOB_OBJECT_QUERY only; never assign, terminate, or set attributes.
++    let job = duplicate(job, 0x0004)?;
++    let process = duplicate(
++        root_process,
++        PROCESS_QUERY_LIMITED_INFORMATION.0 | PROCESS_SYNCHRONIZE.0,
++    )?;
++    let sid = expected_sid.to_owned();
++    let stop = Arc::new(AtomicBool::new(false));
++    let thread_stop = stop.clone();
++    let worker = thread::Builder::new()
++        .name("mxc-msys-token-inspection".into())
++        .spawn(move || {
++            let answer = crate::msys_token_readback::inspect(
++                &root,
++                directory.get(),
++                job.get(),
++                process.get(),
++                &sid,
++                repair,
++                &thread_stop,
++            );
++            let result = match answer {
++                Ok(value) => value,
++                Err(error) => serde_json::json!({"status":"inspection-failed","error":error}),
++            };
++            // Host-owned output enters the already retained executor stderr. The
++            // guest receives only a synchronization acknowledgement, no token data.
++            match serde_json::to_string(&result) {
++                Ok(line) if line.len() <= 16 * 1024 => {
++                    eprintln!("NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={line}")
++                }
++                _ => {
++                    eprintln!("NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={{\"status\":\"result-bound\"}}")
++                }
++            }
++        })
++        .map_err(|error| format!("inspection owner thread start failed: {error}"))?;
++    Ok(Some(OwnerGuard {
++        stop,
++        worker: Some(worker),
++        _desktops: desktops,
++    }))
++}
+diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/backends/appcontainer/common/src/msys_token_readback.rs
+new file mode 100644
+--- /dev/null
++++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
+@@ -0,0 +1,1440 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
++// No token contents, default DACL, privileges, process rights or resume operation change.
++use serde_json::{Value, json};
++use std::ffi::c_void;
++use std::path::Path;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::time::Duration;
++use windows::Win32::Foundation::HANDLE;
++
++type RawHandle = *mut c_void;
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++struct FileTime {
++    low: u32,
++    high: u32,
++}
++#[repr(C)]
++#[derive(Default)]
++struct FileInfo {
++    attributes: u32,
++    creation: FileTime,
++    access: FileTime,
++    write: FileTime,
++    volume: u32,
++    size_high: u32,
++    size_low: u32,
++    links: u32,
++    index_high: u32,
++    index_low: u32,
++}
++#[repr(C)]
++#[derive(Default)]
++struct ProcessBasic {
++    reserved: usize,
++    peb: usize,
++    reserved2: [usize; 2],
++    pid: usize,
++    parent_pid: usize,
++}
++#[repr(C)]
++struct UnicodeName {
++    length: u16,
++    maximum_length: u16,
++    buffer: *const u16,
++}
++#[repr(C)]
++struct ObjectAttributes {
++    length: u32,
++    root: RawHandle,
++    name: *const UnicodeName,
++    attributes: u32,
++    security: *const c_void,
++    quality: *const c_void,
++}
++#[repr(C)]
++#[derive(Default)]
++struct IoStatus {
++    status: usize,
++    information: usize,
++}
++#[link(name = "kernel32")]
++unsafe extern "system" {
++    fn GetLastError() -> u32;
++    fn GetTickCount64() -> u64;
++    fn GetCurrentProcess() -> RawHandle;
++    fn GetCurrentThreadId() -> u32;
++    fn SetLastError(error: u32);
++    fn GetWindowsDirectoryW(buffer: *mut u16, size: u32) -> u32;
++    fn LocalFree(value: RawHandle) -> RawHandle;
++    fn GetModuleHandleW(name: *const u16) -> RawHandle;
++    fn GetProcAddress(module: RawHandle, name: *const u8) -> *const c_void;
++    fn CloseHandle(handle: RawHandle) -> i32;
++    fn GetFileInformationByHandle(handle: RawHandle, info: *mut FileInfo) -> i32;
++    fn ReadFile(
++        handle: RawHandle,
++        bytes: *mut u8,
++        count: u32,
++        read: *mut u32,
++        overlapped: *mut c_void,
++    ) -> i32;
++    fn WriteFile(
++        handle: RawHandle,
++        bytes: *const u8,
++        count: u32,
++        written: *mut u32,
++        overlapped: *mut c_void,
++    ) -> i32;
++    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> RawHandle;
++    fn GetProcessId(process: RawHandle) -> u32;
++    fn GetProcessTimes(
++        process: RawHandle,
++        creation: *mut FileTime,
++        exit: *mut FileTime,
++        kernel: *mut FileTime,
++        user: *mut FileTime,
++    ) -> i32;
++    fn IsProcessInJob(process: RawHandle, job: RawHandle, result: *mut i32) -> i32;
++    fn QueryInformationJobObject(
++        job: RawHandle,
++        class: u32,
++        output: *mut c_void,
++        bytes: u32,
++        needed: *mut u32,
++    ) -> i32;
++    fn WaitForSingleObject(handle: RawHandle, milliseconds: u32) -> u32;
++}
++#[link(name = "advapi32")]
++unsafe extern "system" {
++    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
++        text: *const u16, revision: u32, output: *mut RawHandle, size: *mut u32,
++    ) -> i32;
++    fn SetEntriesInAclW(count: u32, entries: *const DesktopAccess, old: RawHandle, output: *mut RawHandle) -> u32;
++    fn GetSecurityDescriptorDacl(descriptor: *const c_void, present: *mut i32, acl: *mut RawHandle, defaulted: *mut i32) -> i32;
++    fn GetSecurityDescriptorSacl(descriptor: *const c_void, present: *mut i32, acl: *mut RawHandle, defaulted: *mut i32) -> i32;
++    fn SetSecurityDescriptorSacl(descriptor: *mut c_void, present: i32, acl: RawHandle, defaulted: i32) -> i32;
++    fn GetSecurityDescriptorControl(descriptor: *const c_void, control: *mut u16, revision: *mut u32) -> i32;
++    fn SetSecurityDescriptorControl(descriptor: *mut c_void, interest: u16, control: u16) -> i32;
++    fn OpenProcessToken(process: RawHandle, access: u32, token: *mut RawHandle) -> i32;
++    fn GetTokenInformation(
++        token: RawHandle,
++        class: u32,
++        output: *mut c_void,
++        bytes: u32,
++        needed: *mut u32,
++    ) -> i32;
++    fn GetKernelObjectSecurity(
++        object: RawHandle,
++        information: u32,
++        output: *mut c_void,
++        bytes: u32,
++        needed: *mut u32,
++    ) -> i32;
++    fn IsValidSecurityDescriptor(descriptor: *const c_void) -> i32;
++    fn GetSecurityDescriptorLength(descriptor: *const c_void) -> u32;
++    fn InitializeSecurityDescriptor(descriptor: *mut c_void, revision: u32) -> i32;
++    fn SetSecurityDescriptorDacl(
++        descriptor: *mut c_void,
++        present: i32,
++        acl: *const c_void,
++        defaulted: i32,
++    ) -> i32;
++    fn SetKernelObjectSecurity(
++        object: RawHandle,
++        information: u32,
++        descriptor: *const c_void,
++    ) -> i32;
++}
++#[link(name = "ntdll")]
++unsafe extern "system" {
++    fn NtQueryInformationProcess(
++        process: RawHandle,
++        class: u32,
++        output: *mut ProcessBasic,
++        bytes: u32,
++        needed: *mut u32,
++    ) -> i32;
++    fn NtCreateFile(
++        output: *mut RawHandle,
++        access: u32,
++        attributes: *const ObjectAttributes,
++        io: *mut IoStatus,
++        allocation: *const i64,
++        file_attributes: u32,
++        share: u32,
++        disposition: u32,
++        options: u32,
++        ea: *const c_void,
++        ea_bytes: u32,
++    ) -> i32;
++}
++
++struct Owned(RawHandle);
++impl Drop for Owned {
++    fn drop(&mut self) {
++        unsafe {
++            CloseHandle(self.0);
++        }
++    }
++}
++
++#[repr(C)]
++struct StationAttributes {
++    length: u32,
++    descriptor: RawHandle,
++    inherit: i32,
++}
++#[repr(C)]
++#[derive(Default)]
++struct StationFlags {
++    inherit: i32,
++    reserved: i32,
++    flags: u32,
++}
++#[repr(C)]
++struct DesktopTrustee {
++    multiple: RawHandle,
++    operation: u32,
++    form: u32,
++    kind: u32,
++    sid: RawHandle,
++}
++#[repr(C)]
++struct DesktopAccess {
++    mask: u32,
++    mode: u32,
++    inheritance: u32,
++    trustee: DesktopTrustee,
++}
++#[link(name = "user32")]
++unsafe extern "system" {
++    fn GetProcessWindowStation() -> RawHandle;
++    fn GetThreadDesktop(thread: u32) -> RawHandle;
++    fn CreateDesktopW(name: *const u16, device: *const u16, mode: *const c_void, flags: u32, access: u32, attributes: *const StationAttributes) -> RawHandle;
++    fn OpenDesktopW(name: *const u16, flags: u32, inherit: i32, access: u32) -> RawHandle;
++    fn CloseDesktop(desktop: RawHandle) -> i32;
++    fn GetUserObjectInformationW(object: RawHandle, class: i32, output: *mut c_void, size: u32, needed: *mut u32) -> i32;
++    fn GetUserObjectSecurity(object: RawHandle, information: *mut u32, output: *mut c_void, size: u32, needed: *mut u32) -> i32;
++}
++struct DesktopAllocation(RawHandle);
++impl Drop for DesktopAllocation {
++    fn drop(&mut self) { unsafe { LocalFree(self.0); } }
++}
++// The host never selects these desktops. The exact admitted child opens its own
++// handles; this guard retains the new objects until the existing owner ends.
++pub(crate) struct PrivateDesktop { handle: RawHandle, name: String }
++unsafe impl Send for PrivateDesktop {}
++impl Drop for PrivateDesktop {
++    fn drop(&mut self) {
++        let close_started_tick = unsafe { GetTickCount64() };
++        let closed = unsafe { CloseDesktop(self.handle) } != 0;
++        let close_error = if closed { 0 } else { unsafe { GetLastError() } };
++        let name: Vec<u16> = self.name.encode_utf16().chain(Some(0)).collect();
++        let mut absent = false;
++        let mut absence_error = None;
++        let mut presence_handle_closed = true;
++        if closed {
++            let found = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, 0x0002_0000) };
++            if found.is_null() {
++                let error = unsafe { GetLastError() };
++                absent = matches!(error, 2 | 3);
++                absence_error = Some(error);
++            } else {
++                presence_handle_closed = unsafe { CloseDesktop(found) } != 0;
++            }
++        }
++        let record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop",
++            "stage":"owner-close","desktopName":self.name,"closed":closed,"closeError":close_error,
++            "clock":"GetTickCount64","closeStartedTickMilliseconds":close_started_tick,
++            "absenceCheckedTickMilliseconds":unsafe { GetTickCount64() },
++            "absentAfterOwnerClose":absent,"absenceError":absence_error,
++            "presenceHandleClosed":presence_handle_closed,"hostDesktopSelected":false});
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={record}");
++    }
++}
++#[repr(C)]
++#[derive(Default)]
++struct DesktopJobAccounting {
++    times: [i64; 4],
++    page_faults: u32,
++    total_processes: u32,
++    active_processes: u32,
++    terminated_processes: u32,
++}
++// One observation at the actual runner teardown boundary. These borrowed
++// handles are still valid here; no new handle, wait, or job operation is added.
++pub(crate) fn desktop_teardown_snapshot(job: HANDLE, root: HANDLE) {
++    let mut accounting = DesktopJobAccounting::default();
++    let mut needed = 0;
++    let queried = unsafe { QueryInformationJobObject(job.0, 1,
++        (&mut accounting as *mut DesktopJobAccounting).cast(), size_of::<DesktopJobAccounting>() as u32,
++        &mut needed) } != 0;
++    let query_error = if queried {0} else {unsafe { GetLastError() }};
++    let known = queried && needed == size_of::<DesktopJobAccounting>() as u32;
++    let root_wait = unsafe { WaitForSingleObject(root.0, 0) };
++    let root_wait_error = if root_wait == u32::MAX {unsafe {GetLastError()}} else {0};
++    let record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop-teardown",
++        "stage":"before-primary-handle-release","clock":"GetTickCount64",
++        "tickMilliseconds":unsafe {GetTickCount64()},"rootPid":unsafe {GetProcessId(root.0)},
++        "jobAccountingQueried":queried,"jobAccountingKnown":known,
++        "jobAccountingBytes":needed,"jobAccountingExpectedBytes":size_of::<DesktopJobAccounting>(),
++        "jobAccountingError":query_error,
++        "activeProcesses":if known {Some(accounting.active_processes)} else {None},
++        "totalProcesses":if known {Some(accounting.total_processes)} else {None},
++        "terminatedProcesses":if known {Some(accounting.terminated_processes)} else {None},
++        "rootWaitStatus":root_wait,"rootSignaled":root_wait==0,"rootWaitError":root_wait_error});
++    eprintln!("NEMOCLAW_HERMES_DESKTOP_TEARDOWN={record}");
++}
++fn desktop_name(handle: RawHandle) -> Result<String, String> {
++    let mut name = [0u16; 256];
++    let mut needed = 0;
++    require(unsafe { GetUserObjectInformationW(handle, 2, name.as_mut_ptr().cast(), 512, &mut needed) } != 0,
++        &error("GetUserObjectInformationW name"))?;
++    require(needed >= 2 && needed <= 512 && needed % 2 == 0, "desktop object name size differs")?;
++    let end = name[..needed as usize / 2].iter().position(|c| *c == 0).ok_or("desktop object name not terminated")?;
++    String::from_utf16(&name[..end]).map_err(|_| "desktop object name encoding differs".into())
++}
++fn desktop_security(handle: RawHandle, information: u32) -> Result<Vec<u64>, String> {
++    let mut bytes = vec![0u64; 512];
++    let mut needed = 0;
++    let mut requested = information;
++    require(unsafe { GetUserObjectSecurity(handle, &mut requested, bytes.as_mut_ptr().cast(), 4096, &mut needed) } != 0,
++        &error("GetUserObjectSecurity"))?;
++    require(needed >= 20 && needed <= 4096, "desktop descriptor size exceeds bound")?;
++    require(unsafe { IsValidSecurityDescriptor(bytes.as_ptr().cast()) } != 0,
++        "desktop descriptor invalid")?;
++    let actual = unsafe { GetSecurityDescriptorLength(bytes.as_ptr().cast()) };
++    require(actual >= 20 && actual <= needed, "desktop descriptor length differs")?;
++    bytes.truncate((needed as usize + 7) / 8);
++    Ok(bytes)
++}
++fn desktop_hex(bytes: &[u8]) -> String {
++    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
++}
++fn desktop_acl_hex(acl: RawHandle) -> Result<String, String> {
++    require(!acl.is_null(), "NULL desktop DACL is not adapted")?;
++    let head = unsafe { std::slice::from_raw_parts(acl.cast::<u8>(), 8) };
++    let size = u16::from_le_bytes([head[2], head[3]]) as usize;
++    require(size >= 8 && size <= 4096, "desktop ACL exceeds bound")?;
++    let bytes = unsafe { std::slice::from_raw_parts(acl.cast::<u8>(), size) };
++    let count = u16::from_le_bytes([head[4], head[5]]);
++    let mut used = 8usize;
++    for _ in 0..count {
++        require(used + 4 <= size, "desktop ACE header exceeds ACL")?;
++        let length = u16::from_le_bytes([bytes[used + 2], bytes[used + 3]]) as usize;
++        require(length >= 4 && used + length <= size, "desktop ACE exceeds ACL")?;
++        used += length;
++    }
++    // Do not record unused allocation slack after the last ACE.
++    Ok(desktop_hex(&bytes[..used]))
++}
++fn desktop_merge(acl: RawHandle, sid: &str, mask: u32, mode: u32) -> Result<DesktopAllocation, String> {
++    let mut bytes = sid_bytes(sid)?;
++    let access = DesktopAccess { mask, mode, inheritance: 0, trustee: DesktopTrustee {
++        multiple: std::ptr::null_mut(), operation: 0, form: 0, kind: 0, sid: bytes.as_mut_ptr().cast(),
++    }};
++    let mut output = std::ptr::null_mut();
++    let status = unsafe { SetEntriesInAclW(1, &access, acl, &mut output) };
++    if status != 0 || output.is_null() {
++        if !output.is_null() { unsafe { LocalFree(output); } }
++        return Err(format!("SetEntriesInAclW: Win32 {status}; outputPresent={}", !output.is_null()));
++    }
++    Ok(DesktopAllocation(output))
++}
++fn desktop_readback(handle: RawHandle, information: u32) -> Value {
++    match desktop_security(handle, information) {
++        Ok(bytes) => {
++            let length = unsafe { GetSecurityDescriptorLength(bytes.as_ptr().cast()) } as usize;
++            let raw = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), length) };
++            json!({"information":information,"supported":true,"descriptorHex":desktop_hex(raw)})
++        }
++        Err(error) => json!({"information":information,"supported":false,"error":error}),
++    }
++}
++pub(crate) fn prepare_private_desktops(
++    job: HANDLE, root_process: HANDLE, expected_sid: &str,
++) -> Result<Vec<PrivateDesktop>, String> {
++    member(root_process.0, job.0)?;
++    let root_token = token(root_process.0, 8)?;
++    let actual_sid = sid(root_token.0, 31)?;
++    require(number(root_token.0, 29)? == 1 && actual_sid == expected_sid,
++        "desktop root differs from the actual owned AppContainer")?;
++    let host_token = token(unsafe { GetCurrentProcess() }, 8)?;
++    require(number(host_token.0, 29)? == 0, "desktop creator is not a host process")?;
++    let user = sid(host_token.0, 1)?;
++    let elevated = number(host_token.0, 20);
++    let elevation_type = number(host_token.0, 18);
++    let host_session = number(host_token.0, 12);
++    let root_session = number(root_token.0, 12);
++    let host_integrity = sid(host_token.0, 25);
++    let root_integrity = sid(root_token.0, 25);
++    let station = unsafe { GetProcessWindowStation() };
++    let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) };
++    let station_name = desktop_name(station);
++    let current_desktop = desktop_name(desktop);
++    let mut record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop",
++        "stage":"prepare","rootPid":unsafe { GetProcessId(root_process.0) },
++        "actualJobAndAppContainerBound":true,"appContainerSid":actual_sid,
++        "hostUserSid":user,"hostTokenElevation":elevated.as_ref().ok(),
++        "hostTokenElevationError":elevated.as_ref().err(),"hostTokenElevationType":elevation_type.as_ref().ok(),
++        "hostTokenElevationTypeError":elevation_type.as_ref().err(),
++        "hostSession":host_session.as_ref().ok(),"rootSession":root_session.as_ref().ok(),
++        "hostSessionError":host_session.as_ref().err(),"rootSessionError":root_session.as_ref().err(),
++        "hostIntegritySid":host_integrity.as_ref().ok(),"rootIntegritySid":root_integrity.as_ref().ok(),
++        "stationName":station_name.as_ref().ok(),"currentDesktopName":current_desktop.as_ref().ok(),
++        "stationNameError":station_name.as_ref().err(),"currentDesktopNameError":current_desktop.as_ref().err(),
++        "childStartupDesktop":"winsta0\\default","hostDesktopSelected":false,
++        "requestedAccess":0x000e_0083u32,"inheritHandle":false,
++        "existingObjectSecurityChanged":false,"unelevatedSupportQualified":false});
++    // appcontainer_runner uses winsta0\default. No host station/thread switch is
++    // permitted here; an unexpected service/desktop context remains diagnostic.
++    let context_matches = station_name.as_ref().is_ok_and(|v| v.eq_ignore_ascii_case("WinSta0"))
++        && current_desktop.as_ref().is_ok_and(|v| v.eq_ignore_ascii_case("Default"))
++        && host_session.is_ok() && host_session.as_ref().ok() == root_session.as_ref().ok();
++    record["contextMatched"] = json!(context_matches);
++    if !context_matches {
++        record["stage"] = json!("host-context");
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={record}");
++        return Ok(Vec::new());
++    }
++    let prepared = (|| -> Result<(Vec<u64>, DesktopAllocation, DesktopAllocation, u16), String> {
++        let baseline = desktop_security(desktop, 4)?;
++        let mut present = 0;
++        let mut defaulted = 0;
++        let mut acl = std::ptr::null_mut();
++        require(unsafe { GetSecurityDescriptorDacl(baseline.as_ptr().cast(), &mut present, &mut acl, &mut defaulted) } != 0,
++            &error("GetSecurityDescriptorDacl"))?;
++        require(present != 0 && !acl.is_null(), "Absent/NULL current desktop DACL is not adapted")?;
++        record["baselineDaclHex"] = json!(desktop_acl_hex(acl)?);
++        // Chrome window.cc applies this exact RestrictedCode reduction to the
++        // copied current DACL. Preserve all baseline principals/ACE semantics;
++        // then add only the exact admitted AppContainer desktop access.
++        let reduced = desktop_merge(acl, "S-1-5-12", 0x000d_013e, 3)?;
++        record["restrictedCodeReducedDaclHex"] = json!(desktop_acl_hex(reduced.0)?);
++        let granted = desktop_merge(reduced.0, &actual_sid, 0x000e_0083, 1)?;
++        record["newDesktopDaclHex"] = json!(desktop_acl_hex(granted.0)?);
++        record["changes"] = json!([{"sid":"S-1-5-12","mode":"DENY_ACCESS","mask":0x000d_013eu32},
++            {"sid":actual_sid,"mode":"GRANT_ACCESS","mask":0x000e_0083u32}]);
++        let mut control = 0;
++        let mut revision = 0;
++        require(unsafe { GetSecurityDescriptorControl(baseline.as_ptr().cast(), &mut control, &mut revision) } != 0,
++            &error("GetSecurityDescriptorControl"))?;
++        Ok((baseline, reduced, granted, control))
++    })();
++    let (baseline, reduced, granted, control) = match prepared {
++        Ok(value) => value,
++        Err(error) => {
++            record["stage"] = json!("desktop-descriptor"); record["error"] = json!(error);
++            eprintln!("NEMOCLAW_HERMES_DESKTOP={record}"); return Ok(Vec::new());
++        }
++    };
++    let mut desktops = Vec::new();
++    for variant in ["default", "low"] {
++        let name = format!("NemoClawHermesDesktop-{actual_sid}-{variant}");
++        require(name.len() < 240 && !name.contains('\\'), "desktop name exceeds owned contract")?;
++        let mut row = record.clone();
++        row["desktopName"] = json!(name); row["labelVariant"] = json!(variant);
++        let result = (|| -> Result<Option<PrivateDesktop>, String> {
++            let characters: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
++            let found = unsafe { OpenDesktopW(characters.as_ptr(), 0, 0, 0x0002_0000) };
++            if !found.is_null() {
++                let closed = unsafe { CloseDesktop(found) } != 0;
++                row["preexistingOpened"] = json!(true); row["preexistingHandleClosed"] = json!(closed);
++                row["preexistingCloseError"] = json!(if closed {0} else {unsafe {GetLastError()}});
++                return Err("preexisting desktop refused".into());
++            }
++            let lookup_error = unsafe { GetLastError() };
++            row["preexistingOpened"] = json!(false); row["lookupError"] = json!(lookup_error);
++            row["exclusiveCreationClaimed"] = json!(false);
++            let mut descriptor = [0u64; 5];
++            require(unsafe { InitializeSecurityDescriptor(descriptor.as_mut_ptr().cast(), 1) } != 0,
++                &error("InitializeSecurityDescriptor"))?;
++            require(unsafe { SetSecurityDescriptorDacl(descriptor.as_mut_ptr().cast(), 1, granted.0, 0) } != 0,
++                &error("SetSecurityDescriptorDacl new object"))?;
++            require(unsafe { SetSecurityDescriptorControl(descriptor.as_mut_ptr().cast(), 0x1500, control & 0x1500) } != 0,
++                &error("SetSecurityDescriptorControl new object"))?;
++            let mut label = None;
++            if variant == "low" {
++                let text: Vec<u16> = "S:(ML;;NW;;;LW)".encode_utf16().chain(Some(0)).collect();
++                let mut output = std::ptr::null_mut();
++                let converted = unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), 1, &mut output, std::ptr::null_mut()) } != 0;
++                let converted_error = if converted {0} else {unsafe {GetLastError()}};
++                if !output.is_null() { label = Some(DesktopAllocation(output)); }
++                require(converted && label.is_some(), &format!("LOW label constructor: Win32 {converted_error}"))?;
++                let mut present = 0; let mut defaulted = 0; let mut sacl = std::ptr::null_mut();
++                require(unsafe { GetSecurityDescriptorSacl(output, &mut present, &mut sacl, &mut defaulted) } != 0,
++                    &error("GetSecurityDescriptorSacl LOW constructor"))?;
++                require(present != 0 && !sacl.is_null(), "LOW constructor label missing")?;
++                require(unsafe { SetSecurityDescriptorSacl(descriptor.as_mut_ptr().cast(), 1, sacl, 0) } != 0,
++                    &error("SetSecurityDescriptorSacl new object"))?;
++            }
++            let attributes = StationAttributes {length:size_of::<StationAttributes>() as u32, descriptor:descriptor.as_mut_ptr().cast(), inherit:0};
++            unsafe { SetLastError(0); }
++            let handle = unsafe { CreateDesktopW(characters.as_ptr(), std::ptr::null(), std::ptr::null(), 0, 0x000e_0083, &attributes) };
++            let create_error = unsafe { GetLastError() };
++            row["createAttempted"] = json!(true); row["createLastError"] = json!(create_error);
++            row["openedOrCreated"] = json!(!handle.is_null());
++            drop(label);
++            if handle.is_null() { return Err(format!("CreateDesktopW: Win32 {create_error}")); }
++            let owned = PrivateDesktop {handle, name:name.clone()};
++            row["dacl"] = desktop_readback(handle, 4);
++            row["label"] = desktop_readback(handle, 0x10);
++            let actual_name = desktop_name(handle);
++            let mut flags = StationFlags::default(); let mut needed = 0;
++            let known = unsafe { GetUserObjectInformationW(handle, 1, (&mut flags as *mut StationFlags).cast(), size_of::<StationFlags>() as u32, &mut needed) } != 0;
++            let flags_error = if known {0} else {unsafe {GetLastError()}};
++            row["actualName"] = json!(actual_name.as_ref().ok()); row["actualNameError"] = json!(actual_name.as_ref().err());
++            row["inheritanceKnown"] = json!(known); row["inheritHandleObserved"] = json!(if known {Some(flags.inherit != 0)} else {None});
++            row["flagsError"] = json!(flags_error);
++            // Readbacks are observations. The guest independently proves exact
++            // open/use/restore/close; an unavailable host read cannot suppress it.
++            Ok(Some(owned))
++        })();
++        match result {
++            Ok(Some(owned)) => { row["stage"] = json!("prepared"); desktops.push(owned); }
++            Ok(None) => unreachable!(),
++            Err(error) => { row["stage"] = json!("prepare-failed"); row["error"] = json!(error); }
++        }
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={row}");
++    }
++    drop((baseline, reduced, granted));
++    Ok(desktops)
++}
++fn error(stage: &str) -> String {
++    format!("{stage}: Win32 {}", unsafe { GetLastError() })
++}
++fn require(value: bool, reason: &str) -> Result<(), String> {
++    if value {
++        Ok(())
++    } else {
++        Err(reason.to_owned())
++    }
++}
++fn relative_file(root: RawHandle, reply: bool) -> Result<Option<Owned>, String> {
++    let name = if reply {
++        "msys-token-inspection.ack"
++    } else {
++        "msys-token-inspection.request"
++    };
++    let characters: Vec<u16> = name.encode_utf16().collect();
++    let unicode = UnicodeName {
++        length: (characters.len() * 2) as u16,
++        maximum_length: (characters.len() * 2) as u16,
++        buffer: characters.as_ptr(),
++    };
++    let attributes = ObjectAttributes {
++        length: std::mem::size_of::<ObjectAttributes>() as u32,
++        root,
++        name: &unicode,
++        attributes: 0x1040,
++        security: std::ptr::null(),
++        quality: std::ptr::null(),
++    };
++    let mut handle = std::ptr::null_mut();
++    let mut io = IoStatus::default();
++    // Fixed relative leaf under the retained directory object, OBJ_DONT_REPARSE,
++    // FILE_OPEN_REPARSE_POINT|NON_DIRECTORY|SYNCHRONOUS_IO_NONALERT.
++    let status = unsafe {
++        NtCreateFile(
++            &mut handle,
++            if reply { 0x4010_0000 } else { 0x8010_0000 },
++            &attributes,
++            &mut io,
++            std::ptr::null(),
++            0x80,
++            // Exclude writers and deletion while the request's metadata and
++            // bytes are checked. Guest cleanup retries sharing within its
++            // existing budget; it cannot retire the file during this read.
++            1,
++            if reply { 2 } else { 1 },
++            0x0020_0060,
++            std::ptr::null(),
++            0,
++        )
++    };
++    if !reply && matches!(status as u32, 0xc0000034 | 0xc0000043 | 0xc0000056) {
++        return Ok(None);
++    }
++    require(
++        status == 0 && !handle.is_null(),
++        &format!(
++            "NtCreateFile/fixed-relative-inspection-leaf: NTSTATUS 0x{:08x}",
++            status as u32
++        ),
++    )?;
++    Ok(Some(Owned(handle)))
++}
++pub(super) fn verify_owned_descendant(root: HANDLE, relative: &str) -> Result<(), String> {
++    // Only normalized host policy descendants reach this check. Resolve from
++    // the already retained root, rejecting reparse traversal at any component.
++    let characters: Vec<u16> = relative.encode_utf16().collect();
++    require(
++        !characters.is_empty() && characters.len() <= 32766,
++        "Hermes descendant path exceeds bound",
++    )?;
++    let name = UnicodeName {
++        length: (characters.len() * 2) as u16,
++        maximum_length: (characters.len() * 2) as u16,
++        buffer: characters.as_ptr(),
++    };
++    let attributes = ObjectAttributes {
++        length: size_of::<ObjectAttributes>() as u32,
++        root: root.0,
++        name: &name,
++        attributes: 0x1040,
++        security: std::ptr::null(),
++        quality: std::ptr::null(),
++    };
++    let mut handle = std::ptr::null_mut();
++    let mut io = IoStatus::default();
++    let status = unsafe {
++        NtCreateFile(
++            &mut handle,
++            0x0010_0080,
++            &attributes,
++            &mut io,
++            std::ptr::null(),
++            0,
++            3,
++            1,
++            0x0020_0021,
++            std::ptr::null(),
++            0,
++        )
++    };
++    require(
++        status == 0 && !handle.is_null(),
++        &format!("Hermes descendant open: NTSTATUS 0x{:08x}", status as u32),
++    )?;
++    let owned = Owned(handle);
++    let mut info = FileInfo::default();
++    if unsafe { GetFileInformationByHandle(owned.0, &mut info) } == 0 {
++        return Err(error("GetFileInformationByHandle/Hermes-descendant"));
++    }
++    require(
++        info.attributes & 0x400 == 0 && info.attributes & 0x10 != 0,
++        "Hermes writable descendant is not an ordinary directory",
++    )
++}
++fn created(process: RawHandle) -> Result<u64, String> {
++    let (mut start, mut end, mut kernel, mut user) = (
++        FileTime::default(),
++        FileTime::default(),
++        FileTime::default(),
++        FileTime::default(),
++    );
++    if unsafe { GetProcessTimes(process, &mut start, &mut end, &mut kernel, &mut user) } == 0 {
++        return Err(error("GetProcessTimes"));
++    }
++    Ok((u64::from(start.high) << 32) | u64::from(start.low))
++}
++fn member(process: RawHandle, job: RawHandle) -> Result<(), String> {
++    let mut yes = 0;
++    if unsafe { IsProcessInJob(process, job, &mut yes) } == 0 {
++        return Err(error("IsProcessInJob/exact-job"));
++    }
++    require(
++        yes != 0 && unsafe { WaitForSingleObject(process, 0) } == 258,
++        "Expected live member of the retained MXC job",
++    )
++}
++fn candidate_members(job: RawHandle, parent: u32, child: u32) -> Result<(), String> {
++    let mut data = [0usize; 257];
++    let mut needed = 0;
++    if unsafe {
++        QueryInformationJobObject(
++            job,
++            3,
++            data.as_mut_ptr().cast(),
++            std::mem::size_of_val(&data) as u32,
++            &mut needed,
++        )
++    } == 0
++    {
++        return Err(error("QueryInformationJobObject/owned-process-list"));
++    }
++    let counts = unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u32>(), 2) };
++    require(
++        counts[0] == counts[1] && counts[1] > 0 && counts[1] <= 256,
++        "Retained job process list exceeded its bound",
++    )?;
++    let members = &data[1..=counts[1] as usize];
++    require(
++        members.contains(&(parent as usize)) && members.contains(&(child as usize)),
++        "Candidate PID is not in retained job process list",
++    )
++}
++fn process(pid: u32) -> Result<Owned, String> {
++    // QUERY_INFORMATION is needed for the kernel parent-generation check;
++    // SYNCHRONIZE proves liveness. No process/token write or resume right.
++    let handle = unsafe { OpenProcess(0x0010_0400, 0, pid) };
++    if handle.is_null() {
++        Err(error("OpenProcess/query-and-synchronize"))
++    } else {
++        Ok(Owned(handle))
++    }
++}
++fn token(process: RawHandle, access: u32) -> Result<Owned, String> {
++    let mut handle = std::ptr::null_mut();
++    if unsafe { OpenProcessToken(process, access, &mut handle) } == 0 {
++        Err(error("OpenProcessToken/host-readback"))
++    } else {
++        Ok(Owned(handle))
++    }
++}
++fn info(token: RawHandle, class: u32) -> Result<([usize; 512], usize), String> {
++    let mut storage = [0usize; 512];
++    let mut needed = 0;
++    if unsafe {
++        GetTokenInformation(
++            token,
++            class,
++            storage.as_mut_ptr().cast(),
++            std::mem::size_of_val(&storage) as u32,
++            &mut needed,
++        )
++    } == 0
++    {
++        return Err(error(&format!("GetTokenInformation/{class}")));
++    }
++    require(
++        needed > 0 && needed as usize <= std::mem::size_of_val(&storage),
++        "Token information exceeded its fixed bound",
++    )?;
++    Ok((storage, needed as usize))
++}
++fn number(token: RawHandle, class: u32) -> Result<u32, String> {
++    let (data, size) = info(token, class)?;
++    require(size == 4, "Token scalar has another size")?;
++    Ok(data[0] as u32)
++}
++fn sid(token: RawHandle, class: u32) -> Result<String, String> {
++    // Query directly into the final local array: token SID pointers refer to
++    // this exact output allocation and must not survive a copied return value.
++    let mut data = [0usize; 512];
++    let mut needed = 0;
++    if unsafe {
++        GetTokenInformation(
++            token,
++            class,
++            data.as_mut_ptr().cast(),
++            std::mem::size_of_val(&data) as u32,
++            &mut needed,
++        )
++    } == 0
++    {
++        return Err(error(&format!("GetTokenInformation/SID/{class}")));
++    }
++    let begin = data.as_ptr() as usize;
++    let end = begin
++        .checked_add(needed as usize)
++        .ok_or("SID output overflow")?;
++    require(
++        needed as usize >= std::mem::size_of::<usize>()
++            && needed as usize <= std::mem::size_of_val(&data),
++        "SID output size invalid",
++    )?;
++    let pointer = data[0];
++    require(
++        pointer >= begin + std::mem::size_of::<usize>()
++            && pointer.checked_add(8).is_some_and(|n| n <= end),
++        "SID pointer outside token output",
++    )?;
++    let header = unsafe { std::slice::from_raw_parts(pointer as *const u8, 8) };
++    let length = 8 + usize::from(header[1]) * 4;
++    require(
++        header[0] == 1 && header[1] <= 15 && pointer.checked_add(length).is_some_and(|n| n <= end),
++        "SID body outside token output",
++    )?;
++    let bytes = unsafe { std::slice::from_raw_parts(pointer as *const u8, length) };
++    let authority = bytes[2..8]
++        .iter()
++        .fold(0u64, |value, byte| (value << 8) | u64::from(*byte));
++    let mut text = format!("S-1-{authority}");
++    for part in bytes[8..].chunks_exact(4) {
++        text.push_str(&format!(
++            "-{}",
++            u32::from_le_bytes(part.try_into().unwrap())
++        ));
++    }
++    Ok(text)
++}
++pub(super) fn host_hermes_root() -> Result<String, String> {
++    let host = token(unsafe { GetCurrentProcess() }, 8)?;
++    require(
++        number(host.0, 29)? == 0,
++        "Hermes compatibility owner must be outside AppContainer",
++    )?;
++    let user = sid(host.0, 1)?;
++    let mut windows = [0u16; 32768];
++    let length = unsafe { GetWindowsDirectoryW(windows.as_mut_ptr(), windows.len() as u32) };
++    require(
++        length >= 3
++            && (length as usize) < windows.len()
++            && windows[1] == b':' as u16
++            && windows[2] == b'\\' as u16,
++        "The Windows system drive is unavailable",
++    )?;
++    let drive = char::from_u32(u32::from(windows[0]))
++        .filter(char::is_ascii_alphabetic)
++        .ok_or("The Windows system drive is invalid")?;
++    Ok(format!(
++        "{}:\\NemoClawState-{user}-hermes",
++        drive.to_ascii_uppercase()
++    ))
++}
++// An exact token-object DACL adaptation. These pure byte helpers deliberately
++// accept only the observed three allow ACEs (or that exact postimage).
++fn word(bytes: &[u8], offset: usize) -> Result<u16, String> {
++    let value = bytes
++        .get(offset..offset + 2)
++        .ok_or("DACL word out of bounds")?;
++    Ok(u16::from_le_bytes(value.try_into().unwrap()))
++}
++fn dword(bytes: &[u8], offset: usize) -> Result<u32, String> {
++    let value = bytes
++        .get(offset..offset + 4)
++        .ok_or("DACL dword out of bounds")?;
++    Ok(u32::from_le_bytes(value.try_into().unwrap()))
++}
++fn sid_bytes(text: &str) -> Result<Vec<u8>, String> {
++    let fields: Vec<_> = text.split('-').collect();
++    require(
++        fields.len() >= 4 && fields.len() <= 18 && fields[0] == "S" && fields[1] == "1",
++        "SID text shape differs",
++    )?;
++    let authority: u64 = fields[2].parse().map_err(|_| "SID authority invalid")?;
++    require(authority < (1u64 << 48), "SID authority exceeds bound")?;
++    let mut bytes = vec![1, (fields.len() - 3) as u8];
++    bytes.extend_from_slice(&authority.to_be_bytes()[2..]);
++    for part in &fields[3..] {
++        bytes.extend_from_slice(
++            &part
++                .parse::<u32>()
++                .map_err(|_| "SID component invalid")?
++                .to_le_bytes(),
++        );
++    }
++    Ok(bytes)
++}
++fn sid_at(bytes: &[u8], offset: usize) -> Result<&[u8], String> {
++    let header = bytes
++        .get(offset..offset + 8)
++        .ok_or("SID header out of bounds")?;
++    require(header[0] == 1 && header[1] <= 15, "SID header differs")?;
++    bytes
++        .get(offset..offset + 8 + usize::from(header[1]) * 4)
++        .ok_or("SID body out of bounds".into())
++}
++fn query_descriptor(
++    before: &[u8],
++    user: &[u8],
++    group: &[u8],
++    container: &[u8],
++) -> Result<(Vec<u8>, bool), String> {
++    require(
++        before.len() >= 28
++            && before.len() <= 4096
++            && before[0] == 1
++            && before[1] == 0
++            && word(before, 2)? == 0x8004,
++        "Token descriptor control differs from observed default",
++    )?;
++    require(dword(before, 12)? == 0, "Unexpected token SACL offset")?;
++    let owner_at = dword(before, 4)? as usize;
++    let group_at = dword(before, 8)? as usize;
++    let acl_at = dword(before, 16)? as usize;
++    require(
++        owner_at == 20
++            && group_at == owner_at + user.len()
++            && acl_at == group_at + group.len()
++            && sid_at(before, owner_at)? == user
++            && sid_at(before, group_at)? == group,
++        "Token descriptor owner/group differs from actual token",
++    )?;
++    require(
++        owner_at + user.len() <= acl_at && group_at + group.len() <= acl_at,
++        "Token owner/group overlaps DACL",
++    )?;
++    let acl = before.get(acl_at..).ok_or("Token DACL offset invalid")?;
++    let count = word(acl, 4)?;
++    require(
++        acl.len() >= 8
++            && acl[0] == 2
++            && acl[1] == 0
++            && word(acl, 6)? == 0
++            && usize::from(word(acl, 2)?) == acl.len()
++            && (count == 3 || count == 4),
++        "Token DACL header differs from observed default",
++    )?;
++    let admin = sid_bytes("S-1-5-32-544")?;
++    let system = sid_bytes("S-1-5-18")?;
++    let mut at = 8;
++    for (index, expected) in [user, admin.as_slice(), system.as_slice(), container]
++        .iter()
++        .take(usize::from(count))
++        .enumerate()
++    {
++        let ace = acl.get(at..).ok_or("Token ACE offset invalid")?;
++        let size = usize::from(word(ace, 2)?);
++        require(
++            ace[0] == 0
++                && ace[1] == 0
++                && size == 8 + expected.len()
++                && dword(ace, 4)? == if index == 3 { 8 } else { 0x000f01ff }
++                && sid_at(ace, 8)? == *expected,
++            "Token ACE differs from exact user/Admin/System/query template",
++        )?;
++        at += size;
++    }
++    require(
++        at == acl.len(),
++        "Token DACL contains trailing or additional ACE bytes",
++    )?;
++    if count == 4 {
++        return Ok((before.to_vec(), false));
++    }
++    let ace_size = 8 + container.len();
++    let next_size = acl.len() + ace_size;
++    require(
++        next_size <= u16::MAX as usize && before.len() + ace_size <= 4096,
++        "AppContainer query ACE exceeds fixed bound",
++    )?;
++    let mut after = before.to_vec();
++    after[acl_at + 2..acl_at + 4].copy_from_slice(&(next_size as u16).to_le_bytes());
++    after[acl_at + 4..acl_at + 6].copy_from_slice(&4u16.to_le_bytes());
++    after.extend_from_slice(&[0, 0]);
++    after.extend_from_slice(&(ace_size as u16).to_le_bytes());
++    after.extend_from_slice(&8u32.to_le_bytes());
++    after.extend_from_slice(container);
++    Ok((after, true))
++}
++fn descriptor(token: RawHandle) -> Result<Vec<u8>, String> {
++    let mut storage = [0usize; 512];
++    let mut needed = 0;
++    if unsafe {
++        GetKernelObjectSecurity(
++            token,
++            7,
++            storage.as_mut_ptr().cast(),
++            std::mem::size_of_val(&storage) as u32,
++            &mut needed,
++        )
++    } == 0
++    {
++        return Err(error("GetKernelObjectSecurity/token"));
++    }
++    require(
++        needed >= 20 && needed as usize <= std::mem::size_of_val(&storage),
++        "Token descriptor result exceeds bound",
++    )?;
++    require(
++        unsafe { IsValidSecurityDescriptor(storage.as_ptr().cast()) } != 0,
++        "Token descriptor invalid",
++    )?;
++    let size = unsafe { GetSecurityDescriptorLength(storage.as_ptr().cast()) } as usize;
++    require(
++        size >= 20 && size == needed as usize,
++        "Token descriptor length differs",
++    )?;
++    Ok(unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), size) }.to_vec())
++}
++fn default_dacl(token: RawHandle) -> Result<Option<Vec<u8>>, String> {
++    let mut storage = [0usize; 512];
++    let mut needed = 0;
++    if unsafe {
++        GetTokenInformation(
++            token,
++            6,
++            storage.as_mut_ptr().cast(),
++            std::mem::size_of_val(&storage) as u32,
++            &mut needed,
++        )
++    } == 0
++    {
++        return Err(error("GetTokenInformation/TokenDefaultDacl"));
++    }
++    require(
++        needed as usize >= std::mem::size_of::<usize>()
++            && needed as usize <= std::mem::size_of_val(&storage),
++        "Default DACL result exceeds bound",
++    )?;
++    if storage[0] == 0 {
++        return Ok(None);
++    }
++    let base = storage.as_ptr() as usize;
++    let end = base + needed as usize;
++    let pointer = storage[0];
++    require(
++        pointer >= base + std::mem::size_of::<usize>()
++            && pointer.checked_add(8).is_some_and(|value| value <= end),
++        "Default DACL pointer out of bounds",
++    )?;
++    let header = unsafe { std::slice::from_raw_parts(pointer as *const u8, 8) };
++    let size = usize::from(word(header, 2)?);
++    require(
++        size >= 8 && pointer.checked_add(size).is_some_and(|value| value <= end),
++        "Default DACL bytes out of bounds",
++    )?;
++    Ok(Some(
++        unsafe { std::slice::from_raw_parts(pointer as *const u8, size) }.to_vec(),
++    ))
++}
++fn statistics(token: RawHandle) -> Result<Vec<u8>, String> {
++    let (storage, count) = info(token, 10)?;
++    require(count == 56, "TokenStatistics fixed structure differs")?;
++    Ok(unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), count) }.to_vec())
++}
++fn same_token(left: RawHandle, right: RawHandle) -> Result<(), String> {
++    type Compare = unsafe extern "system" fn(RawHandle, RawHandle) -> i32;
++    let module_name: Vec<u16> = "kernelbase.dll".encode_utf16().chain(Some(0)).collect();
++    let module = unsafe { GetModuleHandleW(module_name.as_ptr()) };
++    require(!module.is_null(), "KernelBase module missing")?;
++    let pointer = unsafe { GetProcAddress(module, b"CompareObjectHandles\0".as_ptr()) };
++    require(!pointer.is_null(), "CompareObjectHandles unavailable")?;
++    let compare: Compare = unsafe { std::mem::transmute(pointer) };
++    require(
++        unsafe { compare(left, right) } != 0,
++        "Additional handle refers to another token object",
++    )
++}
++fn repair_query(
++    child: RawHandle,
++    parent: RawHandle,
++    root_process: RawHandle,
++    job: RawHandle,
++    child_time: u64,
++    parent_time: u64,
++    held_token: RawHandle,
++    expected_sid: &str,
++    stop: &AtomicBool,
++    record: &mut Value,
++) -> Result<(), String> {
++    let before = descriptor(held_token)?;
++    let user = sid_bytes(&sid(held_token, 1)?)?;
++    let group = sid_bytes(&sid(held_token, 5)?)?;
++    let container = sid_bytes(expected_sid)?;
++    let (after, needs_write) = query_descriptor(&before, &user, &group, &container)?;
++    let default_before = default_dacl(held_token)?;
++    let stats_before = statistics(held_token)?;
++    record["repairScope"] = json!("actual-AppContainer-SID/TOKEN_QUERY-only");
++    record["repairRequestedAccess"] = json!("0x00000008");
++    if needs_write {
++        // The only additional right is WRITE_DAC, after full read-only
++        // identity/template acceptance. Both handles must name the same object.
++        let writer = token(child, 0x0004_0000)?;
++        same_token(held_token, writer.0)?;
++        let current_primary = token(child, 8)?;
++        same_token(held_token, current_primary.0)?;
++        require(
++            !stop.load(Ordering::Acquire),
++            "Owner stopped before token DACL write",
++        )?;
++        member(root_process, job)?;
++        member(parent, job)?;
++        member(child, job)?;
++        require(
++            created(parent)? == parent_time && created(child)? == child_time,
++            "Owned generations changed before token DACL write",
++        )?;
++        require(
++            number(held_token, 29)? == 1
++                && number(held_token, 8)? == 1
++                && sid(held_token, 31)? == expected_sid,
++            "Token identity changed before DACL write",
++        )?;
++        require(
++            descriptor(held_token)? == before
++                && statistics(held_token)? == stats_before
++                && default_dacl(held_token)? == default_before,
++            "Token changed after read-only acceptance",
++        )?;
++        let acl_at = dword(&after, 16)? as usize;
++        let mut acl = [0usize; 512];
++        let aligned = unsafe {
++            std::slice::from_raw_parts_mut(
++                acl.as_mut_ptr().cast::<u8>(),
++                std::mem::size_of_val(&acl),
++            )
++        };
++        aligned[..after.len() - acl_at].copy_from_slice(&after[acl_at..]);
++        let mut sd = [0usize; 8];
++        if unsafe { InitializeSecurityDescriptor(sd.as_mut_ptr().cast(), 1) } == 0
++            || unsafe {
++                SetSecurityDescriptorDacl(sd.as_mut_ptr().cast(), 1, acl.as_ptr().cast(), 0)
++            } == 0
++        {
++            return Err(error("Build query-only DACL descriptor"));
++        }
++        if unsafe { SetKernelObjectSecurity(writer.0, 4, sd.as_ptr().cast()) } == 0 {
++            return Err(error("SetKernelObjectSecurity/DACL-only"));
++        }
++        record["tokenMutated"] = json!(true);
++        record["additionalTokenHandleAccess"] = json!("0x00040000");
++    }
++    let observed = descriptor(held_token)?;
++    require(
++        observed == after,
++        "Token DACL postimage differs from exact query-only append",
++    )?;
++    require(
++        statistics(held_token)? == stats_before && default_dacl(held_token)? == default_before,
++        "Token contents/default DACL changed",
++    )?;
++    let current_primary = token(child, 8)?;
++    same_token(held_token, current_primary.0)?;
++    member(parent, job)?;
++    member(child, job)?;
++    require(
++        created(parent)? == parent_time
++            && created(child)? == child_time
++            && number(held_token, 29)? == 1
++            && number(held_token, 8)? == 1
++            && sid(held_token, 31)? == expected_sid,
++        "Owned token identity changed after DACL write",
++    )?;
++    record["tokenDescriptorBeforeHex"] = json!(
++        before
++            .iter()
++            .map(|byte| format!("{byte:02x}"))
++            .collect::<String>()
++    );
++    record["tokenDescriptorAfterHex"] = json!(
++        observed
++            .iter()
++            .map(|byte| format!("{byte:02x}"))
++            .collect::<String>()
++    );
++    record["exactTokenObjectPreserved"] = json!(true);
++    record["tokenStatisticsUnchanged"] = json!(true);
++    record["tokenDefaultDaclUnchanged"] = json!(true);
++    record["tokenOwnerGroupAndOldAcesPreserved"] = json!(true);
++    record["repairVerified"] = json!(true);
++    record["status"] = json!(if needs_write {
++        "query-ace-appended-and-verified"
++    } else {
++        "query-ace-already-exact"
++    });
++    Ok(())
++}
++
++fn parse_frame(bytes: &[u8]) -> Result<[u64; 4], String> {
++    require(
++        !bytes.is_empty() && bytes.len() <= 128,
++        "Inspection request size invalid",
++    )?;
++    let text = std::str::from_utf8(bytes).map_err(|_| "Inspection request is not ASCII")?;
++    let text = text
++        .strip_suffix('\n')
++        .ok_or("Inspection request terminator missing")?;
++    require(
++        text.bytes().all(|c| c.is_ascii_digit() || c == b' '),
++        "Inspection request grammar invalid",
++    )?;
++    let fields: Vec<_> = text.split(' ').collect();
++    require(
++        fields.len() == 5 && fields[0] == "1",
++        "Inspection request field count invalid",
++    )?;
++    let mut result = [0u64; 4];
++    for (out, field) in result.iter_mut().zip(&fields[1..]) {
++        *out = field
++            .parse()
++            .map_err(|_| "Inspection request integer invalid")?;
++    }
++    require(
++        result[0] > 0
++            && result[0] <= u32::MAX as u64
++            && result[2] > 0
++            && result[2] <= u32::MAX as u64
++            && result[0] != result[2]
++            && result[1] > 0
++            && result[3] > 0,
++        "Inspection request identity invalid",
++    )?;
++    Ok(result)
++}
++fn request(root: RawHandle) -> Result<Option<[u64; 4]>, String> {
++    let Some(handle) = relative_file(root, false)? else {
++        return Ok(None);
++    };
++    let mut metadata = FileInfo::default();
++    if unsafe { GetFileInformationByHandle(handle.0, &mut metadata) } == 0 {
++        return Err(error("GetFileInformationByHandle/request"));
++    }
++    require(
++        metadata.attributes & (0x10 | 0x400) == 0
++            && metadata.links == 1
++            && metadata.size_high == 0
++            && metadata.size_low > 0
++            && metadata.size_low <= 128,
++        &format!(
++            "Inspection request is not a bounded ordinary single-link file: attributes=0x{:08x}, links={}, sizeHigh={}, sizeLow={}",
++            metadata.attributes, metadata.links, metadata.size_high, metadata.size_low
++        ),
++    )?;
++    let mut bytes = [0u8; 128];
++    let mut count = 0;
++    if unsafe {
++        ReadFile(
++            handle.0,
++            bytes.as_mut_ptr(),
++            metadata.size_low,
++            &mut count,
++            std::ptr::null_mut(),
++        )
++    } == 0
++    {
++        return Err(error("ReadFile/request"));
++    }
++    require(
++        count == metadata.size_low,
++        "Inspection request changed while held",
++    )?;
++    Ok(Some(parse_frame(&bytes[..count as usize])?))
++}
++fn acknowledge(
++    root: RawHandle,
++    frame: &[u64; 4],
++    repair: bool,
++    verified: bool,
++) -> Result<(), String> {
++    let text = if repair {
++        format!(
++            "1 {} {} {} {} {}\n",
++            frame[0],
++            frame[1],
++            frame[2],
++            frame[3],
++            if verified { "verified" } else { "failed" }
++        )
++    } else {
++        "inspected\n".to_owned()
++    };
++    let handle = relative_file(root, true)?.ok_or("Inspection acknowledgement was not created")?;
++    let mut count = 0;
++    if unsafe {
++        WriteFile(
++            handle.0,
++            text.as_ptr(),
++            text.len() as u32,
++            &mut count,
++            std::ptr::null_mut(),
++        )
++    } == 0
++    {
++        return Err(error("WriteFile/inspection-ack"));
++    }
++    require(
++        count as usize == text.len(),
++        "Inspection acknowledgement incomplete",
++    )
++}
++
++pub(super) fn inspect(
++    _request_root: &Path,
++    request_directory: HANDLE,
++    job: HANDLE,
++    root_process: HANDLE,
++    expected_appcontainer_sid: &str,
++    repair: bool,
++    stop: &AtomicBool,
++) -> Result<Value, String> {
++    let mut previous = None;
++    let mut processed = 0u64;
++    let mut failed = 0u64;
++    let mut emitted = 0u32;
++    let mut last_failure = None;
++    loop {
++        if !repair && processed >= 1 {
++            return Ok(
++                json!({"status":"owner-request-bound","requestsProcessed":processed,"repairMode":repair}),
++            );
++        }
++        let candidate = loop {
++            if stop.load(Ordering::Acquire)
++                || (repair && unsafe { WaitForSingleObject(root_process.0, 0) } != 258)
++            {
++                return Ok(
++                    json!({"status":"owner-stopped","requestsProcessed":processed,"requestsFailed":failed,
++                        "diagnosticsEmitted":emitted,"lastFailure":last_failure,"repairMode":repair,"lifetimeRepair":repair}),
++                );
++            }
++            let request = match request(request_directory.0) {
++                Ok(value) => value,
++                Err(error) if repair => {
++                    return Ok(json!({"status":"inspection-failed","error":error,
++                        "requestsProcessed":processed,"requestsFailed":failed,
++                        "diagnosticsEmitted":emitted,"lastFailure":last_failure,
++                        "repairMode":repair,"lifetimeRepair":true}));
++                }
++                Err(error) => return Err(error),
++            };
++            if let Some(value) = request {
++                if previous != Some(value) {
++                    break value;
++                }
++            }
++            std::thread::sleep(Duration::from_millis(10));
++        };
++        processed = processed.saturating_add(1);
++        previous = Some(candidate);
++        let [parent_pid, parent_time, child_pid, child_time] = candidate;
++        let mut record = json!({"schemaVersion":1,"classification":"owned-MXC-child-token-readback","status":"failed","parentPid":parent_pid,"parentCreationFiletime":parent_time.to_string(),"childPid":child_pid,"childCreationFiletime":child_time.to_string(),"tokenMutated":false,"childResumed":false});
++        let result = (|| -> Result<(), String> {
++            member(root_process.0, job.0)?;
++            let root_time = created(root_process.0)?;
++            require(
++                root_time <= parent_time && parent_time <= child_time,
++                "Candidate generation predates retained root/parent",
++            )?;
++            let root_token = token(root_process.0, 8)?;
++            require(
++                number(root_token.0, 29)? == 1
++                    && sid(root_token.0, 31)? == expected_appcontainer_sid,
++                "Retained root token differs from actual MXC profile",
++            )?;
++            candidate_members(job.0, parent_pid as u32, child_pid as u32)?;
++            let parent = process(parent_pid as u32)?;
++            let child = process(child_pid as u32)?;
++            member(parent.0, job.0)?;
++            member(child.0, job.0)?;
++            require(
++                created(parent.0)? == parent_time && created(child.0)? == child_time,
++                "Requested PID generation was replaced",
++            )?;
++            let mut basic = ProcessBasic::default();
++            let mut needed = 0;
++            let status = unsafe {
++                NtQueryInformationProcess(
++                    child.0,
++                    0,
++                    &mut basic,
++                    std::mem::size_of_val(&basic) as u32,
++                    &mut needed,
++                )
++            };
++            require(
++                status == 0,
++                &format!(
++                    "NtQueryInformationProcess/parent: NTSTATUS 0x{:08x}",
++                    status as u32
++                ),
++            )?;
++            require(
++                basic.pid == child_pid as usize && basic.parent_pid == parent_pid as usize,
++                "Child is not the kernel-recorded child of the held parent",
++            )?;
++            record["rootPid"] = json!(unsafe { GetProcessId(root_process.0) });
++            record["exactJobAndGenerationsBound"] = json!(true);
++            let parent_token = token(parent.0, 8)?;
++            require(
++                number(parent_token.0, 29)? == 1
++                    && sid(parent_token.0, 31)? == expected_appcontainer_sid,
++                "Held parent token differs from actual MXC profile",
++            )?;
++            // TOKEN_QUERY|READ_CONTROL only; never WRITE_DAC, ADJUST, DUPLICATE,
++            // ASSIGN_PRIMARY or an enabled privilege.
++            record["childTokenRequestedAccess"] = json!("0x00020008");
++            let child_token = token(child.0, 0x0002_0008)?;
++            let app = number(child_token.0, 29)?;
++            record["tokenIsAppContainer"] = json!(app);
++            require(app == 1, "Actual child token is not an AppContainer")?;
++            let actual_sid = sid(child_token.0, 31)?;
++            record["appContainerSid"] = json!(actual_sid);
++            require(
++                actual_sid == expected_appcontainer_sid,
++                "Actual child token differs from actual MXC profile",
++            )?;
++            record["tokenSession"] = json!(number(child_token.0, 12)?);
++            record["tokenType"] = json!(number(child_token.0, 8)?);
++            record["integritySid"] = json!(sid(child_token.0, 25)?);
++            let bytes = descriptor(child_token.0)?;
++            record["tokenDescriptorSecurityInformation"] = json!(7);
++            record["tokenDescriptorBytes"] = json!(bytes.len());
++            record["tokenDescriptorHex"] = json!(
++                bytes
++                    .iter()
++                    .map(|byte| format!("{byte:02x}"))
++                    .collect::<String>()
++            );
++            member(child.0, job.0)?;
++            require(
++                created(child.0)? == child_time,
++                "Child changed during readback",
++            )?;
++            if repair {
++                require(!stop.load(Ordering::Acquire), "Owner stopped before repair")?;
++                member(root_process.0, job.0)?;
++                require(
++                    number(child_token.0, 8)? == 1 && sid(child_token.0, 25)? == "S-1-16-4096",
++                    "Repair requires the observed primary low-integrity token",
++                )?;
++                require(
++                    number(child_token.0, 12)? == number(root_token.0, 12)?
++                        && number(child_token.0, 12)? == number(parent_token.0, 12)?,
++                    "Repair token session differs from owned root/parent",
++                )?;
++                require(
++                    sid(child_token.0, 1)? == sid(root_token.0, 1)?
++                        && sid(child_token.0, 1)? == sid(parent_token.0, 1)?,
++                    "Repair token user differs from owned root/parent",
++                )?;
++                repair_query(
++                    child.0,
++                    parent.0,
++                    root_process.0,
++                    job.0,
++                    child_time,
++                    parent_time,
++                    child_token.0,
++                    expected_appcontainer_sid,
++                    stop,
++                    &mut record,
++                )?;
++            } else {
++                record["status"] = json!("inspected-read-only");
++            }
++            Ok(())
++        })();
++        if let Err(reason) = result {
++            record["error"] = json!(reason);
++        }
++        record["repairMode"] = json!(repair);
++        // An exact matching acknowledgement only permits an independent contained
++        // token/SID/job recheck; it is never itself admission or a resume command.
++        let verified = repair
++            && record.get("repairVerified") == Some(&json!(true))
++            && record.get("error").is_none();
++        if repair {
++            let encoded = serde_json::to_string(&record).map_err(|error| error.to_string())?;
++            require(
++                encoded.len() <= 15 * 1024,
++                "Repair diagnostic exceeds fixed bound before acknowledgement",
++            )?;
++        }
++        if let Err(reason) = acknowledge(request_directory.0, &candidate, repair, verified) {
++            record["acknowledgementError"] = json!(reason);
++        }
++        if !repair {
++            return Ok(record);
++        }
++        let encoded = serde_json::to_string(&record).map_err(|error| error.to_string())?;
++        require(
++            encoded.len() <= 16 * 1024,
++            "Repair diagnostic exceeds fixed bound",
++        )?;
++        if !verified || record.get("acknowledgementError").is_some() {
++            failed = failed.saturating_add(1);
++            last_failure = Some(record.clone());
++        }
++        // Repair service follows the retained job's lifetime, rather than
++        // exhausting a fork count. Detail storage remains bounded per owner.
++        if !repair || emitted < 32 {
++            eprintln!("NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={encoded}");
++            emitted = emitted.saturating_add(1);
++        }
++    }
++}
