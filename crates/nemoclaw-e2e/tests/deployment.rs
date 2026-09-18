@@ -912,9 +912,29 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     assert_eq!(diagnostic["health"]["reason_code"], "fabric_health_timeout");
     assert_eq!(diagnostic["resourcesRetained"], true);
     fixture.state.lock().unwrap().health_report = None;
+    let configuration_checks = fixture
+        .state
+        .lock()
+        .unwrap()
+        .exec_calls
+        .iter()
+        .filter(|command| command.iter().any(|argument| argument == "check"))
+        .count();
     let result = deployment.apply(&document, &cancel).await.unwrap();
     assert!(result.changes.is_empty());
     assert!(!result.health[0].health.supported);
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .exec_calls
+            .iter()
+            .filter(|command| command.iter().any(|argument| argument == "check"))
+            .count(),
+        configuration_checks + 2,
+        "unchanged apply must stop after preflight and provider refresh configuration checks"
+    );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();

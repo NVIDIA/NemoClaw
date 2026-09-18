@@ -128,6 +128,14 @@ It requires an owned Linux Docker deployment, a new state-directory path, a veri
 It checks configuration and readiness without requesting a model response.
 Select it explicitly; do not run live tests as an ignored-test aggregate.
 
+## Hosted NVIDIA Hermes Parity
+
+The [hosted Hermes test](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) compares an exact-hash historical export with separately authored v1 YAML through a test-only projection.
+It checks expected plan and apply results, a real Hermes reply, unchanged apply with stable resource identities, export/reapply, and destroy.
+It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, the immutable Hermes image, and the declared NVIDIA credential.
+Select `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` explicitly; the test writes no separate report.
+This scenario does not qualify Relay or Switchyard.
+
 ## SSH Engine Transport
 
 The SDK's `ssh_live` tests are opt-in.

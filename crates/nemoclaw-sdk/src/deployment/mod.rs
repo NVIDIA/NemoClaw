@@ -278,6 +278,7 @@ impl Deployment {
             }
         }
         let mut result = OperationResult::planned(changes);
+        let post_apply_readiness = !result.changes.is_empty();
         if !apply {
             if fresh {
                 store.save(&record)?;
@@ -341,16 +342,18 @@ impl Deployment {
                     .id
                     .clone(),
             );
-            (self.progress)(Progress::Readiness);
-            self.timed("sandbox.ready", async {
-                if document.sandbox_harness(definition)?.kind == "pi" {
-                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(&definition.agent)?.default_route()?.overrides)
-                        .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
-                    tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
-                }
-                client.ready(&sandbox, cancel).await?;
-                Ok(())
-            }).await?;
+            if post_apply_readiness {
+                (self.progress)(Progress::Readiness);
+                self.timed("sandbox.ready", async {
+                    if document.sandbox_harness(definition)?.kind == "pi" {
+                        sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(&definition.agent)?.default_route()?.overrides)
+                            .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
+                        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
+                    }
+                    client.ready(&sandbox, cancel).await?;
+                    Ok(())
+                }).await?;
+            }
             {
                 let agents = vec![definition.agent.name.clone()];
                 let health = self.timed("fabric.health", async {

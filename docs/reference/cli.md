@@ -94,7 +94,7 @@ Resource durations use OpenTofu event timestamps when available, falling back to
 These messages do not measure download percentage or establish successful inference.
 Redirected stderr contains errors only unless `--verbose` enables progress output.
 
-With `--verbose`, completed bundle verification, OpenTofu commands, sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed time on stderr.
+With `--verbose`, completed bundle verification, OpenTofu commands, applicable sandbox/runtime readiness, and the `fabric.health` request report a fixed operation label, outcome, and elapsed time on stderr.
 For example, `bundle.verify succeeded 92ms` reports one bundle verification.
 Timing events contain no configuration values, credentials, or error diagnostics; ordinary errors are reported separately.
 Progress messages do not change the selected stdout format.
@@ -104,7 +104,7 @@ The [SDK result type](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines t
 | Field | Meaning |
 |---|---|
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
-| `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
+| `changes` | Resource addresses and planned/applied action lists; an empty list skips the post-apply sandbox readiness wait, but apply still runs preflight/configuration checks and requests Fabric health |
 | `deferred` | Checks or changes deferred by planning; omitted when empty |
 | `health` | Apply observations for the hosted Fabric runtime; includes explicit unsupported results; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |

@@ -401,7 +401,8 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | Export | Observed configuration agrees with retained intent | An inference request or native-data backup |
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
-An empty `changes` list on apply does not skip configuration or readiness checks.
+An empty `changes` list still runs preflight and provider-refresh configuration checks and requests Fabric health.
+Because the plan changed no resources, it skips the redundant post-apply sandbox readiness wait.
 Operation results no longer contain `agentResponse`.
 After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.

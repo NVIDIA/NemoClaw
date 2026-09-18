@@ -254,7 +254,7 @@ pub struct Sandbox {
     pub name: String,
     #[serde(rename = "image")]
     #[schemars(default)]
-    /// Sandbox agent image; omission selects the SDK default.
+    /// Sandbox agent image; omission selects the SDK pin for the selected harness.
     pub image: Image,
     #[serde(rename = "runtime")]
     #[schemars(default)]
@@ -276,7 +276,7 @@ pub struct Sandbox {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image.
+    /// Immutable image reference. Omitted or empty selects the SDK pin for the selected harness.
     pub ref_: String,
 }
 

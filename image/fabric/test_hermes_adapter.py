@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,62 @@ class HermesServerConfiguration(unittest.TestCase):
 
 
 class HermesInvocation(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_owned_health_keeps_credentials_out_of_the_probe(self):
+        import asyncio
+
+        import fabric
+
+        inference = {
+            "api": "openai-completions",
+            "connection": {
+                "provider": "openai",
+                "model": "primary",
+                "base_url": "https://models.example.test/v1",
+                "api_key_env": "NEMOCLAW_INFERENCE_TEST_KEY",
+            },
+            "interfaces": {"dashboard": {"enabled": False}},
+            "provider": "test",
+            "tuning": {},
+        }
+        config = fabric.configuration("primary", "hermes", inference=inference)
+        with patch.object(adapter, "healthy", return_value=True) as healthy:
+            self.assertTrue(await fabric.native_health(config, inference))
+            healthy.assert_called_once_with(inference)
+
+        responses = [True, False]
+
+        async def handle(reader, writer):
+            self.assertEqual(json.loads(await reader.readline()), {"operation": "check"})
+            writer.write(
+                json.dumps(
+                    {
+                        "config": config,
+                        "runtime_id": "fixture",
+                        "ready": True,
+                        "inference": inference,
+                        "native_healthy": responses.pop(0),
+                    }
+                ).encode()
+                + b"\n"
+            )
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        with tempfile.TemporaryDirectory() as directory:
+            socket = str(Path(directory) / "fabric.sock")
+            with (
+                patch.object(fabric, "SOCKET", socket),
+                patch.dict(os.environ, {"NEMOCLAW_INFERENCE_TEST_KEY": ""}),
+            ):
+                async with await asyncio.start_unix_server(handle, socket):
+                    self.assertEqual(
+                        await fabric.client("check", "primary", "hermes", inference=inference), 0
+                    )
+                    self.assertEqual(
+                        await fabric.client("check", "primary", "hermes", inference=inference), 2
+                    )
+
     async def test_uncertain_response_stops_runtime_and_is_never_replayed(self):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
