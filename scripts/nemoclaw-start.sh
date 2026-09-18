@@ -85,7 +85,7 @@ if [ -n "$_EARLY_DASHBOARD_PORT_RAW" ]; then
   _EARLY_DASHBOARD_PORT="$(printf '%s' "$_EARLY_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _EARLY_DASHBOARD_PORT_VALID=1
   case "$_EARLY_DASHBOARD_PORT" in
-    *[!0-9]* | '')
+    0* | *[!0-9]* | '')
       _EARLY_DASHBOARD_PORT_VALID=0
       ;;
   esac
@@ -435,7 +435,7 @@ else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   _DASHBOARD_PORT_VALID=1
   case "$_DASHBOARD_PORT" in
-    *[!0-9]* | '')
+    0* | *[!0-9]* | '')
       _DASHBOARD_PORT_VALID=0
       ;;
   esac
