@@ -128,23 +128,16 @@ describe("getRouterHealthSnapshot (#8962)", () => {
   it("checks liveness without waiting for a hanging semantic health response (#12089)", async () => {
     await withHealthServer(
       (req, res) => {
-        const responses = new Map<string, () => void>([
-          [
-            "/health/liveliness",
-            () => {
-              res.writeHead(200);
-              res.end("ok");
-            },
-          ],
-          [
-            "/health",
-            () => {
-              res.writeHead(200, { "content-type": "application/json" });
-              res.write('{"healthy_endpoints":[');
-            },
-          ],
-        ]);
-        responses.get(req.url ?? "")?.();
+        switch (req.url) {
+          case "/health/liveliness":
+            res.writeHead(200);
+            res.end("ok");
+            break;
+          case "/health":
+            res.writeHead(200, { "content-type": "application/json" });
+            res.write('{"healthy_endpoints":[');
+            break;
+        }
       },
       async (port) => {
         await expect(isRouterResponsive(port, 300)).resolves.toBe(true);
