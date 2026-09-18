@@ -43,6 +43,7 @@ const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 const OPERATOR_CONTAINER_PREFIX = "e2e-llamacpp-operator-loopback";
 const TRANSIENT_OPERATOR_CURL_EXIT_CODES = new Set([7, 28, 56]);
+const TRANSIENT_OPERATOR_HTTP_STATUS = /returned error: 503(?:\s|$)/u;
 validateSandboxName(SANDBOX_NAME);
 assert.match(RECIPE_ID, /^[a-z0-9][a-z0-9._-]{0,159}$/u, "invalid llama.cpp recipe ID");
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
@@ -151,6 +152,8 @@ function operatorReadinessTerminal(attempt: OperatorReadinessAttempt): string | 
       return "The operator llama.cpp container stopped before readiness.";
     case attempt.models.exitCode === 0:
     case TRANSIENT_OPERATOR_CURL_EXIT_CODES.has(attempt.models.exitCode ?? -1):
+    case attempt.models.exitCode === 22 &&
+      TRANSIENT_OPERATOR_HTTP_STATUS.test(attempt.models.stderr):
       return undefined;
     default:
       return "The operator llama.cpp readiness read failed.";
