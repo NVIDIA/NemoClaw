@@ -25,7 +25,8 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
     ] {
         assert!(!args.iter().any(|a| a == flag));
     }
-    doc.spec.sandboxes[0].agents[0]
+    doc.spec.sandboxes[0]
+        .agent
         .inference
         .as_mut()
         .unwrap()

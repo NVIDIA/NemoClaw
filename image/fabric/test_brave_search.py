@@ -16,14 +16,15 @@ class BraveSearch(unittest.TestCase):
         inference = {
             "api": "openai-completions",
             "webSearch": {"agentRefs": ["main"]},
-            "agents": [{"name": "main"}, {"name": "other"}],
+            "agents": [{"name": "main"}],
         }
         with patch.dict("os.environ", {"BRAVE_API_KEY": "placeholder"}):
             config = configuration("main", "deepagents", inference=inference)
             self.assertEqual(
                 config["mcp"]["servers"]["brave"]["env"]["BRAVE_API_KEY"], "placeholder"
             )
-            self.assertNotIn("mcp", configuration("other", "deepagents", inference=inference))
+            inference.pop("webSearch")
+            self.assertNotIn("mcp", configuration("main", "deepagents", inference=inference))
 
     def test_refresh_compares_credential_references_not_snapshot_revisions(self):
         inference = {

@@ -24,11 +24,11 @@ spec:
         tier: isolated
       harness:
         kind: openclaw
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3.5:0.8b
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3.5:0.8b

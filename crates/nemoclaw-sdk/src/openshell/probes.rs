@@ -465,7 +465,7 @@ mod tests {
     async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
         let mut value: serde_json::Value =
             serde_saphyr::from_str(include_str!("../../../../examples/fabric-pi.yaml")).unwrap();
-        let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
         let mut fast = inference["routes"][0].clone();
         fast["name"] = serde_json::json!("fast");
         fast["overrides"]["model"] = serde_json::json!("fast-model");

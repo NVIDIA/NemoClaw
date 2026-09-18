@@ -422,7 +422,7 @@ mod tests {
                     "GAP-V0-OPENCLAW-AGENT-MANIFEST",
                     Boundary::Authoring,
                     ISSUE_12034,
-                    "V1 parses multiple OpenClaw agents but onboarding does not author the V0 manifest workflow",
+                    "V1 deploys each OpenClaw agent in a separate sandbox; onboarding does not author the V0 manifest workflow",
                 ),
                 evidence: Evidence::Fixture(FixtureCase::FullFeatured),
             },
@@ -1185,8 +1185,8 @@ mod tests {
                     json!(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
             }
             Mutation::InferenceInputs => {
-                value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                    ["input"] = json!(["text", "image"]);
+                value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["input"] =
+                    json!(["text", "image"]);
             }
             Mutation::InvalidSandboxName => {
                 value["spec"]["sandboxes"][0]["name"] = json!("Not A DNS Label");
@@ -1336,7 +1336,7 @@ mod tests {
         assert_eq!(provider["provider"], "openai");
         assert_eq!(provider["endpoint"], "https://integrate.api.nvidia.com/v1");
         assert_eq!(
-            value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["model"],
+            value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"],
             "nvidia/nemotron-3-super-120b-a12b"
         );
         assert_eq!(
@@ -1415,23 +1415,19 @@ mod tests {
                     credential
                 );
                 assert_eq!(
-                    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                        ["reasoningEffort"],
+                    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoningEffort"],
                     "high"
                 );
                 assert_eq!(
-                    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                        ["contextWindow"],
+                    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["contextWindow"],
                     65536
                 );
                 assert_eq!(
-                    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                        ["maxTokens"],
+                    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"],
                     8192
                 );
                 assert_eq!(
-                    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                        ["reasoning"],
+                    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoning"],
                     true
                 );
             }
@@ -1448,7 +1444,12 @@ mod tests {
                 );
             }
             FixtureCase::FullFeatured => {
-                let agents = value["spec"]["sandboxes"][0]["agents"].as_array().unwrap();
+                let agents: Vec<_> = value["spec"]["sandboxes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|sandbox| &sandbox["agent"])
+                    .collect();
                 assert_eq!(agents.len(), 3);
                 assert_eq!(agents[0]["name"], "researcher");
                 assert_eq!(agents[1]["name"], "writer");
@@ -1536,8 +1537,8 @@ mod tests {
             FixtureCase::Pi => {
                 assert_eq!(value["spec"]["sandboxes"][0]["harness"]["kind"], "pi");
                 assert_eq!(
-                    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]
-                        ["piModel"]["api"],
+                    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"]
+                        ["api"],
                     "openai-completions"
                 );
             }
@@ -1646,7 +1647,7 @@ mod tests {
                 for test in [
                     "async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent",
                     "async fn execution_settings_cli_export_reapply_and_drift",
-                    "async fn multiple_agents_cli_export_reapply_and_policy_drift",
+                    "async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift",
                     "async fn tool_disclosure_cli_export_reapply_and_drift",
                     "async fn observability_cli_export_reapply_and_drift",
                 ] {

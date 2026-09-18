@@ -5,7 +5,7 @@
 # Broad compatible feature example, not an all-fields template or a live-qualified deployment.
 # Replace the UID, image placeholders, SSH alias, addresses, and model settings for your hosts.
 # Requires local Docker/OpenShell, a compatible remote NVIDIA GPU, an existing proxy and OTLP collector,
-# and BRAVE_API_KEY on the applying host. Apply provisions resources and invokes inference.
+# and BRAVE_API_KEY on the applying host. Apply provisions resources and checks readiness without inference.
 # See docs/configuration-references.md#combine-supported-features for alternatives and limits.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -92,7 +92,7 @@ spec:
       credential:
         env: BRAVE_API_KEY
   sandboxes:
-    - name: assistant
+    - name: researcher
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
         ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -132,46 +132,128 @@ spec:
                 binaries:
                   - path: /usr/local/bin/node
       harnessRef: assistant
-      agents:
-        - name: researcher
-          integrationRefs: [search]
-          tools:
-            disclosure: progressive
-          inference:
-            routes:
-              - name: primary
-                providerRef: nemotron
-                overrides:
-                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
-        - name: writer
-          integrationRefs: [search]
-          tools:
-            disclosure: progressive
-          inference:
-            routes:
-              - name: primary
-                providerRef: nemotron
-                overrides:
-                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
-        # Tool restriction, not filesystem isolation. This agent receives no search grant.
-        - name: reader
-          tools:
-            allow: [read]
-          inference:
-            routes:
-              - name: primary
-                providerRef: nemotron
-                overrides:
-                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
+      agent:
+        name: researcher
+        integrationRefs: [search]
+        tools:
+          disclosure: progressive
+        inference:
+          routes:
+            - name: primary
+              providerRef: nemotron
+              overrides:
+                model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high
+    - name: writer
+      image:
+        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        proxy:
+          management: external
+          host: 10.200.0.1
+          port: 3128
+        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    tls: terminate
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: GET
+                          path: /docs/**
+                binaries:
+                  - path: /usr/local/bin/node
+      harnessRef: assistant
+      agent:
+        name: writer
+        integrationRefs: [search]
+        tools:
+          disclosure: progressive
+        inference:
+          routes:
+            - name: primary
+              providerRef: nemotron
+              overrides:
+                model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high
+    # Read-only tools inside a separate sandbox; this agent receives no search grant.
+    - name: reader
+      image:
+        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        proxy:
+          management: external
+          host: 10.200.0.1
+          port: 3128
+        # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    tls: terminate
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: GET
+                          path: /docs/**
+                binaries:
+                  - path: /usr/local/bin/node
+      harnessRef: assistant
+      agent:
+        name: reader
+        tools:
+          allow: [read]
+        inference:
+          routes:
+            - name: primary
+              providerRef: nemotron
+              overrides:
+                model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high

@@ -404,20 +404,14 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
 }
 
 #[tokio::test]
-async fn agent_roster_refresh_verifies_native_policy_without_mutation() {
+async fn agent_policy_refresh_verifies_native_policy_without_mutation() {
     let fixture = Fixture::start().await;
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    let primary = document.spec.sandboxes[0].agents[0].clone();
-    for name in ["reader", "reviewer"] {
-        let mut agent = primary.clone();
-        agent.name = name.into();
-        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
-            allow: [nemoclaw_sdk::config::AllowedTool::Read],
-        });
-        document.spec.sandboxes[0].agents.push(agent);
-    }
+    document.spec.sandboxes[0].agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
+        allow: [nemoclaw_sdk::config::AllowedTool::Read],
+    });
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -488,7 +482,7 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     .unwrap();
     value["spec"]["gateway"]["endpoint"] = serde_json::json!(fixture.endpoint);
     value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle", "provider":"openai", "endpoint":"http://172.20.0.1:19999/v1"}));
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = serde_json::json!("primary");
     inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart-model"}}));
     let document = Document::parse(value.to_string().as_bytes()).unwrap();

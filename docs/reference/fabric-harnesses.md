@@ -9,9 +9,9 @@ Use [inference API selection](../inference.md#choose-the-request-api) for the pr
 
 | `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |
 |---|---|---|---|
-| `openclaw` | One or more; per-agent model choices | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
+| `openclaw` | One; named model choices | External or managed | [OpenClaw](../../examples/fabric-openclaw.yaml) |
 | `hermes` | One | External or managed | [Hermes](../../examples/fabric-hermes.yaml), [managed Hermes](../../examples/managed-hermes.yaml) |
-| `deepagents` | One or more; separate Fabric runtimes | External or managed, subject to API compatibility | [Deep Agents](../../examples/fabric.yaml) |
+| `deepagents` | One | External or managed, subject to API compatibility | [Deep Agents](../../examples/fabric.yaml) |
 | `claude` | One | External or managed, subject to Anthropic Messages compatibility | [Claude](../../examples/fabric-claude.yaml) |
 | `codex` | One | External or managed, subject to API compatibility | [Codex](../../examples/fabric-codex.yaml) |
 | `mini-swe-agent` | One | External or managed, subject to API compatibility | [Mini SWE Agent](../../examples/fabric-mini-swe-agent.yaml) |

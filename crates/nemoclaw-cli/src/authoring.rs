@@ -332,12 +332,7 @@ impl Draft {
                 "editing requires one generated onboarding sandbox",
             ));
         };
-        let [agent] = sandbox.agents.as_slice() else {
-            return Err(diagnostic(
-                "document",
-                "editing requires one generated onboarding agent",
-            ));
-        };
+        let agent = &sandbox.agent;
         let harness = match document
             .sandbox_harness(sandbox)
             .map(|value| value.kind.as_str())
@@ -478,7 +473,7 @@ impl Review {
     }
 
     pub(crate) fn agent_name(&self) -> &str {
-        &self.authored.document.spec.sandboxes[0].agents[0].name
+        &self.authored.document.spec.sandboxes[0].agent.name
     }
 
     pub(crate) fn provider_name(&self) -> &str {
@@ -486,7 +481,8 @@ impl Review {
     }
 
     pub(crate) fn model(&self) -> &str {
-        &self.authored.document.spec.sandboxes[0].agents[0]
+        &self.authored.document.spec.sandboxes[0]
+            .agent
             .inference
             .as_ref()
             .expect("generated review has inline inference")
@@ -517,7 +513,8 @@ impl Review {
     }
 
     pub(crate) fn render(&self) -> String {
-        let route = &self.authored.document.spec.sandboxes[0].agents[0]
+        let route = &self.authored.document.spec.sandboxes[0]
+            .agent
             .inference
             .as_ref()
             .expect("generated review has inline inference")
@@ -689,14 +686,14 @@ impl Session {
                             "read_write": ["/sandbox"]
                         }
                     }}},
-                    "agents": [{
+                    "agent": {
                         "name": answers.agent_name,
                         "inference": {"routes": [{
                             "name": "primary",
                             "providerRef": answers.provider_name,
                             "overrides": {"model": answers.model}
                         }]}
-                    }]
+                    }
                 }]
             }
         });
@@ -825,7 +822,7 @@ mod tests {
                 "policy must retain {path} as read-only"
             );
         }
-        let route = &document.agent_inference(&sandbox.agents[0]).unwrap().routes[0];
+        let route = &document.agent_inference(&sandbox.agent).unwrap().routes[0];
         assert_eq!(route.provider_ref.as_deref(), Some("hosted-nvidia-prod"));
         assert_eq!(route.overrides.model, "nvidia/nemotron-3-super-120b-a12b");
     }
@@ -1037,7 +1034,7 @@ mod tests {
                 scenario.name
             );
             assert_eq!(sandbox.runtime.provider, "docker");
-            let agent = &sandbox.agents[0];
+            let agent = &sandbox.agent;
             assert_eq!(agent.name, direct_answers.agent_name);
             let route = &reparsed.agent_inference(agent).unwrap().routes[0];
             assert_eq!(route.provider_ref.as_deref(), Some(provider.name.as_str()));

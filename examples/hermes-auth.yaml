@@ -29,13 +29,13 @@ spec:
         tier: isolated
       harness:
         kind: hermes
-      agents:
-        - name: main
-          auth:
-            method: api-key
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: moonshotai/kimi-k2.6
+      agent:
+        name: main
+        auth:
+          method: api-key
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: moonshotai/kimi-k2.6

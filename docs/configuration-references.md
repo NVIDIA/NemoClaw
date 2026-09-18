@@ -32,13 +32,13 @@ Moving a definition does not authorize replacing an existing resource; normal id
 
 ## Supported Families
 
-Paths below are relative to `spec`; `agents[]` is inside `sandboxes[]` and `routes[]` is inside an inline or shared inference configuration.
+Paths below are relative to `spec`; `agent` is inside `sandboxes[]` and `routes[]` is inside an inline or shared inference configuration.
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; multiple vLLM services, at most one managed Ollama or Ollama proxy |
 | Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw and Pi support named choices with an explicit default; other harnesses require one choice |
-| Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration per sandbox; all agents use that implementation |
+| Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
 | Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
@@ -67,13 +67,16 @@ spec:
         dashboard:
           port: 18800
   sandboxes:
-    - name: assistant
+    - name: researcher
       harnessRef: assistant
-      agents:
-        - name: researcher
-          inferenceRef: chat
-        - name: writer
-          inferenceRef: chat
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: writer
+      harnessRef: assistant
+      agent:
+        name: writer
+        inferenceRef: chat
 ```
 
 This fragment assumes a `chat` inference definition and omits other required deployment fields.
@@ -81,7 +84,7 @@ Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
 Use `harness: {kind: openclaw}` for an inline configuration without additional settings.
 Execution defaults, observability, and interfaces belong inside the harness configuration.
 Each sandbox requires exactly one of `harness` or `harnessRef`; agents cannot select a harness.
-Every agent is an instance of the selected implementation, and multiple agents may share one runtime process.
+Each sandbox’s agent uses the selected implementation in its own Fabric runtime.
 Sharing a definition reuses configuration; each sandbox owns its runtime process.
 
 ## Reference an Inference Configuration
@@ -102,17 +105,20 @@ spec:
           overrides:
             model: qwen3:4b
   sandboxes:
-    - name: assistant
+    - name: researcher
       harness: {kind: openclaw}
-      agents:
-        - name: researcher
-          inferenceRef: chat
-        - name: writer
-          inferenceRef: chat
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: writer
+      harness: {kind: openclaw}
+      agent:
+        name: writer
+        inferenceRef: chat
 ```
 
 This fragment omits other required deployment fields.
-Move `inferences` under the sandbox to limit visibility to its agents.
+Move `inferences` under the sandbox to limit visibility to its agent.
 Provider references resolve where the inference is defined: a deployment-level inference cannot select a sandbox-level provider.
 An inline provider inside a shared inference is reused by every agent selecting that inference.
 Using `inference` and `inferenceRef` together is an error, including an empty inline object.
@@ -130,14 +136,14 @@ spec:
   sandboxes:
     - name: assistant
       harness: {kind: openclaw}
-      agents:
-        - name: researcher
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:4b
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
 ```
 
 Move `inferenceProviders` under the sandbox to limit definition visibility to its routes.
@@ -161,7 +167,7 @@ For integration examples, see [define and attach integrations](agents.md#define-
 
 ## Combine Supported Features
 
-The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents, shared search, tracing, dashboard access, execution settings, tool restrictions, and explicit network policy with a proxy.
+The [full-featured OpenClaw example](../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, shared search, tracing, dashboard access, execution settings, tool restrictions, and explicit network policy with a proxy.
 All three agents select the same provider and inference settings; only two receive search access.
 It passes the SDK parser and JSON Schema checks, but this combined deployment has not been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
@@ -176,7 +182,7 @@ No single active configuration exercises every schema branch:
 | Inline provider or integration | [Inline provider](../examples/inline-inference.yaml), [inline integration](agents.md#brave-web-search) | A consumer cannot both inline and reference the same definition |
 | Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service mode; managed Ollama and its proxy still require a singleton lifecycle |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
-| Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Hermes requires one agent; explicit interfaces can include Relay tracing |
+| Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Explicit Hermes interfaces can include Relay tracing |
 | Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Specific to Pi; other harnesses reject it |
 | Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |

@@ -16,7 +16,7 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from fabric import model_connection, openclaw_execution
+from fabric import configured_agent, model_connection, openclaw_execution
 from interfaces import dashboard, gateway_settings, token
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
 from nemo_fabric_adapters.common import lifecycle
@@ -28,24 +28,17 @@ CLI = "/app/openclaw.mjs"
 
 
 def tool_disclosure(inference):
-    modes = set()
-    for agent in (inference or {}).get("agents", []):
-        tools = agent.get("tools")
-        if tools == {"allow": ["read"]}:
-            continue
-        if tools is None and "tools" not in agent:
-            modes.add("progressive")
-        elif (
-            isinstance(tools, dict)
-            and set(tools) == {"disclosure"}
-            and tools["disclosure"] in ("progressive", "direct")
-        ):
-            modes.add(tools["disclosure"])
-        else:
-            raise ValueError("invalid agent tools")
-    if len(modes) > 1:
-        raise ValueError("OpenClaw agents must share a disclosure mode")
-    return next(iter(modes), "progressive")
+    agent = configured_agent("main", inference, match_name=False)
+    tools = agent.get("tools")
+    if tools == {"allow": ["read"]} or tools is None and "tools" not in agent:
+        return "progressive"
+    if (
+        isinstance(tools, dict)
+        and set(tools) == {"disclosure"}
+        and tools["disclosure"] in ("progressive", "direct")
+    ):
+        return tools["disclosure"]
+    raise ValueError("invalid agent tools")
 
 
 def tool_search(inference):
@@ -57,37 +50,23 @@ def tool_search(inference):
 
 
 def agent_entries(name, inference):
-    agents = inference.get("agents") if inference else None
-    if agents is None:
+    agent = configured_agent(name, inference, match_name=False)
+    if not (inference or {}).get("agents"):
         return {name: {}}
-    if not isinstance(agents, list) or not agents:
-        raise ValueError("invalid agent roster")
     tool_disclosure(inference)
-    entries = {}
-    for agent in agents:
-        if (
-            not isinstance(agent, dict)
-            or set(agent) - {"name", "tools", "inference"}
-            or not isinstance(agent.get("name"), str)
-            or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", agent["name"])
-            or agent["name"] in entries
-        ):
-            raise ValueError("invalid agent policy")
-        agent_name = agent["name"]
-        entries[agent_name] = {
-            "workspace": f"/sandbox/workspaces/{agent_name}",
-            **({"tools": {"allow": ["read"]}} if agent.get("tools") == {"allow": ["read"]} else {}),
-        }
-    selected = search_agents(inference)
-    if selected:
-        for agent_name, entry in entries.items():
-            if "tools" not in entry:
-                entry["tools"] = (
-                    {"alsoAllow": ["web_search"]}
-                    if agent_name in selected
-                    else {"deny": ["web_search"]}
-                )
-    return entries
+    if (
+        set(agent) - {"name", "tools", "inference"}
+        or not isinstance(agent.get("name"), str)
+        or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", agent["name"])
+    ):
+        raise ValueError("invalid agent policy")
+    entry = {
+        "workspace": f"/sandbox/workspaces/{agent['name']}",
+        **({"tools": {"allow": ["read"]}} if agent.get("tools") == {"allow": ["read"]} else {}),
+    }
+    if search_agents(inference) and "tools" not in entry:
+        entry["tools"] = {"alsoAllow": ["web_search"]}
+    return {agent["name"]: entry}
 
 
 def native_provider(inference, execution):
@@ -160,40 +139,40 @@ def native_configuration(name, inference=None):
     }
 
     if inference is not None and "agents" in inference:
-        # OpenClaw persists this marker for an explicit roster at gateway startup.
+        # OpenClaw persists this marker for the declared agent at gateway startup.
         config["agents"]["ownership"] = "explicit"
     if inference is not None:
         effort = inference["tuning"].get("reasoningEffort", "default")
         if effort != "default":
             config["agents"]["defaults"]["thinkingDefault"] = effort
-    if any("inference" in agent for agent in (inference or {}).get("agents", [])):
+    agent = configured_agent(name, inference, match_name=False)
+    if "inference" in agent:
         providers = {}
-        for agent in inference["agents"]:
-            selection = agent.get("inference")
-            if (
-                not isinstance(selection, dict)
-                or set(selection) != {"default", "models"}
-                or not isinstance(selection["models"], dict)
-                or selection["default"] not in selection["models"]
-            ):
-                raise ValueError("invalid agent inference selection")
-            entry = config["agents"]["entries"][agent["name"]]
-            choices = {}
-            for alias, settings in selection["models"].items():
-                if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", alias):
-                    raise ValueError("invalid model alias")
-                key = f"nemoclaw_{agent['name']}_{alias}"
-                provider = native_provider(settings, execution)
-                providers[key] = provider
-                ref = key + "/" + provider["models"][0]["id"]
-                choices[ref] = {"alias": alias}
-                if alias == selection["default"]:
-                    entry["model"] = {"primary": ref}
-                    effort = settings["tuning"].get("reasoningEffort", "default")
-                    if effort != "default":
-                        entry["thinkingDefault"] = effort
-            entry["models"] = choices
-            entry["modelPolicy"] = {"allow": list(choices)}
+        selection = agent.get("inference")
+        if (
+            not isinstance(selection, dict)
+            or set(selection) != {"default", "models"}
+            or not isinstance(selection["models"], dict)
+            or selection["default"] not in selection["models"]
+        ):
+            raise ValueError("invalid agent inference selection")
+        entry = config["agents"]["entries"][agent["name"]]
+        choices = {}
+        for alias, settings in selection["models"].items():
+            if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", alias):
+                raise ValueError("invalid model alias")
+            key = f"nemoclaw_{agent['name']}_{alias}"
+            provider = native_provider(settings, execution)
+            providers[key] = provider
+            ref = key + "/" + provider["models"][0]["id"]
+            choices[ref] = {"alias": alias}
+            if alias == selection["default"]:
+                entry["model"] = {"primary": ref}
+                effort = settings["tuning"].get("reasoningEffort", "default")
+                if effort != "default":
+                    entry["thinkingDefault"] = effort
+        entry["models"] = choices
+        entry["modelPolicy"] = {"allow": list(choices)}
         config["models"]["providers"] = providers
         defaults = config["agents"]["defaults"]
         defaults.pop("model", None)
@@ -461,14 +440,14 @@ class OpenClawRuntime:
                 "openclaw_runtime_unavailable", "OpenClaw runtime is unavailable; no replay"
             )
         entries = agent_entries(self.name, self.inference)
-        name = next(iter(entries)) if len(entries) == 1 else None
+        name = next(iter(entries))
         message = request.input
         if isinstance(message, dict) and set(message) == {"agent", "message"}:
             name, message = message["agent"], message["message"]
         if (
             not isinstance(message, str)
             or not isinstance(name, str)
-            or name not in agent_entries(self.name, self.inference)
+            or name not in entries
         ):
             raise ValueError("expected text or a declared agent and text message")
         if not configuration_matches(self.name, self.inference):

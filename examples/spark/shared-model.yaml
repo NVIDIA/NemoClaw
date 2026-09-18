@@ -51,8 +51,8 @@ spec:
       kind: pi
       execution:
         timeoutSeconds: 300
-    agents:
-    - name: assistant
+    agent:
+      name: assistant
       inference:
         routes:
         - name: primary
@@ -77,8 +77,8 @@ spec:
       kind: openclaw
       execution:
         timeoutSeconds: 300
-    agents:
-    - name: assistant
+    agent:
+      name: assistant
       inference:
         routes:
         - name: primary
@@ -98,8 +98,8 @@ spec:
       kind: deepagents
       execution:
         timeoutSeconds: 300
-    agents:
-    - name: assistant
+    agent:
+      name: assistant
       inference:
         routes:
         - name: primary

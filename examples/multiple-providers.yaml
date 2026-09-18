@@ -41,16 +41,19 @@ spec:
             model: qwen3:4b
             contextWindow: 8192
   sandboxes:
-    - name: assistant
+    - name: researcher
       harnessRef: assistant
-      agents:
-        - name: researcher
-          inferenceRef: smart-and-fast
-        - name: writer
-          inference:
-            routes:
-              - name: fast
-                providerRef: local
-                overrides:
-                  model: qwen3:4b
-                  contextWindow: 8192
+      agent:
+        name: researcher
+        inferenceRef: smart-and-fast
+    - name: writer
+      harnessRef: assistant
+      agent:
+        name: writer
+        inference:
+          routes:
+            - name: fast
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+                contextWindow: 8192

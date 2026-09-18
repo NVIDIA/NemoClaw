@@ -49,9 +49,9 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
             doc
         );
-        let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+        let mut other = value["spec"]["sandboxes"][0].clone();
         other["name"] = json!("writer");
-        value["spec"]["sandboxes"][0]["agents"]
+        value["spec"]["sandboxes"]
             .as_array_mut()
             .unwrap()
             .push(other);
@@ -66,7 +66,7 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
         )
         .unwrap();
         assert_eq!(runtime["execution"]["timeoutSeconds"], 900);
-        assert_eq!(runtime["agents"].as_array().unwrap().len(), 2);
+        assert_eq!(runtime["agents"].as_array().unwrap().len(), 1);
     }
 }
 #[test]
@@ -83,19 +83,16 @@ fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_c
         .unwrap()
         .remove("harness");
     let mut legacy = input();
-    legacy["spec"]["sandboxes"][0]["agents"][0]["harness"] = json!({"kind":"openclaw"});
+    legacy["spec"]["sandboxes"][0]["agent"]["harness"] = json!({"kind":"openclaw"});
     let mut legacy_ref = input();
-    legacy_ref["spec"]["sandboxes"][0]["agents"][0]["harnessRef"] = json!("assistant");
+    legacy_ref["spec"]["sandboxes"][0]["agent"]["harnessRef"] = json!("assistant");
     let mut limited = input();
     limited["spec"]["gateway"] =
         json!({"management":"external","endpoint":"http://127.0.0.1:8080"});
     limited["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
-    let mut other = limited["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = limited["spec"]["sandboxes"][0]["agent"].clone();
     other["name"] = json!("other");
-    limited["spec"]["sandboxes"][0]["agents"]
-        .as_array_mut()
-        .unwrap()
-        .push(other);
+    limited["spec"]["sandboxes"][0]["agents"] = json!([other]);
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for value in [absent, both, legacy, legacy_ref, limited] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());

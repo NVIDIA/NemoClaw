@@ -12,14 +12,15 @@ import {
 await fs.mkdir("/sandbox/workspace", { recursive: true });
 const sentinel = "/sandbox/workspace/disclosure.txt";
 await fs.writeFile(sentinel, "disclosure-fixture");
-for (const disclosure of ["direct", "progressive"]) {
+for (const [agentId, disclosure] of [
+  ["primary", "direct"],
+  ["primary", "progressive"],
+  ["reader", "progressive"],
+]) {
   const options = {
     api: "openai-completions",
     tuning: {},
-    agents: [
-      { name: "primary", tools: { disclosure } },
-      { name: "reader", tools: { allow: ["read"] } },
-    ],
+    agents: [{ name: agentId, tools: agentId === "reader" ? { allow: ["read"] } : { disclosure } }],
   };
   const config = JSON.parse(
     execFileSync(
@@ -32,41 +33,40 @@ for (const disclosure of ["direct", "progressive"]) {
       { encoding: "utf8" },
     ),
   );
-  for (const agentId of ["primary", "reader"]) {
-    const catalogRef = createToolSearchCatalogRef();
-    const tools = createOpenClawCodingTools({
-      config,
-      agentId,
-      sessionKey: `agent:${agentId}:fixture`,
-      workspaceDir: "/sandbox/workspace",
-      cwd: "/sandbox/workspace",
-      includeToolSearchControls: true,
-      toolSearchCatalogRef: catalogRef,
-    });
-    const exposed = applyToolSearchCatalog({ config, tools, catalogRef }).tools;
-    const names = exposed.map((tool) => tool.name);
-    if (disclosure === "direct") {
-      assert(!names.includes("tool_search"));
-      assert.equal(names.includes("exec"), agentId === "primary");
-    } else {
-      assert(names.includes("tool_search"), names.join(","));
-      const search = exposed.find((tool) => tool.name === "tool_search");
-      assert(search);
-      const result = await search.execute("find-read", { query: "read" });
-      assert(JSON.stringify(result).includes("read"));
-      if (agentId === "reader") {
-        const call = exposed.find((tool) => tool.name === "tool_call");
-        assert(call);
-        const read = await call.execute("call-read", { id: "read", args: { path: sentinel } });
-        assert(JSON.stringify(read).includes("disclosure-fixture"));
-        for (const denied of ["exec", "write", "edit", "sessions_spawn"]) {
-          await assert.rejects(() =>
-            call.execute("denied", { id: denied, args: { command: "false" } }),
-          );
-        }
+  const catalogRef = createToolSearchCatalogRef();
+  const tools = createOpenClawCodingTools({
+    config,
+    agentId,
+    sessionKey: `agent:${agentId}:fixture`,
+    workspaceDir: "/sandbox/workspace",
+    cwd: "/sandbox/workspace",
+    includeToolSearchControls: true,
+    toolSearchCatalogRef: catalogRef,
+  });
+  const exposed = applyToolSearchCatalog({ config, tools, catalogRef }).tools;
+  const names = exposed.map((tool) => tool.name);
+  if (disclosure === "direct") {
+    assert(!names.includes("tool_search"));
+    assert.equal(names.includes("exec"), agentId === "primary");
+  } else {
+    assert(names.includes("tool_search"), names.join(","));
+    const search = exposed.find((tool) => tool.name === "tool_search");
+    assert(search);
+    const result = await search.execute("find-read", { query: "read" });
+    assert(JSON.stringify(result).includes("read"));
+    if (agentId === "reader") {
+      const call = exposed.find((tool) => tool.name === "tool_call");
+      assert(call);
+      const read = await call.execute("call-read", { id: "read", args: { path: sentinel } });
+      assert(JSON.stringify(read).includes("disclosure-fixture"));
+      for (const denied of ["exec", "write", "edit", "sessions_spawn"]) {
+        await assert.rejects(() =>
+          call.execute("denied", { id: denied, args: { command: "false" } }),
+        );
       }
     }
   }
+
 }
 assert.equal(await fs.readFile(sentinel, "utf8"), "disclosure-fixture");
 console.log("Direct exposure and progressive search/call preserve the read-only allowlist.");

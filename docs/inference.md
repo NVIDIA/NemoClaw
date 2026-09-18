@@ -29,7 +29,7 @@ It assumes an existing endpoint serving both model IDs; it does not provision th
 Select a gateway, current agent image, endpoint, and models using the prerequisites below before applying it with a fresh deployment UID and state directory.
 
 The adapter configures each agent's native model aliases, initial model, and model-selection policy.
-These are harness restrictions inside a shared sandbox, not provider credential or network isolation between agents.
+The model-selection policy restricts the native agent; OpenShell enforces provider access at its sandbox boundary.
 This configuration supplies no automatic fallback, oracle consultation, or agent delegation behavior.
 Apply installs provider attachments and checks the declared agent configuration without requesting model responses.
 Missing credential references still fail deployment; actual endpoint authentication and model compatibility require explicit inference verification.
@@ -61,7 +61,7 @@ Use the [deployment workflow](usage.md) with fresh state, then verify each confi
 
 OpenShell receives a distinct provider credential key for each credentialed registration; the sandbox receives placeholders rather than the resolved upstream keys.
 Every attached provider is available at the sandbox boundary.
-OpenClaw's per-agent model-selection policy is not separate credential or network isolation: use separate sandboxes for that boundary.
+Each agent runs in its own sandbox; its model-selection policy does not further restrict credentials or network access for other processes in that sandbox.
 Use separate deployments when you need independent teardown.
 NemoClaw observes the full attachment set and rejects missing or unexpected attachments.
 
@@ -275,7 +275,7 @@ Remove the retained credential volume explicitly when retiring the deployment.
 
 ## Tune OpenClaw's Primary Route
 
-Declare tuning in `agents[].inference.routes[].overrides`:
+Declare tuning in `agent.inference.routes[].overrides`:
 
 ```yaml
 overrides:

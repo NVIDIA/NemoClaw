@@ -10,12 +10,12 @@ fn input() -> Value {
     serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
-    let inference = value["spec"]["sandboxes"][0]["agents"][0]
+    let inference = value["spec"]["sandboxes"][0]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("inference")
         .unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["inferenceRef"] = json!("chat");
+    value["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("chat");
     let scope = if sandbox {
         &mut value["spec"]["sandboxes"][0]
     } else {
@@ -47,7 +47,7 @@ fn inference_reference_preserves_authored_scope_and_runtime_behavior() {
         );
         let authored = serde_json::to_value(&doc).unwrap();
         assert!(
-            authored["spec"]["sandboxes"][0]["agents"][0]
+            authored["spec"]["sandboxes"][0]["agent"]
                 .get("inference")
                 .is_none()
         );
@@ -56,9 +56,9 @@ fn inference_reference_preserves_authored_scope_and_runtime_behavior() {
 #[test]
 fn inference_references_reject_ambiguity_shadowing_and_invisible_providers() {
     let mut missing = shared(input(), false);
-    missing["spec"]["sandboxes"][0]["agents"][0]["inferenceRef"] = json!("missing");
+    missing["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("missing");
     let mut both = shared(input(), false);
-    both["spec"]["sandboxes"][0]["agents"][0]["inference"] = json!({});
+    both["spec"]["sandboxes"][0]["agent"]["inference"] = json!({});
     let mut shadow = shared(input(), false);
     shadow["spec"]["sandboxes"][0]["inferences"] = shadow["spec"]["inferences"].clone();
     let mut invisible = shared(input(), false);
@@ -105,13 +105,13 @@ fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
         .remove("inferenceProviders")
         .unwrap()[0]
         .clone();
-    let route = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0];
+    let route = &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider;
     let mut value = shared(value, false);
-    let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
-    value["spec"]["sandboxes"][0]["agents"]
+    value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .push(other);
@@ -132,8 +132,8 @@ fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
 fn shared_pi_metadata_accepts_opaque_nulls_only_inside_the_model() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["piModel"]
-        ["custom"] = Value::Null;
+    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"]["custom"] =
+        Value::Null;
     let mut value = shared(value, false);
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
     value["spec"]["inferences"]["chat"]["routes"][0]["overrides"]["model"] = Value::Null;

@@ -63,9 +63,9 @@ fn mixed_sandboxes_share_providers_and_ignore_declaration_order() {
     assert_eq!(before, graph(&value));
 }
 #[test]
-fn agent_order_does_not_change_compiled_identity_or_settings() {
+fn sandbox_and_provider_order_do_not_change_compiled_identity_or_settings() {
     let mut value = example();
-    let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("bob");
     let mut provider = value["spec"]["inferenceProviders"][0].clone();
     provider["name"] = json!("other-models");
@@ -74,13 +74,14 @@ fn agent_order_does_not_change_compiled_identity_or_settings() {
         .as_array_mut()
         .unwrap()
         .push(provider);
-    other["inference"]["routes"][0]["providerRef"] = json!("other-models");
-    value["spec"]["sandboxes"][0]["agents"]
+    other["agent"]["inference"]["routes"][0]["providerRef"] = json!("other-models");
+    value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .push(other);
     let before = graph(&value);
-    value["spec"]["sandboxes"][0]["agents"]
+    value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
+    value["spec"]["inferenceProviders"]
         .as_array_mut()
         .unwrap()
         .reverse();
@@ -149,5 +150,53 @@ fn reordering_named_declarations_preserves_pending_intent_digest() {
         Document::parse(value.to_string().as_bytes())
             .unwrap()
             .digest()
+    );
+}
+
+#[test]
+fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference() {
+    let value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/multiple-sandboxes.yaml")).unwrap();
+    assert!(
+        jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let rows = nemoclaw_sdk::compile::targets(&document, &generations()).unwrap();
+    let sandboxes: Vec<_> = rows.iter().filter(|row| row.kind == "sandbox").collect();
+    assert_eq!(sandboxes.len(), 5);
+    assert_eq!(rows.iter().filter(|row| row.kind == "provider").count(), 1);
+    let mut counts = std::collections::BTreeMap::new();
+    let mut names = std::collections::BTreeSet::new();
+    for sandbox in &document.spec.sandboxes {
+        let harness = document.sandbox_harness(sandbox).unwrap();
+        *counts.entry(harness.kind.as_str()).or_insert(0) += 1;
+        assert!(names.insert(sandbox.name.as_str()));
+        let row = sandboxes
+            .iter()
+            .find(|row| row.values["name"] == sandbox.name)
+            .unwrap();
+        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
+        let runtime_agents = settings["agents"].as_array();
+        if harness.kind == "openclaw" {
+            assert_eq!(runtime_agents.unwrap().len(), 1);
+        } else {
+            assert_eq!(row.values["agent_name"], sandbox.agent.name);
+        }
+        if let Some(agents) = runtime_agents {
+            assert!(agents.len() <= 1);
+            if let Some(agent) = agents.first() {
+                assert_eq!(agent["name"], sandbox.agent.name);
+            }
+        }
+    }
+    assert_eq!(
+        counts,
+        [("openclaw", 2), ("deepagents", 2), ("pi", 1)].into()
     );
 }

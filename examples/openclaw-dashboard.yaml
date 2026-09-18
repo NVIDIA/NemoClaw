@@ -31,15 +31,15 @@ spec:
           dashboard:
             port: 18800
             bind: 127.0.0.1
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: example-reasoning-model
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: example-reasoning-model
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high

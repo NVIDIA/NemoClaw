@@ -249,7 +249,8 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
     let custom = Document::parse(input.as_bytes()).unwrap();
     for name in ["qwen3:4b", "my-custom-model", "gpt-4o-mini"] {
         let mut document = custom.clone();
-        document.spec.sandboxes[0].agents[0]
+        document.spec.sandboxes[0]
+            .agent
             .inference
             .as_mut()
             .unwrap()
@@ -261,7 +262,8 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
         assert_eq!(Document::parse(yaml.as_bytes()).unwrap(), document);
     }
     let mut catalog = custom;
-    let route = &mut catalog.spec.sandboxes[0].agents[0]
+    let route = &mut catalog.spec.sandboxes[0]
+        .agent
         .inference
         .as_mut()
         .unwrap()
@@ -279,11 +281,11 @@ fn pi_model_is_an_optional_opaque_object() {
     )
     .unwrap();
     let opaque = serde_json::json!({"contextWindow": "Pi validates this", "futureOption": {"nested": [null, 7, true]}, "thinkingLevelMap": {"off": null}});
-    tree["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["piModel"] =
+    tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"] =
         opaque.clone();
     let parsed = Document::parse(tree.to_string().as_bytes()).unwrap();
     assert_eq!(
-        serde_json::to_value(&parsed).unwrap()["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"]
+        serde_json::to_value(&parsed).unwrap()["spec"]["sandboxes"][0]["agent"]["inference"]["routes"]
             [0]["overrides"]["piModel"],
         opaque
     );
@@ -297,7 +299,7 @@ fn pi_model_is_an_optional_opaque_object() {
         serde_json::json!(7),
         Value::Null,
     ] {
-        tree["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["piModel"] =
+        tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"] =
             invalid;
         assert!(Document::parse(tree.to_string().as_bytes()).is_err());
     }
@@ -312,7 +314,8 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
         .map(|name| (name.into(), "a".repeat(32)))
         .into();
     let before = targets(&document, &generations).unwrap();
-    document.spec.sandboxes[0].agents[0]
+    document.spec.sandboxes[0]
+        .agent
         .inference
         .as_mut()
         .unwrap()

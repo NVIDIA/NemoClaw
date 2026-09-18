@@ -44,7 +44,7 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
                     .clone();
                 if provider_scope == 2 {
                     let route =
-                        &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0];
+                        &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
                     route.as_object_mut().unwrap().remove("providerRef");
                     route["provider"] = provider;
                 } else {
@@ -56,7 +56,7 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
                     scope["inferenceProviders"] = json!([provider]);
                 }
                 if inference_scope != 0 {
-                    let agent = &mut value["spec"]["sandboxes"][0]["agents"][0];
+                    let agent = &mut value["spec"]["sandboxes"][0]["agent"];
                     let inference = agent.as_object_mut().unwrap().remove("inference").unwrap();
                     agent["inferenceRef"] = json!("chat");
                     let scope = if inference_scope == 1 {

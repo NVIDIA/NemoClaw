@@ -1,5 +1,5 @@
 {
-  "digest": "eac47d47b08dc24495b3af4cdeaa6b6421803b99be812f6c83c5a16e592c7618",
+  "digest": "06f201806211c7cc0ef298776cb51b247f15b98a44a87eb603fe7eca2ce94d09",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -21,31 +21,29 @@
       ],
       "sandboxes": [
         {
-          "agents": [
-            {
-              "inference": {
-                "routes": [
-                  {
-                    "name": "primary",
-                    "overrides": {
-                      "model": "qwen3:4b",
-                      "piModel": {
-                        "api": "openai-completions",
-                        "contextWindow": 8192,
-                        "input": [
-                          "text"
-                        ],
-                        "maxTokens": 2048,
-                        "reasoning": false
-                      }
-                    },
-                    "providerRef": "local"
-                  }
-                ]
-              },
-              "name": "main"
-            }
-          ],
+          "agent": {
+            "inference": {
+              "routes": [
+                {
+                  "name": "primary",
+                  "overrides": {
+                    "model": "qwen3:4b",
+                    "piModel": {
+                      "api": "openai-completions",
+                      "contextWindow": 8192,
+                      "input": [
+                        "text"
+                      ],
+                      "maxTokens": 2048,
+                      "reasoning": false
+                    }
+                  },
+                  "providerRef": "local"
+                }
+              ]
+            },
+            "name": "main"
+          },
           "harness": {
             "kind": "pi"
           },

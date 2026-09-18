@@ -19,7 +19,7 @@ fn generations() -> Generations {
 }
 fn oracle(mut value: Value) -> Value {
     value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(json!({"name":"oracle","provider":"anthropic","api":"anthropic-messages","endpoint":"https://oracle.example/v1","credential":{"env":"ORACLE_KEY"}}));
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = json!("smart");
     inference["routes"]
         .as_array_mut()
@@ -32,14 +32,17 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
     let input: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     let mut value = oracle(input);
-    let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
-    other["inference"]["routes"].as_array_mut().unwrap().pop();
-    other["inference"]
+    other["agent"]["inference"]["routes"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    other["agent"]["inference"]
         .as_object_mut()
         .unwrap()
         .remove("default");
-    value["spec"]["sandboxes"][0]["agents"]
+    value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .push(other);
@@ -65,9 +68,20 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         settings["agents"][0]["inference"]["models"]["smart"]["connection"]["api_key_env"],
         "NEMOCLAW_INFERENCE_ORACLE_KEY"
     );
+    let other = rows
+        .iter()
+        .find(|row| row.kind == "sandbox" && row.values["name"] == "other")
+        .unwrap();
+    let other_settings: Value = serde_json::from_str(&other.values["inference_json"]).unwrap();
     assert_eq!(
-        settings["agents"][1]["inference"]["models"]["primary"]["connection"]["api_key_env"],
+        other_settings["agents"][0]["inference"]["models"]["primary"]["connection"]["api_key_env"],
         "NEMOCLAW_ANONYMOUS_API_KEY"
+    );
+    assert!(other_settings["agents"][0]["inference"]["models"]["smart"].is_null());
+    let other_policy: Value = serde_json::from_str(&other.values["policy_json"]).unwrap();
+    assert_eq!(
+        other_policy["network_policies"].as_object().unwrap().len(),
+        1
     );
     let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
     assert_eq!(policy["network_policies"].as_object().unwrap().len(), 2);
@@ -121,7 +135,7 @@ fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_defau
     let value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
     let model =
-        value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["model"]
+        value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"]
             .clone();
     let local_name = value["spec"]["inferenceProviders"][0]["name"]
         .as_str()
@@ -157,7 +171,7 @@ fn multiple_selected_managed_lifecycles_are_rejected_before_resources_are_create
         .as_array_mut()
         .unwrap()
         .push(other);
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = json!("primary");
     let mut route = inference["routes"][0].clone();
     route["name"] = json!("other");
@@ -187,7 +201,7 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         .as_array_mut()
         .unwrap()
         .push(other);
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     inference["default"] = json!("primary");
     let mut route = inference["routes"][0].clone();
     route["name"] = json!("other");

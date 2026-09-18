@@ -35,11 +35,11 @@ spec:
             internalPort: 19120
             tui:
               enabled: true
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:1.7b
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:1.7b

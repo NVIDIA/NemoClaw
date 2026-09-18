@@ -79,13 +79,7 @@ fn invalid_telemetry_is_rejected_before_planning() {
         assert!(!schema.is_valid(&value));
     }
     let mut value = input();
-    let mut agent = value["spec"]["sandboxes"][0]["agents"][0].clone();
-    agent["name"] = json!("reader");
-    agent["harness"]["observability"] = telemetry();
-    value["spec"]["sandboxes"][0]["agents"]
-        .as_array_mut()
-        .unwrap()
-        .push(agent);
+    value["spec"]["sandboxes"][0]["agent"]["harness"]["observability"] = telemetry();
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(
         !schema.is_valid(&value),

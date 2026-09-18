@@ -8,8 +8,8 @@ Choose a checked-in [example](../examples/), set a fresh deployment UUID and ava
 Each document contains one to 32 named sandboxes, each with exactly one harness configuration.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses in one state directory.
 [OpenClaw and Pi agents](agents.md) can select multiple model choices.
-OpenClaw and Deep Agents support multiple agents in one sandbox; each Deep Agents instance selects one model.
-Other harnesses currently require one agent.
+Each sandbox declares one `agent` and hosts one Fabric runtime; each Deep Agents instance selects one model.
+Use separate sandboxes for additional agents, with shared inference definitions when they use the same providers.
 Multiple selected providers can own independent managed vLLM services.
 Managed Ollama and its proxy still share a singleton lifecycle; see [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
@@ -75,8 +75,7 @@ Apply requests health from the existing hosted Fabric runtime after configuratio
 It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
-The JSON result includes a `health` entry for each hosted Fabric runtime and its agent names.
-A multi-agent Deep Agents sandbox has one entry per agent runtime; OpenClaw shares one runtime observation across its agent roster.
+The JSON result includes one `health` entry per sandbox, identifying its sole agent and hosted Fabric runtime.
 These observations do not separately test every inference route or integration.
 When available, `report` retains Fabric's liveness, activity, readiness, reason codes, timestamps, and dependency observations.
 A busy runtime can complete apply if Fabric reports it responsive and ready to accept work.
@@ -216,7 +215,8 @@ Apply recomputes its plan; a successful earlier plan does not reserve resources 
 
 ### Multiple Sandboxes
 
-Sandbox names must be unique within a deployment; agent names must be unique within their sandbox.
+Sandbox names must be unique within a deployment; each sandbox declares one named agent.
+Agent names may repeat across sandboxes.
 Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
@@ -233,7 +233,7 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 | OpenClaw model choices or a Pi catalog with multiple choices or a tool policy | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
 | Pi model or native model metadata with one declared choice and no tool policy | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes the immutable native provider profile binding; use a separate deployment |
-| Sandbox image, harness, API, OpenClaw tuning, roster/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Sandbox image, harness, API, OpenClaw tuning, agent/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed vLLM process image or serving specification | May replace the process only after checking retained storage and the established engine/resource identities; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound runtime engine | Cannot retarget the existing state; create a separate deployment |

@@ -70,12 +70,14 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
         )
         .unwrap();
-        document.spec.sandboxes[0].agents[0]
+        document.spec.sandboxes[0]
+            .agent
             .inference
             .as_mut()
             .unwrap()
             .routes[0]
-            .overrides = pi.spec.sandboxes[0].agents[0]
+            .overrides = pi.spec.sandboxes[0]
+            .agent
             .inference
             .as_ref()
             .unwrap()
@@ -133,7 +135,8 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     );
     if harness == "pi" {
         let mut changed_model = document.clone();
-        changed_model.spec.sandboxes[0].agents[0]
+        changed_model.spec.sandboxes[0]
+            .agent
             .inference
             .as_mut()
             .unwrap()

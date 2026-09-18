@@ -18,14 +18,14 @@ spec:
     - name: assistant
       harness:
         kind: openclaw
-      agents:
-        - name: researcher
-          inference:
-            routes:
-              - name: primary
-                provider:
-                  name: local
-                  provider: openai
-                  endpoint: http://172.20.0.1:11446/v1
-                overrides:
-                  model: qwen3:4b
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              provider:
+                name: local
+                provider: openai
+                endpoint: http://172.20.0.1:11446/v1
+              overrides:
+                model: qwen3:4b

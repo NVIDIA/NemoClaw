@@ -261,12 +261,12 @@ impl Deployment {
                 }
                 if let Ok(previous) = record.document.sandbox(&sandbox.name)
                     && document
-                        .agent_inference(sandbox.sole_agent()?)?
+                        .agent_inference(&sandbox.agent)?
                         .default_route()?
                         .overrides
                         != record
                             .document
-                            .agent_inference(previous.sole_agent()?)?
+                            .agent_inference(&previous.agent)?
                             .default_route()?
                             .overrides
                 {
@@ -304,7 +304,7 @@ impl Deployment {
                     "pi_model_config".into(),
                     serde_json::to_string(
                         &document
-                            .agent_inference(definition.sole_agent()?)?
+                            .agent_inference(&definition.agent)?
                             .default_route()?
                             .overrides,
                     )
@@ -344,33 +344,17 @@ impl Deployment {
             (self.progress)(Progress::Readiness);
             self.timed("sandbox.ready", async {
                 if document.sandbox_harness(definition)?.kind == "pi" {
-                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(definition.sole_agent()?)?.default_route()?.overrides)
+                    sandbox.insert("pi_model_config".into(), serde_json::to_string(&document.agent_inference(&definition.agent)?.default_route()?.overrides)
                         .map_err(|_| Error::State("cannot encode Pi model configuration"))?);
                     tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=client.configure_pi(&sandbox, false)=>result?}
                 }
                 client.ready(&sandbox, cancel).await?;
                 Ok(())
             }).await?;
-            let separate = document.sandbox_harness(definition)?.kind == "deepagents"
-                && definition.agents.len() > 1;
-            let groups: Vec<Vec<String>> = if separate {
-                definition
-                    .agents
-                    .iter()
-                    .map(|agent| vec![agent.name.clone()])
-                    .collect()
-            } else {
-                vec![
-                    definition
-                        .agents
-                        .iter()
-                        .map(|agent| agent.name.clone())
-                        .collect(),
-                ]
-            };
-            for agents in groups {
+            {
+                let agents = vec![definition.agent.name.clone()];
                 let health = self.timed("fabric.health", async {
-                    tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health_for(&sandbox, separate.then(|| agents[0].as_str())) => result }
+                    tokio::select! { () = cancel.cancelled() => Err(Error::Cancelled), result = client.health_for(&sandbox, None) => result }
                 }).await?;
                 let health = crate::SandboxHealth {
                     sandbox: definition.name.clone(),

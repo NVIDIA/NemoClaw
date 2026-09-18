@@ -18,7 +18,7 @@ fn inline(mut value: Value) -> Value {
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders");
-    let route = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0];
+    let route = &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider;
     value
@@ -65,7 +65,7 @@ fn route_requires_exactly_one_provider_form() {
         json!({"providerRef":"local", "provider":input()["spec"]["inferenceProviders"][0]}),
     ] {
         let mut value = input();
-        let route = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0];
+        let route = &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
         route.as_object_mut().unwrap().remove("providerRef");
         route
             .as_object_mut()
@@ -99,7 +99,7 @@ fn unused_provider_definitions_require_no_secrets_or_resources() {
 fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
     let mut value = inline(input());
     value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
-    let agent = &mut value["spec"]["sandboxes"][0]["agents"][0];
+    let agent = &mut value["spec"]["sandboxes"][0]["agent"];
     agent["auth"] = json!({"method":"api-key"});
     agent["inference"]["routes"][0]["provider"]["endpoint"] =
         json!("https://inference.example.test/v1");
@@ -132,7 +132,7 @@ fn references_reject_missing_names_shadowing_and_distinct_inline_instances() {
     let original = input();
     let provider = original["spec"]["inferenceProviders"][0].clone();
     let mut missing = original.clone();
-    missing["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["providerRef"] =
+    missing["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
         json!("missing");
     let mut duplicate = original.clone();
     duplicate["spec"]["inferenceProviders"]
@@ -143,24 +143,9 @@ fn references_reject_missing_names_shadowing_and_distinct_inline_instances() {
     shadow["spec"]["sandboxes"][0]["inferenceProviders"] = json!([provider.clone()]);
     let mut inline_shadow = inline(original.clone());
     inline_shadow["spec"]["inferenceProviders"] = json!([provider]);
-    let mut siblings = inline(original.clone());
-    let mut other = siblings["spec"]["sandboxes"][0]["agents"][0].clone();
-    other["name"] = json!("other");
-    siblings["spec"]["sandboxes"][0]["agents"]
-        .as_array_mut()
-        .unwrap()
-        .push(other);
     let mut empty_ref = inline(original);
-    empty_ref["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["providerRef"] =
-        json!("");
-    for value in [
-        missing,
-        duplicate,
-        shadow,
-        inline_shadow,
-        siblings,
-        empty_ref,
-    ] {
+    empty_ref["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] = json!("");
+    for value in [missing, duplicate, shadow, inline_shadow, empty_ref] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }

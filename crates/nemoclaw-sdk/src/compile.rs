@@ -50,17 +50,12 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     for sandbox in sandboxes {
         let harness = document.sandbox_harness(sandbox)?;
         let settings = document.sandbox_runtime_settings(sandbox)?;
+        // OpenClaw's hosted runtime identity remains the sandbox name; its native agent
+        // identity is carried separately in the runtime settings.
         let agent_name = if harness.kind == "openclaw" {
             &sandbox.name
-        } else if harness.kind == "deepagents" {
-            &sandbox
-                .agents
-                .iter()
-                .min_by_key(|agent| &agent.name)
-                .expect("validated roster")
-                .name
         } else {
-            &sandbox.sole_agent()?.name
+            &sandbox.agent.name
         };
         let mut values: Row = [
             ("name".into(), sandbox.name.clone()),

@@ -8,7 +8,7 @@ const V0_REVISION: &str = "f47724f29838fe08898993fad1c8c6b7fcb3e080";
 const V0_MANIFEST_SHA256: &str = "35c28e708e5a89a77a52fd91cbd587c1c39621014bed096464c36bbc37409b9b";
 
 #[test]
-fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
+fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent() {
     let v0 = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0.yaml");
     let digest = Sha256::digest(v0)
         .iter()
@@ -17,14 +17,26 @@ fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
     assert_eq!(digest, V0_MANIFEST_SHA256);
     assert_eq!(V0_REVISION.len(), 40);
 
-    let v1 = Document::parse(
-        include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-    )
-    .unwrap();
-    let expected =
+    let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+    assert!(
+        Document::parse(raw.as_slice()).is_err(),
+        "legacy agents lists require explicit reauthoring"
+    );
+    let v1 =
         Document::parse(include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice())
             .unwrap();
-    assert_eq!(v1, expected);
+    // Compare the separately authored fixture with the historical input. This
+    // test-only projection does not add a legacy import path to the SDK.
+    let mut authored: serde_json::Value =
+        serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
+    let sandbox = authored["spec"]["sandboxes"][0].as_object_mut().unwrap();
+    let agents = sandbox.remove("agents").unwrap();
+    assert_eq!(agents.as_array().unwrap().len(), 1);
+    sandbox.insert("agent".into(), agents[0].clone());
+    assert_eq!(
+        Document::parse(authored.to_string().as_bytes()).unwrap(),
+        v1
+    );
     let gateway = &v1.spec.gateway;
     assert_eq!(gateway.management, "managed");
     assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
@@ -77,7 +89,7 @@ fn hosted_openclaw_scenario_parses_the_raw_v0_export_as_v1_desired_state() {
             "raw export policy must grant the v1 runtime root {runtime_root}"
         );
     }
-    let agent = &sandbox.agents[0];
+    let agent = &sandbox.agent;
     assert_eq!(v1.sandbox_harness(sandbox).unwrap().kind, "openclaw");
     let inference = v1.agent_inference(agent).unwrap();
     assert_eq!(
@@ -287,7 +299,7 @@ mod live {
             .unwrap();
         assert_eq!(process.run_as_user.as_deref(), Some("1000"));
         assert_eq!(process.run_as_group.as_deref(), Some("1000"));
-        let agent = &sandbox.agents[0];
+        let agent = &sandbox.agent;
         assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, "openclaw");
         let inference = document.agent_inference(agent).unwrap();
         assert_eq!(
@@ -410,7 +422,7 @@ mod live {
         v0_export_evidence["redactedYaml"] =
             json!(String::from_utf8(v0_export_bytes.clone()).unwrap());
         let document = Document::parse(v0_export_bytes.as_slice())
-            .expect("the curated raw v0 export must parse through the ordinary v1 path");
+            .expect("the curated export must use current singular agent syntax; legacy agents lists are unsupported");
         validate_scenario_document(&document);
         let image = &document.spec.sandboxes[0].image.ref_;
         assert_eq!(

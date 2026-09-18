@@ -41,7 +41,7 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   sandboxes:
-  - name: research
+  - name: researcher
     image:
       ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
     runtime:
@@ -52,8 +52,8 @@ spec:
       kind: deepagents
       execution:
         timeoutSeconds: 300
-    agents:
-    - name: researcher
+    agent:
+      name: researcher
       inference:
         routes:
         - name: primary
@@ -64,7 +64,19 @@ spec:
       tools:
         allow:
         - read
-    - name: writer
+  - name: writer
+    image:
+      ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: deepagents
+      execution:
+        timeoutSeconds: 300
+    agent:
+      name: writer
       inference:
         routes:
         - name: primary

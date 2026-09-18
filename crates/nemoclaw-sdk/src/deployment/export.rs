@@ -151,7 +151,7 @@ async fn export_sandbox(
             "pi_model_config".into(),
             serde_json::to_string(
                 &document
-                    .agent_inference(definition.sole_agent()?)?
+                    .agent_inference(&definition.agent)?
                     .default_route()?
                     .overrides,
             )
@@ -246,7 +246,7 @@ mod tests {
         )
         .unwrap();
         value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle","provider":"openai","endpoint":"https://oracle.example/v1","credential":{"env":"OLD_KEY"}}));
-        let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
         inference["default"] = serde_json::json!("primary");
         inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();

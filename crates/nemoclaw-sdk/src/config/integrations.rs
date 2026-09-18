@@ -50,76 +50,76 @@ impl Sandbox {
             ));
         }
         let mut bindings = BTreeMap::new();
-        for agent in &self.agents {
-            validate_definitions(&agent.integrations)?;
-            if agent
-                .integrations
-                .keys()
-                .any(|name| shared.contains_key(name) || self.integrations.contains_key(name))
-            {
+        let agent = &self.agent;
+        validate_definitions(&agent.integrations)?;
+        if agent
+            .integrations
+            .keys()
+            .any(|name| shared.contains_key(name) || self.integrations.contains_key(name))
+        {
+            return Err(ConfigError::new(
+                "agent integration names must not shadow enclosing definitions",
+            ));
+        }
+        let mut names = BTreeSet::new();
+        let references = agent
+            .integration_refs
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let definition = self
+                    .integrations
+                    .get(name)
+                    .or_else(|| shared.get(name))
+                    .ok_or_else(|| {
+                        super::references::missing_reference(
+                            &format!(
+                                "spec.sandboxes[{}].agent.integrationRefs[{index}]",
+                                super::references::diagnostic_name(&self.name)
+                            ),
+                            "integration",
+                            name,
+                            shared
+                                .keys()
+                                .chain(self.integrations.keys())
+                                .map(String::as_str),
+                        )
+                    })?;
+                Ok((None, name.as_str(), definition))
+            });
+        let inline = agent
+            .integrations
+            .iter()
+            .map(|(name, definition)| Ok((Some(agent.name.as_str()), name.as_str(), definition)));
+        for definition in references.chain(inline) {
+            let (owner, name, definition) = definition?;
+            if !names.insert(name) {
                 return Err(ConfigError::new(
-                    "agent integration names must not shadow enclosing definitions",
+                    "agent integration references must be unique",
                 ));
             }
-            let mut names = BTreeSet::new();
-            let references = agent
-                .integration_refs
-                .iter()
-                .enumerate()
-                .map(|(index, name)| {
-                    let definition = self
-                        .integrations
-                        .get(name)
-                        .or_else(|| shared.get(name))
-                        .ok_or_else(|| {
-                            super::references::missing_reference(
-                                &format!(
-                                    "spec.sandboxes[{}].agents[{}].integrationRefs[{index}]",
-                                    super::references::diagnostic_name(&self.name),
-                                    super::references::diagnostic_name(&agent.name)
-                                ),
-                                "integration",
-                                name,
-                                shared
-                                    .keys()
-                                    .chain(self.integrations.keys())
-                                    .map(String::as_str),
-                            )
-                        })?;
-                    Ok((None, name.as_str(), definition))
-                });
-            let inline = agent.integrations.iter().map(|(name, definition)| {
-                Ok((Some(agent.name.as_str()), name.as_str(), definition))
-            });
-            for definition in references.chain(inline) {
-                let (owner, name, definition) = definition?;
-                if !names.insert(name) {
+            match definition {
+                Integration::WebSearch(_)
+                    if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
+                {
                     return Err(ConfigError::new(
-                        "agent integration references must be unique",
+                        "web search requires unrestricted OpenClaw agents",
                     ));
                 }
-                match definition {
-                    Integration::WebSearch(_)
-                        if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
-                    {
-                        return Err(ConfigError::new(
-                            "web search requires unrestricted OpenClaw agents",
-                        ));
-                    }
-                    Integration::WebSearch(_) => {}
-                }
-                bindings
-                    .entry((owner, name))
-                    .or_insert_with(|| IntegrationBinding {
-                        name,
-                        agent: owner,
-                        definition,
-                        agent_refs: Vec::new(),
-                    })
-                    .agent_refs
-                    .push(&agent.name);
+                Integration::WebSearch(_) => {}
             }
+            bindings
+                .entry((owner, name))
+                .or_insert_with(|| IntegrationBinding {
+                    name,
+                    agent: owner,
+                    definition,
+                    agent_refs: Vec::new(),
+                })
+                .agent_refs
+                .push(&agent.name);
         }
+
         Ok(bindings.into_values().collect())
     }
 }
