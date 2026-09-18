@@ -256,6 +256,23 @@ describe("inactive MXC native-artifact bootstrap", () => {
     expect(verifyAndCreate).not.toHaveBeenCalled();
   });
 
+  it("accepts an OpenShell sandbox name at the maximum length (#12051)", async () => {
+    const sandboxName = "a".repeat(19);
+    const verifyAndCreate = vi.fn(async (plan: RuntimeProviderNativeArtifactBootstrapPlan) =>
+      verifiedCreateOutcome(plan),
+    );
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate,
+      verifyReadiness: vi.fn(async (plan) => readyEvidence(plan)),
+    });
+
+    await expect(bootstrap.run({ ...bootstrapInput(), sandboxName })).resolves.toMatchObject({
+      outcome: "ready",
+      sandboxName,
+    });
+    expect(verifyAndCreate).toHaveBeenCalledWith(expect.objectContaining({ sandboxName }));
+  });
+
   it("rejects a sandbox name above the OpenShell limit before create (#12051)", async () => {
     const verifyAndCreate = vi.fn();
     const bootstrap = nativeBootstrap({
