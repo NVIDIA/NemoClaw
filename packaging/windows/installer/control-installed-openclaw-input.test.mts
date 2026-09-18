@@ -80,7 +80,9 @@ test("the exact observer reader starts discovery while its Stop pipe remains ope
     path.join(path.dirname(fileURLToPath(import.meta.url)), "control-installed-openclaw.ps1"),
     "utf8",
   );
-  const reader = source.match(/^\$inputReader = .+\r?\n\$inputLine = .+$/mu)?.[0];
+  const reader = source.match(
+    /^\$inputReader = .+\r?\n\$inputRead = .+\r?\n\$inputLine = .+$/mu,
+  )?.[0];
   assert(reader);
   assert.equal(await heldInputControl(reader), true);
 });
