@@ -9,11 +9,12 @@ Commit bodies retain the test-first implementation decisions.
 
 The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as a reviewed historical export matched to separately authored current v1 intent, followed by a new v1 lifecycle.
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
-The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
+The live scenario must be selected explicitly and reports its assertions through Cargo without a separate JSON report.
 
-The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) compares a reviewed historical export with separately authored current v1 intent and defines an explicitly gated owned lifecycle for issue #12019.
+The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) compares a reviewed historical export with separately authored current v1 intent and defines an explicitly selected owned lifecycle for issue #12019.
 It adds Hermes interface and runtime-policy preservation without introducing a production migration translator or extending the result to Relay or Switchyard.
-It is not qualification evidence until a native Linux run and its redacted lifecycle evidence are reviewed.
+The exact native Linux ARM64 scenario passed at revision `8fbd792742`: it received the real Hermes response `FOUR`, preserved resource identities through unchanged apply and export/reapply, destroyed its owned workloads, and removed the retained test resources after label-checked observation.
+That result applies only to the named source revision, immutable pins, and test host; Cargo recorded the assertions and no separate JSON report was produced.
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.

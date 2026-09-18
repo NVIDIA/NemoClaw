@@ -26,31 +26,44 @@ cargo test -p nemoclaw-e2e --test hosted_parity
 
 ## Live Verification
 
-The ignored test applies the authored v1 document to a fresh owned Linux/Docker deployment, requires a real Hermes reply through NVIDIA hosted inference, verifies an unchanged apply, exports and reapplies the v1 document, destroys the owned workloads, and retains redacted evidence alongside the exact historical export comparison.
-Its lifecycle and security rules are the same as the [OpenClaw hosted scenario](openclaw-nvidia-hosted-linux-docker.md): use an immutable verified bundle, an owned state directory, and a dedicated `NVIDIA_INFERENCE_API_KEY`; never put the credential value in YAML, arguments, state, evidence, or repository files.
+The live test checks the public deployment operations:
 
-Create `ownership.json` in the state directory before running:
+1. Parse the authored v1 YAML and compare it with the raw export's portable intent.
+2. Apply the owned deployment and require readiness.
+3. Request a real Hermes response through NVIDIA hosted inference and require `FOUR`.
+4. Require a subsequent plan and apply to report no changes while preserving resource identities.
+5. Export the configuration, compare it with the input, reapply it, and require the same identities.
+6. Destroy the owned workloads while retaining the workspace and gateway storage.
 
-```json
-{
-  "scenario": "hermes-nvidia-hosted-linux-docker",
-  "deploymentUid": "the-uid-from-the-v0-export",
-  "owned": true
-}
-```
+The test reports assertion failures through Cargo and writes no separate report.
 
-Set the same absolute-path variables described by the OpenClaw scenario, including both `NEMOCLAW_LIVE_V0_EXPORT` and `NEMOCLAW_LIVE_V1_CONFIG`, then run a clean native-Linux qualification candidate with the Hermes-specific gate:
+Use an owned native Linux Docker daemon, a fresh deployment UID, available gateway port and subnet, and an unused state-directory path whose parent exists.
+Supply the referenced `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, command arguments, state, or repository files.
+Use a verified bundle built from the selected revision and make the immutable Hermes image available to the selected Docker daemon.
+A GPU is not required because the configuration selects hosted inference.
+
+From the repository root, set absolute paths and run the selected test:
 
 ```sh
-export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-12019
-cargo test -p nemoclaw-e2e --test hosted_parity \
+NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
+NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
+NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
+  cargo test -p nemoclaw-e2e --test hosted_parity \
   authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle \
-  -- --ignored --nocapture
+  -- --ignored
 ```
 
-For non-qualifying Docker Desktop feedback, use `issue-12019-local-feedback`.
-The test writes `hermes-nvidia-hosted-parity.json` and `exported.yaml` under the owned state directory.
-Every result remains `qualified: false` until the curated input and redacted lifecycle evidence are externally reviewed.
+The test creates the state directory and rejects an existing path.
+It does not require a Git revision variable, a clean checkout, an issue acknowledgement, or an ownership-marker file.
+Do not run live tests as an ignored-test aggregate.
 
-After a failure, retain the exact artifact, bundle, and state and reapply only the identical pending intent.
-After observation, destroy only the deployment bound to that owned state and confirm its sandbox and managed gateway are absent.
+## Recovery and Cleanup
+
+After a failed apply, keep both inputs, the bundle, and the state directory.
+Follow [interrupted-operation recovery](../../usage.md#recover-an-interrupted-operation) with the same v1 YAML and state.
+Do not create another state directory for the same deployment UID.
+
+Use [destroy](../../usage.md#destroy) to remove a failed test's owned workloads when appropriate.
+Successful test completion already destroys those workloads and retains the workspace and gateway storage.
+Retire the upstream NVIDIA key separately when it is no longer needed.
