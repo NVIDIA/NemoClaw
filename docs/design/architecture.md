@@ -22,7 +22,7 @@ flowchart TD
     SDK -->|compile and check saved plans| Tofu[OpenTofu child process]
     Tofu -->|provider protocol| Provider[Provider process]
     Provider --> Backend[Shared SDK backend operations]
-    SDK -->|preflight, export, and active probes| Backend
+    SDK -->|validation, export, and active probes| Backend
     Backend --> OpenShell[OpenShell API]
     Backend --> Docker[Docker API]
     Backend --> Ollama[Ollama API]
@@ -51,7 +51,7 @@ The local state directory retains distinct kinds of evidence:
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
 | Intent document and digest | Configuration selected for an operation | An interrupted graph mutation rejects different intent until reconciled. |
 | OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check must not erase a created container. |
-| Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining graph boundary. |
+| Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
 An observation has three outcomes, with different consequences:
 

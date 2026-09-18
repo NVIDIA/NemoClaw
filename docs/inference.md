@@ -30,7 +30,7 @@ Select a gateway, current agent image, endpoint, and models using the prerequisi
 
 The adapter configures each agent's native model aliases, initial model, and model-selection policy.
 The model-selection policy restricts the native agent; OpenShell enforces provider access at its sandbox boundary.
-This configuration supplies no automatic fallback, oracle consultation, or agent delegation behavior.
+This configuration supplies no automatic fallback, consultation between models, or agent delegation behavior.
 Apply installs provider attachments and checks the declared agent configuration without requesting model responses.
 Missing credential references still fail deployment; actual endpoint authentication and model compatibility require explicit inference verification.
 Use native requests to verify model selection through the agent interface separately.
@@ -56,7 +56,7 @@ Different sandboxes can reuse local provider names.
 
 Replace the example endpoints, model IDs, deployment UID, and image for your environment.
 The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#prepare-an-external-endpoint).
-Set `ORACLE_API_KEY` on the applying host; requests to a real hosted API may incur charges.
+Set `HOSTED_API_KEY` on the applying host; requests to a real hosted API may incur charges.
 Use the [deployment workflow](usage.md) with fresh state, then verify each configured model through its native agent interface.
 
 OpenShell receives a distinct provider credential key for each credentialed registration; the sandbox receives placeholders rather than the resolved upstream keys.
@@ -82,7 +82,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | NemoClaw should run Ollama and manage its model lifecycle | Declare `ollama`, a local engine, an existing Docker network, a pinned image, and a reachable private endpoint | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare `ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare `service` with the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
-| The managed vLLM engine is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
+| The Docker daemon running vLLM is reached through SSH | Select explicit `service.placement` and a private `service.publication` endpoint; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.

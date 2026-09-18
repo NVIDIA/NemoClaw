@@ -7,8 +7,8 @@ use std::{fs, path::PathBuf, process::Command, sync::Arc};
 struct FixtureCredential;
 impl Secrets for FixtureCredential {
     fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-        assert_eq!(name, "ORACLE_API_KEY");
-        Ok("owned-oracle-fixture-value".into())
+        assert_eq!(name, "HOSTED_API_KEY");
+        Ok("owned-hosted-fixture-value".into())
     }
 }
 
@@ -35,7 +35,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     other.apply(&second, &cancel).await.unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     let state = fs::read(first_state.path().join("terraform.tfstate")).unwrap();
-    assert!(!String::from_utf8_lossy(&state).contains("owned-oracle-fixture-value"));
+    assert!(!String::from_utf8_lossy(&state).contains("owned-hosted-fixture-value"));
     let executable = bundle
         .join("bin")
         .join(nemoclaw_sdk::bundle::executable("nemoclaw"));
@@ -77,7 +77,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
             .spec
             .as_mut()
             .unwrap();
-        assert_eq!(first_spec.providers, ["oracle", "local"]);
+        assert_eq!(first_spec.providers, ["hosted", "local"]);
         first_spec.providers.remove(0);
     }
     assert!(deployment.plan(&first, &cancel).await.is_err());
@@ -101,7 +101,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
         .as_mut()
         .unwrap()
         .providers
-        .insert(0, "oracle".into());
+        .insert(0, "hosted".into());
     for directory in [first_state.path(), second_state.path()] {
         let result = Command::new(&executable)
             .args(["destroy", "--state-dir"])

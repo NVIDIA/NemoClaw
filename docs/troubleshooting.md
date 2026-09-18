@@ -4,9 +4,9 @@
 # Diagnose a Failed Deployment Operation
 
 Retain the original YAML, matching bundle, and entire state directory when an operation fails.
-Composed onboarding publishes its selected YAML before credential fulfillment and plan, so a credential, plan, or apply failure leaves that recovery input in place.
+Onboarding saves its selected YAML before resolving credentials and planning, so a credential, plan, or apply failure leaves that recovery input in place.
 Retry the failed stage with standalone `nemoclaw plan FILE` or `nemoclaw apply FILE` after resolving the cause; do not rerun authoring and replace the deployment identity.
-If you decline the distinct apply prompt, the published YAML remains available and no apply is attempted.
+If you decline the separate apply prompt, the saved YAML remains available and no apply is attempted.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
 See [state locations](state.md) and the [recovery procedure](usage.md#updates-and-recovery).
 
@@ -21,14 +21,14 @@ When ordinary planning is appropriate, collect a read-only runtime preview from 
 
 ```sh
 diagnostic_dir=$(mktemp -d)
-nemoclaw plan --state-dir .local/deployment deployment.yaml > "$diagnostic_dir/plan.json" 2> "$diagnostic_dir/plan.stderr"
+nemoclaw plan -o json --state-dir .local/deployment deployment.yaml > "$diagnostic_dir/plan.json" 2> "$diagnostic_dir/plan.stderr"
 diagnostic_status=$?
 printf 'Exit status: %s\nDiagnostics: %s\n' "$diagnostic_status" "$diagnostic_dir"
 ```
 
 Replace the YAML and state paths with the ones from the failed operation.
 Planning can write local planning files, but does not mutate runtime resources.
-For an unfinished destroy, use `plan --destroy` with the same state instead of the YAML command.
+For an unfinished destroy, use `plan --destroy -o json` with the same state instead of the YAML command.
 On nonzero exit, read `plan.stderr`; empty stdout does not mean the deployment has no changes.
 Review diagnostics before sharing them: endpoints, resource identities, and agent output may be private even when credential values are redacted.
 Do not attach environment dumps, TLS private keys, interface tokens, or the entire state directory to a public report.

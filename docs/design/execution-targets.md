@@ -22,7 +22,7 @@ The design separates three values:
 | Inference publication | How does the sandbox's OpenShell proxy reach the model API? | A private host address and declared `/v1` URL. |
 
 This separation permits an external OpenShell gateway to own Podman sandboxes while a selected Docker daemon owns inference.
-It does not require the inference engine to own the gateway or sandbox.
+The Docker daemon running inference does not need to run the OpenShell gateway or its sandboxes.
 
 The diagram distinguishes management traffic from an agent's inference request:
 
@@ -182,7 +182,7 @@ The SDK and provider subprocess reconstruct the same fixed, read-only SSH host c
 It reads Linux memory, GPU and Docker-storage capacity on the selected execution host, associates measurements with the daemon ID, and rejects missing or mismatched observations.
 It requires existing host trust, Python 3, Docker and NVIDIA tooling; it installs nothing and accepts no shell hooks.
 
-Capacity preflight and immediate startup checks remain direct.
+Capacity validation and immediate startup checks remain direct.
 Refresh and export retain the shared typed API observation path.
 This bounded collector does not yet justify an installed remote observation agent.
 

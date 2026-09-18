@@ -386,7 +386,11 @@ impl Engine {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
-    pub async fn preflight_ollama(&self, spec: &ServiceSpec, id: &str) -> Result<(), Error> {
+    pub async fn validate_ollama_environment(
+        &self,
+        spec: &ServiceSpec,
+        id: &str,
+    ) -> Result<(), Error> {
         match self.observe_ollama(spec, id).await {
             Err(Error::PartialRuntime) if id.is_empty() => Ok(()),
             other => other.map(|_| ()),

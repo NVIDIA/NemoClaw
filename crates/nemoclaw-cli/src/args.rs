@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum OutputFormat {
+    Text,
+    Json,
+}
 
 #[derive(Parser)]
 #[command(
@@ -68,6 +74,9 @@ pub(crate) enum Command {
     /// Preview configuration changes without changing runtime resources.
     #[command(after_help = "Examples:\n  nemoclaw plan spark.yaml\n  nemoclaw plan --destroy")]
     Plan {
+        /// Output format (use json for scripts).
+        #[arg(short, long, value_enum, default_value = "text", value_name = "FORMAT")]
+        output: OutputFormat,
         /// Preview removal of owned workloads while retaining persistent data.
         #[arg(long, conflicts_with = "file")]
         destroy: bool,
@@ -99,6 +108,15 @@ pub(crate) enum Command {
     },
     /// Remove owned workloads while retaining persistent data.
     Destroy,
+}
+
+impl Command {
+    pub(crate) fn output_format(&self) -> OutputFormat {
+        match self {
+            Self::Plan { output, .. } => *output,
+            _ => OutputFormat::Json,
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -132,6 +150,39 @@ mod tests {
     #[test]
     fn export_accepts_an_output_path() {
         assert!(Cli::try_parse_from(["nemoclaw", "export", "--output", "spark.yaml"]).is_ok());
+    }
+
+    #[test]
+    fn plan_accepts_text_and_json_output_for_configuration_and_destroy() {
+        for input in ["spark.yaml", "--destroy"] {
+            assert_eq!(
+                Cli::try_parse_from(["nemoclaw", "plan", input])
+                    .unwrap()
+                    .command
+                    .output_format(),
+                OutputFormat::Text
+            );
+            for flag in ["-o", "--output"] {
+                for (format, expected) in
+                    [("text", OutputFormat::Text), ("json", OutputFormat::Json)]
+                {
+                    assert_eq!(
+                        Cli::try_parse_from(["nemoclaw", "plan", input, flag, format])
+                            .unwrap()
+                            .command
+                            .output_format(),
+                        expected
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            Cli::try_parse_from(["nemoclaw", "plan", "spark.yaml", "-o", "yaml"])
+                .err()
+                .unwrap()
+                .kind(),
+            ErrorKind::InvalidValue
+        );
     }
     #[test]
     fn onboard_supports_composed_and_generation_only_modes() {

@@ -83,7 +83,8 @@ The backend HTTP fixture rejects unavailable, unauthorized, and redirect respons
 The executable test rejects invalid `NEMOCLAW_RUNTIME_SPEC` input and the removed environment alias without starting model work.
 
 The recipe test checks declared serving arguments and capacity, and rejects unqualified model/backend/hardware combinations.
-The [live image-change test](live.md#spark-and-fabric) is the deployment acceptance gate: the new image must preserve cached artifacts and independent bindings, return an agent response, and produce no changes on subsequent apply and export/reapply.
+The [live image-change test](live.md#spark-and-fabric) requires plan and apply to replace only the inference process.
+Managed-resource fixtures check storage identity and explicit recovery; the recipe tests verify prepared data before reuse.
 A fixture process proves supervisor independence; it does not qualify another real serving backend.
 
 ## SSH Service Fixtures
@@ -111,9 +112,9 @@ OpenClaw also receives explicit token limits and reasoning settings; Hermes rece
 The fixture checks configuration readiness without additional inference requests, rejects an incorrect agent identity, invokes the real adapter twice, and checks the inference request paths.
 Hermes may make model-metadata requests during startup; these are separate from inference requests.
 
-The command prints an evidence directory under `.local/fabric-<harness>-<uuid>` and exits successfully when the assertions pass.
-It retains logs, request bodies, and `proof.json`; it removes only its named container, including after failure.
-Inspect that directory on failure and rerun after correcting the fixture or image.
+The command exits successfully when the assertions pass and prints failures and subprocess output to the terminal.
+It removes its named container and temporary certificates, including after failure.
+Read the assertion failure and rerun after correcting the fixture or image.
 These tests do not qualify model quality, live upstream authentication, or inference through a real OpenShell gateway.
 
 ## OpenClaw Agent Tool Policies
@@ -172,7 +173,6 @@ python3 tools/fabric-adapter-experiment.py --harness openclaw --image nc-fabric:
 ```
 
 This offline test uses the nondefault port 18800, lists native pairing requests with the authenticated helper, rejects an incorrect token and weakened native device-auth settings, restores the original settings, and verifies that a runtime restart retains the token.
-Its evidence includes `authenticated_interfaces_verified` in `proof.json`.
 The bundle fixture is `openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift` in the `deployment` test binary.
 [Recorded Linux ARM64 results](../validation/rust-openclaw-interfaces-linux-arm64.json) distinguish native gateway checks from simulated OpenShell lifecycle behavior.
 
@@ -237,8 +237,7 @@ The test runs disposable containers with networking disabled and a local model-p
 It invokes the real adapter twice and checks nonempty ATOF events and ATIF trajectories plus absence of the fixture credential string.
 That narrow credential assertion does not establish general redaction or production privacy.
 
-Expect a successful exit and `relay` evidence in the printed directory's `proof.json`.
-The host retains logs, request records, proof, and a copy of `/sandbox/artifacts` under the evidence directory's `artifacts/` folder, including Relay traces and native runtime-home data.
-Inspect those retained files privately before sharing, and remove only your test's evidence directory when it is no longer needed.
-On failure, inspect the retained diagnostics, correct the fixture/image mismatch, and rerun with an owned test image.
+Expect exit status zero when the Relay assertions pass.
+The test checks traces inside its disposable container and removes that container afterward.
+On failure, read the assertion and subprocess output, correct the fixture/image mismatch, and rerun with an owned test image.
 This is an offline tracing check, not live Hermes/Relay or OpenShell qualification.

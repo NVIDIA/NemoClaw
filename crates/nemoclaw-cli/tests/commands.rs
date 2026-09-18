@@ -264,7 +264,7 @@ fn qualify_generated_lifecycle_boundary() {
 }
 
 #[test]
-fn non_interactive_onboarding_publishes_without_lifecycle_dependencies() {
+fn non_interactive_onboarding_saves_yaml_without_lifecycle_dependencies() {
     let directory = tempfile::tempdir().unwrap();
     let output_path = directory.path().join("deployment.yaml");
     fs::write(&output_path, "complete prior file").unwrap();
@@ -327,7 +327,7 @@ fn generation_only_stops_before_credential_fulfillment() {
 }
 
 #[test]
-fn composed_onboarding_publishes_before_credential_or_plan_failure() {
+fn composed_onboarding_saves_yaml_before_credential_or_plan_failure() {
     let directory = tempfile::tempdir().unwrap();
     let output_path = directory.path().join("deployment.yaml");
     let state_path = directory.path().join("state-must-not-exist");
@@ -373,7 +373,7 @@ fn composed_onboarding_publishes_before_credential_or_plan_failure() {
 }
 
 #[test]
-fn interactive_onboarding_uses_the_same_published_contract() {
+fn interactive_onboarding_saves_the_same_configuration() {
     use std::{io::Write, process::Stdio};
 
     let directory = tempfile::tempdir().unwrap();
@@ -470,7 +470,7 @@ fn existing_generated_yaml_can_be_edited_in_place_without_changing_uid() {
 }
 
 #[test]
-fn exiting_review_does_not_publish_and_failed_publication_preserves_target() {
+fn exiting_review_does_not_save_and_failed_write_preserves_target() {
     use std::{io::Write, process::Stdio};
 
     let directory = tempfile::tempdir().unwrap();

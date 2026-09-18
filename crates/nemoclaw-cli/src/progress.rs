@@ -51,7 +51,7 @@ pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
             elapsed,
             outcome,
         } if verbose => Some(format!("{operation} {outcome} {}", duration(elapsed))),
-        Progress::Preflight => Some("Checking deployment prerequisites".into()),
+        Progress::Validating => Some("Checking deployment configuration".into()),
         Progress::Exporting => Some("Reading deployed configuration".into()),
         Progress::Destroying => Some("Destroying owned workloads".into()),
         _ => None,
@@ -62,6 +62,15 @@ pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn validation_progress_describes_configuration_checks() {
+        assert_eq!(
+            render(Progress::Validating, false).as_deref(),
+            Some("Checking deployment configuration")
+        );
+    }
+
     #[test]
     fn quick_operations_report_measured_milliseconds() {
         assert_eq!(

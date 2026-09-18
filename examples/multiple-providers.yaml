@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 # Replace the UID, endpoint, model IDs, and agent image for your services.
-# Requires a local model endpoint and an HTTPS oracle endpoint; this example starts neither.
-# Set ORACLE_API_KEY on the applying host. Requests to a real oracle may incur charges.
+# Requires a local model endpoint and a hosted HTTPS endpoint; this example starts neither.
+# Set HOSTED_API_KEY on the applying host. Requests to a hosted model may incur charges.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -17,12 +17,12 @@ spec:
     - name: local
       provider: openai
       endpoint: http://172.20.0.1:11434/v1
-    - name: oracle
+    - name: hosted
       provider: anthropic
       api: anthropic-messages
-      endpoint: https://oracle.example/v1
+      endpoint: https://hosted.example/v1
       credential:
-        env: ORACLE_API_KEY
+        env: HOSTED_API_KEY
   harnesses:
     assistant:
       kind: openclaw
@@ -31,7 +31,7 @@ spec:
       default: smart
       routes:
         - name: smart
-          providerRef: oracle
+          providerRef: hosted
           overrides:
             model: replace-with-supported-model
             contextWindow: 32768
