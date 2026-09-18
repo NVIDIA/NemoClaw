@@ -25,16 +25,18 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Author and publish desired-state YAML without deploying it.
-    #[command(after_help = "Example:\n  nemoclaw onboard --generate-only --output deployment.yaml")]
+    /// Author desired state, preview it, and optionally apply it.
+    #[command(
+        after_help = "Examples:\n  nemoclaw onboard\n  nemoclaw onboard --generate-only --output deployment.yaml"
+    )]
     Onboard {
         /// Generate configuration and stop before plan or apply.
-        #[arg(long, required = true)]
+        #[arg(long)]
         generate_only: bool,
-        /// Write the generated YAML to this explicit path.
-        #[arg(short, long, value_name = "FILE")]
+        /// Write the generated YAML to this path.
+        #[arg(short, long, value_name = "FILE", default_value = "deployment.yaml")]
         output: PathBuf,
-        /// Use flags and defaults instead of prompting.
+        /// Use flags/defaults, require environment credentials, and apply without prompting.
         #[arg(long, conflicts_with = "edit")]
         non_interactive: bool,
         /// Review and semantically edit an existing generated YAML document.
@@ -132,7 +134,20 @@ mod tests {
         assert!(Cli::try_parse_from(["nemoclaw", "export", "--output", "spark.yaml"]).is_ok());
     }
     #[test]
-    fn onboard_requires_generation_mode_and_an_output_path() {
+    fn onboard_supports_composed_and_generation_only_modes() {
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        let Command::Onboard {
+            generate_only,
+            output,
+            non_interactive,
+            ..
+        } = cli.command
+        else {
+            panic!("expected onboard command");
+        };
+        assert!(!generate_only);
+        assert_eq!(output, PathBuf::from("deployment.yaml"));
+        assert!(!non_interactive);
         assert!(
             Cli::try_parse_from([
                 "nemoclaw",
@@ -156,8 +171,8 @@ mod tests {
             ])
             .is_ok()
         );
-        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--output", "x.yaml"]).is_err());
-        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--generate-only"]).is_err());
+        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--output", "x.yaml"]).is_ok());
+        assert!(Cli::try_parse_from(["nemoclaw", "onboard", "--generate-only"]).is_ok());
     }
     #[test]
     fn help_explains_inputs_outputs_and_safety_contracts() {
@@ -174,7 +189,7 @@ mod tests {
                 vec!["nemoclaw apply spark.yaml", "nemoclaw apply -"],
             ),
             ("export", vec!["without secret values", "--output"]),
-            ("onboard", vec!["without deploying", "--generate-only"]),
+            ("onboard", vec!["optionally apply", "--generate-only"]),
             ("destroy", vec!["retaining persistent data"]),
         ] {
             let error = Cli::try_parse_from(["nemoclaw", command, "--help"])

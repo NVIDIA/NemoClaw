@@ -40,6 +40,22 @@ An example's old digest or zero-digest placeholder is not a downloadable release
 
 ## 3. Prepare Desired-State YAML
 
+For the supported managed-gateway, Docker, OpenClaw, and hosted-NVIDIA authoring scenario, the V1 CLI can compose the complete journey:
+
+```sh
+mkdir -p .local/first-deployment
+nemoclaw onboard --output .local/first-deployment/deployment.yaml \
+  --state-dir .local/first-deployment/state
+```
+
+Review and accept the authored configuration first.
+The CLI publishes the YAML, resolves its named credential references, prints a plan preview, and then asks separately before applying it.
+Declining apply or encountering a later failure leaves the YAML at the selected path.
+Use `--generate-only` to stop immediately after publication; this mode needs no credential value or working runtime bundle, and the file can later be used with standalone `plan` and `apply`.
+Use `--non-interactive` only for explicit automation: direct flags and defaults replace authoring prompts, all credentials must be available from the environment, and a successful plan proceeds to apply without another prompt.
+
+The external-gateway configuration used by the rest of this guide is outside that fixed authoring scenario, so prepare it by hand as follows.
+
 Use a working directory that does not already contain another deployment.
 Copy the maintained [dashboard example](../examples/openclaw-dashboard.yaml) into it:
 

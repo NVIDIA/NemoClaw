@@ -7,6 +7,10 @@ Use an inline definition for one consumer, or a named definition with references
 Both forms use the same configuration type, defaults, and validation.
 A shared definition becomes active only when a consumer selects it.
 
+`nemoclaw onboard` authors one supported scenario and publishes the parser-validated result before lifecycle work.
+`nemoclaw onboard --generate-only` stops at that boundary; the generated file and an equivalent hand-authored file use the same `plan` and `apply` implementation.
+Fields outside the onboarding scenario remain available through hand-authored YAML according to the [field reference](reference/configuration.md).
+
 ## The Authoring Rule
 
 For a single object, use `thing` or `thingRef`, never both.

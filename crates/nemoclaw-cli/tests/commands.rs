@@ -304,6 +304,75 @@ fn non_interactive_onboarding_publishes_without_lifecycle_dependencies() {
 }
 
 #[test]
+fn generation_only_stops_before_credential_fulfillment() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("deployment.yaml");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args([
+            "onboard",
+            "--generate-only",
+            "--non-interactive",
+            "--output",
+        ])
+        .arg(&output_path)
+        .args(["--credential-env", "GENERATION_ONLY_MISSING_KEY"])
+        .env_remove("GENERATION_ONLY_MISSING_KEY")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output_path.exists());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("missing credential"));
+}
+
+#[test]
+fn composed_onboarding_publishes_before_credential_or_plan_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("deployment.yaml");
+    let state_path = directory.path().join("state-must-not-exist");
+    let bundle_path = directory.path().join("missing-bundle");
+
+    let missing_credential = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["onboard", "--non-interactive", "--output"])
+        .arg(&output_path)
+        .args(["--credential-env", "COMPOSED_MISSING_KEY", "--bundle"])
+        .arg(&bundle_path)
+        .arg("--state-dir")
+        .arg(&state_path)
+        .env_remove("COMPOSED_MISSING_KEY")
+        .output()
+        .unwrap();
+    assert_eq!(missing_credential.status.code(), Some(1));
+    assert!(output_path.exists());
+    assert!(
+        String::from_utf8_lossy(&missing_credential.stderr)
+            .contains("missing credential environment variables: COMPOSED_MISSING_KEY")
+    );
+    assert!(!state_path.exists());
+
+    let failed_plan = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["onboard", "--non-interactive", "--output"])
+        .arg(&output_path)
+        .args(["--credential-env", "COMPOSED_MISSING_KEY", "--bundle"])
+        .arg(&bundle_path)
+        .arg("--state-dir")
+        .arg(&state_path)
+        .env("COMPOSED_MISSING_KEY", "secret-sentinel")
+        .output()
+        .unwrap();
+    assert_eq!(failed_plan.status.code(), Some(1));
+    Document::parse(fs::read(&output_path).unwrap().as_slice()).unwrap();
+    let stderr = String::from_utf8(failed_plan.stderr).unwrap();
+    assert_eq!(
+        stderr,
+        "Credential references: COMPOSED_MISSING_KEY\nbundle directory is unavailable\n"
+    );
+    assert!(!stderr.contains("secret-sentinel"));
+    assert!(!state_path.exists());
+}
+
+#[test]
 fn interactive_onboarding_uses_the_same_published_contract() {
     use std::{io::Write, process::Stdio};
 
