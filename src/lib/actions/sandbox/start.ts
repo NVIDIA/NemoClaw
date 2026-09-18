@@ -38,9 +38,13 @@ import {
   type StandardSandboxLifecycleDeps,
 } from "./runtime/standard-lifecycle";
 
-function verifyGateway(sandboxName: string): Promise<void> {
+function verifyGateway(
+  sandboxName: string,
+  options: { managedHermesGatewayProcessObserved?: true } = {},
+): Promise<void> {
   const { connectSandbox } = require("./connect") as typeof import("./connect");
   return connectSandbox(sandboxName, {
+    ...options,
     probeOnly: true,
     requireLaunchReadinessPublication: false,
   });
@@ -70,7 +74,10 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  verifyGateway?: (sandboxName: string) => Promise<void>;
+  verifyGateway?: (
+    sandboxName: string,
+    options?: { managedHermesGatewayProcessObserved?: true },
+  ) => Promise<void>;
   probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
@@ -289,7 +296,12 @@ async function startSandboxWithinLifecycleFence(
   );
   if (readiness.gatewayProcess !== false) {
     log("  Checking gateway health and host forwards…");
-    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    const verify = deps.verifyGateway ?? verifyGateway;
+    if (resolved.sandbox.agent === "hermes" && readiness.gatewayProcess === true) {
+      await verify(sandboxName, { managedHermesGatewayProcessObserved: true });
+    } else {
+      await verify(sandboxName);
+    }
     readiness.inference = await checkStartedSandboxInference(
       sandboxName,
       resolved.sandbox,

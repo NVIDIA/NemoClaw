@@ -224,6 +224,28 @@ describe("connectSandbox probe-only observe mode", () => {
     await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("alpha")).resolves.toBe(true);
   });
 
+  it("reuses the Hermes process observation accepted by the start command", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      gatewayProcessSettlement: null,
+      sessionAgent: { name: "hermes" },
+      registryEntry: { stopped: true },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        managedHermesGatewayProcessObserved: true,
+        probeOnly: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
+    const recoveryOptions = harness.checkAndRecoverSpy.mock.calls[0]?.[1];
+    expect(recoveryOptions?.isSandboxGatewayRunningImpl).toBeTypeOf("function");
+    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("alpha")).resolves.toBe(true);
+  });
+
   it("stops before recovery when a just-started Hermes gateway stays stopped", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",

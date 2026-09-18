@@ -393,23 +393,12 @@ function sandboxGatewayRecoveryProbeCommand(probeUrl: string, starting = false):
  * Fixes #2342 — previously `curl -sf` failed on 401, causing false
  * "Health Offline" readings.
  */
-/** Observe gateway health through the owning control plane used for recovery decisions. */
-export async function observeSandboxGatewayForRecovery(
+async function isSandboxGatewayRunning(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-  dependencies: {
-    getSessionAgent?: typeof agentRuntime.getSessionAgent;
-    managedHermesProbe?: typeof isSandboxGatewayRunningForStatus;
-  } = {},
 ): Promise<boolean | null> {
-  const agent = (dependencies.getSessionAgent ?? agentRuntime.getSessionAgent)(sandboxName);
+  const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
-  if (agent?.name === "hermes") {
-    return await (dependencies.managedHermesProbe ?? isSandboxGatewayRunningForStatus)(
-      sandboxName,
-      runtimeSelection?.gatewayName,
-    );
-  }
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
   const execProbe = parseSandboxGatewayRecoveryProbe(
@@ -1327,7 +1316,7 @@ export async function waitForRecoveredSandboxGateway(
 ): Promise<boolean> {
   const probe =
     options.probeImpl ??
-    ((name: string) => observeSandboxGatewayForRecovery(name, options.runtimeSelection));
+    ((name: string) => isSandboxGatewayRunning(name, options.runtimeSelection));
   const managedProbe =
     options.managedProbeImpl ?? (options.probeImpl ? null : confirmRecoveredSandboxGatewayManaged);
   const sleep = options.sleepImpl ?? sleepSeconds;
@@ -1476,7 +1465,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
   {
     quiet = false,
-    isSandboxGatewayRunningImpl = observeSandboxGatewayForRecovery,
+    isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecoveredSandboxGatewayImpl = waitForRecoveredSandboxGateway,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     commandExecutor,
