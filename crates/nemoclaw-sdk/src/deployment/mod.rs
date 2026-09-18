@@ -42,7 +42,7 @@ pub enum Progress {
         operation: &'static str,
         elapsed: std::time::Duration,
     },
-    Preflight,
+    Validating,
     Planning,
     Applying,
     Readiness,
@@ -216,8 +216,8 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
-        (self.progress)(Progress::Preflight);
-        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.preflight(&client,&document,&targets,&bindings)=>result?}
+        (self.progress)(Progress::Validating);
+        tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.validate_deployment_resources(&client,&document,&targets,&bindings)=>result?}
         self.prepare(
             &bundle,
             &store,
@@ -367,7 +367,7 @@ impl Deployment {
         result.outcome = Outcome::Succeeded;
         Ok(result)
     }
-    async fn preflight(
+    async fn validate_deployment_resources(
         &self,
         client: &OpenShell,
         document: &Document,

@@ -86,19 +86,19 @@ fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error
     }
     Ok(old)
 }
-struct Preflight {
+struct RuntimeValidation {
     expected: BTreeMap<String, Row>,
     replacements: BTreeSet<String>,
     gateway_running: bool,
 }
-async fn preflight(
+async fn validate_runtime_environment(
     engines: &crate::docker::Connections,
     document: &Document,
     generations: &crate::compile::Generations,
     targets: &[Target],
     bindings: &BTreeMap<String, StateBinding>,
-) -> Result<Preflight, Error> {
-    let mut result = Preflight {
+) -> Result<RuntimeValidation, Error> {
+    let mut result = RuntimeValidation {
         expected: allowed(targets),
         replacements: BTreeSet::new(),
         gateway_running: false,
@@ -217,7 +217,7 @@ impl Deployment {
         let stage = Store::open(&store.directory.join("runtime"))?;
         let bindings = stage.bindings()?;
         let targets = compile::runtime_targets(document, &record.generations)?;
-        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=preflight(&self.engines,document,&record.generations,&targets,&bindings)=>result?};
+        let mut checked = tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=validate_runtime_environment(&self.engines,document,&record.generations,&targets,&bindings)=>result?};
         if document.spec.gateway.management == "external" {
             checked.gateway_running = true;
         }
