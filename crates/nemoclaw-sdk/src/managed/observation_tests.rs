@@ -229,9 +229,9 @@ async fn capacity_requires_measurements_from_the_selected_execution_target() {
 #[test]
 fn owned_volume_accepts_an_isolated_daemon_data_root() {
     let (spec, _, mut volume, _) = reference();
-    volume["Mountpoint"] = json!("/srv/nemoclaw-proof/docker/volumes/fixture/_data");
+    volume["Mountpoint"] = json!("/srv/nemoclaw-fixture/docker/volumes/fixture/_data");
     let volume = serde_json::from_value(volume).unwrap();
-    verify_volume(&spec, &volume, Some("/srv/nemoclaw-proof/docker")).unwrap();
+    verify_volume(&spec, &volume, Some("/srv/nemoclaw-fixture/docker")).unwrap();
     for root in [
         None,
         Some("/var/lib/docker"),
@@ -241,8 +241,8 @@ fn owned_volume_accepts_an_isolated_daemon_data_root() {
         assert!(verify_volume(&spec, &volume, root).is_err());
     }
     let mut drifted: Volume = volume;
-    drifted.mountpoint = "/srv/nemoclaw-proof/docker/volumes/../foreign/_data".into();
-    assert!(verify_volume(&spec, &drifted, Some("/srv/nemoclaw-proof/docker")).is_err());
+    drifted.mountpoint = "/srv/nemoclaw-fixture/docker/volumes/../foreign/_data".into();
+    assert!(verify_volume(&spec, &drifted, Some("/srv/nemoclaw-fixture/docker")).is_err());
 }
 
 #[tokio::test]

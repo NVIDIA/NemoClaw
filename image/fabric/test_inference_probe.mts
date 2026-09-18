@@ -38,8 +38,8 @@ const model = (name: string, api: string, credential = "LOCAL_KEY") => ({
   connection: { provider: name, model: name, base_url: base, api_key_env: credential },
 });
 const fast = model("fast", "openai-completions");
-const smart = model("smart", "anthropic-messages", "ORACLE_KEY");
-const responses = model("responses", "openai-responses", "ORACLE_KEY");
+const smart = model("smart", "anthropic-messages", "HOSTED_KEY");
+const responses = model("responses", "openai-responses", "HOSTED_KEY");
 const config = {
   ...fast,
   agents: [
@@ -49,7 +49,7 @@ const config = {
 };
 async function probe(
   value: unknown,
-  credentials = { LOCAL_KEY: "local-placeholder", ORACLE_KEY: "oracle-placeholder" },
+  credentials = { LOCAL_KEY: "local-placeholder", HOSTED_KEY: "hosted-placeholder" },
 ) {
   requests.length = 0;
   const child = spawn(
@@ -77,15 +77,15 @@ async function probe(
 try {
   assert.equal(await probe(config), 0);
   assert.deepEqual(requests.map((r) => r.model).sort(), ["fast", "responses", "smart"]);
-  assert(requests.some((r) => r.path === "/v1/messages" && r.key === "oracle-placeholder"));
-  assert(requests.some((r) => r.path === "/v1/responses" && r.key === "Bearer oracle-placeholder"));
+  assert(requests.some((r) => r.path === "/v1/messages" && r.key === "hosted-placeholder"));
+  assert(requests.some((r) => r.path === "/v1/responses" && r.key === "Bearer hosted-placeholder"));
   assert(
     requests.some((r) => r.path === "/v1/chat/completions" && r.key === "Bearer local-placeholder"),
   );
   broken = "smart";
   assert.equal(await probe(config), 1, "a failing non-default choice must fail readiness");
   broken = "";
-  assert.equal(await probe(config, { LOCAL_KEY: "local-placeholder", ORACLE_KEY: "" }), 1);
+  assert.equal(await probe(config, { LOCAL_KEY: "local-placeholder", HOSTED_KEY: "" }), 1);
   assert.equal(await probe(fast), 0, "single-model wire remains supported");
   assert.equal(await probe({ ...fast, api: "unknown" }), 1, "unknown API must fail closed");
   assert.equal(await probe(null), 1);

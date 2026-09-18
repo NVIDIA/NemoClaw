@@ -4,7 +4,7 @@ use super::{RuntimeObservation, capacity::regular_stat};
 use crate::{
     Error,
     docker::Engine,
-    snapshot::{Receipt, VerifiedFile},
+    snapshot::{CompletionRecord, VerifiedFile},
 };
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -57,8 +57,8 @@ impl Engine {
             _ => Err(Error::State("unknown inference runtime status")),
         }
     }
-    /// Verify retained receipts and file metadata without rehashing the model
-    /// or starting a container. Only the runtime publishes completed receipts.
+    /// Verify retained completion records and file metadata without rehashing the model
+    /// or starting a container. Only the runtime publishes completion records.
     pub async fn verify_artifacts(&self, observed: &RuntimeObservation) -> Result<(), Error> {
         let work = async {
             let service = observed
@@ -87,10 +87,10 @@ impl Engine {
                 )
                 .await?
                 .ok_or(Error::State("complete model snapshot is unobservable"))?;
-            let receipt: Receipt = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::State("invalid model completion receipt"))?;
-            validate_snapshot_manifest(&receipt, &manifest)?;
-            for file in &receipt.files {
+            let completion: CompletionRecord = serde_json::from_slice(&bytes)
+                .map_err(|_| Error::State("invalid model completion record"))?;
+            validate_snapshot_manifest(&completion, &manifest)?;
+            for file in &completion.files {
                 self.verify_artifact_file(&observed.container_id, &model, file)
                     .await?;
             }
@@ -105,11 +105,11 @@ impl Engine {
                     )
                     .await?
                     .ok_or(Error::State("recipe completion is unobservable"))?;
-                let receipt: crate::recipes::preparation::Completion =
+                let completion: crate::recipes::preparation::CompletionRecord =
                     serde_json::from_slice(&bytes)
-                        .map_err(|_| Error::State("invalid recipe completion receipt"))?;
-                crate::recipes::preparation::validate_receipt(recipe, &key, &receipt)?;
-                for file in &receipt.files {
+                        .map_err(|_| Error::State("invalid recipe completion record"))?;
+                crate::recipes::preparation::validate_completion(recipe, &key, &completion)?;
+                for file in &completion.files {
                     self.verify_artifact_file(&observed.container_id, &prepared, file)
                         .await?;
                 }
@@ -137,19 +137,19 @@ impl Engine {
     }
 }
 fn validate_snapshot_manifest(
-    receipt: &Receipt,
+    completion: &CompletionRecord,
     manifest: &crate::snapshot::Manifest,
 ) -> Result<(), Error> {
-    if receipt.manifest != manifest.key()
-        || receipt.files.len() != manifest.files.len()
-        || receipt
+    if completion.manifest != manifest.key()
+        || completion.files.len() != manifest.files.len()
+        || completion
             .files
             .iter()
             .zip(&manifest.files)
             .any(|(actual, expected)| &actual.file != expected)
     {
         return Err(Error::Conflict(
-            "model snapshot receipt conflicts with immutable pin",
+            "model snapshot completion record conflicts with immutable pin",
         ));
     }
     Ok(())

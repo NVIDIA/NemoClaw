@@ -81,7 +81,7 @@ pub(crate) async fn prepare(
             ));
         }
         let root = root.join("prepared");
-        let receipt = nemoclaw_sdk::recipes::preparation::prepare(
+        let completion = nemoclaw_sdk::recipes::preparation::prepare(
             &root,
             &model,
             service,
@@ -93,7 +93,7 @@ pub(crate) async fn prepare(
             environment.insert(key.clone(), value.into());
         }
         for (key, path) in &recipe.serving.prepared_environment {
-            let directory = root.join(&receipt.key);
+            let directory = root.join(&completion.key);
             environment.insert(
                 key.clone(),
                 if path == "." {

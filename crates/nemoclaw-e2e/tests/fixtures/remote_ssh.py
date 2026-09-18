@@ -46,7 +46,7 @@ with (root / "lock").open("w") as lock:
     fixture = json.loads((root / "fixture.json").read_text())
     code, value, extra = 200, None, {}
     if method == "GET" and path == "/info":
-        value = {"ID": control.get("daemon", "remote-engine"), "DockerRootDir": "/srv/nemoclaw-proof/docker"}
+        value = {"ID": control.get("daemon", "remote-engine"), "DockerRootDir": "/srv/nemoclaw-fixture/docker"}
     elif method == "GET" and path.startswith("/images/"):
         value = fixture["image"]
     elif method == "GET" and path.startswith("/volumes/"):
@@ -83,7 +83,7 @@ with (root / "lock").open("w") as lock:
     elif method == "POST" and path == "/volumes/create":
         request = json.loads(body)
         value = {**request, "Driver": "local", "Scope": "local", "Options": {},
-            "Mountpoint": "/srv/nemoclaw-proof/docker/volumes/fixture/_data", "CreatedAt": "2026-09-15T00:00:00Z"}
+            "Mountpoint": "/srv/nemoclaw-fixture/docker/volumes/fixture/_data", "CreatedAt": "2026-09-15T00:00:00Z"}
         state["volume"] = value
         state["effects"] += 1
     elif method == "POST" and path == "/networks/create":

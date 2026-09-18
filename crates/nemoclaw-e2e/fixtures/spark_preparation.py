@@ -54,9 +54,9 @@ class PackedPLE(unittest.TestCase):
     def test_complete_preparation_matches_every_source_row(self):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        receipt = json.loads(result.stdout)
+        file_metadata = json.loads(result.stdout)
         self.assertEqual((self.output / PACKED).read_bytes(), self.expected)
-        self.assertEqual(receipt, {"name": PACKED, "size": len(self.expected),
+        self.assertEqual(file_metadata, {"name": PACKED, "size": len(self.expected),
                                    "sha256": hashlib.sha256(self.expected).hexdigest()})
 
     def test_last_shard_corruption_with_correct_size_is_rejected(self):
@@ -76,7 +76,7 @@ class PackedPLE(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, b"")
 
-    def test_missing_model_shard_does_not_produce_a_receipt(self):
+    def test_missing_model_shard_does_not_produce_verification_output(self):
         path = self.snapshot / "model.safetensors.index.json"
         index = json.loads(path.read_text())
         del index["weight_map"][f"{PREFIX}.shard_127.weight_scale"]

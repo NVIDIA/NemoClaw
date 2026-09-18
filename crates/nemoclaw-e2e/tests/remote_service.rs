@@ -113,14 +113,14 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         files["/data/inference-key"] = json!({"raw":bearer});
         stats["/data/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
     }
-    let mut receipt = serde_json::to_value(&manifest.files).unwrap();
-    for file in receipt.as_array_mut().unwrap() {
+    let mut downloaded_files = serde_json::to_value(&manifest.files).unwrap();
+    for file in downloaded_files.as_array_mut().unwrap() {
         file["modified"] = json!(1);
         let path = format!("/data/{}/{}", model, file["name"].as_str().unwrap());
         stats[path] = json!({"name":file["name"],"size":file["size"],"mode":420,"mtime":"1970-01-01T00:00:00.000000001Z","linkTarget":""});
     }
     files[format!("/data/{}/.nemoclaw-complete.json", model)] =
-        json!({"manifest":manifest.key(),"files":receipt});
+        json!({"manifest":manifest.key(),"files":downloaded_files});
     let mut prepared = Vec::new();
     for name in ["prepared.bin".to_string(), "prepared.json".to_string()] {
         prepared.push(json!({"name":name,"size":1,"sha256":"a".repeat(64),"modified":1}));

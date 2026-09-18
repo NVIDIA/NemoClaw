@@ -16,7 +16,7 @@ fn observed() -> RuntimeObservation {
     }
 }
 #[tokio::test]
-async fn status_requires_complete_current_evidence_and_never_mutates() {
+async fn runtime_status_requires_complete_current_data_and_never_mutates() {
     let response = Arc::new(Mutex::new((
         200,
         json!({"phase":"ready","detail":"","updated":"2026-09-14T00:01:00Z","pid":123}),
@@ -69,14 +69,14 @@ async fn status_requires_complete_current_evidence_and_never_mutates() {
 }
 
 #[test]
-fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
+fn artifact_completion_records_require_matching_identity_and_unchanged_regular_files() {
     let service = observed().spec.service.unwrap();
     let recipe = service.recipe.as_ref().unwrap();
     let manifest = recipe.snapshot.as_ref().unwrap().clone();
     let modified = timestamp("2026-09-14T00:00:00.123456789Z")
         .unwrap()
         .unix_timestamp_nanos() as u64;
-    let mut receipt = Receipt {
+    let mut completion = CompletionRecord {
         manifest: manifest.key(),
         files: manifest
             .files
@@ -85,17 +85,17 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
             .map(|file| VerifiedFile { file, modified })
             .collect(),
     };
-    validate_snapshot_manifest(&receipt, &manifest).unwrap();
-    let original = receipt.clone();
-    receipt.files.swap(0, 1);
-    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
-    receipt = original.clone();
-    receipt.files.pop();
-    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
-    receipt = original;
-    receipt.manifest = "wrong".into();
-    assert!(validate_snapshot_manifest(&receipt, &manifest).is_err());
-    let file = &receipt.files[0];
+    validate_snapshot_manifest(&completion, &manifest).unwrap();
+    let original = completion.clone();
+    completion.files.swap(0, 1);
+    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
+    completion = original.clone();
+    completion.files.pop();
+    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
+    completion = original;
+    completion.manifest = "wrong".into();
+    assert!(validate_snapshot_manifest(&completion, &manifest).is_err());
+    let file = &completion.files[0];
     let mut stat = bollard::container::PathStatResponse {
         name: file.file.name.clone(),
         size: file.file.size as i64,
@@ -115,7 +115,7 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
     stat.file_mode = 0o600;
     stat.link_target = "elsewhere".into();
     assert!(verify_stat(file, &stat).is_err());
-    let mut prep = crate::recipes::preparation::Completion {
+    let mut prep = crate::recipes::preparation::CompletionRecord {
         key: recipe.key(&service),
         files: ["prepared.bin".to_owned(), "prepared.json".to_owned()]
             .into_iter()
@@ -129,17 +129,17 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
             })
             .collect(),
     };
-    crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep).unwrap();
+    crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep).unwrap();
     let original = prep.clone();
     prep.files[1] = prep.files[0].clone();
     assert!(
-        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
+        crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep)
             .is_err()
     );
     prep = original;
     prep.key = "wrong".into();
     assert!(
-        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
+        crate::recipes::preparation::validate_completion(recipe, &recipe.key(&service), &prep)
             .is_err()
     );
 }

@@ -84,17 +84,17 @@ async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data
             .await
             .is_err()
     );
-    let receipt = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
+    let completion = preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
         .await
         .unwrap();
     assert_eq!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
             .unwrap(),
-        receipt
+        completion
     );
     assert_eq!(runner.calls.load(Ordering::SeqCst), 3);
-    std::fs::write(root.path().join(receipt.key).join("packed"), b"changed").unwrap();
+    std::fs::write(root.path().join(completion.key).join("packed"), b"changed").unwrap();
     assert!(
         preparation::prepare(root.path(), root.path(), service, &runner, &cancel)
             .await
@@ -120,14 +120,14 @@ fn preparation_keys_track_model_and_tool_identity() {
 }
 
 #[tokio::test]
-async fn failed_verification_never_publishes_a_completion_receipt() {
+async fn failed_verification_never_publishes_a_completion_record() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
         recipes::preparation::{self, Action, Request, Runner},
     };
-    struct UntrustedEvidence(Vec<u8>);
+    struct InvalidVerification(Vec<u8>);
     #[async_trait::async_trait]
-    impl Runner for UntrustedEvidence {
+    impl Runner for InvalidVerification {
         async fn run(
             &self,
             action: Action,
@@ -150,7 +150,7 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
         .as_ref()
         .unwrap();
     let file = serde_json::json!({"name":"packed","size":12,"sha256":"a".repeat(64)});
-    for evidence in [
+    for verification in [
         b"not JSON".to_vec(),
         vec![b' '; (1 << 20) + 1],
         serde_json::to_vec(&serde_json::json!({"files":[]})).unwrap(),
@@ -163,16 +163,21 @@ async fn failed_verification_never_publishes_a_completion_receipt() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let key = service.recipe.as_ref().unwrap().key(service);
+        let error = preparation::prepare(
+            root.path(),
+            root.path(),
+            service,
+            &InvalidVerification(verification),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(
-            preparation::prepare(
-                root.path(),
-                root.path(),
-                service,
-                &UntrustedEvidence(evidence),
-                &CancellationToken::new()
-            )
-            .await
-            .is_err()
+            matches!(
+                error,
+                Error::State("recipe preparation is incomplete or changed")
+            ),
+            "{error}"
         );
         assert!(!root.path().join(&key).exists());
         let staging = root.path().join(format!("{key}.preparing"));
@@ -198,7 +203,7 @@ fn model_specific_backend_names_are_rejected() {
 }
 
 #[tokio::test]
-async fn published_directory_without_a_receipt_is_not_rebuilt() {
+async fn published_directory_without_a_completion_record_is_not_rebuilt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
         recipes::preparation::{self, Action, Request, Runner},

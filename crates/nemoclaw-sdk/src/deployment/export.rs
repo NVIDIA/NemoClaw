@@ -245,17 +245,17 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"oracle","provider":"openai","endpoint":"https://oracle.example/v1","credential":{"env":"OLD_KEY"}}));
+        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"hosted","provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"OLD_KEY"}}));
         let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
         inference["default"] = serde_json::json!("primary");
-        inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"oracle","overrides":{"model":"smart"}}));
+        inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();
         let original = document.spec.inference_providers[0].clone();
         let record = Record::new(document.clone()).unwrap();
         let expected = compile::targets(&document, &record.generations)
             .unwrap()
             .into_iter()
-            .find(|target| target.kind == "provider" && target.values["name"] == "oracle")
+            .find(|target| target.kind == "provider" && target.values["name"] == "hosted")
             .unwrap()
             .values;
         let mut observed = expected.clone();
