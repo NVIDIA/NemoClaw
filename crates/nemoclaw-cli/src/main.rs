@@ -10,7 +10,7 @@ mod formatting;
 mod io;
 mod onboarding;
 #[cfg(test)]
-mod parity;
+mod onboarding_scenarios;
 mod progress;
 use args::Cli;
 use clap::Parser;
