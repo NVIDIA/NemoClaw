@@ -648,7 +648,7 @@ describe("CLI OpenShell direct forward start", () => {
 
   it("starts only after proving the owner, bound TCP port, and same owner", async () => {
     const events = new EventEmitter();
-    const successfulChild = {
+    const child = {
       exitCode: null,
       off: events.off.bind(events),
       on: events.on.bind(events),
@@ -677,7 +677,7 @@ describe("CLI OpenShell direct forward start", () => {
       },
       inspect,
       probePort,
-      spawn: () => successfulChild,
+      spawn: () => child,
     });
 
     const started = await adapter.startForward({ forward });
@@ -702,19 +702,19 @@ describe("CLI OpenShell direct forward start", () => {
       },
     );
     expect(inspect).toHaveBeenNthCalledWith(1, forward, undefined, 15_000);
-    expect(inspect).toHaveBeenNthCalledWith(2, forward, successfulChild.pid, 30_000);
+    expect(inspect).toHaveBeenNthCalledWith(2, forward, child.pid, 30_000);
     expect(probePort).toHaveBeenNthCalledWith(1, forward, 15_000);
     expect(probePort).toHaveBeenNthCalledWith(2, forward, 30_000);
-    expect(inspect).toHaveBeenNthCalledWith(3, forward, successfulChild.pid, 30_000);
+    expect(inspect).toHaveBeenNthCalledWith(3, forward, child.pid, 30_000);
     expect(events.listenerCount("exit")).toBe(0);
     expect(events.listenerCount("error")).toBe(1);
-    expect(() => events.emit("error", new Error("late private spawn error"))).not.toThrow();
-    expect(successfulChild.unref).toHaveBeenCalledOnce();
+    expect(child.unref).toHaveBeenCalledOnce();
     expect(started.state).toBe("started");
+    expect(() => events.emit("error", new Error("late private child diagnostic"))).not.toThrow();
     const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
     const assertCurrent = vi.fn(async () => undefined);
     await expect(cleanup({ assertCurrent })).resolves.toEqual({ state: "released" });
-    expect(terminate).toHaveBeenCalledExactlyOnceWith(successfulChild, 5_000);
+    expect(terminate).toHaveBeenCalledExactlyOnceWith(child, 5_000);
     expect(probePort).toHaveBeenNthCalledWith(3, forward, 5_000);
     expect(assertCurrent).toHaveBeenCalledTimes(3);
   });

@@ -119,7 +119,7 @@ const cases: readonly StartFailureCase[] = [
       }),
   },
   {
-    mode: "the executable is not permitted",
+    mode: "the executable is not permitted with EACCES",
     failure: { stage: "spawn", reason: "permission_denied" },
     terminationCount: 0,
     harness: () =>
@@ -130,7 +130,7 @@ const cases: readonly StartFailureCase[] = [
       }),
   },
   {
-    mode: "the executable operation is not permitted",
+    mode: "the executable is not permitted with EPERM",
     failure: { stage: "spawn", reason: "permission_denied" },
     terminationCount: 0,
     harness: () =>
@@ -149,24 +149,6 @@ const cases: readonly StartFailureCase[] = [
     ),
   },
   {
-    mode: "the child emits an error before it exits",
-    failure: { stage: "spawn", reason: "child_error" },
-    terminationCount: 1,
-    harness: childEventHarness((events) => {
-      events.emit("error", new Error("private child diagnostic"));
-      events.emit("exit", 17, null);
-    }),
-  },
-  {
-    mode: "the child exits before it emits an error",
-    failure: { stage: "startup", reason: "child_exited", exitStatus: 19 },
-    terminationCount: 1,
-    harness: childEventHarness((events) => {
-      events.emit("exit", 19, null);
-      events.emit("error", new Error("private child diagnostic"));
-    }),
-  },
-  {
     mode: "a child listener cannot be installed",
     failure: { stage: "spawn", reason: "listener_registration_failed" },
     terminationCount: 1,
@@ -177,6 +159,24 @@ const cases: readonly StartFailureCase[] = [
     failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
     terminationCount: 1,
     harness: childEventHarness((events) => events.emit("exit", 17, null)),
+  },
+  {
+    mode: "a child error precedes its exit",
+    failure: { stage: "spawn", reason: "child_error" },
+    terminationCount: 1,
+    harness: childEventHarness((events) => {
+      events.emit("error", new Error("private child diagnostic"));
+      events.emit("exit", 19, null);
+    }),
+  },
+  {
+    mode: "a child exit precedes its error",
+    failure: { stage: "startup", reason: "child_exited", exitStatus: 19 },
+    terminationCount: 1,
+    harness: childEventHarness((events) => {
+      events.emit("exit", 19, null);
+      events.emit("error", new Error("private child diagnostic"));
+    }),
   },
   {
     mode: "the child exits during ownership inspection",
