@@ -54,13 +54,28 @@ except Exception:
 `;
 }
 
-// Kubernetes pod names append generated suffixes to the requested sandbox name.
-// Keep substring matching so names such as "box[1]" match "pod/box[1]-abc",
-// then strip the leading "pod/" prefix before returning the pod name.
+// Kubernetes pod names append a generated suffix to the requested sandbox
+// name, so an exact match alone is not enough — "box[1]" must still match
+// "pod/box[1]-abc". Require the generated suffix to look like one (lowercase
+// alphanumeric) rather than matching any pod name that merely contains the
+// sandbox name as a substring: a bare `.includes()` also matches an unrelated
+// sandbox whose name happens to extend this one, e.g. sandboxName "box1"
+// against pod "box10-xyz12" — which would wire DNS/iptables into the wrong
+// sandbox's network namespace. Mirrors `isSandboxPodName` in
+// `src/lib/tunnel/sandbox-gateway-stop.ts`.
+function isSandboxPodLine(trimmed: string, sandboxName: string): boolean {
+  if (!trimmed.startsWith("pod/")) return false;
+  const podName = trimmed.slice("pod/".length);
+  if (podName === sandboxName) return true;
+  const prefix = `${sandboxName}-`;
+  if (!podName.startsWith(prefix)) return false;
+  return /^[a-z0-9]+$/.test(podName.slice(prefix.length));
+}
+
 export function selectSandboxPod(sandboxName: string, podsOutput: string): string | null {
   for (const line of podsOutput.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed.includes(sandboxName)) continue;
+    if (!isSandboxPodLine(trimmed, sandboxName)) continue;
     return trimmed.replace(/^pod\//, "");
   }
   return null;
