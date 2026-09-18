@@ -215,6 +215,10 @@ describe("destroySandbox retained recovery flow", () => {
         "process.exit(1)",
       );
 
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     },
