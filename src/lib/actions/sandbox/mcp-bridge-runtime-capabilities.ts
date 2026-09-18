@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
-  assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   assertAgentMcpTeardownRuntimeCapability,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter } from "./mcp-bridge-contracts";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
 function adaptersForEntries(
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
 ): Set<AgentMcpAdapter> {
   return new Set(
     entries.map((entry) =>
@@ -22,13 +23,14 @@ function adaptersForEntries(
   );
 }
 
-export function assertMcpAdapterMutationRuntimeCapabilities(
+export async function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
-): void {
+  entries: readonly McpSourceEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -38,22 +40,13 @@ export function assertMcpAdapterMutationRuntimeCapabilities(
  * NemoClaw release remain safe to scrub because their exact persisted adapter
  * definition is still ownership-checked by unregisterAgentAdapter.
  */
-export function assertMcpAdapterConfigMutationsAllowed(
+export async function assertMcpAdapterTeardownRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
-): void {
+  entries: readonly McpSourceEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
-  }
-}
-
-export function assertMcpAdapterTeardownRuntimeCapabilities(
-  sandboxName: string,
-  sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
-): void {
-  for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+    await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }

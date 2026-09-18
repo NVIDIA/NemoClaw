@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
@@ -26,6 +27,7 @@ import {
 } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxEntry } from "../../state/registry/types";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
@@ -42,10 +44,25 @@ import {
 } from "../../openshell-gateway-endpoint-guard";
 import { isPortableExperimentalProfile } from "./portable-profile";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+import { portableLifecycleLockOptions } from "./portable-lifecycle-lock";
 export { defaultPortableDemoStateDir as defaultHermesPortableStateDir };
+
+type McpLifecycleLock = <R>(
+  sandboxName: string,
+  operation: () => Promise<R> | R,
+  options?: { readonly stateDir?: string },
+) => Promise<R>;
+
+/** Bind Portable onboarding mutations to the host-scoped receipt state. */
+export function bindHermesPortableOnboardingLifecycleLock(
+  withMcpLifecycleLock: McpLifecycleLock,
+  env: NodeJS.ProcessEnv = process.env,
+): <R>(sandboxName: string, operation: () => Promise<R>) => Promise<R> {
+  return async <R>(sandboxName: string, operation: () => Promise<R>): Promise<R> =>
+    await withMcpLifecycleLock(sandboxName, operation, portableLifecycleLockOptions(env));
+}
 import {
   assertCurrentHermesPortableContainer,
-  configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   probeHermesPortableAuthenticatedHealth,
   type HermesPortableAuthenticatedHealthCapture,
@@ -64,6 +81,7 @@ import {
 } from "./hermes-portable-contract";
 import {
   proveHermesPortableLivePolicy,
+  createHermesPortableAsyncPolicyCapture,
   type HermesPortablePolicyCapture,
 } from "./hermes-portable-policy-state";
 import {
@@ -161,7 +179,7 @@ export interface HermesPortableOnboardingDeps<T> {
     result: T | null,
     receipt: HermesPortableConfiguredReceipt,
     liveIdentityFingerprint: string,
-    revalidate: () => string,
+    revalidate: () => Promise<string>,
     routeReservation: QualifiedSandboxInferenceRouteReservation,
   ) => SandboxEntry | Promise<SandboxEntry>;
   readonly afterRegistryCommit?: () => void | Promise<void>;
@@ -368,7 +386,14 @@ export function createHermesPortableReadyRunner(
       scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName) ??
       (args[0] === "sandbox" && args[1] === "delete" && args.length === 3 && args[2] === sandboxName
         ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-        : null);
+        : args.length === 5 &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "-g" &&
+            args[3] === gatewayName &&
+            args[4] === sandboxName
+          ? args
+          : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
@@ -778,7 +803,7 @@ export function observeHermesPortableSandbox(
   const output =
     `${strictOpenShellText(current.stderr)}\n${strictOpenShellText(current.stdout)}`.trim();
   const named = new RegExp(
-    `^(?:Error:\\s*)?sandbox ['\"]?${escapedRegExp(sandboxName)}['\"]? not found\\.?$`,
+    `^(?:Error:\\s*)?sandbox ['"]?${escapedRegExp(sandboxName)}['"]? not found\\.?$`,
     "u",
   );
   const coded =
@@ -930,16 +955,27 @@ function assertCurrentTransaction(
   if (receipt.phase === "pending") assertHermesPortablePolicySource(receipt.policy);
 }
 
-function proveLivePolicy(
+async function proveLivePolicy(
   receipt: HermesPortableLifecycleReceipt,
   capture: HermesPortablePolicyCapture,
-): void {
+  stateDir: string,
+  observeSandbox: () => HermesPortableSandboxObservation,
+): Promise<void> {
   if (receipt.phase === "pending") assertHermesPortablePolicySource(receipt.policy);
-  proveHermesPortableLivePolicy({
+  const authority = inspectPortableAgentReceiptAuthorityForPublicationRecovery(
+    receipt.sandboxName,
+    stateDir,
+  );
+  if (authority.kind !== "hermes" || !isDeepStrictEqual(authority.snapshot.receipt, receipt)) {
+    fail("receipt authority changed before policy observation");
+  }
+  await proveHermesPortableLivePolicy({
     gatewayName: receipt.gatewayName,
     sandboxName: receipt.sandboxName,
     capture,
   });
+  requireCurrentReceiptSnapshot(authority.snapshot, stateDir, true);
+  if (receipt.phase !== "pending") requireCurrentOpenShellIdentity(receipt, observeSandbox());
 }
 
 function assertRegistryMissingBeforeConfiguration(
@@ -1041,12 +1077,8 @@ function requireConfiguredReceiptSnapshot(
 }
 
 function requireConfiguredContainerReady(container: HermesPortableContainerInspection): void {
-  if (
-    !container.authority.running ||
-    container.paused ||
-    container.authority.restartPolicy !== "unless-stopped"
-  ) {
-    fail("exact container is not running with the committed restart policy");
+  if (!container.authority.running || container.paused) {
+    fail("exact container is not running and unpaused");
   }
 }
 
@@ -1085,6 +1117,9 @@ export async function runHermesPortableOnboardingTransaction<T>(
   input: HermesPortableOnboardingInput,
   deps: HermesPortableOnboardingDeps<T>,
 ): Promise<HermesPortableOnboardingResult<T>> {
+  enforceRemovedImmutabilityMigrationBoundary(input.sandboxName, {
+    stateDir: path.join(input.stateDir, "state"),
+  });
   return await deps.withLifecycleLock(input.sandboxName, async () => {
     assertHermesPortableUninstallCompleteForOnboarding(input.stateDir);
     const assertOpenShellExecutableAuthority = (): void =>
@@ -1093,9 +1128,13 @@ export async function runHermesPortableOnboardingTransaction<T>(
       assertOpenShellExecutableAuthority();
       return deps.observeSandbox(timeoutBudgetMs);
     };
-    const capturePolicy: HermesPortablePolicyCapture = (args) => {
+    const capturePolicy: HermesPortablePolicyCapture = async (args) => {
       assertOpenShellExecutableAuthority();
-      return deps.capturePolicy(args);
+      try {
+        return await deps.capturePolicy(args);
+      } finally {
+        assertOpenShellExecutableAuthority();
+      }
     };
     const validatedCreateArgv = rewriteHermesPortableCreatePolicyArgv(
       input.createArgv,
@@ -1377,7 +1416,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
       requireConfiguredContainerReady(
         assertCurrentHermesPortableContainer(activeSnapshot.receipt, containerDeps),
       );
-      proveLivePolicy(activeSnapshot.receipt, capturePolicy);
+      await proveLivePolicy(activeSnapshot.receipt, capturePolicy, input.stateDir, observeSandbox);
       requireMatchingRegistry(
         activeSnapshot.receipt,
         repairRegistryGatewayPort(activeSnapshot.receipt, liveIdentity.liveIdentityFingerprint),
@@ -1396,7 +1435,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
       requireConfiguredContainerReady(
         assertCurrentHermesPortableContainer(activeSnapshot.receipt, containerDeps),
       );
-      proveLivePolicy(activeSnapshot.receipt, capturePolicy);
+      await proveLivePolicy(activeSnapshot.receipt, capturePolicy, input.stateDir, observeSandbox);
       requireMatchingRegistry(
         activeSnapshot.receipt,
         repairRegistryGatewayPort(activeSnapshot.receipt, finalIdentity.liveIdentityFingerprint),
@@ -1491,7 +1530,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
         podmanExecutableAuthority,
         createIntentSha256,
       );
-      proveLivePolicy(snapshot.receipt, capturePolicy);
+      await proveLivePolicy(snapshot.receipt, capturePolicy, input.stateDir, observeSandbox);
+      if (!isDeepStrictEqual(observation, observeSandbox())) {
+        fail("live sandbox authority changed during policy observation");
+      }
       const container = enrollHermesPortableContainer(
         snapshot.receipt,
         observation.sandboxId,
@@ -1526,18 +1568,22 @@ export async function runHermesPortableOnboardingTransaction<T>(
       configuringSnapshot.receipt,
       observeSandbox(),
     );
-    proveLivePolicy(configuringSnapshot.receipt, capturePolicy);
+    await proveLivePolicy(
+      configuringSnapshot.receipt,
+      capturePolicy,
+      input.stateDir,
+      observeSandbox,
+    );
     requireRegistryBeforeConfigurationMutation(
       repairRegistryGatewayPort(configuringSnapshot.receipt, liveIdentity.liveIdentityFingerprint),
       liveIdentity.liveIdentityFingerprint,
     );
-    configureHermesPortableRestartPolicy(configuringSnapshot.receipt, containerDeps);
     const beforeRegistry = registryDisposition(configuringSnapshot.receipt);
     if (beforeRegistry.kind === "conflict") {
       fail(`registry conflicts with configuring authority: ${beforeRegistry.detail}`);
     }
     if (beforeRegistry.kind === "missing") {
-      const revalidateRegistryBoundary = (): string => {
+      const revalidateRegistryBoundary = async (): Promise<string> => {
         assertCurrentTransaction(
           configuringSnapshot.receipt,
           input,
@@ -1549,7 +1595,12 @@ export async function runHermesPortableOnboardingTransaction<T>(
           configuringSnapshot.receipt,
           observeSandbox(),
         );
-        proveLivePolicy(configuringSnapshot.receipt, capturePolicy);
+        await proveLivePolicy(
+          configuringSnapshot.receipt,
+          capturePolicy,
+          input.stateDir,
+          observeSandbox,
+        );
         requireConfiguredContainerReady(
           assertCurrentHermesPortableContainer(configuringSnapshot.receipt, containerDeps),
         );
@@ -1579,7 +1630,12 @@ export async function runHermesPortableOnboardingTransaction<T>(
       createIntentSha256,
     );
     liveIdentity = requireCurrentOpenShellIdentity(configuringSnapshot.receipt, observeSandbox());
-    proveLivePolicy(configuringSnapshot.receipt, capturePolicy);
+    await proveLivePolicy(
+      configuringSnapshot.receipt,
+      capturePolicy,
+      input.stateDir,
+      observeSandbox,
+    );
     const currentContainer = assertCurrentHermesPortableContainer(
       configuringSnapshot.receipt,
       containerDeps,
@@ -1593,7 +1649,12 @@ export async function runHermesPortableOnboardingTransaction<T>(
     probeHermesPortableAuthenticatedHealth(configuringSnapshot.receipt, containerDeps);
     configuringSnapshot = requireCurrentReceiptSnapshot(configuringSnapshot, input.stateDir, true);
     liveIdentity = requireCurrentOpenShellIdentity(configuringSnapshot.receipt, observeSandbox());
-    proveLivePolicy(configuringSnapshot.receipt, capturePolicy);
+    await proveLivePolicy(
+      configuringSnapshot.receipt,
+      capturePolicy,
+      input.stateDir,
+      observeSandbox,
+    );
     requireConfiguredContainerReady(
       assertCurrentHermesPortableContainer(configuringSnapshot.receipt, containerDeps),
     );
@@ -1769,7 +1830,10 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
         authenticatedHealth,
       }),
       assertOpenShellExecutableAuthority: () => assertOpenShellExecutableAuthority(),
-      capturePolicy: captureOpenShell,
+      capturePolicy: createHermesPortableAsyncPolicyCapture(() => {
+        assertOpenShellExecutableAuthority();
+        return { executablePath, env: commandEnv };
+      }, 5_000),
       observeSandbox: (timeoutBudgetMs) =>
         observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell, timeoutBudgetMs),
       createSandbox: (argv, buildContextPath, effectivePolicySourcePath) =>

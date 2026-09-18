@@ -427,3 +427,12 @@ export function createPortableLifecycleTimingRecorder(
     finish,
   };
 }
+
+export function emitPortableOpenClawAlreadyRunningTiming(
+  write: (line: string) => void = (line) => console.log(line),
+): void {
+  const timing = createPortableLifecycleTimingRecorder({ now: () => 0, write });
+  timing.setContainerAction("reused");
+  timing.setGatewayAction("reused");
+  timing.finish("already-running");
+}

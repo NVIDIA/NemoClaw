@@ -190,15 +190,16 @@ describe("E2E scorecard", () => {
         'summarize-jobs.mts',
         'build-slack-blocks.mts',
         'coordinate-scorecard.mts',
-        'read-artifact-zip.mts',
       ]) {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }
       const runtimeAudit = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'));
       if (Object.keys(runtimeAudit).length === 0) process.exit(2);
+      const artifactZip = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/lib/read-artifact-zip.mts'));
+      if (Object.keys(artifactZip).length === 0) process.exit(2);
     `;
-    const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
+    const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, GITHUB_WORKSPACE: process.cwd() },
@@ -736,7 +737,6 @@ describe("E2E scorecard", () => {
       rmSync(directory, { force: true, recursive: true });
     }
   });
-
 
   it("bounds trace input count and file size before parsing", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));

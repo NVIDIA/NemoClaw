@@ -7,8 +7,6 @@ import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { ToolDisclosure } from "../../tool-disclosure";
-import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
-import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
 
 /** Bounded identity checkpoint for one incomplete sandbox create. */
@@ -22,6 +20,12 @@ export interface PendingSandboxCreateIdentity {
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
+  /** The exact final handoff crossed its durable commit fence. */
+  readonly exactFinalHandoffCommitStarted?: true;
+  /** Exact Docker replacement ID authorized before compatibility handoff commit. */
+  readonly exactFinalHandoffRuntimeId?: string;
+  /** OpenShell acknowledged the exact replacement handoff for this identity. */
+  readonly exactFinalHandoffAcknowledged?: true;
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
@@ -102,8 +106,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
-  /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
-  openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
   // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
   // it against the running NemoClaw build so an image/build change with an
@@ -124,8 +126,9 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
+  /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
+  deferredN1xManagedVllmAccepted?: true;
   messaging?: SandboxMessagingState;
-  mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
   /** Destination-scoped provider holding the host-minted Hermes inference key. */
   hermesInferenceProvider?: string;
@@ -153,6 +156,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
+  stopped?: boolean;
 }
 
 export type SandboxWorkloadReceipt =

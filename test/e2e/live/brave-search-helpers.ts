@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import YAML from "yaml";
+import { asExportedConfig } from "../../support/config-export-document.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -12,11 +14,13 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-brave-search";
 validateSandboxName(SANDBOX_NAME);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
 const PLACEHOLDER_PATTERN = /^openshell:resolve:env:(?:v[0-9]+_)?BRAVE_API_KEY$/;
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -124,7 +128,7 @@ export async function onboardBrave(
           NVIDIA_INFERENCE_API_KEY: inferenceKey,
         }),
         redactionValues,
-        timeoutMs: 20 * 60_000,
+        timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
     const retry =
@@ -160,9 +164,35 @@ export async function reuseBraveSandboxWithWebSearchDisabled(
         NVIDIA_INFERENCE_API_KEY: inferenceKey,
       }),
       redactionValues: [inferenceKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
+}
+
+export async function exportBraveConfig(
+  host: HostCliClient,
+  outputPath: string,
+  artifactName: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+    { artifactName, cwd: REPO_ROOT, env: commandEnv(), redactionValues, timeoutMs: 60_000 },
+  );
+}
+
+/** Validate private export output before retaining only public spec evidence. */
+export function assertBraveExport(raw: string, credentialValues: readonly string[]) {
+  for (const value of credentialValues) {
+    expect(raw.includes(value), "Export must omit credential values").toBe(false);
+  }
+  const document = asExportedConfig(YAML.parse(raw));
+  const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
+  expect(webSearch?.provider).toBe("brave");
+  expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
+  expect(document.spec.sandboxes[0]?.agents[0]?.integrationRefs).toEqual(["brave-search"]);
+  return document.spec;
 }
 
 export function assertBraveConfig(configText: string): string {
@@ -277,12 +307,4 @@ esac`,
     { artifactName: "phase-4c-shell-credential-boundary", timeoutMs: 60_000, redactionValues },
   );
   expect(probe.exitCode, "BRAVE_API_KEY is raw in the sandbox login shell environment").toBe(0);
-}
-
-export function assertBraveResponse(body: string): void {
-  const status = body.match(/HTTP_STATUS:(\d{3})/)?.[1];
-  expect(status, body).toBe("200");
-  const json = body.replace(/\n?HTTP_STATUS:\d{3}\s*$/u, "");
-  const braveResponse = JSON.parse(json) as { web?: { results?: unknown[] } };
-  expect(braveResponse.web?.results?.length ?? 0, json.slice(0, 500)).toBeGreaterThan(0);
 }

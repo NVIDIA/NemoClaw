@@ -236,6 +236,13 @@ describe("launch readiness validation", () => {
           stderr: "",
         } as ReturnType<NonNullable<LaunchReadinessDeps["capture"]>>;
       },
+      commandExecutor: {
+        runBuffered: vi.fn(async () => ({
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          stdout: "",
+          stderr: "",
+        })),
+      },
       gatewayHealth: async (sandboxName, gatewayName) => {
         externalEvents.push("gateway-health");
         gatewayHealthRequests.push([sandboxName, gatewayName]);
@@ -246,8 +253,8 @@ describe("launch readiness validation", () => {
         forwardRequests.push([sandboxName, gatewayName]);
         return forwardsHealthy;
       },
-      smoke: () => ({ ok: true }),
-      inferenceProbe: (sandboxName, _agent, gatewayName) => {
+      smoke: async () => ({ ok: true }),
+      inferenceProbe: async (sandboxName, _agent, gatewayName) => {
         externalEvents.push("inference-health");
         inferenceHealthRequests.push([sandboxName, gatewayName]);
         return { healthy: true, broken: false, httpStatus: 200, detail: "OK 200" };
@@ -733,7 +740,7 @@ describe("launch readiness validation", () => {
     });
 
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
-    currentDeps.inferenceProbe = () => ({
+    currentDeps.inferenceProbe = async () => ({
       healthy: false,
       broken: true,
       httpStatus: 503,
@@ -756,7 +763,7 @@ describe("launch readiness validation", () => {
       };
       routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
       const currentDeps = await createAcceptedLease();
-      currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, _gatewayName) => ({
+      currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, _gatewayName) => ({
         healthy: httpStatus < 500,
         broken: httpStatus >= 500,
         httpStatus,
@@ -795,7 +802,7 @@ describe("launch readiness validation", () => {
     };
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
     const currentDeps = await createAcceptedLease();
-    currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, gatewayName) => ({
+    currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, _gatewayName) => ({
       healthy: true,
       broken: false,
       httpStatus: 299,
@@ -835,10 +842,17 @@ describe("launch readiness validation", () => {
   });
 
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
-    sandbox = entry("langchain-deepagents-code");
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
     const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = async () => ({ ok: true });
     const gatewayHealth = vi.fn(async () => true);
-    const smoke = vi.fn(() => ({ ok: true }) as const);
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
     currentDeps.gatewayHealth = gatewayHealth;
     currentDeps.smoke = smoke;
     await createAcceptedLease(currentDeps);
@@ -847,19 +861,51 @@ describe("launch readiness validation", () => {
     expect(smoke).toHaveBeenCalledWith(
       SANDBOX,
       expect.objectContaining({ name: "langchain-deepagents-code" }),
-      expect.any(Function),
-      GATEWAY_NAME,
     );
     expect(gatewayHealth).not.toHaveBeenCalled();
     expect(externalEvents).not.toContain("pairing-qualification");
     expect(publishedIdentity?.session).toBeNull();
   });
 
+  it("rejects a Deep Agents Code lease when model discovery succeeds but inference fails (#11520)", async () => {
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+    const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+    await createAcceptedLease(currentDeps);
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "accepted",
+    });
+
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(decision).toMatchObject({ kind: "fallback", category: "health", fenceFailed: false });
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toMatchObject({ kind: "validation-failed", category: "health" });
+    expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        model: "model-a",
+      }),
+    );
+  });
+
   it("uses ordinary terminal smoke health for feature-gated NemoCUA (#9649)", async () => {
     sandbox = entry(" nemocua ");
     const currentDeps = deps();
     const gatewayHealth = vi.fn(async () => true);
-    const smoke = vi.fn(() => ({ ok: true }) as const);
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
     const cuaAgent = {
       ...loadAgent("hermes"),
       name: "nemocua",
@@ -938,15 +984,6 @@ describe("launch readiness validation", () => {
           label: "cuda",
           at: "2026-01-01T00:00:00.000Z",
         },
-      }),
-    ],
-    [
-      "image plugin provenance",
-      (current: SandboxEntry) => ({
-        ...current,
-        openclawImagePluginInstalls: [
-          { id: "plugin", installPath: "/sandbox/.openclaw/extensions/plugin", loadPaths: [] },
-        ],
       }),
     ],
   ])("invalidates accepted readiness after a launch-affecting %s change", async (_name, mutate) => {

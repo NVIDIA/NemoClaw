@@ -20,7 +20,7 @@ import {
   normalizeSandboxPhaseTailSample,
   type SandboxPhaseTailSample,
 } from "./analyze-sandbox-phase-tail.mts";
-import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../lib/read-artifact-zip.mts";
 
 export const RUNTIME_SUMMARY_ARTIFACT = "e2e-runtime-summary";
 export const RUNTIME_SUMMARY_FILE = "e2e-runtime-summary.json";
@@ -225,10 +225,13 @@ export function createRuntimeSummary(
 
 function parseRuntimeSummaryArchive(archive: Buffer): RuntimeSummaryArtifact | null {
   try {
-    const contents = readValidatedArtifactZipEntry(archive, RUNTIME_SUMMARY_FILE, {
-      maxBytes: MAX_SUMMARY_BYTES,
+    const entries = readValidatedArtifactZipEntries(archive, {
+      maxTotalUncompressedBytes: MAX_SUMMARY_BYTES,
     });
-    return contents === null ? null : normalizeRuntimeSummary(JSON.parse(contents));
+    const contents = entries?.find(({ name }) => name === RUNTIME_SUMMARY_FILE)?.bytes;
+    return contents === undefined
+      ? null
+      : normalizeRuntimeSummary(JSON.parse(contents.toString("utf8")));
   } catch {
     return null;
   }

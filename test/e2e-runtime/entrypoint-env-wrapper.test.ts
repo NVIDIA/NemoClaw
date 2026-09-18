@@ -9,7 +9,14 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sliceBlock } from "../helpers/corporate-ca-support";
 
-const HELPER = path.join(import.meta.dirname, "..", "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
+const HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
 
 function runNormalizer(argv: readonly string[]) {
@@ -159,7 +166,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     const openClawPortBlock = sliceBlock(
       OPENCLAW_START,
       'NEMOCLAW_CMD=("$@")',
-      "# ── Config integrity check",
+      "# ── Mutable config permission normalize",
     );
     const snippet = [
       normalizer,
@@ -175,6 +182,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const baseEnv = { ...process.env };
       delete baseEnv.NEMOCLAW_DASHBOARD_PORT;
       delete baseEnv.CHAT_UI_URL;
+      delete baseEnv.OPENCLAW_GATEWAY_URL;
       const script = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -183,7 +191,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
         'printf "CHAT_UI_URL=%s\\n" "$CHAT_UI_URL"',
         'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
         'printf "OPENCLAW_GATEWAY_PORT=%s\\n" "$OPENCLAW_GATEWAY_PORT"',
-        'printf "OPENCLAW_GATEWAY_URL=%s\\n" "$OPENCLAW_GATEWAY_URL"',
+        'printf "OPENCLAW_GATEWAY_URL=%s\\n" "${OPENCLAW_GATEWAY_URL-unset}"',
         'printf "SANDBOX_HOME=%s\\n" "$_SANDBOX_HOME"',
         'printf "OPENCLAW_HOME=%s\\n" "$OPENCLAW_HOME"',
         'printf "OPENCLAW_STATE_DIR=%s\\n" "$OPENCLAW_STATE_DIR"',
@@ -215,11 +223,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       const injected = runScenario(
         "set -- env CHAT_UI_URL=https://chat.example.test NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw-start openclaw agent --agent main",
       );
-      expect(injected.status).toBe(0);
+      expect(injected.status, injected.stderr).toBe(0);
       expect(injected.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:19000");
       expect(injected.stdout).toContain("PUBLIC_PORT=19000");
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_PORT=19000");
-      expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:19000");
+      expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(injected.stdout).toContain("SANDBOX_HOME=/sandbox");
       expect(injected.stdout).toContain("OPENCLAW_HOME=/sandbox");
       expect(injected.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
@@ -234,7 +242,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(bakedCustomPort.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:18790");
       expect(bakedCustomPort.stdout).toContain("PUBLIC_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18790");
-      expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18790");
+      expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
@@ -246,7 +254,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       expect(baked.stdout).toContain("CHAT_UI_URL=https://baked.example.test/ui");
       expect(baked.stdout).toContain("PUBLIC_PORT=18789");
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_PORT=18789");
-      expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789");
+      expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=unset");
       expect(baked.stdout).toContain("SANDBOX_HOME=/sandbox");
       expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");

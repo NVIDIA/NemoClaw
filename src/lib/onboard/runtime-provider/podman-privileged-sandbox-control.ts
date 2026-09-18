@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SANITIZED_PRIVILEGED_ENV } from "./privileged-sandbox-environment";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type {
   RuntimeProviderPrivilegedSandboxCommandInput,
@@ -10,6 +11,7 @@ import type {
 } from "./contract";
 import { observePodmanManagedContainer } from "./podman-lifecycle";
 import {
+  DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
@@ -18,26 +20,6 @@ import {
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
 } from "./stopped-sandbox-state-cleanup";
-
-const SANITIZED_PRIVILEGED_ENV = [
-  "BASH_ENV=",
-  "ENV=",
-  "GCONV_PATH=",
-  "GLIBC_TUNABLES=",
-  "LD_AUDIT=",
-  "LD_LIBRARY_PATH=",
-  "LD_PRELOAD=",
-  "LOCPATH=",
-  "NODE_OPTIONS=",
-  "PERL5OPT=",
-  "PYTHONHOME=",
-  "PYTHONINSPECT=",
-  "PYTHONNOUSERSITE=1",
-  "PYTHONPATH=",
-  "PYTHONSTARTUP=",
-  "PYTHONUSERBASE=",
-  "RUBYOPT=",
-] as const;
 
 function resolveTarget(
   engine: PodmanContainerEngine,
@@ -50,7 +32,12 @@ function resolveTarget(
     throw new Error("Podman privileged control requires the registered sandbox identity.");
   }
   const container = observePodmanManagedContainer(engine, input.sandboxName);
-  if (!container || !container.running || container.paused) {
+  if (!container) {
+    throw new DirectSandboxContainerNotFoundError(
+      `No Podman runtime resource found for sandbox '${input.sandboxName}'.`,
+    );
+  }
+  if (!container.running || container.paused) {
     throw new DirectSandboxFallbackUnavailableError(
       `No running Podman runtime resource found for sandbox '${input.sandboxName}'.`,
     );

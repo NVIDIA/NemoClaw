@@ -113,50 +113,6 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
   });
 
-  it("lists managed MCP credential reservations in a stable order", async () => {
-    const registry = await loadRegistryWith({
-      zeta: {
-        name: "zeta",
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://8.8.8.8/mcp",
-              env: ["SEARCH_TOKEN", "SEARCH_REGION"],
-              policyName: "mcp-bridge-search",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-      alpha: {
-        name: "alpha",
-        mcp: {
-          bridges: {
-            files: {
-              server: "files",
-              agent: "hermes",
-              url: "https://1.1.1.1/mcp",
-              env: ["FILES_TOKEN"],
-              policyName: "mcp-bridge-files",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-    });
-
-    expect(registry.listManagedMcpCredentialReservations()).toEqual([
-      { sandboxName: "alpha", server: "files", credentialKeys: ["FILES_TOKEN"] },
-      {
-        sandboxName: "zeta",
-        server: "search",
-        credentialKeys: ["SEARCH_TOKEN", "SEARCH_REGION"],
-      },
-    ]);
-  });
-
   it("preserves a stale pointer for diagnostics but repairs it on registration", async () => {
     const registry = await loadRegistryWith({ mismatched: { name: "different" } }, "mismatched");
 
@@ -245,6 +201,78 @@ describe("sandbox registry normalization", () => {
     );
   });
 
+  it.each([
+    null,
+    "http://host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:18000/v1",
+  ])(
+    "round-trips valid Deferred N1x preview acceptance with endpoint %s (#11510)",
+    async (endpointUrl) => {
+      const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+      registry.registerSandbox({
+        name: "preview",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl,
+        endpointSource: null,
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      });
+      vi.resetModules();
+      const reloadedRegistry = await import("./registry");
+
+      expect(reloadedRegistry.getSandbox("preview")).toMatchObject({
+        endpointUrl,
+        deferredN1xManagedVllmAccepted: true,
+      });
+    },
+  );
+
+  it("rejects malformed Deferred N1x preview acceptance (#10959)", async () => {
+    const malformed = await loadRegistryWith({
+      malformed: {
+        name: "malformed",
+        deferredN1xManagedVllmAccepted: "true",
+      },
+    });
+    expect(() => malformed.getSandbox("malformed")).toThrow("invalid N1x preview acceptance");
+    const mismatchedRoute = await loadRegistryWith({
+      mismatched: {
+        name: "mismatched",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        endpointSource: "inference-set",
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      },
+    });
+    expect(() => mismatchedRoute.getSandbox("mismatched")).toThrow(
+      "invalid N1x preview acceptance",
+    );
+  });
+
+  it("clears Deferred N1x acceptance when route authority changes (#10959)", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({
+      name: "preview",
+      provider: "vllm-local",
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      endpointUrl: null,
+      endpointSource: null,
+      openshellDriver: "docker",
+      deferredN1xManagedVllmAccepted: true,
+    });
+    registry.updateSandbox("preview", { dashboardPort: 18_789 });
+    const afterUnrelatedUpdate = registry.getSandbox("preview")?.deferredN1xManagedVllmAccepted;
+    registry.updateSandbox("preview", { model: "other/model" });
+
+    expect({
+      afterUnrelatedUpdate,
+      afterRouteUpdate: registry.getSandbox("preview")?.deferredN1xManagedVllmAccepted,
+    }).toEqual({ afterUnrelatedUpdate: true, afterRouteUpdate: undefined });
+  });
+
   it("fails closed when persisted serving profile provenance is malformed (#8246)", async () => {
     const registry = await loadRegistryWith({
       profile: {
@@ -326,7 +354,10 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none" as const,
+      route: "compatibility" as const,
+      exactFinalHandoffCommitStarted: true as const,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
+      exactFinalHandoffAcknowledged: true as const,
       policyHash: "legacy",
     };
     const { registry } = await loadRegistryDocument({
@@ -347,8 +378,48 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none",
+      route: "compatibility",
+      exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
+      exactFinalHandoffAcknowledged: true,
     });
+  });
+
+  it.each([
+    ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
+    ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
+    ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],
+    [
+      "a compatibility fence without exact runtime authority",
+      { exactFinalHandoffCommitStarted: true },
+    ],
+    ["runtime authority without a commit fence", { exactFinalHandoffRuntimeId: "b".repeat(64) }],
+    [
+      "malformed runtime authority",
+      { exactFinalHandoffCommitStarted: true, exactFinalHandoffRuntimeId: "short" },
+    ],
+  ])("rejects %s in a pending create checkpoint", async (_case, receipt) => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "compatibility",
+          ...receipt,
+        },
+      },
+    });
+
+    expect(() => registry.getSandbox("alpha")).toThrow(
+      /invalid pending sandbox create verification/u,
+    );
   });
 
   it("sets a gateway port only while the complete qualified row remains current", async () => {

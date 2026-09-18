@@ -18,7 +18,11 @@ import {
   selectCiEndpointCaRoots,
   writeCiEndpointCaRootsOutput,
 } from "../../scripts/checks/select-ci-endpoint-ca-roots.mts";
-import { LEAF_PEM, PEM, tmpDir } from "../../src/lib/onboard/__test-helpers__/corporate-ca-fixtures";
+import {
+  LEAF_PEM,
+  PEM,
+  tmpDir,
+} from "../../src/lib/onboard/__test-helpers__/corporate-ca-fixtures";
 
 const hasOpenSsl = spawnSync("openssl", ["version"], { encoding: "utf8" }).status === 0;
 

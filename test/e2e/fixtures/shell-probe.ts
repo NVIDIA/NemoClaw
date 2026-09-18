@@ -9,7 +9,7 @@ import {
 } from "../../../src/lib/agent/candidate.ts";
 import { CUA_FEATURE_ENV } from "../../../src/lib/cua/feature.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
-import { superviseChild } from "./shell/supervisor.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
 /**
@@ -17,7 +17,7 @@ import type { TrustedShellCommand } from "./shell/trusted-command.ts";
  *
  * The lifecycle boundary (detached process-group cleanup, SIGTERM ->
  * SIGKILL escalation, timeout, AbortSignal) is owned by
- * fixtures/shell/supervisor.ts and shared with the phase orchestrator
+ * test/helpers/process-supervisor.ts and shared with the phase orchestrator
  * and probe helpers. The trusted-command brand + NUL-byte guard live
  * in fixtures/shell/trusted-command.ts. This file layers the
  * fixture-specific policy on top: redaction at the canonical entry
@@ -25,6 +25,8 @@ import type { TrustedShellCommand } from "./shell/trusted-command.ts";
  */
 
 export interface ShellProbeRunOptions {
+  /** Supply finite input, hold an empty pipe open, or default to immediate EOF. */
+  stdin?: "open-pipe" | { text: string };
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -47,13 +49,39 @@ export interface ShellProbeOutputEvent {
 export type { TrustedShellCommand, TrustedShellCommandInput } from "./shell/trusted-command.ts";
 export { trustedShellCommand } from "./shell/trusted-command.ts";
 
+export type LiveE2EAgentName =
+  | "hermes"
+  | "langchain-deepagents-code"
+  | "nemocua"
+  | "openclaw"
+  | "pi";
+
+export function normalizeLiveE2EAgentName(value: string): LiveE2EAgentName {
+  switch (value) {
+    case "hermes":
+      return "hermes";
+    case "langchain-deepagents-code":
+      return "langchain-deepagents-code";
+    case "nemocua":
+      return "nemocua";
+    case "openclaw":
+      return "openclaw";
+    case "pi":
+      return "pi";
+    default:
+      throw new Error("Unsupported E2E agent selector.");
+  }
+}
+
 export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const targetId = input.E2E_TARGET_ID ?? process.env.E2E_TARGET_ID;
   const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
   if (!targetId || source !== "local-dockerfile") return input;
   const localBuildEnvironment = { ...input, NEMOCLAW_SANDBOX_PREBUILD: "1" };
   if (input.NEMOCLAW_FROM_DOCKERFILE) return localBuildEnvironment;
-  const agentName = input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw";
+  const agentName = normalizeLiveE2EAgentName(
+    input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw",
+  );
   const agent = loadAgent(agentName, {
     [CANDIDATE_AGENT_FEATURE_ENV]:
       input[CANDIDATE_AGENT_FEATURE_ENV] ?? process.env[CANDIDATE_AGENT_FEATURE_ENV],
@@ -71,6 +99,8 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
 
 export interface ShellProbeResult {
   command: string[];
+  startedAt?: string;
+  finishedAt?: string;
   /** Wall-clock command duration, persisted for CI bottleneck analysis. */
   durationMs?: number;
   exitCode: number | null;
@@ -232,6 +262,28 @@ export class ShellProbe {
       result: Omit<ShellProbeResult, "artifacts">,
     ): Promise<ShellProbeResult["artifacts"]> => {
       if (options.persistArtifacts === false) return { stdout: "", stderr: "", result: "" };
+      if (process.env.NEMOCLAW_E2E_COMMAND_EVIDENCE === "1") {
+        // Preserve completed command metadata through the existing remote log transport.
+        // Output bodies stay in redacted guest artifacts, outside this metadata-only stream.
+        const record = {
+          schemaVersion: 1,
+          artifactName: this.artifacts.redact(activityName).slice(0, 256),
+          command: result.command.map((argument) => this.artifacts.redact(argument)),
+          startedAt: result.startedAt,
+          finishedAt: result.finishedAt,
+          durationMs: result.durationMs,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+        };
+        let encoded = this.artifacts.redact(JSON.stringify(record));
+        if (Buffer.byteLength(encoded) > 65_536) {
+          encoded = this.artifacts.redact(
+            JSON.stringify({ ...record, command: [], commandOmitted: "size-limit" }),
+          );
+        }
+        process.stderr.write(`NEMOCLAW_E2E_COMMAND ${encoded}\n`);
+      }
       return {
         stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
         stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
@@ -255,10 +307,11 @@ export class ShellProbe {
         cwd: options.cwd,
         detached: true,
         env: commandEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       },
     });
     const supervised = await superviseChild(child, {
+      stdin: typeof options.stdin === "object" ? options.stdin.text : undefined,
       timeoutMs,
       killGraceMs,
       signal,
@@ -282,25 +335,31 @@ export class ShellProbe {
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);
-    const durationMs = Date.now() - startedAtMs;
-    if (supervised.spawnError) {
-      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+    const finishedAtMs = Date.now();
+    const timing = {
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs: finishedAtMs - startedAtMs,
+    };
+    const superviseError = supervised.spawnError ?? supervised.cleanupError;
+    if (superviseError) {
+      const redactedMessage = redactProbeText(errorMessage(superviseError));
       const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
-        durationMs,
-        exitCode: null,
-        signal: null,
+        ...timing,
+        exitCode: supervised.exitCode,
+        signal: supervised.signal,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
         stderr: stderrWithError,
       });
-      throw redactedError(supervised.spawnError, redactedMessage);
+      throw redactedError(superviseError, redactedMessage);
     }
 
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
-      durationMs,
+      ...timing,
       exitCode: supervised.exitCode,
       signal: supervised.signal,
       timedOut: supervised.timedOut,

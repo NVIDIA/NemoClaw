@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { matchesGlob } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,10 +12,41 @@ import { readRepoText, readYaml, type Workflow } from "../../helpers/e2e-workflo
 type PortableProfileWorkflow = Workflow & {
   on: {
     pull_request: { paths: string[]; types: string[] };
+    push: { branches: string[]; paths: string[] };
+    workflow_dispatch: null;
   };
 };
 
+type SandboxPolicy = {
+  filesystem_policy?: { read_only?: string[] };
+  process?: { run_as_user?: string; run_as_group?: string };
+};
+
 describe("portable profile rootless runtime workflow", () => {
+  // source-shape-contract: security -- The rootless-linux install must skip redundant advisory requests on automated runs while manual dispatches retain an explicit audit without a reviewed prerequisite
+  it("routes rootless job dependency auditing by workflow trigger (#11028)", () => {
+    const workflow = readYaml<PortableProfileWorkflow>(
+      ".github/workflows/portable-profile-e2e.yaml",
+    );
+    const install = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies",
+    );
+    const auditedInstall = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies with audit",
+    );
+
+    expect(Object.keys(workflow.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+    expect(workflow.on.push.branches).toEqual(["main"]);
+    expect(install).toMatchObject({
+      if: "github.event_name != 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --no-audit --no-fund",
+    });
+    expect(auditedInstall).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --audit --no-fund",
+    });
+  });
+
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
@@ -27,6 +59,9 @@ describe("portable profile rootless runtime workflow", () => {
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "utf-8",
     );
+    const hermesPolicy = readYaml<SandboxPolicy>(
+      "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
+    );
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
     const provision = steps.find(
@@ -37,6 +72,9 @@ describe("portable profile rootless runtime workflow", () => {
     )?.run;
     const dependencyInstallIndex = steps.findIndex(
       (step) => step.name === "Install root dependencies",
+    );
+    const auditedDependencyInstallIndex = steps.findIndex(
+      (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
     const provisionIndex = steps.findIndex(
@@ -59,15 +97,25 @@ describe("portable profile rootless runtime workflow", () => {
         "agents/hermes/Dockerfile",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
+        "src/lib/actions/sandbox/forward-recovery.ts",
+        "src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.ts",
+        "src/lib/actions/sandbox/start.ts",
+        "src/lib/adapters/openshell/command-execution.ts",
+        "src/lib/adapters/openshell/forward-cli.ts",
+        "src/lib/adapters/openshell/forward.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+        "src/lib/onboard/experimental/hermes-portable-contract.ts",
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
+        "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
-    expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
     expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(liveTestIndex).toBeGreaterThan(policyIndex);
@@ -92,7 +140,25 @@ describe("portable profile rootless runtime workflow", () => {
       /mkdtempSync\(\s*path\.join\(os\.tmpdir\(\),\s*["']nemoclaw-portable-e2e-/,
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
+    expect(liveTest).toContain(
+      'import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";',
+    );
+    expect(liveTest).toContain(
+      "getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage",
+    );
+    expect(liveTest).not.toContain("OPENSHELL_V0106_QUALIFICATION");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
+    expect(liveTest).toContain('".hermes-policy.yaml"');
+    expect(liveTest).toContain('flag: "wx"');
+    expect(liveTest).toContain("mode: 0o600");
+    expect(liveTest).toContain("await streamSandboxCreate(");
+    expect(liveTest).toContain("waitForReadyTermination: true");
+    expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
+    expect(hermesPolicy.process).toEqual({
+      run_as_user: "sandbox",
+      run_as_group: "sandbox",
+    });
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
@@ -228,7 +294,342 @@ ${serviceIdentityCheck}`,
     const liveSource = readRepoText("test/e2e/live/portable-profile-rootless-linux.test.ts");
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
+    // Evaluate selection rather than requiring a particular spelling of the filters.
+    const selects = (event: "pull_request" | "push", changedPath: string) =>
+      workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/launch.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/connect.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-receipt.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/portable-uninstall-retirement.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "agents/hermes/manifest.yaml")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/start.ts")).toBe(true);
+    expect.soft(selects("pull_request", "docs/get-started/quickstart.mdx")).toBe(false);
+    expect.soft(selects("pull_request", "src/lib/messaging/telegram.ts")).toBe(false);
+    expect.soft(selects("push", "src/lib/actions/sandbox/launch.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/connect.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-receipt.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/portable-uninstall-retirement.ts")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/manifest.yaml")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/start.ts")).toBe(true);
+    expect.soft(selects("push", "docs/get-started/quickstart.mdx")).toBe(false);
+    expect.soft(selects("push", "src/lib/messaging/telegram.ts")).toBe(false);
+
+    expect
+      .soft(selects("pull_request", "src/lib/actions/sandbox/launch-readiness/health.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/gateway-state.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/portable-retirement-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/actions/uninstall/hermes-portable-uninstall.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/actions/uninstall/portable-runtime-cleanup.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/hermes-portable-uninstall/authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/onboard/portable-runtime-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/lifecycle-generation.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/lifecycle-generation-cas.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-demo-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/portable-runtime-receipt-readiness.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/adapters/openshell/forward-runtime.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/launch-readiness/health.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/gateway-state.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/portable-retirement-authority.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/uninstall/hermes-portable-uninstall.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/uninstall/portable-runtime-cleanup.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/hermes-portable-uninstall/authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/onboard/portable-runtime-authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lifecycle-generation.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lifecycle-generation-cas.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-demo-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-runtime-receipt-readiness.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/forward-runtime.ts")).toBe(true);
+
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-container.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-onboarding.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-podman-authority.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/hermes-portable-operating-authority.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-policy-state.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/stop.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-agent-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-lifecycle-lock.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/mcp-lifecycle-lock-acquisition.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/mcp-lifecycle-lock/decisions.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/launch-readiness-lease.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-container.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-onboarding.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-podman-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-operating-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-policy-state.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/stop.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-agent-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-lifecycle-lock.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/mcp-lifecycle-lock-acquisition.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/mcp-lifecycle-lock/decisions.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/launch-readiness-lease.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry.ts")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/Dockerfile")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/start.sh")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/dashboard-external-host.patch")).toBe(true);
+    expect
+      .soft(selects("push", "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"))
+      .toBe(true);
+
+    expect.soft(selects("pull_request", "src/lib/state/registry/route-reservation.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/pending-create-identity.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/persistence.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/lock.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/types.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-runtime-readiness.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts",
+        ),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/docker-driver-platform.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/docker-network-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman-lifecycle.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/podman/index.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/podman/socket-authority.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/adapters/podman/executable-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/route-reservation.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/pending-create-identity.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/persistence.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lock.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/types.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-runtime-readiness.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-platform.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/docker-network-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman-lifecycle.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/index.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/socket-authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/executable-authority.ts")).toBe(true);
+
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy-execution.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy-presence.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/domain/sandbox/destroy.ts")).toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-ollama-inference.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/hermes-portable-ollama-gateway-transaction.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/host-local-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/runtime-provider/host-local-inference-lifecycle.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/host-local-inference-routing.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman.ts")).toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/podman-host-local-inference.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman-preflight.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/persisted-engine-authority.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/docker-driver-gateway-env.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/docker-driver-gateway-local-tls.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/build-context-stage.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/sandbox-prebuild.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/sandbox/build-context.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/sandbox/create-stream.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/openshell/resolve-shared.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/openshell/timeouts.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/agent/defs.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/core/retry.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy-execution.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy-presence.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/domain/sandbox/destroy.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-ollama-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "push",
+          "src/lib/onboard/experimental/hermes-portable-ollama-gateway-transaction.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference-routing.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/podman-host-local-inference.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman-preflight.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/persisted-engine-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-gateway-env.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-gateway-local-tls.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/build-context-stage.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/sandbox-prebuild.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/sandbox/build-context.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/sandbox/create-stream.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/resolve-shared.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/timeouts.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/agent/defs.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/core/retry.ts")).toBe(true);
+
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
+    expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
+    expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",
@@ -244,6 +645,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(135);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');

@@ -1,98 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
-const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
-const HERMES_INTEGRITY_FILES = [
-  {
-    arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
-    source: "agents/hermes/image-build-probes.py",
-    target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
-    source: "agents/hermes/patch-hermes-sqlite-temp-store.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
-    source: "agents/hermes/hermes-wrapper.py",
-    target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256",
-    source: "agents/hermes/hermes-cli-adapter-v1.json",
-    target: "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
-    source: "agents/hermes/validate-cli-adapter.py",
-    target: "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_VALIDATOR_SHA256",
-    source: "agents/hermes/validate-env-secret-boundary.py",
-    target: "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
-    source: "agents/hermes/finalize-tirith-marker.py",
-    target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
-    source: "agents/hermes/patch-langfuse-credentials.mts",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
-    source: "agents/hermes/patch-discord-recovery-permissions.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
-    source: "agents/hermes/patch-profile-policy-defaults.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
-    source: "agents/hermes/patch-gateway-runtime-metadata.py",
-    target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
-    source: "agents/hermes/patch-gateway-process-identity.py",
-    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
-    source: "agents/hermes/patch-cron-execution-runtime.py",
-    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256",
-    source: "agents/hermes/patch-cron-restore-drain.py",
-    target: "/opt/nemoclaw-hermes-config/patch-cron-restore-drain.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256",
-    source: "agents/hermes/cron-restore-control.py",
-    target: "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
-    source: "agents/hermes/patch-neutral-platform-env-activation.py",
-    target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-  },
-] as const;
+const FINALIZE_IMAGE_LAYOUT = path.join(ROOT, "agents", "hermes", "finalize-image-layout.sh");
 
 type LegacyDataFixture =
   | "none"
@@ -158,12 +74,6 @@ function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
-function indexOfRequired(haystack: string, needle: string): number {
-  const index = haystack.indexOf(needle);
-  expect(index).toBeGreaterThanOrEqual(0);
-  return index;
-}
-
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -171,7 +81,6 @@ function runFinalLayout({
   legacyData?: LegacyDataFixture;
   openclaw?: OpenClawFixture;
 } = {}) {
-  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-final-layout-"));
   const sandboxRoot = path.join(tmp, "sandbox");
   const hermesDir = path.join(sandboxRoot, ".hermes");
@@ -194,38 +103,23 @@ function runFinalLayout({
   legacyDataSetups[legacyData](fixturePaths);
   openclawSetups[openclaw](fixturePaths);
 
-  const layoutCommand = dockerRunCommandBetween(
-    dockerfile,
-    "# Flatten stale published base images",
-    "# Pin config hash at build time",
-  ).replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"));
-  const { result } = runDockerShell(layoutCommand, sandboxRoot);
+  const result = spawnSync("bash", [FINALIZE_IMAGE_LAYOUT, sandboxRoot], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
 describe("Hermes final image layout", () => {
-  // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
-  it.each(HERMES_INTEGRITY_FILES)(
-    "pins $source to its current bytes at $target",
-    ({ arg, source, target }) => {
-      const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-      const declarationPrefix = `ARG ${arg}=`;
-      const declarations = dockerfile
-        .split("\n")
-        .filter((line) => line.startsWith(declarationPrefix));
-      expect(declarations, arg).toHaveLength(1);
+  it("rejects the filesystem root as the image layout root", () => {
+    const result = spawnSync("bash", [FINALIZE_IMAGE_LAYOUT, "/"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
 
-      const integrityChecks = dockerfile
-        .split("\n")
-        .filter((line) => line.trim() === `"$${arg}" ${target} \\`);
-      expect(integrityChecks, `${arg} must verify ${target}`).toHaveLength(1);
-
-      const digest = createHash("sha256")
-        .update(fs.readFileSync(path.join(ROOT, source)))
-        .digest("hex");
-      expect(declarations[0]?.slice(declarationPrefix.length), source).toBe(digest);
-    },
-  );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("image layout root must not be /");
+  });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });

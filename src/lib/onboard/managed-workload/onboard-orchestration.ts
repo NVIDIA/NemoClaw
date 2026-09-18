@@ -22,7 +22,6 @@ import {
   renderSandboxCreateArgsForGpuRoute,
   type SelectedDockerGpuRoute,
 } from "../docker-gpu-route";
-import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
 import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
@@ -35,10 +34,7 @@ import {
   managedStartupStateRoots,
   managedStartupWorkspaceRoot,
 } from "../managed-startup/state-roots";
-import {
-  getChannelsFromPlan,
-  getMessagingChannelConfigFromPlan,
-} from "../messaging-plan-session";
+import { getChannelsFromPlan, getMessagingChannelConfigFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
@@ -106,8 +102,8 @@ export type ManagedStateVolumeOnboardLifecycle = {
   readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
   materializeSandboxCreatePlan(
     input: MaterializeSandboxCreatePlanInput,
-    materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
-  ): SandboxCreatePlan;
+    materialize: (input: MaterializeSandboxCreatePlanInput) => Promise<SandboxCreatePlan>,
+  ): Promise<SandboxCreatePlan>;
   commit(): void;
 };
 
@@ -206,6 +202,9 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   portableLifecycle: boolean,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
+  }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,
     workload.source.kind === "managed-image",
@@ -224,6 +223,9 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
     throw new Error(
       "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
     );
+  }
+  if (workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
   }
   if (
     workload.source.reason !== "runtime-unsupported" ||
@@ -303,6 +305,9 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
+          // Same environment authority the catalog selection above reads, so
+          // both onboarding decisions observe one set of values (#11138).
+          environment: input.startupProfile.environment,
           ...(!input.tempManagedRuntimeCatalog && liveCatalog?.catalog
             ? { catalog: liveCatalog.catalog }
             : {}),
@@ -336,7 +341,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
-    const selectedModel = input.model?.trim() || "unconfigured";
+    const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
@@ -353,20 +358,24 @@ export function createManagedWorkloadOnboardRuntime(
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
-      inference: {
-        routeProvider: inference.providerKey,
-        upstreamProvider: selectedProvider ?? inference.providerKey,
-        model: selectedModel,
-        routedBaseUrl: inference.inferenceBaseUrl,
-        upstreamEndpointUrl:
-          input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
-        api: inference.inferenceApi as
-          | "openai-completions"
-          | "openai-responses"
-          | "anthropic-messages",
-        primaryModelRef: input.agentName === "openclaw" ? inference.primaryModelRef : null,
-        compatibility: input.agentName === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
-      },
+      inference:
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+          ? null
+          : {
+              routeProvider: inference.providerKey,
+              upstreamProvider: selectedProvider ?? inference.providerKey,
+              model: selectedModel,
+              routedBaseUrl: inference.inferenceBaseUrl,
+              upstreamEndpointUrl:
+                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+              api: inference.inferenceApi as
+                | "openai-completions"
+                | "openai-responses"
+                | "anthropic-messages",
+              primaryModelRef: input.agentName === "openclaw" ? inference.primaryModelRef : null,
+              compatibility:
+                input.agentName === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
+            },
       ...input.startupProfile,
       corporateCa: resolveCorporateCa(input.startupProfile.environment),
     });
@@ -395,6 +404,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly intent: SandboxCreateIntent;
     readonly policylessCreate?: boolean;
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
+    readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -448,6 +458,9 @@ function requireLegacyBuildContext(
 export async function prepareOnboardSandboxWorkloadLaunch(
   input: PrepareOnboardSandboxWorkloadLaunchInput,
 ): Promise<PreparedOnboardSandboxWorkloadLaunch> {
+  if (input.workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
+  }
   const log = input.log ?? console.log;
   const legacyBuildContext =
     input.workload.source.kind === "legacy-dockerfile"
@@ -465,12 +478,13 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
-  const createPlan = input.dependencies.materializeSandboxCreatePlan({
+  const createPlan = await input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
     policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
+    skipProviderEffects: input.plan.skipProviderEffects,
     messagingTokenDefs: [...messagingTokenDefs],
     messagingConfig:
       input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
@@ -548,9 +562,12 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
       ...patchInput,
-      // An explicit path to the checked-in agent Dockerfile is staged through
-      // the trusted agent builder. Preserve that classification at patch time.
-      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
+      // A prepared rebuild must retain its original target for identity checks.
+      // Fresh generated builds use the managed-agent Dockerfile patch policy.
+      fromDockerfile:
+        !patchInput.preparedBuildContext && buildContext.origin === "generated"
+          ? null
+          : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });
@@ -689,6 +706,9 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
         shared: false,
       },
     };
+  }
+  if (input.workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
   }
   const profile = input.runtime.ensurePreparedProfile(input.workload);
   if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");

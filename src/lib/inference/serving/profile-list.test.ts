@@ -3,14 +3,70 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SystemReadinessReport } from "../../readiness/types";
 import { loadServingCatalog } from "./catalog-loader";
 import {
   listServingProfiles,
   renderServingProfiles,
   resolveServingProfileSelection,
 } from "./profile-list";
+import { readinessReportForPreset } from "./readiness-report.test-support";
+
+const MUSE_LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const N1X_LLAMA_CPP_PROFILE_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
 
 describe("serving profile discovery", () => {
+  it("lists a managed llama.cpp profile as compatible on a host that meets its requirements", () => {
+    const catalog = loadServingCatalog();
+    const preset = catalog.presets.find(
+      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
+    );
+    expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
+    const entries = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "spark-host", report: readinessReportForPreset(preset!) }],
+    });
+
+    expect(entries.find(({ id }) => id === MUSE_LLAMA_CPP_PROFILE_ID)).toMatchObject({
+      backend: "install-llama-cpp",
+      selectionMode: "explicit-only",
+      compatible: true,
+      incompatibilityReason: null,
+    });
+    expect(
+      resolveServingProfileSelection(MUSE_LLAMA_CPP_PROFILE_ID, {
+        catalog,
+        listProfiles: () => entries,
+      }),
+    ).toBe(MUSE_LLAMA_CPP_PROFILE_ID);
+    expect(entries.find(({ id }) => id === N1X_LLAMA_CPP_PROFILE_ID)).toMatchObject({
+      backend: "install-llama-cpp",
+      compatible: false,
+      incompatibilityReason: expect.stringMatching(/^Readiness requirement .* did not match\.$/u),
+    });
+  });
+
+  it("keeps a profile whose backend onboarding cannot configure incompatible", () => {
+    const catalog = loadServingCatalog();
+    const patched = {
+      ...catalog,
+      recipes: catalog.recipes.map((recipe) => ({
+        ...recipe,
+        spec: { ...recipe.spec, backend: "future-backend" },
+      })),
+    };
+    const entries = listServingProfiles(patched as never, { readinessReports: [] }).filter(
+      ({ supportState }) => supportState !== "disabled",
+    );
+
+    expect(entries.length).toBeGreaterThan(0);
+    entries.forEach((entry) => {
+      expect(entry).toMatchObject({
+        compatible: false,
+        incompatibilityReason: "Backend future-backend is not available through onboarding.",
+      });
+    });
+  });
+
   it(
     "lists every compiled preset with stable selection metadata (#8384)",
     { timeout: 30_000 },
@@ -88,6 +144,49 @@ describe("serving profile discovery", () => {
 
     expect(observed).toHaveLength(catalog.presets.length);
     expect(observed.every((reports) => reports === readinessReports)).toBe(true);
+  });
+
+  it("keeps managed vLLM profiles incompatible when Docker is absent (#10891)", () => {
+    const catalog = loadServingCatalog();
+    const profileId = "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4";
+    const report = {
+      schemaVersion: "1.1.0",
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: new Date().toISOString(),
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.docker.unavailable",
+          severity: "blocking",
+          summary: "Docker is unavailable.",
+          capabilityIds: ["host.docker.available"],
+        },
+      ],
+      evidence: [],
+      status: "incompatible",
+      exitCode: 2,
+    } satisfies SystemReadinessReport;
+    const entries = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "podman-host", report }],
+    });
+    const profile = entries.find(({ id }) => id === profileId);
+
+    expect(profile).toMatchObject({
+      compatible: false,
+      incompatibilityReason: "podman-host: readiness status is incompatible",
+    });
+    expect(() =>
+      resolveServingProfileSelection(profileId, {
+        catalog,
+        listProfiles: () => entries,
+      }),
+    ).toThrow("is incompatible: podman-host: readiness status is incompatible");
   });
 
   it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {

@@ -131,14 +131,8 @@ describe("experimental voice gateway composed boundary", () => {
       fs.writeFileSync(deploymentPath, DEPLOYMENT_BEARER, { mode: 0o600 });
       fs.writeFileSync(openClawPath, OPENCLAW_CREDENTIAL, { mode: 0o600 });
       const credentials = readPrivateBearerDescriptors({
-        deployment: fs.openSync(
-          openClawPath,
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-        ),
-        openClaw: fs.openSync(
-          deploymentPath,
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-        ),
+        deployment: fs.openSync(openClawPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
+        openClaw: fs.openSync(deploymentPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
       });
       let clientsCreated = 0;
       const service = new VoiceSessionService({

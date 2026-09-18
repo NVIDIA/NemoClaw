@@ -93,18 +93,17 @@ describe("buildCompletionModel", () => {
 });
 
 describe("generateCompletionScript", () => {
-  it.each([
-    "bash",
-    "zsh",
-    "fish",
-  ] as const)("generates %s from the same metadata model", (shell) => {
-    const script = generateCompletionScript(shell, COMMANDS, "nemoclaw");
-    expect(script).toContain("credentials add");
-    expect(script).toContain("gateway-token");
-    expect(script).toContain("completion --list-sandbox-names");
-    expect(script).not.toContain("nemoclaw list --json");
-    expect(script).not.toContain("credentials:add");
-  });
+  it.each(["bash", "zsh", "fish"] as const)(
+    "generates %s from the same metadata model",
+    (shell) => {
+      const script = generateCompletionScript(shell, COMMANDS, "nemoclaw");
+      expect(script).toContain("credentials add");
+      expect(script).toContain("gateway-token");
+      expect(script).toContain("completion --list-sandbox-names");
+      expect(script).not.toContain("nemoclaw list --json");
+      expect(script).not.toContain("credentials:add");
+    },
+  );
 
   it("uses the active oclif binary name", () => {
     const script = generateCompletionScript("bash", COMMANDS, "nemo-deepagents");

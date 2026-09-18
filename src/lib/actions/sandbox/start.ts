@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -14,8 +17,13 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { withSandboxLifecycleLock } from "./gateway-state";
+import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import {
+  isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
+  waitForStartedHermesGatewayProcess,
+} from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -27,19 +35,6 @@ function verifyGateway(sandboxName: string): Promise<void> {
     probeOnly: true,
     requireLaunchReadinessPublication: false,
   });
-}
-
-type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
-
-function restoreProcessState(sandboxName: string): SandboxStartupRecoveryResult {
-  const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
-  return restoreSandboxStartupState(sandboxName);
-}
-
-function restoreLockedStartupAccess(sandboxName: string): void {
-  const { restoreLockedStateDirStartupAccess } =
-    require("../../shields") as typeof import("../../shields");
-  restoreLockedStateDirStartupAccess(sandboxName);
 }
 
 /** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
@@ -59,81 +54,63 @@ async function waitForSandboxReady(
   });
 }
 
-export interface SandboxStartupStateDeps {
-  agent?: SandboxEntry["agent"];
-  restoreLockedStartupAccess?: (sandboxName: string) => void;
-  waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
-}
-
-export async function restoreStoppedSandboxStartupState(
-  sandboxName: string,
-  deps: SandboxStartupStateDeps = {},
-): Promise<SandboxStartupRecoveryResult> {
-  if ((deps.agent ?? "openclaw") === "openclaw") {
-    (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
-  }
-  await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
-  return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
-}
-
 export interface SandboxStartDeps {
   allowDockerRuntimeInspection?: boolean;
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
-  restoreLockedStartupAccess?: (sandboxName: string) => void;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (
-    sandboxName: string,
-  ) => SandboxStartupRecoveryResult | Promise<SandboxStartupRecoveryResult>;
-  waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
+  probeGatewayProcess?: typeof isSandboxGatewayRunningForStatus;
+  delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
+  now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
-function isMissingManagedSupervisorStartupFailure(
-  check: SandboxStartupRecoveryResult,
-  failure: string,
-): boolean {
-  return (
-    failure === "supervisor not running: SUPERVISOR_NOT_RUNNING" &&
-    check.recoveryFailureLayer === "supervisor not running" &&
-    check.recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING"
-  );
-}
+const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 
-function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | null {
-  if (!check.checked) return "managed agent gateway inspection did not complete";
-  if ("runtime" in check && check.runtime === "terminal") return null;
-  if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
-    return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
+/** Observe native startup only after an intentional stop; never relaunch the agent here. */
+async function waitForStartedNativeGatewayProcess(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  deps: SandboxStartDeps,
+  log: (message: string) => void,
+): Promise<boolean | null | undefined> {
+  const nativeAgent = sandbox.agent ?? "openclaw";
+  if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
+    return undefined;
   }
-  if ("mcpReconciliationRefused" in check && check.mcpReconciliationRefused) {
-    return `MCP reconciliation refusal: ${String(check.mcpReconciliationReason)}`;
+  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
+  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
+  const delay = async (delayMs: number) => {
+    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
+    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
+  };
+  if (nativeAgent === "hermes") {
+    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
+      probe,
+      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+      log,
+    });
   }
-  if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
-    return String(check.forwardRecoveryFailureDetail);
-  }
-  if (check.wasRunning || check.recovered) return null;
-  const layer = check.recoveryFailureLayer ?? "managed agent gateway recovery";
-  return check.recoveryFailureDetail
-    ? `${layer}: ${check.recoveryFailureDetail}`
-    : `${layer}: the agent gateway did not recover`;
-}
 
-function startupRecoveryError(sandboxName: string, detail: unknown): Error {
-  const { sanitizeSandboxStartupRecoveryDetail } =
-    require("./connect") as typeof import("./connect");
-  const rawDetail = detail instanceof Error && detail.message ? detail.message : String(detail);
-  const safeDetail = sanitizeSandboxStartupRecoveryDetail(rawDetail);
-  return new Error(
-    `Sandbox '${sandboxName}' started, but startup recovery failed: ${safeDetail}. ` +
-      `Inspect the current sandbox state before retrying. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
-  );
+  const now = deps.now ?? (() => performance.now());
+  const deadline =
+    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
+  while (now() < deadline) {
+    const remaining = Math.floor(deadline - now());
+    if (remaining < 1) break;
+    const running = await probe(sandboxName, gatewayName, {
+      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
+    });
+    if (now() >= deadline) break;
+    if (running !== false) return running;
+    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
+  }
+  return false;
 }
 
 /**
@@ -143,18 +120,18 @@ function startupRecoveryError(sandboxName: string, detail: unknown): Error {
  * provider or no model has nothing to request, so start skips the request
  * instead of failing.
  */
-function checkStartedSandboxInference(
+async function checkStartedSandboxInference(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
   log: (message: string) => void,
-): SandboxInferenceInvocationResult | null {
+): Promise<SandboxInferenceInvocationResult | null> {
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  return (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+  return await (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
     {
       sandboxName,
       gatewayName,
@@ -177,8 +154,11 @@ export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
-  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
-    startSandboxWithinLifecycleFence(sandboxName, deps),
+  const environment = deps.environment ?? process.env;
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+    sandboxName,
+    () => startSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, environment),
   );
 }
 
@@ -197,6 +177,7 @@ async function startSandboxWithinLifecycleFence(
   if (!resolved.ok) return resolved.result;
 
   const input = {
+    readRegistry: deps.getSandbox ?? registry.getSandbox,
     environment: deps.environment ?? process.env,
     log,
     sandbox: resolved.sandbox,
@@ -204,61 +185,61 @@ async function startSandboxWithinLifecycleFence(
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
   if (preflight) return preflight;
-  const result = resolved.lifecycle.start(input);
+  const result = await resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  const clearIntentionalStop = () => {
+    if (
+      resolved.sandbox.stopped === true &&
+      !registry.recordSandboxStopIntent(
+        sandboxName,
+        false,
+        deps.updateSandbox ?? registry.updateSandbox,
+      )
+    ) {
+      throw new Error(
+        `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+      );
+    }
+  };
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    log("  Checking gateway health and host forwards…");
+    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    clearIntentionalStop();
     return { exitCode: 0 };
   }
 
-  const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
+  const readiness: {
+    gatewayProcess: boolean | null | undefined;
+    inference: SandboxInferenceInvocationResult | null;
+  } = {
+    gatewayProcess: undefined,
+    inference: null,
+  };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
-    log("  Restoring sandbox startup state…");
-    const restoreStartupState =
-      deps.restoreStartupState ??
-      ((sandboxNameToRestore: string) =>
-        restoreStoppedSandboxStartupState(sandboxNameToRestore, {
-          agent: resolved.sandbox.agent,
-          restoreLockedStartupAccess: deps.restoreLockedStartupAccess,
-          restoreProcessState: deps.restoreProcessState,
-          waitForSandboxReady: (readyName) =>
-            waitForSandboxReady(readyName, deps.observer, deps.allowDockerRuntimeInspection),
-        }));
-    let recovery: SandboxStartupRecoveryResult;
-    try {
-      recovery = await restoreStartupState(name);
-    } catch (error) {
-      throw startupRecoveryError(name, error);
-    }
-    let failure = startupRecoveryFailure(recovery);
-    if (failure && isMissingManagedSupervisorStartupFailure(recovery, failure)) {
-      let supervisorReady = false;
-      try {
-        const waitForSupervisor =
-          deps.waitForManagedGatewaySupervisor ??
-          (require("./connect") as typeof import("./connect")).waitForManagedGatewaySupervisor;
-        supervisorReady = waitForSupervisor(name);
-      } catch {
-        // Preserve the authoritative first recovery failure when the bounded
-        // read-only settling probe itself cannot complete.
-      }
-      if (supervisorReady) {
-        try {
-          recovery = await restoreStartupState(name);
-        } catch (error) {
-          throw startupRecoveryError(name, error);
-        }
-        failure = startupRecoveryFailure(recovery);
-      }
-    }
-    if (failure) throw startupRecoveryError(name, failure);
+    log("  Waiting for OpenShell sandbox readiness…");
+    await waitForSandboxReady(name, deps.observer, deps.allowDockerRuntimeInspection);
+    readiness.gatewayProcess = await waitForStartedNativeGatewayProcess(
+      name,
+      resolved.sandbox,
+      deps,
+      log,
+    );
+    if (readiness.gatewayProcess === false) return;
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
-    readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
+    readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
+  if (readiness.gatewayProcess === false) {
+    log(
+      "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
+    );
+    return { exitCode: 1 };
+  }
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
     return { exitCode: 1 };
   }
+  clearIntentionalStop();
   return { exitCode: 0 };
 }

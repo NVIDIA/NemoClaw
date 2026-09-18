@@ -30,7 +30,6 @@ import {
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
 import { advanceTo, branchTo } from "./result";
-import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
 type Gpu = { platform: string };
@@ -239,13 +238,15 @@ function createPhases(
       note: vi.fn(),
 
       cliName: () => "nemoclaw",
+      loadSession: () => createSession(),
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
+      compareAndSwapSession: vi.fn(() => "mismatch" as const),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
       getSandboxRecreateObservation: () => ({ state: "missing", liveIdentityFingerprint: null }),
-      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
+      getDcodeSelectionDrift: async () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       getSandboxRegistryEntry,
@@ -268,7 +269,6 @@ function createPhases(
       stageSandboxCredentialProviders: vi.fn(async () => []),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),
-      stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
       planRegisteredExtraProviders: vi.fn(() => ({
         extraProviders: [],
@@ -317,6 +317,8 @@ function createPhases(
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       ...overrides.sandboxDeps,
+      inspectGatewayCredential:
+        overrides.sandboxDeps?.inspectGatewayCredential ?? (() => ({ kind: "missing" as const })),
       checkGatewayRouteCompatibility:
         overrides.sandboxDeps?.checkGatewayRouteCompatibility ?? (() => ({ ok: true })),
       withGatewayRouteMutationLock:
@@ -643,9 +645,7 @@ describe("core onboard flow phases", () => {
         resolved?: { policy?: { basePolicyPath?: string } };
       };
       const runVerifiedEffects = args[16] as
-        | ((context: {
-            revalidateSandboxIdentity: (operation: string) => void;
-          }) => Promise<void>)
+        | ((context: { revalidateSandboxIdentity: (operation: string) => void }) => Promise<void>)
         | undefined;
       expect(createIntent).toMatchObject({
         resolved: { policy: { basePolicyPath: "/repo/policy.yaml" } },
@@ -668,7 +668,7 @@ describe("core onboard flow phases", () => {
 
   it.each([
     ["provider-backed input", { model: "gpt-5.4", provider: "nvidia-prod" }],
-    ["a nondefault agent", { agent: { name: "hermes" }, model: null, provider: null }],
+    ["an unsupported agent", { agent: { name: "pi" }, model: null, provider: null }],
   ])("rejects %s before provider inference or sandbox effects", async (_label, patch) => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
     const reserveSandboxInferenceRoute = vi.fn(() => true);
@@ -832,112 +832,134 @@ describe("core onboard flow phases", () => {
     expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
   });
 
-  it("completes providerless APF after the verified sandbox-create boundary", async () => {
-    const setupNim = vi.fn();
-    const setupInference = vi.fn(async () => ({ ok: true as const }));
-    let providerlessReservation: {
-      name: string;
-      gatewayName: string;
-      pendingRouteReservation: true;
-      reservationSessionId?: string;
-      provider: string | null;
-      model: string | null;
-      endpointUrl: string | null;
-      endpointSource: InferenceEndpointSource | null;
-      credentialEnv: string | null;
-      preferredInferenceApi: string | null;
-    } | null = null;
-    const reserveRoute = vi.fn(
-      (
-        name: string,
-        route: Parameters<ProviderOptions["deps"]["reserveSandboxInferenceRoute"]>[1],
-      ) => {
-        providerlessReservation = {
-          name,
-          pendingRouteReservation: true,
-          ...route,
-        };
-        return true;
-      },
-    );
-    const updateSandboxRegistry = vi.fn();
-    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
-      Object.assign(session, updates);
-      return session;
-    });
-    const createSandbox = vi.fn(async (...args: unknown[]) => {
-      expect(args[1]).toBe("");
-      expect(args[2]).toBe("");
-      expect(args[15]).toMatchObject({
-        apfInterceptorRequested: true,
-        deferSandboxEffectsUntilIdentityVerification: true,
+  it.each([
+    { agentName: "openclaw", registered: false },
+    { agentName: "openclaw", registered: true },
+    { agentName: "hermes", registered: true },
+  ])(
+    "routes $agentName providerless creation with component $registered (#11548)",
+    async ({ agentName, registered }) => {
+      const setupNim = vi.fn();
+      const setupInference = vi.fn(async () => ({ ok: true as const }));
+      let providerlessReservation: {
+        name: string;
+        gatewayName: string;
+        pendingRouteReservation: true;
+        reservationSessionId?: string;
+        provider: string | null;
+        model: string | null;
+        endpointUrl: string | null;
+        endpointSource: InferenceEndpointSource | null;
+        credentialEnv: string | null;
+        preferredInferenceApi: string | null;
+      } | null = null;
+      const reserveRoute = vi.fn(
+        (
+          name: string,
+          route: Parameters<ProviderOptions["deps"]["reserveSandboxInferenceRoute"]>[1],
+        ) => {
+          providerlessReservation = {
+            name,
+            pendingRouteReservation: true,
+            ...route,
+          };
+          return true;
+        },
+      );
+      const updateSandboxRegistry = vi.fn();
+      const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
+        Object.assign(session, updates);
+        return session;
       });
-      return "created-sandbox";
-    });
-    const session = createSession({ apfInterceptorRequested: true });
-    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
-      providerEnv: { NEMOCLAW_WEB_SEARCH_PROVIDER: "none" },
-      providerDeps: {
-        reserveSandboxInferenceRoute: reserveRoute,
-        setupInference,
-        setupNim,
-      },
-      sandboxOptions: { apfInterceptorRequested: true },
-      sandboxDeps: {
-        createSandbox,
-        getSandboxRegistryEntry: () => providerlessReservation,
-        recordStepComplete,
-        setupMessagingChannels: vi.fn(async () => []),
-        updateSandboxRegistry,
-      },
-    });
-    const initial = context({
-      fresh: true,
-      session,
-      model: null,
-      provider: null,
-      selectedMessagingChannels: [],
-    });
-
-    const providerResult = await providerPhase.run(initial);
-    expect(providerResult.result).toEqual([
-      advanceTo("inference", {
-        metadata: { state: "provider_selection", providerlessApf: true },
-      }),
-      advanceTo("sandbox", {
-        metadata: { state: "inference", providerlessApf: true },
-      }),
-    ]);
-    expect(reserveRoute).toHaveBeenCalledWith(
-      "my-sandbox",
-      expect.objectContaining({
-        provider: null,
+      const createSandbox = vi.fn(async (...args: unknown[]) => {
+        expect(args[1]).toBe("");
+        expect(args[2]).toBe("");
+        expect(args[15]).toMatchObject({
+          apfInterceptorRequested: true,
+          deferSandboxEffectsUntilIdentityVerification: true,
+        });
+        return "created-sandbox";
+      });
+      const session = createSession({ apfInterceptorRequested: true });
+      const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+        providerEnv: { NEMOCLAW_WEB_SEARCH_PROVIDER: "none" },
+        providerDeps: {
+          reserveSandboxInferenceRoute: reserveRoute,
+          setupInference,
+          setupNim,
+        },
+        sandboxOptions: { apfInterceptorRequested: true },
+        sandboxDeps: {
+          createSandbox,
+          getSandboxRegistryEntry: () => providerlessReservation,
+          recordStepComplete,
+          setupMessagingChannels: vi.fn(async () => []),
+          updateSandboxRegistry,
+        },
+      });
+      const initial = context({
+        agent: { name: agentName },
+        fresh: true,
+        session,
         model: null,
-        gatewayName: "nemoclaw",
-        reservationSessionId: session.sessionId,
-      }),
-      { requireAbsent: true },
-    );
-    const sandboxResult = await sandboxPhase.run(providerResult.context);
+        provider: null,
+        selectedMessagingChannels: [],
+        externalComponent: registered
+          ? {
+              declaration: {
+                schemaVersion: 1,
+                componentId: "policy-governance",
+                interceptorSocketPath: "/run/component/interceptor.sock",
+                activationSocketPath: "/run/component/activation.sock",
+              },
+              revalidateBeforeGateway: vi.fn(),
+              revalidateBeforeActivation: vi.fn(),
+            }
+          : null,
+      });
 
-    expect(sandboxResult.result).toMatchObject({ type: "complete" });
-    expect(
-      isCoreFlowCompleteBeforeFinalization({
-        context: sandboxResult.context,
-        session: { machine: { state: "complete" } },
-      }),
-    ).toBe(true);
-    expect(setupNim).not.toHaveBeenCalled();
-    expect(setupInference).not.toHaveBeenCalled();
-    expect(createSandbox).toHaveBeenCalledOnce();
-    expect(updateSandboxRegistry).toHaveBeenCalledWith(
-      "created-sandbox",
-      expect.not.objectContaining({ model: expect.anything(), provider: expect.anything() }),
-    );
-    const sandboxCompletion = recordStepComplete.mock.calls.find(([step]) => step === "sandbox");
-    expect(sandboxCompletion?.[1]).not.toHaveProperty("model");
-    expect(sandboxCompletion?.[1]).not.toHaveProperty("provider");
-  });
+      const providerResult = await providerPhase.run(initial);
+      expect(providerResult.result).toEqual([
+        advanceTo("inference", {
+          metadata: { state: "provider_selection", providerlessApf: true },
+        }),
+        advanceTo("sandbox", {
+          metadata: { state: "inference", providerlessApf: true },
+        }),
+      ]);
+      expect(reserveRoute).toHaveBeenCalledWith(
+        "my-sandbox",
+        expect.objectContaining({
+          provider: null,
+          model: null,
+          gatewayName: "nemoclaw",
+          reservationSessionId: session.sessionId,
+        }),
+        { requireAbsent: true },
+      );
+      const sandboxResult = await sandboxPhase.run(providerResult.context);
+
+      expect(sandboxResult.result).toMatchObject(
+        registered ? { type: "transition", next: "agent_setup" } : { type: "complete" },
+      );
+      expect(
+        isCoreFlowCompleteBeforeFinalization({
+          context: sandboxResult.context,
+          session: { machine: { state: "complete" } },
+        }),
+      ).toBe(!registered);
+      expect(setupNim).not.toHaveBeenCalled();
+      expect(setupInference).not.toHaveBeenCalled();
+      expect(createSandbox).toHaveBeenCalledOnce();
+      expect(updateSandboxRegistry).toHaveBeenCalledWith(
+        "created-sandbox",
+        expect.not.objectContaining({ model: expect.anything(), provider: expect.anything() }),
+      );
+      const sandboxCompletion = recordStepComplete.mock.calls.find(([step]) => step === "sandbox");
+      expect(sandboxCompletion?.[1]).not.toHaveProperty("model");
+      expect(sandboxCompletion?.[1]).not.toHaveProperty("provider");
+    },
+  );
 
   it.each([
     ["registered", true, false],

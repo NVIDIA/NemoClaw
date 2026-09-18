@@ -17,15 +17,13 @@ Use these workflows to keep existing sandboxes reachable and control the resourc
 
 ## Manage Dashboard Ports
 
-If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart the forward manually with the port from the install summary.
+If a managed forward stopped or the URL does not load, restore its identity-bound lifecycle through NemoClaw.
 
 ```bash
-openshell forward start --background <dashboard-port> my-gpt-claw
+nemoclaw my-gpt-claw recover
 ```
 
-On WSL, use `0.0.0.0:<dashboard-port>` as the forward target so the Windows host can continue to reach the dashboard.
-
-To list active forwards across all sandboxes, run the following command.
+For lower-level diagnostics, list OpenShell's legacy and user-managed forwards separately. Receipt-owned ForwardTcp services are verified by `nemoclaw <name> status` and `recover`.
 
 ```bash
 openshell forward list
@@ -51,12 +49,13 @@ When the default port is already held by another sandbox, `$$nemoclaw onboard` s
 
 <AgentOnly variant="hermes">
 Each Hermes sandbox also needs its own OpenAI-compatible API port.
-When another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
+When creating a Hermes sandbox, if another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `$$nemoclaw <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.
@@ -67,9 +66,20 @@ Gateway and dashboard cleanup is scoped by sandbox name and port.
 A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+Repeated onboarding and resume keep the sandbox's registered dashboard port and restore a missing forward on that port.
+If the port is already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
+Ports registered to another sandbox, foreign listeners, or unverified ownership stop onboarding with a port conflict error.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Hermes also retains or restores its registered OpenAI-compatible API forward using the same ownership checks.
+</AgentOnly>
+
 <AgentOnly variant="deepagents">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `nemo-deepagents <name> exec` and `nemo-deepagents <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `nemo-deepagents <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.
@@ -135,9 +145,6 @@ $$nemoclaw <sandbox-name> start
 <AgentOnly variant="openclaw,hermes">
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
 NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
-</AgentOnly>
-<AgentOnly variant="openclaw">
-NemoClaw restores locked startup access before that wait when Shields are up.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 After Docker reports the existing container as running, NemoClaw waits for OpenShell to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.

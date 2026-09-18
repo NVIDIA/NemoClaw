@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type OnboardEntryOptionsDeps,
+  reconstructUnownedPendingCreateRecoveries,
+  resolveEntryOptions,
   resolveOnboardEntryOptions,
   resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
@@ -30,6 +32,109 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
     ...overrides,
   };
 }
+
+describe("pending create recovery admission", () => {
+  it("ignores an unrelated checkpoint for an explicit different sandbox (#11096)", () => {
+    const reconstruct = vi.fn(() => {
+      throw new Error("alpha recovery is unavailable");
+    });
+    const state = {
+      loadSession: () => ({ status: "failed" }),
+      listRetainedSandboxRecoveryRecords: () => [],
+      reconstructRetainedSandboxRecoveryFromPendingCreate: reconstruct,
+    };
+
+    const resolved = resolveEntryOptions(
+      { fresh: true, sandboxName: "bravo" },
+      (name) => name,
+      state,
+      {
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", pendingCreateIdentity: {} }],
+        }),
+      },
+    );
+
+    expect(resolved.requestedSandboxName).toBe("bravo");
+    expect(reconstruct).not.toHaveBeenCalled();
+  });
+
+  it("reconstructs the discarded session authority before fresh onboarding (#11096)", () => {
+    const reconstruct = vi.fn();
+    const entry = {
+      name: "alpha",
+      pendingCreateIdentity: {},
+      reservationSessionId: "failed-create-session",
+    };
+
+    reconstructUnownedPendingCreateRecoveries(
+      { fresh: true },
+      { sessionId: "failed-create-session", status: "failed" },
+      [entry],
+      reconstruct,
+    );
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
+  it("reconstructs an ownerless checkpoint instead of matching absent session IDs (#11096)", () => {
+    const reconstruct = vi.fn();
+    const entry = { name: "alpha", pendingCreateIdentity: {} };
+
+    reconstructUnownedPendingCreateRecoveries({ resume: true }, null, [entry], reconstruct);
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
+  it.each([
+    ["explicit resume", { resume: true }, "failed"],
+    ["automatic resume", {}, "in_progress"],
+  ])("preserves the matching checkpoint for %s", (_label, options, status) => {
+    const reconstruct = vi.fn();
+    const owned = {
+      name: "alpha",
+      pendingCreateIdentity: {},
+      reservationSessionId: "current-session",
+    };
+    const foreign = {
+      name: "bravo",
+      pendingCreateIdentity: {},
+      reservationSessionId: "other-session",
+    };
+
+    reconstructUnownedPendingCreateRecoveries(
+      options,
+      { sessionId: "current-session", status },
+      [owned, foreign],
+      reconstruct,
+    );
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(foreign);
+  });
+
+  it("leaves an existing recovery-only session authoritative when its writer stays unavailable (#11096)", () => {
+    const reconstruct = vi.fn();
+
+    reconstructUnownedPendingCreateRecoveries(
+      { fresh: true },
+      {
+        sessionId: "failed-create-session",
+        status: "recovery_required",
+        cancellationRecovery: { sandboxName: "alpha" },
+      },
+      [
+        {
+          name: "alpha",
+          pendingCreateIdentity: {},
+          reservationSessionId: "failed-create-session",
+        },
+      ],
+      reconstruct,
+    );
+
+    expect(reconstruct).not.toHaveBeenCalled();
+  });
+});
 
 describe("resolveOnboardRunOptions", () => {
   it.each([

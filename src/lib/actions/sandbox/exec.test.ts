@@ -1,218 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const spawnMock = vi.hoisted(() => vi.fn());
+import { execTimeout, testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  spawn: spawnMock,
-}));
-
-// Multi-line command argv dispatch and field-specific rejection coverage lives
-// in exec.multiline-argv.test.ts so this file stays focused on argv construction
-// and the workdir probe.
 import {
-  buildOpenshellExecArgs,
-  buildWorkdirProbeArgs,
-  computeExitCode,
-  evaluateWorkdirProbe,
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+  isMcpLifecycleLockHeld,
+} from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withPortableHostFence,
+  portableHostFencePath,
+} from "../../state/portable-uninstall-retirement";
+import {
   execSandbox,
-  runSandboxExecChild,
-  type SandboxExecChild,
+  startSandboxExec,
   type SandboxExecCleanupDeps,
-  type SandboxExecSignalSource,
-  validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
-
-function completedSpawnChild(status = 0): SandboxExecChild {
-  const child = {
-    exitCode: null,
-    signalCode: null,
-    kill: vi.fn(() => true),
-    once: vi.fn((event: "error" | "close", listener: (...args: unknown[]) => void) => {
-      const notify = {
-        error: () => undefined,
-        close: () => queueMicrotask(() => listener(status, null)),
-      }[event];
-      notify();
-      return child;
-    }),
-  };
-  return child as unknown as SandboxExecChild;
-}
-
-const signalSource: SandboxExecSignalSource = {
-  add: vi.fn(),
-  remove: vi.fn(),
-};
-
-describe("runSandboxExecChild spawn options", () => {
-  afterEach(() => {
-    spawnMock.mockReset();
-    vi.mocked(signalSource.add).mockClear();
-    vi.mocked(signalSource.remove).mockClear();
-  });
-
-  it("forwards a supplied subprocess environment to spawn unchanged", async () => {
-    const subprocessEnv = { HOME: "/home/test", PATH: "/usr/bin" };
-    spawnMock.mockReturnValueOnce(completedSpawnChild());
-
-    const result = await runSandboxExecChild(
-      "/usr/bin/openshell",
-      ["sandbox", "list"],
-      { stdin: false, subprocessEnv },
-      undefined,
-      signalSource,
-    );
-    result.releaseSignals?.();
-
-    expect(spawnMock).toHaveBeenCalledWith(
-      "/usr/bin/openshell",
-      ["sandbox", "list"],
-      expect.objectContaining({
-        env: subprocessEnv,
-        stdio: ["ignore", "inherit", "inherit"],
-      }),
-    );
-    expect(spawnMock.mock.calls[0]?.[2]?.env).toBe(subprocessEnv);
-  });
-
-  it("preserves the existing spawn options when subprocessEnv is absent", async () => {
-    spawnMock.mockReturnValueOnce(completedSpawnChild());
-
-    const result = await runSandboxExecChild(
-      "/usr/bin/openshell",
-      ["sandbox", "list"],
-      { stdin: false },
-      undefined,
-      signalSource,
-    );
-    result.releaseSignals?.();
-
-    expect(spawnMock).toHaveBeenCalledWith("/usr/bin/openshell", ["sandbox", "list"], {
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    expect(spawnMock.mock.calls[0]?.[2]).not.toHaveProperty("env");
-  });
-});
-
-describe("buildOpenshellExecArgs", () => {
-  it("targets the sandbox by name and forwards the user command after --", () => {
-    expect(
-      buildOpenshellExecArgs("my-assistant", ["openclaw", "agent", "--agent", "main", "-m", "hi"]),
-    ).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "my-assistant",
-      "--",
-      "openclaw",
-      "agent",
-      "--agent",
-      "main",
-      "-m",
-      "hi",
-    ]);
-  });
-
-  it("places --workdir before the command separator", () => {
-    expect(
-      buildOpenshellExecArgs("alpha", ["ls", "-la"], { workdir: "/sandbox/workspace" }),
-    ).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--workdir",
-      "/sandbox/workspace",
-      "--",
-      "ls",
-      "-la",
-    ]);
-  });
-
-  it("emits --tty when tty is explicitly true and --no-tty when false", () => {
-    expect(buildOpenshellExecArgs("alpha", ["hostname"], { tty: true })).toContain("--tty");
-    expect(buildOpenshellExecArgs("alpha", ["hostname"], { tty: false })).toContain("--no-tty");
-  });
-
-  it("omits the tty flag entirely when tty is null or undefined (auto-detect)", () => {
-    const auto = buildOpenshellExecArgs("alpha", ["hostname"], { tty: null });
-    expect(auto).not.toContain("--tty");
-    expect(auto).not.toContain("--no-tty");
-    const omitted = buildOpenshellExecArgs("alpha", ["hostname"]);
-    expect(omitted).not.toContain("--tty");
-    expect(omitted).not.toContain("--no-tty");
-  });
-
-  it("forwards --timeout as a stringified integer", () => {
-    expect(buildOpenshellExecArgs("alpha", ["sleep", "1"], { timeoutSeconds: 30 })).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--timeout",
-      "30",
-      "--",
-      "sleep",
-      "1",
-    ]);
-  });
-
-  it("preserves an empty user command (caller is responsible for guarding)", () => {
-    expect(buildOpenshellExecArgs("alpha", [])).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-    ]);
-  });
-
-  it("does not interpolate the sandbox name into argv strings", () => {
-    const argv = buildOpenshellExecArgs("name; rm -rf /", ["echo", "ok"]);
-    expect(argv).toContain("name; rm -rf /");
-    expect(argv).toEqual(["sandbox", "exec", "--name", "name; rm -rf /", "--", "echo", "ok"]);
-  });
-});
-
-describe("computeExitCode", () => {
-  it("returns the remote command's status when it exits normally", () => {
-    expect(computeExitCode({ status: 0 })).toEqual({ code: 0 });
-    expect(computeExitCode({ status: 42 })).toEqual({ code: 42 });
-  });
-
-  it("surfaces spawn transport errors with the error message and code 1", () => {
-    const error = new Error("openshell: command not found");
-    expect(computeExitCode({ status: null, error })).toEqual({
-      code: 1,
-      errorMessage: "openshell: command not found",
-    });
-  });
-});
-
-describe("buildWorkdirProbeArgs", () => {
-  it("targets the sandbox by name and probes the directory with test -d", () => {
-    expect(buildWorkdirProbeArgs("alpha", "/sandbox/workspace")).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-      "test",
-      "-d",
-      "/sandbox/workspace",
-    ]);
-  });
-
-  it("does not split a path argument that contains whitespace", () => {
-    const argv = buildWorkdirProbeArgs("alpha", "/sandbox/with spaces/dir");
-    expect(argv[argv.length - 1]).toBe("/sandbox/with spaces/dir");
-  });
-});
 
 describe("workdirMissingMessage", () => {
   it("renders a user-facing CLI error with the offending path", () => {
@@ -222,89 +34,11 @@ describe("workdirMissingMessage", () => {
   });
 });
 
-describe("evaluateWorkdirProbe", () => {
-  it("returns 'ok' when the probe exits 0", () => {
-    expect(evaluateWorkdirProbe({ status: 0 })).toBe("ok");
-  });
-
-  it("returns 'missing' only for the canonical test -d failure (exit 1)", () => {
-    expect(evaluateWorkdirProbe({ status: 1 })).toBe("missing");
-  });
-
-  it("returns 'unclear' for any other exit code so the main exec surfaces it", () => {
-    expect(evaluateWorkdirProbe({ status: 2 })).toBe("unclear");
-    expect(evaluateWorkdirProbe({ status: 127 })).toBe("unclear");
-    expect(evaluateWorkdirProbe({ status: null })).toBe("unclear");
-  });
-
-  it("returns 'unclear' when spawn reports a transport error", () => {
-    expect(evaluateWorkdirProbe({ status: null, error: new Error("ENOENT") })).toBe("unclear");
-  });
-});
-
-describe("validateWorkdirOrFail", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("passes through when the directory exists", () => {
-    const run = vi.fn(() => ({ status: 0 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("process.exit should not be called for ok outcome");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
-
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-      "test",
-      "-d",
-      "/sandbox/workspace",
-    ]);
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(errSpy).not.toHaveBeenCalled();
-  });
-
-  it("prints a friendly error and exits 1 when the directory is missing", () => {
-    const run = vi.fn(() => ({ status: 1 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("exit");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    expect(() => validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run)).toThrow(
-      "exit",
-    );
-    expect(errSpy).toHaveBeenCalledWith(
-      "error: --workdir: /sandbox/workspace does not exist inside the sandbox",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("does not abort when the probe outcome is unclear (lets main exec surface it)", () => {
-    const run = vi.fn(() => ({ status: 127 }));
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-      throw new Error("process.exit should not be called for unclear outcome");
-    }) as never);
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    validateWorkdirOrFail("openshell", "alpha", "/sandbox/workspace", run);
-
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(errSpy).not.toHaveBeenCalled();
-  });
-});
-
 // End-to-end wiring of the post-exec policy-denial hint through execSandbox
 // (#5978): proves the breadcrumb fires for a denied failure while the command's
 // exit code is preserved, and stays silent on success and unrelated failures.
 // All host seams are injected so the test never spawns openshell or touches the
-// registry/shields (getSandbox returns null → cleanup is a no-op).
+// registry (getSandbox returns null, so cleanup is a no-op).
 describe("execSandbox policy-denial hint wiring (#5978)", () => {
   const START_MS = 1_000_000;
   // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
@@ -354,11 +88,21 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       ["curl", "-sS", "https://example.com/"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => {
-          options.onRun?.();
-          return { status, ...(options.error ? { error: options.error } : {}) };
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => {
+            options.onRun?.();
+            return {
+              outcome: options.error
+                ? {
+                    kind: "failed" as const,
+                    error: { kind: "invocation" as const, message: options.error.message },
+                  }
+                : { kind: "completed" as const, exitCode: status ?? 1 },
+              release: () => {},
+            };
+          },
         },
         cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
         exit,
@@ -437,15 +181,17 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 
   it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
-    const inspectMutableConfigPerms = vi.fn(() => ({
-      applies: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
-    }));
+    const inspectMutableConfigPerms = vi
+      .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
+      .mockReturnValueOnce({
+        applies: true,
+        ok: false,
+        issues: ["config mode differs from runtime contract"],
+      });
     const repairMutableConfigPerms = vi.fn(() => ({
-      applied: false as const,
-      skipReason: "locked" as const,
-      reason: "shields up",
+      applied: true as const,
+      verified: true as const,
+      errors: [],
     }));
     const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
       cleanupDeps: {
@@ -516,9 +262,14 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
       ["openclaw", "cron", "add"],
       {},
       {
-        resolveBinary: () => "openshell",
         selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-        run: async () => ({ status }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async () => ({
+            outcome: { kind: "completed", exitCode: status },
+            release: () => {},
+          }),
+        },
         cleanupDeps: cleanupSkipped,
         exit,
         policyHint: {
@@ -573,3 +324,184 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
     expect(stderr).toBe("");
   });
 });
+
+it.each([
+  { mode: "sync", error: new Error("lock timed out"), commandCode: 0, invocationFailed: false },
+  {
+    mode: "async",
+    error: new Error("migration blocked"),
+    commandCode: 23,
+    invocationFailed: false,
+  },
+  { mode: "async", error: "registry unavailable", commandCode: 1, invocationFailed: true },
+])(
+  "reports $mode cleanup authority failure after command status $commandCode (#11647)",
+  async ({ mode, error, commandCode, invocationFailed }) => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const release = vi.fn();
+    const inspect = vi.fn(() => ({ applies: true as const, ok: true, issues: [] }));
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+    try {
+      const finish = await startSandboxExec(
+        "alpha",
+        ["true"],
+        {},
+        {
+          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+          commandExecutor: {
+            probeDirectory: async () => ({ state: "present" }),
+            runStreaming: async () => ({
+              outcome: invocationFailed
+                ? { kind: "failed", error: { kind: "invocation", message: "transport failed" } }
+                : { kind: "completed", exitCode: commandCode },
+              release,
+            }),
+          },
+          withCleanupAuthority:
+            mode === "sync"
+              ? () => {
+                  throw error;
+                }
+              : () => Promise.reject(error),
+          cleanupDeps: {
+            getSandbox: () => ({ agent: "openclaw" }),
+            inspectMutableConfigPerms: inspect,
+            repairMutableConfigPerms: () => ({ applied: true, verified: true, errors: [] }),
+          },
+          policyHint: {
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+          },
+          exit,
+        },
+      );
+      await expect(finish()).rejects.toThrow("exit:1");
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(stderr).toHaveBeenCalledWith(
+        `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): cleanup authority unavailable: ${error instanceof Error ? error.message : error}`,
+      );
+      expect(
+        stderr.mock.calls.filter(([line]) => String(line).includes("Failed to invoke openshell")),
+      ).toHaveLength(invocationFailed ? 1 : 0);
+      expect(inspect).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      stderr.mockRestore();
+    }
+  },
+);
+
+it(
+  "releases authority to another process before interactive completion (#11647)",
+  testTimeoutOptions(15_000),
+  async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-exec-"));
+    const stateDir = path.join(home, "state");
+    const lockOptions = { stateDir };
+    const sandboxName = "launch-exec";
+    let endSession: () => void = () => {};
+    const ended = new Promise<void>((resolve) => {
+      endSession = resolve;
+    });
+    const release = vi.fn();
+    const cleanup = vi.fn(() =>
+      withMcpLifecycleLockSync(
+        sandboxName,
+        () => {
+          expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+          return { applies: true as const, ok: true, issues: [] };
+        },
+        lockOptions,
+      ),
+    );
+    let dispatched = false;
+    let lockHeldDuringCleanup: boolean | null = null;
+    let fenceHeldDuringCleanup: boolean | null = null;
+    try {
+      const finish = await withPortableHostFence(home, () =>
+        withMcpLifecycleLock(
+          sandboxName,
+          () =>
+            startSandboxExec(
+              sandboxName,
+              ["bash", "-lc", "openclaw tui"],
+              { tty: true, stdin: true, timeoutSeconds: 0 },
+              {
+                selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+                commandExecutor: {
+                  probeDirectory: async () => ({ state: "present" }),
+                  runStreaming: async () => {
+                    expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+                    expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
+                    dispatched = true;
+                    await ended;
+                    return { outcome: { kind: "completed", exitCode: 0 }, release };
+                  },
+                },
+                cleanupDeps: {
+                  getSandbox: () => {
+                    lockHeldDuringCleanup = isMcpLifecycleLockHeld(sandboxName, stateDir);
+                    fenceHeldDuringCleanup = fs.existsSync(portableHostFencePath(home));
+                    return { agent: "openclaw" };
+                  },
+                  inspectMutableConfigPerms: cleanup,
+                  repairMutableConfigPerms: () => {
+                    throw new Error("healthy config needs no repair");
+                  },
+                },
+                exit: (code) => {
+                  throw new Error(`exit:${code}`);
+                },
+              },
+            ),
+          lockOptions,
+        ),
+      );
+      expect(dispatched).toBe(true);
+      expect(cleanup).not.toHaveBeenCalled();
+      const contender = spawnSync(
+        process.execPath,
+        [
+          "--no-warnings",
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `
+        const retirement = (await import(process.argv[1])).default;
+        const lifecycle = (await import(process.argv[2])).default;
+        await retirement.withPortableHostFence(process.argv[3], () =>
+          lifecycle.withMcpLifecycleLock(process.argv[4], () => {
+            console.log("contender-entered");
+          }, { stateDir: process.argv[5] }),
+        );
+      `,
+          new URL("../../state/portable-uninstall-retirement.ts", import.meta.url).href,
+          new URL("../../state/mcp-lifecycle-lock-acquisition.ts", import.meta.url).href,
+          home,
+          sandboxName,
+          stateDir,
+        ],
+        { encoding: "utf8", timeout: execTimeout() },
+      );
+      expect(contender.status, contender.stderr || String(contender.error ?? "")).toBe(0);
+      expect(contender.stdout.trim()).toBe("contender-entered");
+      expect(cleanup).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      endSession();
+      await expect(finish()).rejects.toThrow("exit:0");
+      expect(lockHeldDuringCleanup).toBe(false);
+      expect(fenceHeldDuringCleanup).toBe(false);
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      endSession();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  },
+);

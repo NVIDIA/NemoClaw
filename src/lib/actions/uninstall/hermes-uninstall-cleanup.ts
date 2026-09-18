@@ -7,7 +7,6 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider
 import type { RuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/contract";
 import { removeManagedHermesStateVolume } from "../../onboard/sandbox-provider-cleanup";
 
-export { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 export { requiresManagedHermesStateVolume } from "../../onboard/managed-workload/hermes-state-volume";
 export type { ManagedHermesStateVolumeContext };
 

@@ -16,6 +16,17 @@ export type InstalledTelegramRuntimeProof = {
   messageId: string;
 };
 
+export function resolveInstalledTelegramRuntimePath(
+  candidate: string,
+  realpath: (candidate: string) => string,
+): string {
+  try {
+    return realpath(candidate);
+  } catch {
+    return candidate;
+  }
+}
+
 export const TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -23,6 +34,8 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
+const resolveInstalledTelegramRuntimePath = ${resolveInstalledTelegramRuntimePath.toString()};
 
 function addPathWalk(candidates, seen, start) {
   if (!start) return;
@@ -146,12 +159,13 @@ function requestFakeTelegram(endpoint, fields, token) {
   });
 }
 
-const runtimeApiPath = resolveTelegramRuntimeApiPath();
-if (!runtimeApiPath) {
+const runtimeApiCandidate = resolveTelegramRuntimeApiPath();
+if (!runtimeApiCandidate) {
   throw new Error(
     "could not find installed OpenClaw Telegram runtime-api.js at openclaw/dist/extensions/telegram/runtime-api.js",
   );
 }
+const runtimeApiPath = resolveInstalledTelegramRuntimePath(runtimeApiCandidate, fs.realpathSync);
 const { sendMessageTelegram } = await import(pathToFileURL(runtimeApiPath).href);
 if (typeof sendMessageTelegram !== "function") {
   throw new Error("installed Telegram runtime API does not export sendMessageTelegram");

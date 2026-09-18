@@ -222,6 +222,7 @@ describe("uninstall across every gateway port (#7791)", () => {
           stderr: "",
         }),
         runPortPass: () => 0,
+        withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
       });
 
       expect(result).toEqual({ exitCode: 0, ports: [8080, 9123] });

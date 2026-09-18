@@ -109,7 +109,7 @@ export function unexpectedHermesPortablePodmanArgs(args: readonly string[]): nev
 
 export function hermesPortableTestOpenShellAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.106",
+    version: "0.0.116",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",
@@ -469,7 +469,7 @@ export function createHermesPortableTransactionFixture(
       }),
     registerSandbox:
       options.registerSandbox ??
-      ((_result, _receipt, _liveIdentityFingerprint, revalidate, routeReservation) => {
+      (async (_result, _receipt, _liveIdentityFingerprint, revalidate, routeReservation) => {
         registryEntry =
           "replaceRegistryBeforeRegistration" in options
             ? (options.replaceRegistryBeforeRegistration ?? null)
@@ -480,7 +480,7 @@ export function createHermesPortableTransactionFixture(
               "Cannot register a sandbox after its inference route reservation changed",
             );
           })();
-        revalidate();
+        await revalidate();
         events.push("registry");
         registryEntry = {
           ...matchingRegistryEntry(input, {

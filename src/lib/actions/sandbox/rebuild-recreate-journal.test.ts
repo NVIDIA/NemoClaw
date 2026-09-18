@@ -24,6 +24,7 @@ vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
   resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
+import { fingerprintSandboxRecreateValue } from "../../onboard/sandbox-recreate-transaction";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -139,6 +140,7 @@ describe("rebuild replacement target fingerprint", () => {
     { recreateProvider: "compatible-endpoint" },
     { recreateModel: "model-b" },
     { recreatePreferredInferenceApi: "anthropic" },
+    { reinstallDeferredN1xManagedVllm: true },
   ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
     expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
       fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -265,6 +267,9 @@ describe("rebuild replacement journal", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -279,9 +284,9 @@ describe("rebuild replacement journal", () => {
     vi.restoreAllMocks();
   });
 
-  function open() {
+  function open(target = NON_DEFAULT_TARGET) {
     return openRebuildRecreateJournal({
-      target: NON_DEFAULT_TARGET,
+      target,
       expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -370,10 +375,80 @@ describe("rebuild replacement journal", () => {
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
   });
 
+  it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+    const stranded = open();
+    onboardSession.updateSession((current) => {
+      const checkpoint = current.checkpoint as NonNullable<Session["checkpoint"]>;
+      const transaction = checkpoint.sandboxRecreate as NonNullable<
+        typeof checkpoint.sandboxRecreate
+      >;
+      current.checkpoint = {
+        ...checkpoint,
+        sandboxRecreate: { ...transaction, phase: "deleted" },
+      };
+      return current;
+    });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      phase: "deleted",
+    });
+
+    const restarted = open();
+
+    expect(restarted.id).not.toBe(stranded.id);
+    expect(restarted.acceptedTarget).toBe(false);
+    expect(restarted.sourceConfirmedAbsent).toBe(false);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: restarted.id,
+      phase: "planned",
+      revision: 0,
+    });
+  });
+
+  it("keeps a stranded journal when the matching source is on another gateway (#10473)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    const stranded = open();
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+
+    // Same sandbox name and same live identity, but the row and the probe now
+    // describe a sandbox on a different gateway. The journal may still own an
+    // unregistered replacement on nemoclaw-9090, so it must survive.
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-7070",
+      gatewayPort: 7070,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+
+    expect(() =>
+      open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
+    ).toThrow(/different recreate transaction in progress/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+  });
+
   it("records the delete boundary before and after the destructive command", () => {
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
 
     mocks.captureOpenshell.mockReturnValue(absentProbe());
@@ -385,14 +460,14 @@ describe("rebuild replacement journal", () => {
     mocks.captureOpenshell.mockReturnValue(absentProbe());
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
   });
 
   it("stops before the next mutation when the source outlives its delete", () => {
     const journal = open();
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(() => journal.confirmDeleted()).toThrow(
       /OpenShell still reports the journaled source after delete/,
@@ -534,6 +609,72 @@ describe("rebuild replacement journal", () => {
     expect(resumed.id).toBe(first.id);
   });
 
+  it("pins an interrupted replacement observation to its recorded OpenShell target (#10514)", () => {
+    open();
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const resolveRuntimeSelection = vi.fn(() => runtimeSelection);
+    mocks.captureOpenshell.mockClear();
+
+    const resumed = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      resolveRuntimeSelection,
+    });
+
+    expect(resolveRuntimeSelection).toHaveBeenCalledOnce();
+    expect(resumed.runtimeSelection).toEqual(runtimeSelection);
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
+  it("pins the first replacement observation to its recorded OpenShell target (#10514)", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const resolveRuntimeSelection = vi.fn(() => runtimeSelection);
+
+    const journal = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      resolveRuntimeSelection,
+    });
+
+    expect(resolveRuntimeSelection).toHaveBeenCalledOnce();
+    expect(journal.runtimeSelection).toEqual(runtimeSelection);
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
   it("retires the journal of a proven replacement instead of deleting it again (#7734)", () => {
     const first = open();
     proveReplacement(first.targetGeneration);
@@ -636,14 +777,14 @@ describe("rebuild replacement recovery backup", () => {
     expect(findRebuildRecoveryBackup(identity(), deps())).toEqual(
       expect.objectContaining({ backupPath, timestamp: manifest.timestamp }),
     );
-    expect(
-      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
-    ).toBe(false);
+    expect(isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps())).toBe(
+      false,
+    );
 
     markRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps());
-    expect(
-      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
-    ).toBe(true);
+    expect(isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps())).toBe(
+      true,
+    );
 
     clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
     expect(fs.existsSync(recordPath)).toBe(false);
@@ -660,6 +801,57 @@ describe("rebuild replacement recovery backup", () => {
     ).toThrow("already belongs to another transaction");
     expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
+  });
+
+  it("preserves recovery handoffs when the default observer lists a legacy sandbox", () => {
+    manifest.rebuildMcpHandoff = {
+      entries: [],
+      runtimeSelection: { gatewayName: "nemoclaw-18080", workspace: "default" },
+    };
+    const { handoffPath, recordPath } = prepareUnsafeRecovery();
+    const retainedManifest = structuredClone(manifest);
+    const retainedRecord = fs.readFileSync(recordPath, "utf8");
+    const retainedPolicy = fs.readFileSync(handoffPath, "utf8");
+    const clearPolicyHandoff = vi.fn(() => true);
+    const clearMcpHandoff = vi.fn(() => true);
+    mocks.captureOpenshell.mockReset();
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            id: SANDBOX_ID,
+            name: "alpha",
+            labels: {},
+            resource_version: 1,
+            created_at: "2026-09-12T00:00:00Z",
+            phase: "Ready",
+            current_policy_version: 1,
+          },
+        ]),
+        stderr: "",
+      });
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), clearPolicyHandoff, clearMcpHandoff },
+      ),
+    ).toThrow("OpenShell still reports sandbox 'alpha' on recorded gateway 'nemoclaw-18080'");
+    expect(mocks.captureOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      ["sandbox", "list", "-g", "nemoclaw-18080", "-o", "json"],
+    ]);
+    expect(clearPolicyHandoff).not.toHaveBeenCalled();
+    expect(clearMcpHandoff).not.toHaveBeenCalled();
+    expect(fs.readFileSync(recordPath, "utf8")).toBe(retainedRecord);
+    expect(fs.readFileSync(handoffPath, "utf8")).toBe(retainedPolicy);
+    expect(manifest).toEqual(retainedManifest);
   });
 
   it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {

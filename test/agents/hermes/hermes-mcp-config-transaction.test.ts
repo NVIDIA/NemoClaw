@@ -19,7 +19,11 @@ const TRANSACTION = path.resolve(
   "../../..",
   "agents/hermes/mcp-config-transaction.py",
 );
-const GUARD = path.resolve(import.meta.dirname, "../../..", "agents/hermes/runtime-config-guard.py");
+const GUARD = path.resolve(
+  import.meta.dirname,
+  "../../..",
+  "agents/hermes/runtime-config-guard.py",
+);
 
 function runPython(source: string, args: string[] = []) {
   const canonicalEnvironment = Object.fromEntries(
@@ -28,9 +32,14 @@ function runPython(source: string, args: string[] = []) {
       `openshell:resolve:env:${name!}`,
     ]),
   );
+  const stableEnvironment = Object.fromEntries(
+    [...source.matchAll(/openshell:resolve:env:(s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+      ([, handle, name]) => [name!, `openshell:resolve:env:${handle!}_${name!}`],
+    ),
+  );
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
-    env: { ...process.env, ...canonicalEnvironment },
+    env: { ...process.env, ...canonicalEnvironment, ...stableEnvironment },
   });
 }
 
@@ -156,9 +165,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
     ]);
   });
 
@@ -194,6 +203,7 @@ print(json.dumps({"ok": True}))
       "v1_TOKEN",
       "v999999_very_unlikely",
       "v0_1",
+      `s${"a".repeat(64)}_TOKEN`,
     ];
     const result = runPython(
       `
@@ -261,6 +271,7 @@ base = {
 }
 valid = [
     ("add", {**base, "replace_existing": False}),
+    ("add", {**base, "headers": {"Authorization": "Bearer openshell:resolve:env:saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_SAFE_MCP_TOKEN"}, "replace_existing": False}),
     ("remove", {**base, "force": False}),
 ]
 invalid = [
@@ -294,7 +305,7 @@ print(json.dumps(accepted))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([true, true, ...Array(16).fill(false)]);
+    expect(JSON.parse(result.stdout)).toEqual([true, true, true, ...Array(16).fill(false)]);
   });
 
   it("rejects command, YAML-tag, and terminal-control injection without executing it", () => {
@@ -473,13 +484,15 @@ print(json.dumps({"exit_code": module.main()}))
       expect(result.status, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
       expect(result.stderr).toContain("<REDACTED>");
-      expect([
-            "SAFE_MCP_TOKEN",
-            "runtime-secret-123",
-            "second-secret-456",
-            "password",
-            "query-secret-789",
-          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
+      expect(
+        [
+          "SAFE_MCP_TOKEN",
+          "runtime-secret-123",
+          "second-secret-456",
+          "password",
+          "query-secret-789",
+        ].every((secret) => !result.stderr.includes(secret)),
+      ).toBe(true);
       expect(result.stderr).not.toContain("\u001b");
       expect(result.stderr).not.toContain("\u202e");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -510,7 +523,7 @@ print(json.dumps([
     },
   );
 
-  it("refuses a locked config snapshot", () => {
+  it("refuses a non-writable config snapshot", () => {
     const result = runPython(`
 import importlib.util, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
@@ -527,7 +540,7 @@ else:
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("locked");
+    expect(result.stdout).toContain("not writable");
   });
 
   it("blocks symlink, hardlink, permission, inode-race, and atomic-write guard bypasses", () => {
@@ -752,9 +765,11 @@ print(json.dumps(results, sort_keys=True))
     Object.entries(scenarios).forEach(([name, scenario]) => {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      expect(Object.entries(scenario).filter(
-            ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-          ).every(([property, value]) => Object.is(value, true))).toBe(true);
+      expect(
+        Object.entries(scenario)
+          .filter(([property]) => property.endsWith("preserved") || property === "temp_cleaned")
+          .every(([_property, value]) => Object.is(value, true)),
+      ).toBe(true);
     });
   });
 
@@ -1474,8 +1489,9 @@ else:
       });
       expect(result.stdout).toContain("re-kick sent: yes");
       expect(fs.readFileSync(configPath, "utf8")).toBe(config);
-      expect(fs.readFileSync(compatHash, "utf8")).toBe(originalHash);
-      expect(fs.readFileSync(strictHash, "utf8")).toBe(originalHash);
+      const nativeHash = `${originalHash.split("\n").slice(0, 2).join("\n")}\n`;
+      expect(fs.readFileSync(compatHash, "utf8")).toBe(nativeHash);
+      expect(fs.readFileSync(strictHash, "utf8")).toBe(nativeHash);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }

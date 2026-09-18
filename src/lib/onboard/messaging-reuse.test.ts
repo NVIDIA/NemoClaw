@@ -49,7 +49,7 @@ function authoritativeRegistry(
 }
 
 describe("onboard messaging reuse", () => {
-  it("maps one bridge provider for single-token messaging channels", () => {
+  it("maps one bridge provider for single-token messaging channels", async () => {
     expect(getMessagingProviderNamesForChannel("assistant", "discord")).toEqual([
       "assistant-discord-bridge",
     ]);
@@ -61,13 +61,13 @@ describe("onboard messaging reuse", () => {
     ]);
   });
 
-  it("requires both Slack providers before reusing a stored Slack channel", () => {
+  it("requires both Slack providers before reusing a stored Slack channel", async () => {
     expect(getMessagingProviderNamesForChannel("assistant", "slack")).toEqual([
       "assistant-slack-bridge",
       "assistant-slack-app",
     ]);
 
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       false,
       null,
       "assistant",
@@ -81,8 +81,8 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toBeNull();
   });
 
-  it("reuses stored Slack channels when both Slack providers exist", () => {
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+  it("reuses stored Slack channels when both Slack providers exist", async () => {
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       false,
       null,
       "assistant",
@@ -96,8 +96,8 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toEqual(["slack"]);
   });
 
-  it("reuses a stored WeChat channel when its bridge provider exists", () => {
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+  it("reuses a stored WeChat channel when its bridge provider exists", async () => {
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       false,
       null,
       "assistant",
@@ -111,8 +111,8 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toEqual(["wechat"]);
   });
 
-  it("honors an explicit empty resume messaging channel set", () => {
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+  it("honors an explicit empty resume messaging channel set", async () => {
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       true,
       ["unknown"],
       "assistant",
@@ -126,8 +126,8 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toEqual([]);
   });
 
-  it("does not rediscover token-backed channels when resume recorded none", () => {
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+  it("does not rediscover token-backed channels when resume recorded none", async () => {
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       true,
       [],
       "assistant",
@@ -141,13 +141,14 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toEqual([]);
   });
 
-  it("does not reuse messaging channels from a pending route reservation without a host token", () => {
-    const getRegistryMessagingAuthority = vi.fn(
-      (): RegistryMessagingAuthority => ({ authoritative: false, plan: null }),
-    );
+  it("does not reuse messaging channels from a pending route reservation without a host token", async () => {
+    const getRegistryMessagingAuthority = vi.fn((): RegistryMessagingAuthority => ({
+      authoritative: false,
+      plan: null,
+    }));
     const providerExists = vi.fn(() => true);
 
-    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+    const reusedChannels = await getNonInteractiveStoredMessagingChannels(
       false,
       null,
       "assistant",

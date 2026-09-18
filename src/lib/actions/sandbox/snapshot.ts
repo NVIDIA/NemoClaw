@@ -7,18 +7,22 @@ import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  createCliOpenShellSandboxLookupFromRunner,
+  waitForSandboxDeleteAbsence,
+} from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -31,34 +35,29 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
-import { listMessagingProviderSuffixes } from "../../messaging/channels";
-import {
-  findAvailableDashboardPort,
-  getRegistryOccupiedDashboardPorts,
-  getRegistryOccupiedHermesApiPorts,
-  withDashboardPortReservationLock,
-} from "../../onboard/dashboard-port";
+import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
+import { withDashboardPortReservationLock } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   cleanupTempDir,
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
-import * as shields from "../../shields";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
-import { readTimerMarker } from "../../shields/timer-control";
+import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -70,14 +69,10 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import {
-  cleanupShieldsDestroyArtifacts,
   removeSandboxRegistryEntryOutcome,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
-import {
-  establishRestoredSandboxGatewayPairing,
-  waitForRestoredSandboxGatewaySupervisor,
-} from "./restore-gateway-pairing";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -108,6 +103,10 @@ import {
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
+import {
+  allocateSnapshotCloneForwardPorts,
+  snapshotCloneHermesApiEnvArgs,
+} from "./snapshot/forward-port-allocation";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -268,71 +267,6 @@ function resolveSrcPodImage(
   }
 }
 
-// Allocate the clone's own dashboard port. Dashboard ports are per-sandbox
-// host resources: the host forward for src's port is owned by src, so a clone
-// that inherits the port gets a dashboard URL that points at src's dashboard
-// and a rebuild preflight that rejects the clone forever (#6746). Allocate
-// dst's own port instead, from the same per-gateway forward list +
-// cross-gateway registry occupancy view as onboard's `ensureDashboardForward`.
-// Sources without a dashboard port (non-dashboard-managed agents) return null
-// so the clone's field stays unset. Callers must invoke this before any
-// destructive step (e.g. deleting a `--force` destination) so port-range
-// exhaustion aborts before, not after, the mutation.
-function allocateCloneDashboardPort(
-  dstName: string,
-  srcEntry: {
-    name?: string;
-    dashboardPort?: number | null;
-    hermesDashboardEnabled?: boolean;
-    hermesDashboardInternalPort?: number | null;
-  },
-): number | null {
-  const srcPort = srcEntry.dashboardPort;
-  if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  const occupied = getRegistryOccupiedDashboardPorts(dstName);
-  const hermesInternalPort = srcEntry.hermesDashboardInternalPort;
-  if (srcEntry.hermesDashboardEnabled === true && isValidForwardPort(hermesInternalPort)) {
-    occupied.set(
-      String(hermesInternalPort),
-      `${srcEntry.name ?? "source"} (Hermes dashboard internal)`,
-    );
-  }
-  try {
-    return findAvailableDashboardPort(dstName, srcPort, forwards.output || "", undefined, occupied);
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
-// Allocate the clone's own API port. The source owns the host forward for its
-// port, and the sandbox exposes the API on the same number it is forwarded on,
-// so a clone that inherits the source's port gets no inference forward, and its
-// gateway restart never converges. Returns null for an agent that has no
-// per-sandbox API port, so the clone's field stays unset. Callers must invoke
-// this before any destructive step so range exhaustion aborts before the
-// mutation.
-function allocateCloneHermesApiPort(
-  dstName: string,
-  srcEntry: { name?: string; agent?: string | null },
-): number | null {
-  if (srcEntry.agent !== "hermes") return null;
-  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  try {
-    return findAvailableHermesApiPort(
-      dstName,
-      undefined,
-      forwards.output || "",
-      undefined,
-      getRegistryOccupiedHermesApiPorts(dstName),
-    );
-  } catch (err) {
-    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
-    snapshotExit(1);
-  }
-}
-
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -385,7 +319,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  const policyRead = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",
@@ -406,7 +340,11 @@ async function prepareSnapshotClonePolicy(
   }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
-    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    fs.writeFileSync(policyPath, policy, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
     return {
       policyPath,
       cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
@@ -460,7 +398,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
-    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
+    ...snapshotCloneHermesApiEnvArgs(dstHermesApiPort),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -644,12 +582,6 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
-  const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
-  if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
   // The pending registry row now owns any host-local inference reservation.
   // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
@@ -658,8 +590,8 @@ async function autoCreateSandboxFromSource(
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
 // can recreate it from the source's image. Stops the destination's NIM
 // container, runs `openshell sandbox delete`, performs the destination-only
-// cleanups that `sandboxDestroy` does (PID dir, per-sandbox messaging
-// providers, shields state), then drops the NemoClaw registry entry. Throws
+// cleanups that `sandboxDestroy` does (PID dir and per-sandbox messaging
+// providers), then drops the NemoClaw registry entry. Throws
 // SnapshotCommandError on failure so the caller does not proceed into a
 // partially-deleted target.
 //
@@ -668,8 +600,8 @@ async function autoCreateSandboxFromSource(
 // `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
-function deleteSandboxForRestore(name: string): void {
-  withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
+async function deleteSandboxForRestore(name: string): Promise<void> {
+  await withMcpLifecycleLock(name, async () => {
     const sbMeta = registry.getSandbox(name);
     if (!sbMeta) {
       console.error(
@@ -703,24 +635,31 @@ function deleteSandboxForRestore(name: string): void {
       }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
-    if (readTimerMarker(name)) {
-      shields.shieldsUp(name, {
-        throwOnError: true,
-        allowLegacyHermesProtocol: true,
-      });
-    }
-    const deleteResult = runOpenshell(["sandbox", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
+    const gatewayName = resolveSandboxGatewayName(sbMeta);
+    const deleteResult = await createCliOpenShellSandboxLifecycleFromRunner(
+      runOpenshell,
+    ).deleteSandbox({
+      sandboxName: name,
+      target: { kind: "named", gatewayName },
     });
-    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-    if (deleteResult.status !== 0 && !alreadyGone) {
-      // Any active timer was cleared only after shieldsUp verified the live
-      // destination was hardened. Preserve that locked state on failure.
+    if (deleteResult.kind === "failed" && !deleteResult.ambiguous) {
       console.error(
-        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+        `  Failed to delete '${name}' (exit ${deleteResult.exitCode ?? 1}). Aborting restore.`,
       );
       snapshotExit(1);
+    }
+    if (deleteResult.kind !== "absent") {
+      const convergence = await waitForSandboxDeleteAbsence(
+        name,
+        gatewayName,
+        createCliOpenShellSandboxLookupFromRunner(runOpenshell),
+      );
+      if (!convergence.confirmed) {
+        console.error(
+          `  OpenShell did not confirm that destination '${name}' is absent. Aborting restore.`,
+        );
+        snapshotExit(1);
+      }
     }
     if (hostLocalInferenceAuthority) {
       try {
@@ -746,7 +685,6 @@ function deleteSandboxForRestore(name: string): void {
     // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
     // - OpenShell per-sandbox messaging bridge providers declared by channel
     //   manifests.
-    // - shields-<name>.json + shields timer: per-sandbox shields artifacts
     try {
       fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
         recursive: true,
@@ -755,28 +693,27 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-    }
-    cleanupShieldsDestroyArtifacts(name);
+    await deleteSandboxProviderRegistrations(name, "messaging", {
+      runOpenshell,
+    });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
-function listLiveSandboxesOnSandboxGateway(sandboxName: string): Set<string> | null {
-  if (!selectSandboxGatewayIfRegistered(sandboxName)) return null;
-  if (!probeGatewayRunning(sandboxName)) return null;
+async function listLiveSandboxesOnSandboxGateway(sandboxName: string): Promise<Set<string> | null> {
+  if (!(await selectSandboxGatewayIfRegistered(sandboxName))) return null;
+  if (!(await probeGatewayRunning(sandboxName))) return null;
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (isLive.status !== 0) return null;
   return parseLiveSandboxNames(isLive.output || "");
 }
 
-function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string): Set<string> {
-  const liveNames = listLiveSandboxesOnSandboxGateway(sandboxName);
+async function requireLiveSandboxesOnSandboxGateway(
+  sandboxName: string,
+  error: string,
+): Promise<Set<string>> {
+  const liveNames = await listLiveSandboxesOnSandboxGateway(sandboxName);
   if (!liveNames) {
     console.error(error);
     snapshotExit(1);
@@ -784,8 +721,8 @@ function requireLiveSandboxesOnSandboxGateway(sandboxName: string, error: string
   return liveNames;
 }
 
-function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+async function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     targetSandbox,
     `  Cannot verify destination sandbox '${targetSandbox}' on its registered gateway. Aborting restore.`,
   );
@@ -800,11 +737,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 
 type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
 
-function reconcilePendingSnapshotClone(
+async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
-): PendingSnapshotCloneRecovery {
+): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
   if (
     !pending ||
@@ -834,7 +771,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveNames = parseLiveSandboxNames(list.output || "");
   if (!liveNames.has(targetSandbox)) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
 
@@ -848,20 +785,13 @@ function reconcilePendingSnapshotClone(
   }
   const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
   if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!isSandboxReady(list.output || "", targetSandbox)) {
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
     );
-  }
-  if (
-    (pending.agent || "openclaw") === "openclaw" &&
-    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
-  ) {
-    deleteSandboxForRestore(targetSandbox);
-    return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(
@@ -870,20 +800,6 @@ function reconcilePendingSnapshotClone(
   }
   console.log(`  ${G}\u2713${R} Recovered pending clone '${targetSandbox}'`);
   return "finalized";
-}
-
-function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
-  // Snapshot creation is a shields/policy boundary. Production builds should
-  // always export this helper, but stale compiled artifacts, package-boundary
-  // skew, or test doubles can present a missing CommonJS interop surface. There
-  // is no safe runtime source fix once snapshot creation has started, so keep
-  // this as permanent defense-in-depth and fail closed before backup side effects.
-  const isShieldsDown = shields.isShieldsDown;
-  if (typeof isShieldsDown !== "function") {
-    console.error("  Cannot verify shields state. Refusing to create snapshot.");
-    return false;
-  }
-  return isShieldsDown(sandboxName);
 }
 
 function shouldCheckDcodeActivity(sandboxName: string): boolean {
@@ -959,11 +875,11 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
   );
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
-  const liveNames = requireLiveSandboxesOnSandboxGateway(
+): Promise<void> {
+  const liveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -971,15 +887,7 @@ function runSnapshotCreate(
     console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
     snapshotExit(1);
   }
-  return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
-    // Keep the shields check and backup in one timer-bound interval. At the
-    // absolute deadline, auto-restore closes the outer lifecycle gate and waits
-    // for this exact owner to finish before changing policy or config.
-    if (!isSnapshotCreationAllowedByShields(sandboxName)) {
-      console.error("  Cannot create snapshot while shields are up.");
-      console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
-      snapshotExit(1);
-    }
+  return withMcpLifecycleLockSync(sandboxName, () => {
     if (
       shouldCheckDcodeActivity(sandboxName) &&
       !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
@@ -1025,27 +933,29 @@ function runSnapshotCreate(
   });
 }
 
-function repairRestoredOpenClawConfigPerms(
+function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
-  result: ReturnType<typeof sandboxState.restoreSandboxState>,
+  result: Awaited<ReturnType<typeof sandboxState.restoreSandboxState>>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
+  let failure: string;
   try {
-    const permRepair = shields.repairMutableConfigPerms(targetSandbox);
+    const permRepair = repairMutableConfigPerms(targetSandbox);
     if (permRepair.applied && permRepair.verified) {
       console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
-    } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
-      console.warn(`  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`);
-    } else if (permRepair.applied && !permRepair.verified) {
-      console.warn(
-        `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
-      );
+      return;
     }
+    failure = permRepair.applied
+      ? permRepair.errors.join("; ") || "permission verification failed"
+      : permRepair.reason;
   } catch (err) {
-    console.warn(
-      `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    failure = err instanceof Error ? err.message : String(err);
   }
+  throw new SnapshotCommandError([
+    `State restored into '${targetSandbox}', but OpenClaw config permissions could not be verified.`,
+    `Run \`${CLI_NAME} ${targetSandbox} doctor --fix\`, then rerun \`${CLI_NAME} ${targetSandbox} doctor\` before running an agent.`,
+    `Details: ${failure}`,
+  ]);
 }
 
 function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
@@ -1076,7 +986,7 @@ async function runSnapshotRestore(
   if (targetSandbox !== sandboxName) {
     assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
   }
-  const orderedNames = recoverCompletedAutoRestoreForSnapshotRestore(lockNames);
+  const orderedNames = [...new Set(lockNames)].sort();
   const acquire = (index: number): Promise<void> =>
     index === orderedNames.length
       ? Promise.resolve().then(() => {
@@ -1090,23 +1000,12 @@ async function runSnapshotRestore(
   return acquire(0);
 }
 
-export function recoverCompletedAutoRestoreForSnapshotRestore(
-  sandboxNames: readonly string[],
-  stateDir?: string,
-): string[] {
-  const orderedNames = [...new Set(sandboxNames)].sort();
-  for (const name of orderedNames) {
-    shields.recoverCompletedAutoRestoreBeforeCommand(name, stateDir);
-  }
-  return orderedNames;
-}
-
 async function runSnapshotRestoreUnlocked(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "restore" }>,
   targetSandbox: string,
 ): Promise<void> {
-  const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
+  const sourceLiveNames = await requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
   );
@@ -1389,7 +1288,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
-      const pendingRecovery = reconcilePendingSnapshotClone(
+      const pendingRecovery = await reconcilePendingSnapshotClone(
         targetSandbox,
         lockedSourceEntry,
         lockedGatewayName,
@@ -1410,8 +1309,20 @@ async function runSnapshotRestoreUnlocked(
       // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
-      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
-      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
+      let clonePorts: Awaited<ReturnType<typeof allocateSnapshotCloneForwardPorts>>;
+      try {
+        clonePorts = await allocateSnapshotCloneForwardPorts({
+          destinationName: targetSandbox,
+          executable: getOpenshellBinary(),
+          gatewayName: lockedGatewayName,
+          gatewayPort: lockedGatewayPort,
+          source: lockedSourceEntry,
+        });
+      } catch (error) {
+        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+        snapshotExit(1);
+      }
+      const { dashboardPort: dstDashboardPort, hermesApiPort: dstHermesApiPort } = clonePorts;
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
@@ -1430,10 +1341,10 @@ async function runSnapshotRestoreUnlocked(
         clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+            await verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
-          deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
+          await deleteSandboxForRestore(targetSandbox);
+          await requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
@@ -1507,16 +1418,12 @@ async function runSnapshotRestoreUnlocked(
         console.error(
           `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
         );
-        deleteSandboxForRestore(targetSandbox);
+        await deleteSandboxForRestore(targetSandbox);
         snapshotExit(1);
       }
     }
   }
-  withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
-    // Serialize filesystem restore, mutable-permission repair, and policy
-    // reconciliation under the active timer generation. At the absolute
-    // deadline, auto-restore keeps the outer lifecycle gate closed and waits
-    // for this exact owner to finish before restoring lockdown.
+  await withMcpLifecycleLock(targetSandbox, async () => {
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1557,11 +1464,6 @@ async function runSnapshotRestoreUnlocked(
             }
           }
         : null;
-    if (targetSandbox !== sandboxName) {
-      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-    } else {
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-    }
     if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
       console.error(
         `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
@@ -1569,13 +1471,18 @@ async function runSnapshotRestoreUnlocked(
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
     }
+    if (targetSandbox !== sandboxName) {
+      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+    } else {
+      console.log(`  Restoring snapshot into '${sandboxName}'...`);
+    }
     const result =
       snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+        ? await sandboxState.restoreSandboxState(targetSandbox, backupPath, {
             authority: snapshotRestoreAuthority,
             validateBeforeMutation: validateProviderRestoreBeforeMutation,
           })
-        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
+        : await sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
       if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
         const currentTarget = registry.getSandbox(targetSandbox);
@@ -1607,6 +1514,7 @@ async function runSnapshotRestoreUnlocked(
           snapshotExit(1);
         }
       }
+      requireRestoredOpenClawConfigPerms(targetSandbox, result);
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );
@@ -1633,13 +1541,6 @@ async function runSnapshotRestoreUnlocked(
       }
       snapshotExit(1);
     }
-    // Post-restore security-state reconciliation is best-effort by design: the
-    // filesystem restore succeeded and old snapshots may target hosts where policy
-    // providers or mutable-config repair are temporarily unavailable. Surface every
-    // failure as a warning, but keep the restore result tied to state restoration.
-    // #5027/#4538: openclaw.json restores via the generic copy strategy, which
-    // lands it at 0640. Repair the mutable config contract when needed.
-    repairRestoredOpenClawConfigPerms(targetSandbox, result);
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {

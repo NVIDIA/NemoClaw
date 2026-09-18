@@ -10,7 +10,7 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { buildChildEnv } from "./redaction.ts";
 import type { SecretStore } from "./secrets.ts";
-import { superviseChild } from "./shell/supervisor.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 import type { AbortSignalSource } from "./shell-probe.ts";
 
 export type DockerCommandResult = {
@@ -193,7 +193,7 @@ export class DockerProbe {
       });
       rawCommandResult = {
         command,
-        exitCode: supervised.exitCode,
+        exitCode: supervised.cleanupError ? -1 : supervised.exitCode,
         signal: supervised.signal,
         stdout: outputExceeded
           ? "[docker-probe output exceeded safe capture limit]"
@@ -203,6 +203,7 @@ export class DockerProbe {
           : stderr.toString("utf8"),
         error:
           supervised.spawnError?.message ??
+          supervised.cleanupError?.message ??
           (outputExceeded ? "Docker output exceeded the safe capture limit" : undefined),
       };
     }

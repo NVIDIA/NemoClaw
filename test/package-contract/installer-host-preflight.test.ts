@@ -27,9 +27,21 @@ exit 99`,
   );
 }
 
+function copyCompiledOnboardAdmission(readinessDir: string, onboardDir: string): void {
+  const compiledAdmission = path.resolve("dist/lib/readiness/onboard-admission.js");
+  const compiledProviderKeys = path.resolve(
+    "dist/lib/onboard/inference-providers/provider-selection-keys.js",
+  );
+  const targetProviderDir = path.join(onboardDir, "inference-providers");
+  fs.mkdirSync(targetProviderDir, { recursive: true });
+  fs.copyFileSync(compiledAdmission, path.join(readinessDir, "onboard-admission.js"));
+  fs.copyFileSync(compiledProviderKeys, path.join(targetProviderDir, "provider-selection-keys.js"));
+}
+
 function runInstallerHostAdmissionTest(
   host: {
     runtime: string;
+    isN1x?: boolean;
     hasNestedOverlayConflict?: boolean;
     isUnsupportedRuntime?: boolean;
     additionalFindingIds?: string[];
@@ -41,7 +53,10 @@ function runInstallerHostAdmissionTest(
     gatewayRuntime?: string;
     gatewayManagementMode?: string;
     portableProfileArtifact?: "present" | "missing";
-    providerPreparationFailure?: string;
+    providerResolutionFailure?: string;
+    provider?: string;
+    noExpress?: boolean;
+    useCompiledAdmission?: boolean;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -50,12 +65,10 @@ function runInstallerHostAdmissionTest(
   const onboardDir = path.join(sourceRoot, "dist", "lib", "onboard");
   const experimentalDir = path.join(onboardDir, "experimental");
   const readinessDir = path.join(sourceRoot, "dist", "lib", "readiness");
-  const runtimeProviderDir = path.join(onboardDir, "runtime-provider");
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(onboardDir, { recursive: true });
   fs.mkdirSync(experimentalDir, { recursive: true });
   fs.mkdirSync(readinessDir, { recursive: true });
-  fs.mkdirSync(runtimeProviderDir, { recursive: true });
 
   fs.writeFileSync(
     path.join(onboardDir, "preflight.js"),
@@ -67,7 +80,16 @@ function runInstallerHostAdmissionTest(
       ...host,
     })};
 exports.assessHost = () => host;
-exports.planHostAdvisories = () => [];
+exports.planHostAdvisories = (_host, options = {}) =>
+  !options.providerOwnsHostReadiness &&
+  host.additionalFindingIds?.includes("host.docker.unavailable")
+    ? [{
+        id: "install_docker",
+        title: "Install Docker",
+        reason: "Docker is required before onboarding can create a gateway or sandbox.",
+        commands: ["Install Docker Engine, then rerun \`nemoclaw onboard\`."],
+      }]
+    : [];
 `,
   );
   fs.writeFileSync(
@@ -92,20 +114,13 @@ exports.loadGatewayManagementDeclaration = () => ({
     fs.writeFileSync(artifactPath, contents);
   }
   fs.writeFileSync(
-    path.join(runtimeProviderDir, "selection.js"),
-    `const preparationFailure = ${JSON.stringify(options.providerPreparationFailure ?? null)};
-exports.resolveConfiguredRuntimeProvider = () => ({
-  gateway: {
-    supported: true,
-    prepareHostRuntime: () => {
-      if (preparationFailure) throw new Error(preparationFailure);
-      return {
-        sandboxHostAddress:
-          process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
-      };
-    },
-  },
-});\n`,
+    path.join(onboardDir, "docker-driver-gateway-env.js"),
+    `const resolutionFailure = ${JSON.stringify(options.providerResolutionFailure ?? null)};
+exports.configuredRuntimeProviderOwnsHostReadiness = ({ environment = process.env } = {}) => {
+  if (resolutionFailure) throw new Error(resolutionFailure);
+  return environment.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" &&
+    environment.NEMOCLAW_GATEWAY_RUNTIME === "podman";
+};\n`,
   );
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
@@ -129,19 +144,71 @@ exports.resolveConfiguredRuntimeProvider = () => ({
   for (const id of host.additionalFindingIds || []) {
     findings.push({ id, severity: "blocking", summary: "Blocking finding: " + id });
   }
-  return { findings, capabilityIds: host.unknownCapabilityIds || [], host };
+  const requiredCapabilities = [
+    "host.docker.available",
+    "host.docker.daemon_reachable",
+    "host.docker.runtime_supported",
+    "host.docker.storage_compatible",
+    "host.gpu.nvidia_available",
+    "host.gpu.container_toolkit_available",
+    "host.gpu.cdi_healthy",
+    "host.platform.supported",
+  ];
+  const unknown = new Set(host.unknownCapabilityIds || []);
+  const capabilities = requiredCapabilities.map((id) => ({
+    id,
+    state:
+      unknown.has(id) ? "unknown" : id === "host.platform.supported" && host.isN1x ? "absent" : "present",
+  }));
+  if (host.isN1x) capabilities.push({ id: "host.platform.n1x", state: "present" });
+  for (const id of unknown) {
+    if (!capabilities.some((capability) => capability.id === id)) {
+      capabilities.push({ id, state: "unknown" });
+    }
+  }
+  return {
+    observations: [],
+    capabilities,
+    findings,
+    capabilityIds: host.unknownCapabilityIds || [],
+    host,
+  };
 };
 `,
   );
-  fs.writeFileSync(
-    path.join(readinessDir, "onboard-admission.js"),
-    `const forcedRejection = ${JSON.stringify(forcedRejection ?? null)};
+  const writeStubbedOnboardAdmission = () =>
+    fs.writeFileSync(
+      path.join(readinessDir, "onboard-admission.js"),
+      `const forcedRejection = ${JSON.stringify(forcedRejection ?? null)};
 exports.evaluateOnboardReadinessAdmission = (report, options) => {
   if (forcedRejection) {
     return { admitted: false, reasonIds: [], ...forcedRejection, waivedFindingIds: [] };
   }
+  const providerOwnedDockerFindings = new Set([
+    "host.docker.unavailable",
+    "host.docker.host_invalid",
+    "host.docker.daemon_unreachable",
+    "host.docker.runtime_unsupported",
+    "host.docker.storage_incompatible",
+  ]);
+  const providerOwnedDockerCapabilities = new Set([
+    "host.docker.available",
+    "host.docker.daemon_reachable",
+    "host.docker.runtime_supported",
+    "host.docker.storage_compatible",
+    "host.docker.storage_remediation_available",
+  ]);
   const findingIds = report.findings
     .filter((finding) => {
+      if (
+        finding.id === "host.platform.n1x_validation_pending" &&
+        options.allowDeferredN1xManagedVllm &&
+        report.host.isN1x
+      ) return false;
+      if (
+        options.providerOwnsHostReadiness &&
+        providerOwnedDockerFindings.has(finding.id)
+      ) return false;
       if (
         finding.id === "host.docker.runtime_unsupported" &&
         options.allowUnsupportedRuntime
@@ -160,22 +227,31 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     .map((finding) => finding.id);
   const capabilityIds = report.capabilityIds.filter(
     (id) =>
-      !options.allowPortableHostPreparation ||
-      (id !== "host.docker.daemon_reachable" &&
-        id !== "host.docker.runtime_supported" &&
-        id !== "host.docker.storage_compatible")
+      !(options.providerOwnsHostReadiness && providerOwnedDockerCapabilities.has(id)) &&
+      (!options.allowPortableHostPreparation ||
+        (id !== "host.docker.daemon_reachable" &&
+          id !== "host.docker.runtime_supported" &&
+          id !== "host.docker.storage_compatible"))
   );
   return findingIds.length === 0 && capabilityIds.length === 0
     ? { admitted: true, waivedFindingIds: [] }
     : { admitted: false, reasonIds: [], findingIds, capabilityIds, waivedFindingIds: [] };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
 `,
-  );
+    );
+  const installOnboardAdmission = options.useCompiledAdmission
+    ? () => copyCompiledOnboardAdmission(readinessDir, onboardDir)
+    : writeStubbedOnboardAdmission;
+  installOnboardAdmission();
   writeNodeStub(fakeBin);
 
   const {
     NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
     NEMOCLAW_GATEWAY_RUNTIME: _gatewayRuntime,
+    NEMOCLAW_NO_EXPRESS: _noExpress,
+    NEMOCLAW_PROVIDER: _provider,
     TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
     ...inheritedEnv
   } = process.env;
@@ -189,6 +265,8 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
       ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
       : {}),
     ...(options.gatewayRuntime ? { NEMOCLAW_GATEWAY_RUNTIME: options.gatewayRuntime } : {}),
+    ...(options.noExpress ? { NEMOCLAW_NO_EXPRESS: "1" } : {}),
+    ...(options.provider ? { NEMOCLAW_PROVIDER: options.provider } : {}),
     TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
   };
 
@@ -213,6 +291,85 @@ run_installer_host_preflight
 }
 
 describe("installer host preflight package contract", () => {
+  it.each([
+    ["NEMOCLAW_NO_EXPRESS", { noExpress: true, useCompiledAdmission: true }],
+    ["an explicit standard provider", { provider: "ollama", useCompiledAdmission: true }],
+  ])(
+    "admits qualified Deferred N1x through %s (#11041)",
+    (_scenario, intent) => {
+      const { output, result } = runInstallerHostAdmissionTest(
+        {
+          runtime: "docker",
+          isN1x: true,
+          additionalFindingIds: ["host.platform.n1x_validation_pending"],
+        },
+        undefined,
+        intent,
+      );
+
+      expect(result.status, output).toBe(0);
+      expect(output).not.toMatch(/Host preflight found issues/);
+    },
+    15_000,
+  );
+
+  it("keeps Deferred N1x blocked without explicit onboarding intent (#11041)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "docker",
+        isN1x: true,
+        additionalFindingIds: ["host.platform.n1x_validation_pending"],
+      },
+      undefined,
+      { useCompiledAdmission: true },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("host.platform.n1x_validation_pending");
+  });
+
+  it.each([
+    ["an unknown provider", "unknown-provider", false],
+    ["the NIM provider", "nim-local", true],
+    ["the NIM provider alias", "nim", true],
+  ] as const)(
+    "keeps Deferred N1x blocked for %s (#11041)",
+    (_scenario, provider, noExpress) => {
+      const { output, result } = runInstallerHostAdmissionTest(
+        {
+          runtime: "docker",
+          isN1x: true,
+          additionalFindingIds: ["host.platform.n1x_validation_pending"],
+        },
+        undefined,
+        { provider, noExpress, useCompiledAdmission: true },
+      );
+
+      expect(result.status).toBe(1);
+      expect(output).toContain("host.platform.n1x_validation_pending");
+    },
+    15_000,
+  );
+
+  it("keeps unrelated blockers fail-closed for Deferred N1x intent (#11041)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "docker",
+        isN1x: true,
+        additionalFindingIds: [
+          "host.platform.n1x_validation_pending",
+          "host.test.additional_blocker",
+        ],
+      },
+      undefined,
+      { provider: "ollama", useCompiledAdmission: true },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).not.toContain("host.platform.n1x_validation_pending");
+    expect(output).toContain("host.test.additional_blocker");
+  });
+
   it("continues to onboarding when managed storage remediation is available", () => {
     const { output, result } = runInstallerHostAdmissionTest({
       runtime: "docker",
@@ -262,18 +419,45 @@ describe("installer host preflight package contract", () => {
     expect(output).not.toMatch(/Host preflight found issues/);
   });
 
-  it("fails closed when selected provider host preparation throws", () => {
+  it("admits a Docker-less host through the selected managed runtime provider (#10891)", () => {
+    const dockerCapabilityIds = [
+      "host.docker.available",
+      "host.docker.daemon_reachable",
+      "host.docker.runtime_supported",
+      "host.docker.storage_compatible",
+      "host.docker.storage_remediation_available",
+    ];
+    const host = {
+      runtime: "unknown",
+      additionalFindingIds: ["host.docker.unavailable"],
+      unknownCapabilityIds: dockerCapabilityIds,
+    };
+
+    const admitted = runInstallerHostAdmissionTest(host, undefined, {
+      gatewayRuntime: "podman",
+    });
+    expect(admitted.result.status, admitted.output).toBe(0);
+    expect(admitted.output).not.toMatch(/Host preflight found issues/);
+    expect(admitted.output).not.toContain("Install Docker");
+
+    const rejected = runInstallerHostAdmissionTest(host);
+    expect(rejected.result.status).toBe(1);
+    expect(rejected.output).toContain("host.docker.unavailable");
+    expect(rejected.output).toContain("Install Docker");
+  });
+
+  it("fails closed when selected provider resolution throws", () => {
     const { output, result } = runInstallerHostAdmissionTest(
       { runtime: "podman", isUnsupportedRuntime: true },
       undefined,
       {
         gatewayRuntime: "podman",
-        providerPreparationFailure: "native Podman address preparation failed",
+        providerResolutionFailure: "native Podman provider resolution failed",
       },
     );
 
     expect(result.status).toBe(1);
-    expect(output).toContain("native Podman address preparation failed");
+    expect(output).toContain("native Podman provider resolution failed");
   });
 
   it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {

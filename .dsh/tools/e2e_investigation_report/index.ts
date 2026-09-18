@@ -116,7 +116,7 @@ export default async function e2e_investigation_report(input: {
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
-      .replace(/([\\`*_{}\[\]()+#\-.!|~])/gu, "\\$1");
+      .replace(/([\\`*_{}[\]()+#\-.!|~])/gu, "\\$1");
   const inlineCode = (value: string) => {
     const longest = Math.max(0, ...(value.match(/`+/gu) ?? []).map((item) => item.length));
     const delimiter = "`".repeat(longest + 1);

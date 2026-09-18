@@ -91,7 +91,7 @@ describe("Teams policy preset", () => {
     expect(policies.getPresetValidationWarning("teams")).toContain("Microsoft Teams");
   });
 
-  it("shares the Teams credential binding with Outlook only while Teams is active", () => {
+  it("shares the Teams credential binding with Outlook only while Teams is active", async () => {
     const sandboxName = "teams-outlook";
     const composed = policies.mergePresetNamesIntoPolicy(
       "version: 1\nnetwork_policies: {}\n",
@@ -111,7 +111,7 @@ describe("Teams policy preset", () => {
     expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
 
     const teamsEntries = policies.extractPresetEntries(
-      policies.loadPresetForSandbox(sandboxName, "teams"),
+      await policies.loadPresetForSandbox(sandboxName, "teams"),
     );
     const withoutTeams = policies.removePresetFromPolicy(composed, teamsEntries);
     const restored = YAML.parse(
@@ -121,6 +121,103 @@ describe("Teams policy preset", () => {
       (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
     );
     expect(restoredOutlookLogin).not.toHaveProperty("credential_binding");
+  });
+
+  // `channels remove teams` reconciles against the LIVE gateway policy, whose
+  // Outlook login endpoints are not guaranteed to match the pristine preset.
+  // Requiring exactly one is an add-time invariant; on removal it refused the
+  // whole command and left the channel half-removed with no operator remedy
+  // (#10679).
+  describe("Teams removal tolerates the live Outlook login endpoint shape (#10679)", () => {
+    const sandboxName = "e2e-hm-ch-cycle";
+    const expectedBinding = { provider: `${sandboxName}-teams-bridge` };
+
+    function outlookOnlyPolicy(): any {
+      return YAML.parse(
+        policies.mergePresetNamesIntoPolicy("version: 1\nnetwork_policies: {}\n", ["outlook"], {
+          sandboxName,
+        }).policy,
+      );
+    }
+
+    function outlookLoginEndpoints(document: any): any[] {
+      return document.network_policies.outlook_graph.endpoints.filter(
+        (endpoint: { host?: string; port?: unknown }) =>
+          endpoint.host === "login.microsoftonline.com" && endpoint.port === 443,
+      );
+    }
+
+    function removeTeams(document: any): string {
+      return policies.reconcileTeamsOutlookLoginCredentialBinding(
+        YAML.stringify(document),
+        sandboxName,
+        false,
+      );
+    }
+
+    it("leaves the policy untouched when Outlook declares no login endpoint", () => {
+      const document = outlookOnlyPolicy();
+      document.network_policies.outlook_graph.endpoints =
+        document.network_policies.outlook_graph.endpoints.filter(
+          (endpoint: { host?: string }) => endpoint.host !== "login.microsoftonline.com",
+        );
+      const policyContent = YAML.stringify(document);
+
+      expect(removeTeams(document)).toBe(policyContent);
+    });
+
+    it("leaves the policy untouched when the login endpoint port is not the reviewed 443", () => {
+      const document = outlookOnlyPolicy();
+      outlookLoginEndpoints(document).forEach((endpoint) => {
+        endpoint.port = 8443;
+      });
+      const policyContent = YAML.stringify(document);
+
+      expect(removeTeams(document)).toBe(policyContent);
+    });
+
+    it("clears the Teams binding from every duplicated login endpoint", () => {
+      const document = outlookOnlyPolicy();
+      const [login] = outlookLoginEndpoints(document);
+      login.credential_binding = { ...expectedBinding };
+      document.network_policies.outlook_graph.endpoints.push(
+        JSON.parse(JSON.stringify(login)) as unknown,
+      );
+
+      const restored = YAML.parse(removeTeams(document));
+
+      expect(outlookLoginEndpoints(restored)).toHaveLength(2);
+      outlookLoginEndpoints(restored).forEach((endpoint) => {
+        expect(endpoint).not.toHaveProperty("credential_binding");
+      });
+    });
+
+    it("still refuses when any duplicated login endpoint carries a foreign binding", () => {
+      const document = outlookOnlyPolicy();
+      const [login] = outlookLoginEndpoints(document);
+      login.credential_binding = { ...expectedBinding };
+      const foreign = JSON.parse(JSON.stringify(login));
+      foreign.credential_binding = { provider: "operator-owned" };
+      document.network_policies.outlook_graph.endpoints.push(foreign as unknown);
+
+      expect(() => removeTeams(document)).toThrow("is not owned by Teams");
+    });
+
+    it("keeps the exactly-one requirement on the binding direction", () => {
+      const document = outlookOnlyPolicy();
+      const [login] = outlookLoginEndpoints(document);
+      document.network_policies.outlook_graph.endpoints.push(
+        JSON.parse(JSON.stringify(login)) as unknown,
+      );
+
+      expect(() =>
+        policies.reconcileTeamsOutlookLoginCredentialBinding(
+          YAML.stringify(document),
+          sandboxName,
+          true,
+        ),
+      ).toThrow("must declare exactly one login.microsoftonline.com:443 endpoint");
+    });
   });
 
   it("refuses to overwrite a foreign Outlook credential binding", () => {
@@ -171,16 +268,19 @@ describe("Teams policy preset", () => {
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const policyOut = path.join(tmpDir, "policy.yaml");
     const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 ${managedRegistrationSource("hermes-sandbox", "hermes")}
-const result = policies.applyPresets("hermes-sandbox", ["teams"]);
+const result = await policies.applyPresets("hermes-sandbox", ["teams"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
   policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
   registry: registry.getSandbox("hermes-sandbox"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
     fs.writeFileSync(
       fakeOpenshell,

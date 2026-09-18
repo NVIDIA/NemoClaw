@@ -117,7 +117,20 @@ beforeEach(() => {
   providerRestore.readManagedSnapshotProfileAuthority.mockClear();
   providerRestore.prepareManagedSnapshotProfileRestore.mockClear();
   providerRestore.requireCurrentSnapshotRuntimeProvider.mockClear();
-  providerRestore.prepareSandboxRuntimeRestore.mockClear();
+  providerRestore.prepareSandboxRuntimeRestore.mockReset().mockImplementation(() => {
+    providerRestore.events.push("provider-preflight");
+    return {
+      phase: "preflighted",
+      targetProviderId: "docker",
+      targetSandboxName: "alpha",
+      source: providerRestore.source,
+      preflight: {},
+      managedProfile: {
+        agent: "openclaw",
+        profileFingerprint: "a".repeat(64),
+      },
+    };
+  });
   providerRestore.confirmSandboxRuntimeRestore.mockClear();
   fixture.getLatestBackupMock.mockReturnValue(managedSnapshot());
   fixture.getSandboxMock.mockReturnValue({
@@ -125,26 +138,16 @@ beforeEach(() => {
     agent: "openclaw",
     openshellDriver: "docker",
   });
-  fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
-    try {
-      options?.validateBeforeMutation?.();
-    } catch (error) {
-      return {
-        success: false,
-        restoredDirs: [],
-        restoredFiles: [],
-        failedDirs: ["workspace"],
-        failedFiles: [],
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-    providerRestore.events.push("filesystem-restore");
+  fixture.restoreSandboxStateMock.mockImplementation(async (_name, _path, options) => {
+    const error = await fixture.validateSnapshotRestoreMutationMock(_path, options ?? {});
+    providerRestore.events.push(...(error ? [] : ["filesystem-restore"]));
     return {
-      success: true,
-      restoredDirs: ["workspace"],
+      success: !error,
+      restoredDirs: error ? [] : ["workspace"],
       restoredFiles: [],
-      failedDirs: [],
+      failedDirs: error ? ["workspace"] : [],
       failedFiles: [],
+      ...(error ? { error } : {}),
     };
   });
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -156,36 +159,38 @@ afterEach(() => {
 
 describe("managed snapshot provider restore ordering", () => {
   it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("refreshes %s provider authority at the mutation edge and proves the profile", async (agent) => {
-    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
-    fixture.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent,
-      openshellDriver: "docker",
-    });
-    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
-    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
-      providerRestoreAuthority: {
+    { agent: "openclaw" as const, providerChecks: 2 },
+    { agent: "hermes" as const, providerChecks: 2 },
+    { agent: "langchain-deepagents-code" as const, providerChecks: 2 },
+  ])(
+    "refreshes $agent provider authority at each mutation edge and proves the profile",
+    async ({ agent, providerChecks }) => {
+      fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
+      fixture.getSandboxMock.mockReturnValue({
+        name: "alpha",
         agent,
-        profileFingerprint: "a".repeat(64),
-      },
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+        openshellDriver: "docker",
+      });
+      providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
+      providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+        providerRestoreAuthority: {
+          agent,
+          profileFingerprint: "a".repeat(64),
+        },
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore" });
+      await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(providerRestore.events).toEqual([
-      "provider-preflight",
-      "provider-preflight",
-      "filesystem-restore",
-      "provider-restore-proof",
-    ]);
-    expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(2);
-    expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
-  });
+      expect(providerRestore.events).toEqual([
+        ...Array<string>(providerChecks).fill("provider-preflight"),
+        "filesystem-restore",
+        "provider-restore-proof",
+      ]);
+      expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(providerChecks);
+      expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
+    },
+  );
 
   it("aborts before filesystem mutation when mutation-edge validation fails", async () => {
     providerRestore.prepareSandboxRuntimeRestore
@@ -220,6 +225,92 @@ describe("managed snapshot provider restore ordering", () => {
       expect.objectContaining({ validateBeforeMutation: expect.any(Function) }),
     );
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
+  });
+
+  it("rejects changed provider authority at the snapshot restore mutation boundary", async () => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "docker",
+    });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({
+      agent: "langchain-deepagents-code",
+    });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent: "langchain-deepagents-code",
+        profileFingerprint: "a".repeat(64),
+      },
+    });
+    providerRestore.prepareSandboxRuntimeRestore
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight");
+        return {
+          phase: "preflighted",
+          targetProviderId: "docker",
+          targetSandboxName: "alpha",
+          source: providerRestore.source,
+          preflight: {},
+          managedProfile: {
+            agent: "langchain-deepagents-code",
+            profileFingerprint: "a".repeat(64),
+          },
+        };
+      })
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight-rejected");
+        throw new Error("runtime changed before filesystem restore");
+      });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
+    expect(fixture.restoreSandboxStateMock).toHaveBeenCalledOnce();
+    expect(providerRestore.events).not.toContain("filesystem-restore");
+  });
+
+  it("rejects changed snapshot content at the restore mutation boundary", async () => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "docker",
+    });
+    fixture.captureSnapshotRestoreAuthorityMock
+      .mockReturnValueOnce({
+        schemaVersion: 1,
+        backupPath: "/tmp/backup-alpha",
+        contentSha256: "a".repeat(64),
+      })
+      .mockReturnValueOnce({
+        schemaVersion: 1,
+        backupPath: "/tmp/backup-alpha",
+        contentSha256: "b".repeat(64),
+      });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({
+      agent: "langchain-deepagents-code",
+    });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent: "langchain-deepagents-code",
+        profileFingerprint: "a".repeat(64),
+      },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(fixture.restoreSandboxStateMock).toHaveBeenCalledOnce();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Selected snapshot content changed before filesystem mutation"),
+    );
+    expect(providerRestore.events).not.toContain("filesystem-restore");
   });
 });
 
@@ -256,53 +347,53 @@ describe("legacy snapshot compatibility gate", () => {
     expect(providerRestore.prepareSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "source",
-    "destination",
-  ] as const)("rejects cross-clone when the current %s is managed", async (managedSide) => {
-    const source = {
-      name: "alpha",
-      agent: "openclaw" as const,
-      openshellDriver: "docker",
-      imageTag: "legacy-source:test",
-      ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
-    };
-    const destination =
-      managedSide === "destination"
-        ? {
-            name: "beta",
-            agent: "openclaw" as const,
-            openshellDriver: "docker",
-            imageTag: "managed-target@test",
-            workload: managedWorkload(),
-          }
-        : null;
-    fixture.getSandboxMock.mockImplementation((name) =>
-      name === "alpha" ? source : name === "beta" ? destination : null,
-    );
-    fixture.parseLiveSandboxNamesMock.mockReturnValue(
-      new Set(managedSide === "destination" ? ["alpha", "beta"] : ["alpha"]),
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each(["source", "destination"] as const)(
+    "rejects cross-clone when the current %s is managed",
+    async (managedSide) => {
+      const source = {
+        name: "alpha",
+        agent: "openclaw" as const,
+        openshellDriver: "docker",
+        imageTag: "legacy-source:test",
+        ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
+      };
+      const destination =
+        managedSide === "destination"
+          ? {
+              name: "beta",
+              agent: "openclaw" as const,
+              openshellDriver: "docker",
+              imageTag: "managed-target@test",
+              workload: managedWorkload(),
+            }
+          : null;
+      fixture.getSandboxMock.mockImplementation((name) =>
+        name === "alpha" ? source : name === "beta" ? destination : null,
+      );
+      fixture.parseLiveSandboxNamesMock.mockReturnValue(
+        new Set(managedSide === "destination" ? ["alpha", "beta"] : ["alpha"]),
+      );
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+      await expect(
+        runSandboxSnapshot("alpha", {
+          kind: "restore",
+          to: "beta",
+          force: true,
+          yes: true,
+        }),
+      ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("legacy snapshot lacks managed workload"),
-    );
-    expect(
-      fixture.runOpenshellMock.mock.calls.some(
-        ([args]) => args[0] === "sandbox" && args[1] === "delete",
-      ),
-    ).toBe(false);
-    expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
-  });
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining("legacy snapshot lacks managed workload"),
+      );
+      expect(
+        fixture.runOpenshellMock.mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete",
+        ),
+      ).toBe(false);
+      expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
 });

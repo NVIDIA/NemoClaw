@@ -10,17 +10,29 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import {
+  createAdvisorFindingToolController,
+  RECORD_ADVISOR_FINDINGS_TOOL,
+} from "../../../tools/pr-review-advisor/finding-ledger.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
-import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
+import { E2E_RECEIPT_TOOL } from "../../../tools/pr-review-advisor/e2e-receipt.mts";
+import {
+  runSpecialistAdvisor,
+  writeSpecialistSummary,
+} from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
-import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
+import type {
+  RunAdvisorResult,
+  RunReadOnlyAdvisorOptions,
+} from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
-  buildSpecialistInvestigateTurn,
+  ADVISOR_SPECIALISTS,
   parseAdvisorInterest,
   readAdvisorSpecialists,
   type AdvisorInterest,
-} from "../../../tools/pr-review-advisor/specialists.mts";
+} from "../../../tools/pr-review-advisor/specialist-catalog.mts";
+import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 import type { InvestigateTurnContext } from "../../../tools/pr-review-advisor/investigate-turn.mts";
 
 type CallableTool = ToolDefinition & {
@@ -55,7 +67,9 @@ describe("PR review advisor specialist prompts", () => {
     const file = writeSpecialistDiff(directory, "diff evidence");
 
     expect(file).toBe(expected);
-    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(expected);
+    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(
+      fs.realpathSync(expected),
+    );
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -134,19 +148,21 @@ describe("PR review advisor specialist prompts", () => {
       recursive: true,
     });
 
-    const output = execFileSync(
-      process.execPath,
-      ["--experimental-strip-types", "render-specialist-matrix.mts"],
-      { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
-    );
-    const matrix = JSON.parse(output) as Array<{ interest: string; model: string }>;
+    const output = execFileSync(process.execPath, ["render-specialist-matrix.mts"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+    });
+    const matrix = JSON.parse(output) as Array<Record<string, unknown>>;
+    const expected = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
+      interest,
+      label,
+      model: index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
+      artifact_dir: `pr-review-specialist-${interest}`,
+      artifact_name: `pr-review-specialist-${interest}`,
+    }));
 
-    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
-    expect(matrix.map(({ model }) => model)).toEqual(
-      ADVISOR_INTERESTS.map((_, index) =>
-        index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
-      ),
-    );
+    expect(matrix).toEqual(expected);
     expect(matrix.every((entry) => !("sandbox_name" in entry))).toBe(true);
   });
 
@@ -196,17 +212,51 @@ describe("PR review advisor specialist prompts", () => {
         "pr_review_reconciliation_context",
         "pr_review_metadata",
       ]);
-      expect(turn.requiredToolNames).toEqual(contextToolNames);
+      expect(turn.requiredToolNames).toEqual([...contextToolNames, E2E_RECEIPT_TOOL]);
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
+      expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
+      expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
+      expect(turn.prompt).toContain("do not try to preload the complete diff");
+      expect(turn.prompt).not.toContain(
+        "Treat the trusted human review as the frozen review contract",
+      );
       expect(turn.atomicTerminalToolName).toBeUndefined();
-      expect(turn.terminalSubmitToolName).toBeUndefined();
+      expect(turn.terminalSubmitToolName).toBe(RECORD_ADVISOR_FINDINGS_TOOL);
+      expect(turn.terminalSubmitRepairPrompt).toContain(RECORD_ADVISOR_FINDINGS_TOOL);
     },
   );
 
+  it("bounds a follow-up review to the frozen contract and exact commit delta", () => {
+    const followUpDiffPath = ".pr-review-advisor-context/follow-up-diff.patch";
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
+      ...context,
+      followUp: {
+        review: {
+          reviewId: 10,
+          reviewedHeadSha: "a".repeat(40),
+          state: "CHANGES_REQUESTED",
+          body: "Preserve the completed command result.",
+          inlineComments: [],
+        },
+        diffPath: followUpDiffPath,
+      },
+    });
+
+    expect(turn.contextToolResults?.map(({ toolName }) => toolName)).toContain(
+      "pr_review_follow_up_context",
+    );
+    expect(turn.requiredReadOneOfPaths).toEqual([followUpDiffPath]);
+    expect(turn.terminalSubmitRepairToolNames).toEqual([E2E_RECEIPT_TOOL]);
+    expect(turn.prompt).toContain("Treat the trusted human review as the frozen review contract");
+    expect(turn.prompt).toContain("Do not restart the original full review");
+    expect(turn.prompt).toContain("the follow-up delta introduces it");
+    expect(turn.prompt).toContain("record a clear ledger");
+  });
+
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
-    const turn = buildSpecialistInvestigateTurn("behavior", {
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
       ...context,
       controlledWords: largeWords,
     });
@@ -225,7 +275,7 @@ describe("PR review advisor specialist prompts", () => {
     expect(wordChunks.map(({ content }) => content).join("")).toBe(largeWords);
     expect(wordChunks.every(({ content }) => !/[\uD800-\uDBFF]$/u.test(content))).toBe(true);
     const toolNames = results.map(({ toolName }) => toolName);
-    expect(turn.requiredToolNames).toEqual(toolNames);
+    expect(turn.requiredToolNames).toEqual([...toolNames, E2E_RECEIPT_TOOL]);
     expect(turn.requireToolsBeforeText).toEqual(toolNames);
   });
 
@@ -234,18 +284,18 @@ describe("PR review advisor specialist prompts", () => {
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const artifact = writeSpecialistSummary(
       directory,
-      "design-architecture",
+      "architecture-standard-work",
       "## Findings\n\nConcrete reduction.",
     );
 
     const expected = fs.readFileSync(artifact, "utf8");
-    expect(path.basename(artifact)).toBe("pr-review-design-architecture-summary.md");
-    expect(expected).toContain("PR Review Advisor — Design / Architecture specialist");
+    expect(path.basename(artifact)).toBe("pr-review-architecture-standard-work-summary.md");
+    expect(expected).toContain("PR Review Advisor — Architecture ownership specialist");
     expect(expected).toContain("Complete specialist review for maintainers and review agents.");
     expect(expected).toContain("Concrete reduction.");
   });
 
-  it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
+  it("passes finding recording to every specialist and terminology tracing only to documentation (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const git = (args: string[]) =>
@@ -285,10 +335,15 @@ describe("PR review advisor specialist prompts", () => {
 
     await Promise.all(
       ADVISOR_INTERESTS.map((interest) =>
-        runSpecialistAdvisor(interest, { baseRef, headRef }, options, async (runnerOptions) => {
-          captured.push([interest, runnerOptions.customTools ?? []]);
-          return result;
-        }),
+        runSpecialistAdvisor(
+          interest,
+          { baseRef, headRef, headSha: headRef },
+          options,
+          async (runnerOptions) => {
+            captured.push([interest, runnerOptions.customTools ?? []]);
+            return result;
+          },
+        ),
       ),
     );
 
@@ -300,13 +355,17 @@ describe("PR review advisor specialist prompts", () => {
       Object.fromEntries(
         ADVISOR_INTERESTS.map((interest) => [
           interest,
-          interest === "documentation" ? [TERMINOLOGY_TRACE_TOOL] : [],
+          interest === "documentation-standard-work"
+            ? [TERMINOLOGY_TRACE_TOOL, RECORD_ADVISOR_FINDINGS_TOOL]
+            : [RECORD_ADVISOR_FINDINGS_TOOL],
         ]),
       ),
     );
     const documentationTools =
-      captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
-    const trace = documentationTools[0] as CallableTool;
+      captured.find(([interest]) => interest === "documentation-standard-work")?.[1] ?? [];
+    const trace = documentationTools.find(
+      ({ name }) => name === TERMINOLOGY_TRACE_TOOL,
+    ) as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
       { term: "checkout-bound" },
@@ -323,15 +382,92 @@ describe("PR review advisor specialist prompts", () => {
     (interest) => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const expected =
-        interest === "documentation"
-          ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL]
-          : ["read", "grep", "find", "ls"];
+        interest === "documentation-standard-work"
+          ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL, RECORD_ADVISOR_FINDINGS_TOOL]
+          : ["read", "grep", "find", "ls", RECORD_ADVISOR_FINDINGS_TOOL];
 
-      expect(turn.activeToolNames).toEqual(expected);
+      expect(turn.activeToolNames).toEqual([...expected, E2E_RECEIPT_TOOL]);
       expect(turn.activeToolNames).not.toContain("record_findings");
       expect(turn.activeToolNames).not.toContain("record_review_receipt");
       expect(turn.activeToolNames).not.toContain("recommend_e2e");
       expect(turn.activeToolNames).not.toContain("submit_review");
     },
   );
+
+  it("commits a canonical exact-head finding ledger through one terminal tool", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({ headSha, interest: "behavior" });
+    const record = controller.tools[0] as CallableTool;
+
+    await record.execute(
+      "record-1",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The fallback loses the recorded value.",
+            path: "src/lib/example.ts",
+            line: 42,
+            impact: "A valid invocation returns the wrong state.",
+            smallestSafeFix: "Preserve the value when the fallback runs.",
+            regressionTest: "Add a focused fallback-state regression.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    const ledger = controller.snapshot();
+    expect(ledger).toMatchObject({
+      version: 1,
+      revision: 1,
+      identity: "exact-head",
+      headSha,
+      interest: "behavior",
+      status: "findings",
+      noFindingsReason: null,
+    });
+    expect(ledger.findings[0]?.id).toMatch(/^F-behavior-[0-9a-f]{20}$/u);
+    const nextHead = createAdvisorFindingToolController({
+      headSha: "b".repeat(40),
+      interest: "behavior",
+    });
+    await (nextHead.tools[0] as CallableTool).execute(
+      "record-next-head",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The fallback loses the recorded value.",
+            path: "src/lib/example.ts",
+            line: 42,
+            impact: "A valid invocation returns the wrong state.",
+            smallestSafeFix: "Preserve the value when the fallback runs.",
+            regressionTest: "Add a focused fallback-state regression.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    expect(nextHead.snapshot().findings[0]?.id).toBe(ledger.findings[0]?.id);
+    await expect(
+      record.execute(
+        "record-2",
+        { findings: [], noFindingsReason: "No blocking behavior issue remains." },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow("already has a committed receipt");
+  });
 });

@@ -330,12 +330,11 @@ function packFixture(packageDirectory: string, archivePath: string): void {
 }
 
 function readPackageField<T>(directory: string, field: string): T {
-  const result = spawnSync("npm", ["pkg", "get", field, "--json"], {
-    cwd: directory,
-    encoding: "utf-8",
-  });
-  expect(result.status, result.stderr).toBe(0);
-  return JSON.parse(result.stdout) as T;
+  let value: unknown = readJson<Record<string, unknown>>(path.join(directory, "package.json"));
+  for (const part of field.split(".")) {
+    value = (value as Record<string, unknown>)[part];
+  }
+  return value as T;
 }
 
 function writeLegacyCoreArchiveFixtures(): {
@@ -367,7 +366,7 @@ function writeLegacyCoreArchiveFixtures(): {
       'case "$1:$2:${3:-}" in',
       '  "view:tar@7.5.21:dist.integrity") value="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
       '  "view:tar@7.5.21:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.21.tgz" ;;',
-      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.21.tgz:--pack-destination") ;;',
+      '  "pack:tar@7.5.21:--pack-destination") ;;',
       '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
       "esac",
       'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
@@ -433,6 +432,7 @@ describe("OpenClaw npm remediation", () => {
     },
   );
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Axios remediation installs only the reviewed replacement graph
   it("replaces the reviewed bundled Axios graph with the patched graph", () => {
     const directory = writeFixture();
 
@@ -482,6 +482,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Jaeger remediation installs only the reviewed aligned graph
   it("replaces the reviewed Jaeger propagator with its aligned patched core", () => {
     const directory = writeDiagnosticsFixture();
 
@@ -550,10 +551,10 @@ describe("OpenClaw npm remediation", () => {
         "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
     });
     expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.5",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
+      version: "3.1.6",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
       integrity:
-        "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
+        "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==",
     });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
       version: "8.10.0",
@@ -666,6 +667,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Discord remediation installs only the reviewed undici graph
   it("replaces the reviewed OpenClaw Discord undici dependency", () => {
     const directory = writeDiscordFixture();
 
@@ -746,7 +748,10 @@ describe("OpenClaw npm remediation", () => {
     const fixture = writeLegacyCoreArchiveFixtures();
     const request = {
       archivePath: fixture.archivePath,
-      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
+      env: {
+        NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable,
+        NPM_CONFIG_CACHE: path.join(path.dirname(fixture.archivePath), "npm-cache"),
+      },
       packageSpec: "openclaw@2026.3.11",
       workingDirectory: fixture.workingDirectory,
     };

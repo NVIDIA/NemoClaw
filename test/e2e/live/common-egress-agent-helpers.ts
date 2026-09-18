@@ -13,7 +13,7 @@ import {
   type BoundedRetryResult,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { lockedArchives } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import { parseAuditExceptionRegistry } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { createBuiltInChannelManifestRegistry } from "../../../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
@@ -23,12 +24,6 @@ const PRODUCTION_DOCKERFILES = [
   path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
 ];
 const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
-const DEPENDENCY_REVIEW_NOTE = path.join(
-  REPO_ROOT,
-  "internal",
-  "security-reviews",
-  "openclaw-2026.7.1-dependency-review.md",
-);
 const PRODUCTION_BUILD_ARG_GUARD = path.join(
   REPO_ROOT,
   "scripts",
@@ -69,7 +64,7 @@ const PINNED_NEMOCLAW_TAR_VERSION = "7.5.21";
 const PINNED_NEMOCLAW_TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 const PINNED_NEMOCLAW_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
-const PINNED_NEMOCLAW_TAR_COMMIT = "0cd9cc3c5814446d3c0cbea6a31d6c00c2c8a9d9";
+
 const PINNED_CODEX_ACP_VERSION = "0.11.1";
 const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
@@ -109,16 +104,13 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
   "sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz";
-const PINNED_OPENCLAW_DISCORD_INTEGRITY =
-  "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==";
+
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
   "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==";
-const PINNED_OPENCLAW_WHATSAPP_INTEGRITY =
-  "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==";
+
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
   "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==";
-const PINNED_WECHAT_PLUGIN_INTEGRITY =
-  "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
+
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
 const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";
@@ -303,7 +295,7 @@ function runInstallBlock(
       'if [ "${1:-}" = "pack" ]; then',
       '  pack_spec="${2:-}"; pack_dir=""',
       '  while [ "$#" -gt 0 ]; do if [ "${1:-}" = "--pack-destination" ]; then pack_dir="${2:-}"; shift 2; continue; fi; shift; done',
-      '  pack_file="$(basename "$pack_spec")"',
+      `  case "$pack_spec" in "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}") pack_file="codex-acp-${PINNED_CODEX_ACP_VERSION}.tgz" ;; openclaw@*) pack_file="openclaw-\${pack_spec#openclaw@}.tgz" ;; *) exit 1 ;; esac`,
       `  reported_pack_file=${JSON.stringify(packFilename ?? "")}`,
       ...(packFilename === null
         ? []
@@ -435,8 +427,7 @@ function runInstallBlock(
     "      shift",
     "    done",
     '    test -n "$pack_dir";',
-    '    pack_file="$(basename "$pack_spec")";',
-    '    case "$pack_file" in *.tgz) ;; *) pack_file="${pack_file}.tgz" ;; esac',
+    `    case "$pack_spec" in "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}") pack_file="codex-acp-${PINNED_CODEX_ACP_VERSION}.tgz" ;; openclaw@*) pack_file="openclaw-\${pack_spec#openclaw@}.tgz" ;; *) return 1 ;; esac`,
     `    reported_pack_file=${JSON.stringify(packFilename ?? "")}`,
     ...(packFilename === null
       ? []
@@ -464,6 +455,10 @@ function runInstallBlock(
       .replaceAll("/usr/local/bin", path.join(tmp, "usr-local-bin"))
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
+      .replaceAll(
+        "bash /scripts/lib/verify-mcporter-audit.sh",
+        `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json`,
+      )
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
       .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
   ].join("\n");
@@ -557,7 +552,8 @@ function runOptionalOpenClawPluginBlock(
       'if [ "${1:-}" = "pack" ]; then',
       '  pack_spec="${2:-}"; pack_dir=""',
       '  while [ "$#" -gt 0 ]; do if [ "${1:-}" = "--pack-destination" ]; then pack_dir="${2:-}"; shift 2; continue; fi; shift; done',
-      '  pack_file="$(basename "$pack_spec")"',
+      '  package_name="${pack_spec#*/}"; package_name="${package_name%@*}"; package_version="${pack_spec##*@}"',
+      '  pack_file="${package_name}-${package_version}.tgz"',
       `  reported_pack_file=${JSON.stringify(pluginPackFilename)}`,
       '  reported_pack_file="${reported_pack_file:-$pack_file}"',
       '  printf "fake plugin tarball" > "$pack_dir/$pack_file"',
@@ -618,7 +614,8 @@ function runOptionalOpenClawPluginBlock(
     '      if [ "${1:-}" = "--pack-destination" ]; then pack_dir="${2:-}"; shift 2; continue; fi',
     "      shift",
     "    done",
-    '    test -n "$pack_dir"; pack_file="$(basename "$pack_spec")";',
+    '    test -n "$pack_dir"; package_name="${pack_spec#*/}"; package_name="${package_name%@*}"; package_version="${pack_spec##*@}";',
+    '    pack_file="${package_name}-${package_version}.tgz";',
     `    reported_pack_file=${JSON.stringify(pluginPackFilename)}`,
     '    reported_pack_file="${reported_pack_file:-$pack_file}"',
     '    printf "fake plugin tarball" > "$pack_dir/$pack_file";',
@@ -656,88 +653,6 @@ export type OpenClawIntegrityPinTestGroup = "base" | "contract" | "plugin-instal
 export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTestGroup): void {
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {
-      it("keeps the advisory review note aligned with the committed OpenClaw pin", () => {
-        const reviewNote = fs.readFileSync(DEPENDENCY_REVIEW_NOTE, "utf-8").replace(/\s+/g, " ");
-
-        expect(reviewNote).toContain(`openclaw@${PINNED_OPENCLAW_VERSION}`);
-        expect(reviewNote).toContain(PINNED_OPENCLAW_INTEGRITY);
-        expect(reviewNote).toContain(PINNED_OPENCLAW_TARBALL);
-        expect(reviewNote).toContain(`tar@${PINNED_NEMOCLAW_TAR_VERSION}`);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_INTEGRITY);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_TARBALL);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_COMMIT);
-        expect(reviewNote).toContain(`@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}`);
-        expect(reviewNote).toContain(PINNED_CODEX_ACP_TARBALL);
-        expect(reviewNote).toContain(PINNED_CODEX_ACP_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/discord@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_DISCORD_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/slack@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_SLACK_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/whatsapp@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_WHATSAPP_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/msteams@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_MSTEAMS_INTEGRITY);
-        expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain(PINNED_WECHAT_PLUGIN_INTEGRITY);
-        expect(reviewNote).toContain("downloaded tarball integrity");
-        expect(reviewNote).toContain("bind reviewed npm installs to verified local archives");
-        expect(reviewNote).toContain("npm pack --json");
-        expect(reviewNote).toContain("rejects reported archive filenames");
-        expect(reviewNote).toContain("unsafe archive paths");
-        expect(reviewNote).toContain("each reviewed npm plugin registry integrity");
-        expect(reviewNote).toContain("returns only the verified local `.tgz` path");
-        expect(reviewNote).toContain("OpenClaw Compiled-Dist Patch Runtime Boundary");
-        expect(reviewNote).toContain(
-          "The long-term source of truth for these behaviors remains upstream OpenClaw",
-        );
-        expect(reviewNote).toContain("test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts");
-        expect(reviewNote).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
-        expect(reviewNote).toContain("not a substitute for focused nightly E2E proof");
-        expect(reviewNote).toContain("OpenClaw Diagnostics OTEL Host Gateway Boundary");
-        expect(reviewNote).toContain("openclaw-diagnostics-otel-local");
-        expect(reviewNote).toContain("imports `OTLPTraceExporter`");
-        expect(reviewNote).toContain("contains no `web_fetch`, `fetchWithSsrFGuard`");
-        expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
-        expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
-        expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain("three production-compatible boundaries");
-        expect(reviewNote).toContain("Lower-severity findings remain visible");
-        expect(reviewNote).toContain("`0` high");
-        expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain(
-          "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
-        );
-        expect(reviewNote).toContain(
-          "imports the hashed pipeline runtime for `prepareSlackMessage`",
-        );
-        expect(reviewNote).toContain(
-          "only reports `openclaw-pipeline-runtime` after allowed prepare",
-        );
-        expect(reviewNote).toContain("`dist/extensions/telegram/runtime-api.js`");
-        expect(reviewNote).toContain("which exports `sendMessageTelegram`");
-        expect(reviewNote).toContain("fails closed if the installed runtime file is missing");
-        expect(reviewNote).toContain("NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1");
-        expect(reviewNote).toContain("scripts/check-production-build-args.sh");
-        expect(reviewNote).toContain("production build args");
-        expect(reviewNote).toContain("claiming `openclaw-pipeline-runtime` inbound proof");
-        expect(reviewNote).toContain("imports `dist/extensions/telegram/test-api.js`");
-        expect(reviewNote).toContain("gateway/upstream reporting layer");
-        expect(reviewNote).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
-        expect(reviewNote).toContain("scripts/patch-openclaw-device-self-approval.mts");
-        expect(reviewNote).toContain("scripts/patch-openclaw-shared-state-permissions.mts");
-        expect(reviewNote).toContain("Gateway Startup Migration Compatibility");
-        expect(reviewNote).toContain("HOME=/sandbox");
-        expect(reviewNote).toContain("approveDevicePairing");
-        expect(reviewNote).toContain(
-          "Recovery hint: check sandbox egress and provider reachability, then retry.",
-        );
-        expect(reviewNote).toContain("default 180-second timeout");
-      });
-
       it("keeps NemoClaw's direct tar dependency above the reviewed advisory floor", () => {
         const packageJson = JSON.parse(
           fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package.json"), "utf-8"),
@@ -772,6 +687,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             resolved: PINNED_NEMOCLAW_TAR_TARBALL,
           }),
         );
+        expect(
+          lockedArchives(packageLockSource.toString("utf-8"), {
+            cpu: "x64",
+            libc: "glibc",
+            os: "linux",
+          }).some(({ archive }) => archive.includes("linux-x64-musl")),
+        ).toBe(false);
       });
 
       it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.7.1 integrity", () => {
@@ -871,7 +793,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm view @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} dist.tarball`,
         );
         expect(calls).toContain(
-          "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz --pack-destination",
+          `npm pack @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
           /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.7\.1\.tgz\n/,
@@ -887,7 +809,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.tarball`,
         );
         expect(calls).toContain(
-          "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz --pack-destination",
+          `npm pack @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
           /openclaw plugins install npm-pack:\S*\/brave-plugin-2026\.7\.1\.tgz\n/,
@@ -986,7 +908,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`,
         );
         expect(production.calls).not.toContain(
-          `npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`,
+          `npm pack openclaw@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(production.calls).toMatch(/npm --prefix \S+\/openclaw-runtime ci /u);
         expect(production.calls).toContain("--verify-installed-lock");
@@ -994,7 +916,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} version`);
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
-        expect(base.calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+        expect(base.calls).not.toContain(
+          `npm pack openclaw@${PINNED_OPENCLAW_VERSION} --pack-destination`,
+        );
         expect(base.calls).toMatch(/npm --prefix \S+\/openclaw-runtime ci /u);
         expect(base.calls).toContain("--verify-installed-lock");
         expect(base.calls).toContain("postinstall-bundled-plugins.mjs");
@@ -1028,7 +952,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
-        expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+        expect(calls).not.toContain(
+          `npm pack openclaw@${PINNED_OPENCLAW_VERSION} --pack-destination`,
+        );
         expect(calls).not.toContain(
           "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
         );
@@ -1281,7 +1207,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(result.stdout).toContain("lacks matching reviewed provenance");
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
-        expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+        expect(calls).not.toContain(
+          `npm pack openclaw@${PINNED_OPENCLAW_VERSION} --pack-destination`,
+        );
         expect(calls).toMatch(/npm --prefix \S+\/openclaw-runtime ci /u);
         expect(calls).toContain("--verify-installed-lock");
         expect(calls).toContain("postinstall-bundled-plugins.mjs");
@@ -1314,7 +1242,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `Base image has OpenClaw ${UNPINNED_OPENCLAW_VERSION}, which is newer than reviewed target ${PINNED_OPENCLAW_VERSION}`,
         );
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
-        expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+        expect(calls).not.toContain(
+          `npm pack openclaw@${PINNED_OPENCLAW_VERSION} --pack-destination`,
+        );
         expect(provenanceExists).toBe(false);
       });
 
@@ -1437,7 +1367,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(result.stderr).toContain(diagnostic);
         expect(result.stdout).not.toContain(diagnostic);
         expect(calls).toContain(
-          `npm pack ${LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL} --pack-destination`,
+          `npm pack openclaw@${LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).not.toContain("npm install -g");
       });
@@ -1518,9 +1448,8 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm view openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} dist.tarball`,
         );
         expect(fixtureBase.calls).toContain(
-          `npm pack ${LEGACY_REBUILD_OPENCLAW_TARBALL} --pack-destination`,
+          `npm pack openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} --pack-destination`,
         );
-        expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
         expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
         expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
         expect(fixtureBase.calls).not.toContain('"archivePath"');
@@ -1764,7 +1693,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
         const block = dockerfile.slice(
           dockerfile.indexOf("FROM scratch AS codex-acp-common-archive"),
-          dockerfile.indexOf("FROM node:22-trixie-slim", dockerfile.indexOf("AS wechat-npm-cache")),
+          dockerfile.indexOf("FROM npm12 AS wechat-npm-cache"),
         );
 
         expect(block).toContain(

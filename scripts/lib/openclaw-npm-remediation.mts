@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -20,7 +20,7 @@ import {
 } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
+import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
 
@@ -90,10 +90,10 @@ const CURRENT_BRACE_EXPANSION_INTEGRITY =
   "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const CURRENT_BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-const CURRENT_FAST_URI_VERSION = "3.1.5";
+const CURRENT_FAST_URI_VERSION = "3.1.6";
 const CURRENT_FAST_URI_INTEGRITY =
-  "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==";
-const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
+  "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==";
+const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
@@ -138,25 +138,25 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // #7337: remove this branch only after a reviewed diagnostics release ships a safe SDK graph.
   "@openclaw/diagnostics-otel@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+      "sha512-p3TthwGT081xMnHkZNwh6WwObk/OHkNtjImllLRuTezaro09kk6uShJDHpcwRtiW5C9RdbXN5DV/QS2lGoG/zQ==",
     kind: "jaeger",
     version: "2026.7.1",
   },
   "@openclaw/discord@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-w+F8FrRl0wPd0EN2RnLyu6yfixel7BT8Iex4wLLQDvfIac8rLhuksNpFU4uZa8W9wXgh47hguq0F9NSN0BZfOQ==",
+      "sha512-KUDcFJnqI3O7yKiBUh20ZijM7J7gkbpKGDw4bb8y+uO8s914US6PieyzwAzgycRXWfXPxHQx5CTDrg28PdKfaw==",
     kind: "undici",
     version: "2026.7.1",
   },
   "@openclaw/msteams@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
+      "sha512-qk1PXcRU5r/7zWIJlwHGTBmKIuLoBYHhv6hA1w+mYs0H9JX0nBk6WccahcmiWVzu2SsryCQ4Sck6j4Fbu6kcHg==",
     kind: "axios",
     version: "2026.7.1",
   },
   "@openclaw/slack@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
+      "sha512-A23af8PA4KuO8vju0viceyj1Y0M7ywF66TxKZZ8rI21L/TSn8RrzqiSaOV4UewV3/PLjDz+lY5lY+qbycOCBfg==",
     kind: "axios",
     version: "2026.7.1",
   },
@@ -168,9 +168,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   // openclaw/openclaw#113584: remove after a supported OpenClaw archive
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
+  // npm 12 no longer packs or honors npm-shrinkwrap.json. The reviewed archive
+  // still ships the complete bundleDependencies tree, and this digest pins that
+  // exact npm 12 packed tree so either a packlist or bundled-graph change fails.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-OfBP5yJPR5gdGnQ1LPtvSvrn3WoRT7+vi3KMsNGyXgwM8wpzJ174dfnJTLRtn6zSX9Vrp84uDn6YffkaLyNOVg==",
+      "sha512-j/ArEzhwh+FDiIqgKQBFMiDUk5wHOHzGxbvl5hnh2W8X0nTpJ5oW/VzO8T5B7HqI6MVlQp4NLadFveN209TLLg==",
     kind: "current-core",
     version: "2026.7.1",
   },
@@ -1379,10 +1382,11 @@ export function buildRemediatedOpenClawPluginArchive(
     env,
   );
   const packed = JSON.parse(packedJson);
-  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+  const packedResult = singleNpmPackResult(packed);
+  if (typeof packedResult?.filename !== "string") {
     throw new Error(`npm pack returned an invalid remediation result for ${request.packageSpec}`);
   }
-  const archivePath = resolve(outputDirectory, basename(packed[0].filename));
+  const archivePath = resolve(outputDirectory, basename(packedResult.filename));
   validateArchiveMembers(archivePath, remediationRoot, env);
   const packedPackage = extractArchive(
     archivePath,
@@ -1442,6 +1446,46 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
+function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("Missing --")) {
+    return "OpenClaw npm remediation is missing required arguments.";
+  }
+  if (message.includes(" failed:")) {
+    return "OpenClaw npm remediation command failed.";
+  }
+  if (
+    error instanceof SyntaxError ||
+    message.startsWith("npm archive ") ||
+    message.includes(" did not extract a package directory") ||
+    message.includes(" archive escaped its reviewed root") ||
+    message.includes(" archive is not a regular file")
+  ) {
+    return "OpenClaw npm remediation rejected an invalid archive.";
+  }
+  if (
+    message.includes(" changed") ||
+    message.includes(" before remediation") ||
+    message.includes(" after review") ||
+    message.includes(" must declare") ||
+    message.includes(" must resolve") ||
+    message.includes(" must ship") ||
+    message.includes(" unexpectedly") ||
+    message.includes(" already") ||
+    message.includes(" integrity mismatch") ||
+    message.includes("unsupported entry") ||
+    message.includes("invalid remediation result") ||
+    message.startsWith("No OpenClaw npm remediation is defined")
+  ) {
+    return "OpenClaw npm remediation rejected an unreviewed package state.";
+  }
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "EACCES" || code === "EISDIR" || code === "ENOENT" || code === "ENOTDIR") {
+    return "OpenClaw npm remediation could not access its working files.";
+  }
+  return "OpenClaw npm remediation failed.";
+}
+
 if (isMainModule()) {
   const args = process.argv.slice(2);
   const value = (name: string): string => {
@@ -1461,7 +1505,7 @@ if (isMainModule()) {
       ),
     );
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalOpenClawNpmRemediationDiagnostic(error));
     process.exit(1);
   }
 }

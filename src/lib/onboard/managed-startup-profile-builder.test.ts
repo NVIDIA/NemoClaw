@@ -182,6 +182,24 @@ function piInput(
 }
 
 describe("buildManagedStartupProfile", () => {
+  it.each([dcodeInput(), piInput()])("rejects absent inference for $agent", (input) => {
+    expect(() => buildManagedStartupProfile({ ...input, inference: null })).toThrow(
+      "requires inference configuration",
+    );
+  });
+  it.each([openClawInput(), hermesInput()])(
+    "rejects ambient model input when $agent inference is absent",
+    (input) => {
+      expect(() =>
+        buildManagedStartupProfile({
+          ...input,
+          inference: null,
+          environment: { NEMOCLAW_MODEL: "fixture/model" },
+        }),
+      ).toThrow("NEMOCLAW_MODEL");
+    },
+  );
+
   it("builds Pi model tuning from the environment and leaves the effort scale unset (#7930)", () => {
     const built = buildManagedStartupProfile(
       piInput({
@@ -717,14 +735,14 @@ describe("buildManagedStartupProfile", () => {
     [
       "Hermes inference compatibility",
       hermesInput({
-        inference: { ...hermesInput().inference, compatibility: { strict: true } },
+        inference: { ...hermesInput().inference!, compatibility: { strict: true } },
       }),
       /does not support inference compatibility/,
     ],
     [
       "DCode inference compatibility",
       dcodeInput({
-        inference: { ...dcodeInput().inference, compatibility: { strict: true } },
+        inference: { ...dcodeInput().inference!, compatibility: { strict: true } },
       }),
       /does not support inference compatibility/,
     ],
@@ -800,7 +818,7 @@ describe("buildManagedStartupProfile", () => {
       "secret-shaped model",
       openClawInput({
         inference: {
-          ...openClawInput().inference,
+          ...openClawInput().inference!,
           model: "sk-proj-secret-material-1234567890",
         },
       }),
@@ -858,6 +876,56 @@ describe("buildManagedStartupProfile", () => {
       ),
     ).toThrow(message);
   });
+
+  it.each([
+    [
+      "secondary-agent",
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "reviewer", subagents: { maxSpawnDepth: 2 } },
+        ]),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "secondary-agent",
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [{ id: "reviewer", subagents: { maxSpawnDepth: 2 } }],
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "main-agent",
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "main-agent",
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+  ])(
+    "rejects %s maxSpawnDepth from %s profile input",
+    (_agent, _encoding, environment, message) => {
+      expect(() => buildManagedStartupProfile(openClawInput({ environment }))).toThrow(message);
+    },
+  );
 
   it("rejects malformed or non-CA certificate material", () => {
     expect(() =>

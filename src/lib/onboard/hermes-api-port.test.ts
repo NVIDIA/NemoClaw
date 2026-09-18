@@ -3,10 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellForwardObservation } from "../adapters/openshell/forward";
 import {
   createHermesApiPortScopedSandboxEntryPoints,
   createHermesApiPortReservationScope,
-  findAvailableHermesApiPort,
+  findAvailableHermesApiPortFromObservations,
   HERMES_API_PORT_ENV,
   type HermesApiPortReservationScope,
   readHermesApiPort,
@@ -18,10 +19,38 @@ import {
   withHermesApiPortReservationScope,
 } from "./hermes-api-port";
 
-const noneBound = () => false;
+function forwardObservation(
+  sandboxName: string,
+  port: number,
+  state: "absent" | "foreign" | "owned" | "stale" | "indeterminate",
+): OpenShellForwardObservation {
+  const forward = {
+    gatewayEndpoint: "https://127.0.0.1:9090",
+    gatewayName: "nemoclaw-9090",
+    workspace: "default",
+    sandboxName,
+    localHost: "127.0.0.1" as const,
+    port,
+  };
+  return state === "indeterminate"
+    ? {
+        state,
+        forward,
+        error: {
+          kind: "ownership",
+          message: "NemoClaw could not prove OpenShell forward ownership.",
+        },
+      }
+    : { state, forward };
+}
 
-function forwardList(rows: string[]): string {
-  return ["SANDBOX BIND PORT PID STATUS", ...rows].join("\n");
+function observePorts(
+  sandboxName: string,
+  states: ReadonlyMap<number, Parameters<typeof forwardObservation>[2]> = new Map(),
+) {
+  return vi.fn(async (ports: readonly number[]) =>
+    ports.map((port) => forwardObservation(sandboxName, port, states.get(port) ?? "absent")),
+  );
 }
 
 describe("Hermes API and dashboard port creation scopes", () => {
@@ -85,30 +114,41 @@ describe("readHermesApiPort", () => {
   );
 });
 
-describe("findAvailableHermesApiPort", () => {
-  it("keeps the preferred port when no sandbox holds it", () => {
-    expect(findAvailableHermesApiPort("beta", 8642, "", noneBound, new Map())).toBe(8642);
+describe("findAvailableHermesApiPortFromObservations", () => {
+  it.each(["owned", "stale"] as const)("keeps an exact %s forward", (state) => {
+    expect(
+      findAvailableHermesApiPortFromObservations(
+        "beta",
+        8642,
+        [forwardObservation("beta", 8642, state)],
+        new Map(),
+      ),
+    ).toBe(8642);
   });
 
-  it("skips a port another sandbox already forwards", () => {
-    const forwards = forwardList(["alpha 127.0.0.1 8642 101 running"]);
-    expect(findAvailableHermesApiPort("beta", 8642, forwards, noneBound, new Map())).toBe(8643);
+  it("skips a port with foreign ownership evidence", () => {
+    expect(
+      findAvailableHermesApiPortFromObservations(
+        "beta",
+        8642,
+        [forwardObservation("beta", 8642, "foreign"), forwardObservation("beta", 8643, "absent")],
+        new Map(),
+      ),
+    ).toBe(8643);
   });
 
-  it("keeps a port this sandbox already owns", () => {
-    const forwards = forwardList(["beta 127.0.0.1 8643 101 running"]);
-    expect(findAvailableHermesApiPort("beta", 8643, forwards, noneBound, new Map())).toBe(8643);
-  });
-
-  it("skips a port held by a sandbox on another gateway", () => {
-    const occupied = new Map([["8642", "alpha (gateway 9090)"]]);
-    expect(findAvailableHermesApiPort("beta", 8642, "", noneBound, occupied)).toBe(8643);
-  });
-
-  it("reports the occupants when the range is exhausted", () => {
-    expect(() => findAvailableHermesApiPort("beta", 8642, "", () => true, new Map())).toThrow(
-      /All Hermes API ports in range 8642-8652 are occupied/,
-    );
+  it("blocks allocation when ownership is indeterminate", () => {
+    expect(() =>
+      findAvailableHermesApiPortFromObservations(
+        "beta",
+        8642,
+        [
+          forwardObservation("beta", 8642, "indeterminate"),
+          forwardObservation("beta", 8643, "absent"),
+        ],
+        new Map(),
+      ),
+    ).toThrow(/could not prove OpenShell forward ownership/i);
   });
 });
 
@@ -130,8 +170,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
       sandboxName: "alpha",
       env: firstEnv,
       getSandbox: () => undefined,
-      forwardListOutput: "",
-      isPortBoundCheck: noneBound,
+      observeForwardPorts: observePorts("alpha"),
       registryOccupiedPorts: new Map(),
       reservePort,
     });
@@ -139,8 +178,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
       sandboxName: "beta",
       env: secondEnv,
       getSandbox: () => undefined,
-      forwardListOutput: "",
-      isPortBoundCheck: noneBound,
+      observeForwardPorts: observePorts("beta"),
       registryOccupiedPorts: new Map(),
       reservePort,
     });
@@ -169,8 +207,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
       sandboxName: "beta",
       env,
       getSandbox: () => ({ pendingRouteReservation: true }),
-      forwardListOutput: "",
-      isPortBoundCheck: noneBound,
+      observeForwardPorts: observePorts("beta"),
       registryOccupiedPorts: new Map(),
       reservePort,
     });
@@ -195,8 +232,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
         sandboxName: "beta",
         env,
         getSandbox: () => ({}),
-        forwardListOutput: "",
-        isPortBoundCheck: noneBound,
+        observeForwardPorts: observePorts("beta"),
         registryOccupiedPorts: new Map(),
         reservePort,
       }),
@@ -222,8 +258,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
           pendingRouteReservation: true,
           createdAt: "2026-08-17T00:00:00.000Z",
         }),
-        forwardListOutput: "",
-        isPortBoundCheck: noneBound,
+        observeForwardPorts: observePorts("beta"),
         registryOccupiedPorts: new Map(),
         reservePort,
       }),
@@ -231,6 +266,47 @@ describe("reserveCreateSandboxHermesApiPort", () => {
 
     expect(reservePort.mock.calls).toEqual([[8642]]);
     expect(env[HERMES_API_PORT_ENV]).toBe("8642");
+  });
+
+  it("defers a durable port reservation only for the exact owned forward", async () => {
+    const reservePort = vi.fn();
+    const observeForwardPorts = observePorts("beta", new Map([[8643, "owned"]]));
+
+    const selection = await reserveCreateSandboxHermesApiPort({
+      sandboxName: "beta",
+      env: {},
+      getSandbox: () => ({ hermesApiPort: 8643 }),
+      observeForwardPorts,
+      registryOccupiedPorts: new Map(),
+      reservePort,
+    });
+
+    expect(selection).toEqual({ effectivePort: 8643, reservation: null });
+    expect(observeForwardPorts).toHaveBeenCalledOnce();
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
+  it("reports pinned foreign ownership before range exhaustion", async () => {
+    const reservePort = vi.fn();
+    const observeForwardPorts = observePorts(
+      "beta",
+      new Map(Array.from({ length: 11 }, (_, index) => [8642 + index, "foreign" as const])),
+    );
+
+    await expect(
+      reserveCreateSandboxHermesApiPort({
+        sandboxName: "beta",
+        env: { [HERMES_API_PORT_ENV]: "8642" },
+        getSandbox: () => undefined,
+        observeForwardPorts,
+        registryOccupiedPorts: new Map(),
+        reservePort,
+      }),
+    ).rejects.toThrow(
+      "Cannot allocate Hermes API port 8642: OpenShell forward ownership is not proven.",
+    );
+    expect(observeForwardPorts).toHaveBeenCalledWith([8642]);
+    expect(reservePort).not.toHaveBeenCalled();
   });
 
   it("releases a held port when sandbox preparation fails", async () => {
@@ -248,12 +324,23 @@ describe("reserveCreateSandboxHermesApiPort", () => {
   it("rebinds an owned forward after sandbox deletion", async () => {
     const env: NodeJS.ProcessEnv = {};
     const scope = createHermesApiPortReservationScope();
+    let observationCount = 0;
+    const observeForwardPorts = vi.fn(async (ports: readonly number[]) => {
+      const ownedForwardStillExists = observationCount++ === 0;
+      return ports.map((port) =>
+        forwardObservation(
+          "beta",
+          port,
+          ownedForwardStillExists && port === 8643 ? "owned" : "absent",
+        ),
+      );
+    });
     const input = {
       agentName: "hermes",
       sandboxName: "beta",
       env,
       getSandbox: () => ({ hermesApiPort: 8643 }),
-      captureForwardList: () => forwardList(["beta 127.0.0.1 8643 101 running"]),
+      observeForwardPorts,
       reservePort: async (port: number) => ({ port, release: vi.fn(async () => undefined) }),
       warn: vi.fn(),
     };
@@ -264,6 +351,7 @@ describe("reserveCreateSandboxHermesApiPort", () => {
 
     await scope.rebindAfterOwnedForwardDelete(input);
     expect(scope.current?.port).toBe(8643);
+    expect(observeForwardPorts).toHaveBeenCalledOnce();
     await scope.release();
   });
 
@@ -291,16 +379,13 @@ describe("resolveOnboardHermesApiPort", () => {
 
   it("rejects a conflicting existing-sandbox override before forward setup", () => {
     const env = { [HERMES_API_PORT_ENV]: "8644" };
-    const findAvailablePort = vi.fn(() => 8645);
 
     expect(() =>
       resolveOnboardHermesApiPort("beta", {
         env,
         getSandbox: () => ({ hermesApiPort: 8643 }),
-        findAvailablePort,
       }),
     ).toThrow(/serves its OpenAI-compatible API on port 8643.*--recreate-sandbox/);
-    expect(findAvailablePort).not.toHaveBeenCalled();
   });
 
   it("applies a conflicting override only at a create or registration boundary", () => {
@@ -329,59 +414,46 @@ describe("resolveOnboardHermesApiPort", () => {
 
   it("keeps a registered sandbox without a port on the default instead of allocating", () => {
     const env: NodeJS.ProcessEnv = {};
-    const findAvailablePort = vi.fn(() => 8643);
     expect(
       resolveOnboardHermesApiPort("beta", {
         env,
         getSandbox: () => ({}),
-        findAvailablePort,
       }),
     ).toBe(8642);
-    expect(findAvailablePort).not.toHaveBeenCalled();
     expect(env[HERMES_API_PORT_ENV]).toBe("8642");
   });
 
-  it("allocates for a route-only reservation instead of pinning the default (#9291)", () => {
+  it("requires typed observation before selecting for a route-only reservation (#9291)", () => {
     const env: NodeJS.ProcessEnv = {};
-    const findAvailablePort = vi.fn(() => 8643);
-    expect(
+    expect(() =>
       resolveOnboardHermesApiPort("beta", {
         env,
         getSandbox: () => ({ pendingRouteReservation: true }),
-        findAvailablePort,
       }),
-    ).toBe(8643);
-    expect(findAvailablePort).toHaveBeenCalledOnce();
-    expect(env[HERMES_API_PORT_ENV]).toBe("8643");
+    ).toThrow(/must be reserved from typed OpenShell forward observations/);
+    expect(env[HERMES_API_PORT_ENV]).toBeUndefined();
   });
 
   it("prefers the registered port over a fresh allocation", () => {
     const env: NodeJS.ProcessEnv = {};
-    const findAvailablePort = vi.fn(() => 8644);
     expect(
       resolveOnboardHermesApiPort("beta", {
         env,
         getSandbox: () => ({ hermesApiPort: 8643 }),
-        findAvailablePort,
       }),
     ).toBe(8643);
-    expect(findAvailablePort).not.toHaveBeenCalled();
     expect(env[HERMES_API_PORT_ENV]).toBe("8643");
   });
 
-  it("publishes a fresh allocation so later consumers agree on it", () => {
-    const env: NodeJS.ProcessEnv = {};
-    const warn = vi.fn();
+  it("uses the fresh typed reservation published for later consumers", () => {
+    const env: NodeJS.ProcessEnv = { [HERMES_API_PORT_ENV]: "8644" };
     expect(
       resolveOnboardHermesApiPort("beta", {
         env,
         getSandbox: () => undefined,
-        findAvailablePort: () => 8644,
-        warn,
       }),
     ).toBe(8644);
     expect(env[HERMES_API_PORT_ENV]).toBe("8644");
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Using port 8644 instead"));
   });
 });
 

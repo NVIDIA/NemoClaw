@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
+import { type OpenShellRuntimeSelection } from "../../adapters/openshell/command-argv";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
+import type { GatewayRecoveryOutput } from "../gateway-recovery";
 import { normalizeGatewayStartError } from "../gateway-start-failure";
 
 type OnboardGpu = ReturnType<typeof import("../../inference/nim").detectGpu>;
@@ -11,6 +14,7 @@ type DynamicGatewayHelpers = ReturnType<
 type GatewayReuseHelpers = ReturnType<typeof import("../gateway-reuse").createGatewayReuseHelpers>;
 
 export interface GatewayStartDeps {
+  lifecycle: OpenShellGatewayLifecycle;
   assertGatewayStartAllowed(exitOnFailure: boolean): void;
   cliDisplayName(): string;
   dockerGpuLocalInference: typeof import("../docker-gpu-local-inference");
@@ -19,14 +23,13 @@ export interface GatewayStartDeps {
   gatewayName(): string;
   getGatewayLocalEndpoint(): string;
   getGatewayReuseSnapshot: GatewayReuseHelpers["getGatewayReuseSnapshot"];
-  hasStaleGateway(gatewayInfo: string): boolean;
-  isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayHttpReady: DynamicGatewayHelpers["isGatewayHttpReady"];
   isLinuxDockerDriverGatewayEnabled(): boolean;
-  runOpenshell(args: string[], options?: { ignoreError?: boolean }): unknown;
   selectNamedGatewayForReuseIfNeeded: GatewayReuseHelpers["selectNamedGatewayForReuseIfNeeded"];
   startDockerDriverGateway(options?: {
     exitOnFailure?: boolean;
+    output?: GatewayRecoveryOutput;
+    runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
   step: typeof import("../prompt-helpers").step;
@@ -36,7 +39,12 @@ export interface GatewayStart {
   startGateway(gpu: OnboardGpu, options?: { gpuPassthrough?: boolean }): Promise<void>;
   startGatewayWithOptions(
     gpu: OnboardGpu,
-    options?: { exitOnFailure?: boolean; gpuPassthrough?: boolean },
+    options?: {
+      exitOnFailure?: boolean;
+      gpuPassthrough?: boolean;
+      output?: GatewayRecoveryOutput;
+      runtimeSelection?: OpenShellRuntimeSelection;
+    },
   ): Promise<void>;
 }
 
@@ -46,10 +54,17 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
     {
       exitOnFailure = true,
       gpuPassthrough = false,
-    }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
+      output,
+      runtimeSelection,
+    }: {
+      exitOnFailure?: boolean;
+      gpuPassthrough?: boolean;
+      output?: GatewayRecoveryOutput;
+      runtimeSelection?: OpenShellRuntimeSelection;
+    } = {},
   ): Promise<void> {
     deps.assertGatewayStartAllowed(exitOnFailure);
-    deps.step(2, 8, "Starting OpenShell gateway");
+    (output?.step ?? deps.step)(2, 8, "Starting OpenShell gateway");
     if (deps.isLinuxDockerDriverGatewayEnabled()) {
       const selectedGpuRoute = deps.dockerGpuRoute.initialDockerGpuRoute(
         deps.dockerGpuRoute.resolveDockerGpuRoutePlan(
@@ -62,6 +77,8 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
       );
       return deps.startDockerDriverGateway({
         exitOnFailure,
+        ...(output ? { output } : {}),
+        ...(runtimeSelection ? { runtimeSelection } : {}),
         skipSandboxBridgeReachability: deps.dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
           gpuPassthrough,
           gpu?.platform,
@@ -70,28 +87,35 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
       });
     }
 
-    const snapshot = deps.selectNamedGatewayForReuseIfNeeded(deps.getGatewayReuseSnapshot());
-    if (
-      deps.isGatewayHealthy(snapshot.gatewayStatus, snapshot.gwInfo, snapshot.activeGatewayInfo)
-    ) {
+    const snapshot = await deps.selectNamedGatewayForReuseIfNeeded(
+      await deps.getGatewayReuseSnapshot(runtimeSelection),
+      runtimeSelection,
+    );
+    if (snapshot.healthy) {
       // CLI metadata can remain healthy after a restart. Probe HTTP before reuse to
       // prevent a later connection failure (#3258).
       if (await deps.isGatewayHttpReady()) {
-        console.log("  ✓ Reusing existing gateway");
-        deps.runOpenshell(["gateway", "select", deps.gatewayName()], { ignoreError: true });
+        (output?.log ?? console.log)("  ✓ Reusing existing gateway");
+        const selected = await deps.lifecycle.selectGateway({
+          target: { kind: "named", gatewayName: deps.gatewayName() },
+          runtimeSelection,
+        });
+        if (!selected.ok) throw new Error(selected.error.message);
         process.env.OPENSHELL_GATEWAY = deps.gatewayName();
         return;
       }
-      console.log(
+      (output?.log ?? console.log)(
         `  Gateway metadata reports healthy but ${deps.getGatewayLocalEndpoint()}/ is not responding.`,
       );
     }
-    if (deps.hasStaleGateway(snapshot.gwInfo)) console.log("  Stale gateway detected.");
+    if (snapshot.namedMetadata) {
+      (output?.log ?? console.log)("  Stale gateway detected.");
+    }
 
     // The deployment owns this gateway lifecycle. NemoClaw can reuse the gateway
     // but cannot start it.
     const message = `${deps.cliDisplayName()} does not start the '${deps.gatewayName()}' gateway on this host.`;
-    console.error(`  ${gatewayStartGuidance(deps.gatewayName())}`);
+    (output?.error ?? console.error)(`  ${gatewayStartGuidance(deps.gatewayName())}`);
     if (exitOnFailure) process.exit(1);
     throw normalizeGatewayStartError(new Error(message));
   }

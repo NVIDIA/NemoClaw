@@ -7,6 +7,7 @@ import { expect, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
+import { openshellMainProcessSpecEnvValue } from "../docker-startup-command-env";
 import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
@@ -62,6 +63,8 @@ export type DockerFixtureAcknowledgement =
   | "journal:create"
   | "journal:cutover"
   | "journal:completion"
+  | "journal:bootstrap-complete"
+  | "journal:openshell-handoff-complete"
   | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
@@ -82,6 +85,8 @@ export type DockerFixtureOptions = {
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
+  readonly completionUnavailablePolls?: number;
+  readonly beforeSharedStateCommit?: () => void;
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
@@ -130,7 +135,7 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       Env: [
         "A=1",
         `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
-        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(inputs.heldArgv, false)}`,
         "OPENSHELL_OCI_IMAGE_USER=root",
         "OPENSHELL_SANDBOX_UID=",
         "OPENSHELL_SANDBOX_GID=",
@@ -233,6 +238,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let journal: DockerManagedBootstrapJournal | null = null;
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
+  let completionUnavailablePolls = Math.max(0, options.completionUnavailablePolls ?? 0);
   const events: string[] = [];
   const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
   const dockerRemoveResults = [...(options.dockerRemoveResults ?? [])];
@@ -435,6 +441,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           };
           const copyFromContainer = () => {
             if (source === `${NEW_ID}:${MANAGED_BOOTSTRAP_COMPLETION_FILE}`) {
+              if (completionUnavailablePolls > 0) {
+                completionUnavailablePolls -= 1;
+                return {
+                  status: 1,
+                  stderr: `Error response from daemon: Could not find the file ${MANAGED_BOOTSTRAP_COMPLETION_FILE} in container ${NEW_ID}`,
+                };
+              }
               fs.writeFileSync(
                 destination,
                 serializeManagedBootstrapImageCompletion({
@@ -477,6 +490,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
         case "exec":
           switch (true) {
             case args.includes("--commit-shared-state-transaction"): {
+              options.beforeSharedStateCommit?.();
               const result = options.sharedStateCommitResult ?? ok();
               sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
@@ -566,7 +580,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
         ? { status: 1, stderr: "lost rm acknowledgement" }
         : result;
     }),
-    runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
+    runCaptureOpenshell: vi.fn((args) =>
+      args[1] === "list"
+        ? "alpha  Ready\n"
+        : `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`,
+    ),
     runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };

@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  clearPersistedOllamaHostIfUnused,
+  loadPersistedOllamaHost,
+  persistResolvedOllamaHost,
+} from "../../src/lib/inference/local.js";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
@@ -23,6 +28,30 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
+const HERMES_OAUTH_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const HERMES_API_KEY_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: NOUS_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const OPENAI_API_PROVIDER_METADATA = [
+  "Name: openai-api",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
@@ -34,7 +63,7 @@ describe("onboard helpers", () => {
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -205,8 +234,8 @@ describe("onboard helpers", () => {
       const preflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
-      const bridgeDnsPreflightPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
+      const runtimeEffectfulPreflightPath = JSON.stringify(
+        path.join(repoRoot, "src/lib/onboard/machine/runtime-effectful-preflight.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -245,8 +274,8 @@ preflight.assessHost = () => ({
   nvidiaContainerToolkitInstalled: false,
   notes: [],
 });
-const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
-bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
+const runtimeEffectfulPreflight = require(${runtimeEffectfulPreflightPath});
+runtimeEffectfulPreflight.bindConfiguredRuntimeProviderHealth = () => () => {};
 const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
 const createPreflightGatewayAuthority =
   preflightGatewayAuthority.createOnboardPreflightGatewayAuthority;
@@ -277,6 +306,7 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
+const hermesApiKeyProviderMetadata = ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)};
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -300,6 +330,10 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const providerGet = "provider get -g nemoclaw hermes-provider";
+  if (normalized === providerGet || normalized.endsWith(" " + providerGet)) {
+    return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runCapture = (command) => {
@@ -512,7 +546,7 @@ const { onboard } = require(${onboardPath});
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -572,21 +606,10 @@ const { onboard } = require(${onboardPath});
           overrides: { applyLocalInferenceRoute },
         });
         await harness.setupInference("test-box", "meta-llama", "vllm-local");
-        const profileCommandIndex = harness.commands.findIndex(
-          (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-        );
-        const providerCommandIndex = harness.commands.findIndex((entry) =>
-          entry.command.includes("provider create"),
-        );
         const providerCommand = harness.commands.find((entry) =>
           entry.command.includes("provider create"),
         );
         assert.ok(providerCommand, "expected local vLLM provider create command");
-        assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-        assert.ok(
-          profileCommandIndex < providerCommandIndex,
-          "OpenAI profile validation must precede local vLLM registration",
-        );
         assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
         assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
         assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
@@ -629,23 +652,11 @@ const { onboard } = require(${onboardPath});
       warn.mockRestore();
     }
     assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
-    const profileCommandIndex = harness.commands.findIndex(
-      (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-    );
-    const providerCommandIndex = harness.commands.findIndex(
-      (entry) =>
-        entry.command.includes("provider create") && entry.command.includes("ollama-local"),
-    );
     const providerCommand = harness.commands.find(
       (entry) =>
         entry.command.includes("provider create") && entry.command.includes("ollama-local"),
     );
     assert.ok(providerCommand, "expected ollama-local provider create command");
-    assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-    assert.ok(
-      profileCommandIndex < providerCommandIndex,
-      "OpenAI profile validation must precede Ollama registration",
-    );
     assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
     assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
     assert.doesNotMatch(providerCommand.command, /proxy-token/);
@@ -847,9 +858,14 @@ exit 1
       scriptPath,
       `
 const { isOpenclawReady } = require(${onboardPath});
-console.log(JSON.stringify({
-  ready: isOpenclawReady("my-assistant"),
-}));
+(async () => {
+  console.log(JSON.stringify({
+    ready: await isOpenclawReady("my-assistant"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `,
     );
 
@@ -903,7 +919,7 @@ console.log(JSON.stringify({
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
@@ -916,12 +932,11 @@ console.log(JSON.stringify({
       );
 
       const commands = harness.commands;
-      assert.equal(commands.length, 4);
-      assert.equal(commands[0].command, "provider profile -g nemoclaw export openai --output json");
-      assert.match(commands[1].command, /^provider get -g nemoclaw /);
-      assert.match(commands[2].command, /^provider update -g nemoclaw openai-api/);
-      assert.doesNotMatch(commands[2].command, /--type/);
-      assert.match(commands[3].command, /^inference set -g nemoclaw --no-verify/);
+      assert.equal(commands.length, 3);
+      assert.match(commands[0].command, /^provider get -g nemoclaw /);
+      assert.match(commands[1].command, /^provider update -g nemoclaw openai-api/);
+      assert.doesNotMatch(commands[1].command, /--type/);
+      assert.match(commands[2].command, /^inference set -g nemoclaw --no-verify/);
     });
   });
   it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {
@@ -930,7 +945,10 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+          ],
         },
         {
           name: "inference-set",
@@ -975,7 +993,7 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",
@@ -1087,22 +1105,31 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
-  it("retires the final Ollama route receipt after switching providers", async () => {
-    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
-    const harness = releaseHarness({
-      getSandbox: () => priorEntry,
-      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }],
-      unloadOllamaModels: vi.fn(),
-      clearPersistedOllamaHostIfUnused,
-    });
+  it("retires the final Windows-host Ollama route receipt after switching providers", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-ollama-"));
+    const finalRoutes = [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }];
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: finalRoutes,
+        unloadOllamaModels: vi.fn(),
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
 
-    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
-      ok: true,
-    });
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
 
-    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith([
-      { ...priorEntry, provider: "vllm-local", model: "vllm-model" },
-    ]);
+      expect(clearReceipt).toHaveBeenCalledWith(finalRoutes);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
@@ -1277,29 +1304,38 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("keeps the route and shared model for a compatible local Ollama peer", async () => {
+  it("keeps the Windows-host route and shared model for a compatible local Ollama peer", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-peer-"));
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
-    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
     const peer: ReleaseEntry = {
       name: "peer",
       provider: "compatible-endpoint",
       model: "llama3:latest",
-      endpointUrl: "http://127.0.0.1:11434/v1",
+      endpointUrl: "http://host.docker.internal:11434/v1",
     };
-    const harness = releaseHarness({
-      getSandbox: () => priorEntry,
-      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
-      unloadOllamaModels,
-      loadPersistedOllamaHost: () => "127.0.0.1",
-      clearPersistedOllamaHostIfUnused,
-    });
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+        unloadOllamaModels,
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
 
-    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
-      ok: true,
-    });
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
 
-    expect(unloadOllamaModels).not.toHaveBeenCalled();
-    expect(clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+      expect(clearReceipt).not.toHaveBeenCalled();
+      expect(loadPersistedOllamaHost(stateRoot)).toBe("host.docker.internal");
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {

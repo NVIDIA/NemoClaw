@@ -564,8 +564,8 @@ export function validateToolDisclosureDockerfileContract(
   ]);
   const promotesToFinalRuntime = Boolean(
     lastEnvAssignment &&
-      lastEnvAssignment.index > declarationIndex &&
-      expandableRuntimeValues.has(lastEnvAssignment.value!.raw),
+    lastEnvAssignment.index > declarationIndex &&
+    expandableRuntimeValues.has(lastEnvAssignment.value!.raw),
   );
   if (!promotesToFinalRuntime) {
     throw new Error(

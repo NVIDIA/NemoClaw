@@ -4,9 +4,9 @@
 /**
  * Slash command handler for `/nemoclaw config`.
  *
- * Read-only — shows the current sandbox configuration with credential
- * values redacted. Configuration can only be modified from the host CLI
- * (security invariant: sandbox never writes its own immutable config).
+ * Read-only — shows the current sandbox configuration with credential values
+ * redacted. NemoClaw supports agent config as mutable; this command does not
+ * modify it.
  */
 
 import type { PluginCommandResult } from "../index.js";
@@ -52,8 +52,7 @@ export function slashConfigShow(): PluginCommandResult {
     `Profile:     ${config.profile}`,
     `Onboarded:   ${config.onboardedAt}`,
     "",
-    "Configuration can only be modified from the host CLI.",
-    "Use `nemoclaw config get <sandbox>` for the full sandbox config.",
+    "Use `nemoclaw <sandbox> config get` for the full sandbox config.",
   ];
 
   return { text: lines.filter(Boolean).join("\n") };

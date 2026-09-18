@@ -18,11 +18,13 @@ const patcherPath = fileURLToPath(
 const pinnedValidatorFixture = `\
 import os
 import re
+import threading
 from typing import Any, Dict, Optional
 
 Langfuse = Any
 _LANGFUSE_CLIENT = None
 _INIT_FAILED = object()
+_LANGFUSE_CLIENT_LOCK = threading.Lock()
 
 class _Logger:
     def warning(self, *_args: Any) -> None:
@@ -55,9 +57,10 @@ def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
 
 def _get_langfuse() -> Optional[Langfuse]:
     global _LANGFUSE_CLIENT
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
-    return None
+    with _LANGFUSE_CLIENT_LOCK:
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        return None
 `;
 
 const validatorAssertions = `\
@@ -66,9 +69,13 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is N
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:v0_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v12345678901234567890_LANGFUSE_PUBLIC_KEY") is None
+assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:s${"a".repeat(64)}_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_SECRET_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v123456789012345678901_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(63)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(65)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"A".repeat(64)}_LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_base_url("https://cloud.langfuse.com") is None
 assert _validate_langfuse_base_url("https://langfuse.example.test:8443/base") is None
@@ -117,11 +124,7 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
     const fixturePath = path.join(directory, "__init__.py");
     fs.writeFileSync(fixturePath, pinnedValidatorFixture, "utf8");
 
-    const result = spawnSync(
-      process.execPath,
-      ["--experimental-strip-types", patcherPath, fixturePath],
-      { encoding: "utf8" },
-    );
+    const result = spawnSync(process.execPath, [patcherPath, fixturePath], { encoding: "utf8" });
 
     expect(result.status, result.stderr).toBe(0);
     const patched = fs.readFileSync(fixturePath, "utf8");

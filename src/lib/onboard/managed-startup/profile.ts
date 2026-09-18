@@ -62,7 +62,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
   "targetEnvKey",
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
-  /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+  /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]*$/u;
 const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
   listMessagingCredentialEnvAssignments()
     .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
@@ -149,6 +149,8 @@ export interface ManagedStartupInference {
   readonly routeProvider: string;
   /** User-selected provider upstream of the managed inference route. */
   readonly upstreamProvider: string;
+  /** Exact managed-inference catalog preset, when onboarding selected one. */
+  readonly servingPreset?: string | null;
   readonly model: string;
   /** Sandbox-facing managed inference route (normally inference.local). */
   readonly routedBaseUrl: string;
@@ -330,7 +332,7 @@ export interface ManagedStartupProfile {
   readonly schemaVersion: typeof MANAGED_STARTUP_PROFILE_SCHEMA_VERSION;
   readonly agent: ManagedStartupAgent;
   readonly agentConfig: ManagedStartupAgentConfig;
-  readonly inference: ManagedStartupInference;
+  readonly inference: ManagedStartupInference | null;
   readonly proxy: ManagedStartupProxy;
   readonly dashboard: ManagedStartupDashboard;
   readonly tools: ManagedStartupTools;
@@ -512,6 +514,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_MODEL", "inference.model"),
     affordance("NEMOCLAW_INFERENCE_PROVIDER_ID", "inference.routeProvider"),
     affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
+    affordance("NEMOCLAW_SERVING_PRESET", "inference.servingPreset"),
     affordance("NEMOCLAW_PRIMARY_MODEL_REF", "inference.primaryModelRef"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
@@ -849,6 +852,7 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
@@ -908,6 +912,7 @@ const PROFILE_KEYS = new Set([
 const INFERENCE_KEYS = new Set([
   "routeProvider",
   "upstreamProvider",
+  "servingPreset",
   "model",
   "routedBaseUrl",
   "upstreamEndpointUrl",
@@ -1074,7 +1079,7 @@ function messagingCredentialPlaceholderEnvKey(value: string): string | null {
     ? "openshell:resolve:env:"
     : "-OPENSHELL-RESOLVE-ENV-";
   const key = value.slice(value.indexOf(marker) + marker.length);
-  return key.replace(/^v[0-9]+_/u, "");
+  return key.replace(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u, "");
 }
 
 function containsMessagingCredentialPlaceholder(value: string): boolean {
@@ -1140,8 +1145,8 @@ function isCanonicalMessagingRuntimeEnvAlias(
   const placeholder = ownDataPropertyValue(value, "value");
   const expectedMatch =
     targetEnvKey === undefined
-      ? `^openshell:resolve:env:(v[0-9]+_)?${envKey}$`
-      : `^openshell:resolve:env:v[0-9]+_${envKey}$`;
+      ? `^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${envKey}$`
+      : `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${envKey}$`;
   return (
     typeof envKey === "string" &&
     CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
@@ -1964,7 +1969,15 @@ function validateDashboard(
   return { agent, mode: "disabled" };
 }
 
-function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedStartupInference {
+function validateInference(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupInference | null {
+  if (value === null) {
+    if (agent !== "openclaw" && agent !== "hermes")
+      invalid(`${agent} requires inference configuration`);
+    return null;
+  }
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
   const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
@@ -1972,6 +1985,12 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     inference.upstreamProvider,
     "inference.upstreamProvider",
   );
+  const servingPreset =
+    inference.servingPreset === undefined
+      ? undefined
+      : inference.servingPreset === null
+        ? null
+        : requireBoundedString(inference.servingPreset, "inference.servingPreset");
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
@@ -2029,6 +2048,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   return {
     routeProvider,
     upstreamProvider,
+    ...(servingPreset === undefined ? {} : { servingPreset }),
     model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,

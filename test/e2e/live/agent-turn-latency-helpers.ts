@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import {
   openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -19,7 +18,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // The injected E2E inference adapter (#5745) is the single source of the
@@ -43,7 +42,7 @@ export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MA
 const INSTALL_ATTEMPTS = turnLatencyInstallAttemptCount(
   process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS,
 );
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 
 type AgentTurnProgress = Pick<TestProgress, "activity" | "event" | "onOutput">;
 
@@ -146,18 +145,19 @@ function startProgressActivity(progress: AgentTurnProgress | undefined, label: s
   };
 }
 
-async function runCleanupStep(
+async function runCleanupStep<T>(
   label: string,
-  run: () => Promise<unknown>,
+  run: () => Promise<T>,
   progress?: AgentTurnProgress,
   acceptNonzero?: (value: unknown) => boolean,
-): Promise<void> {
+): Promise<T> {
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
     const result = await run();
     requireCleanupSuccess(label, result, acceptNonzero);
     emitProgressEvent(progress, `${label} passed`);
+    return result;
   } catch (error) {
     emitProgressEvent(progress, `${label} failed`);
     if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
@@ -174,6 +174,7 @@ export type OpenClawAgentDurationEvidence =
 export interface OpenClawFirstTurnLatencyEvidence {
   firstTurnAgentDuration: OpenClawAgentDurationEvidence;
   firstTurnCommandMs: number;
+  firstTurnHostOverheadMs?: number;
 }
 
 /**
@@ -211,9 +212,14 @@ export function buildOpenClawFirstTurnLatencyEvidence(
   ) {
     throw new Error("first-turn command duration is invalid");
   }
+  const firstTurnAgentDuration = extractOpenClawAgentDurationEvidence(output);
   return {
-    firstTurnAgentDuration: extractOpenClawAgentDurationEvidence(output),
+    firstTurnAgentDuration,
     firstTurnCommandMs,
+    ...(firstTurnAgentDuration.status === "available" &&
+    firstTurnAgentDuration.durationMs <= firstTurnCommandMs
+      ? { firstTurnHostOverheadMs: firstTurnCommandMs - firstTurnAgentDuration.durationMs }
+      : {}),
   };
 }
 
@@ -315,7 +321,7 @@ export async function installSandbox(
     emitProgressEvent(
       progress,
       install.timedOut
-        ? `${attemptLabel} timeout fired at the 30-minute limit`
+        ? `${attemptLabel} timeout fired at the ${INSTALL_TIMEOUT_MS / 60_000}-minute limit`
         : `${attemptLabel} ${install.exitCode === 0 ? "passed" : "failed"}`,
     );
     const retry =
@@ -360,6 +366,17 @@ export async function cleanupTurnSandboxes(
   inference: AgentTurnInference,
   progress?: AgentTurnProgress,
 ): Promise<void> {
+  const cleanupEnv = env(OPENCLAW_SANDBOX, "openclaw", inference);
+  const gatewayName = cleanupEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
+  const gatewayPresent = await runCleanupStep(
+    "inspect OpenShell gateway",
+    () =>
+      sandbox.hasGatewayForInitialCleanup(gatewayName, {
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    progress,
+  );
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
@@ -369,18 +386,20 @@ export async function cleanupTurnSandboxes(
       () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
-    await runCleanupStep(
-      `delete ${agent} sandbox`,
-      () =>
-        sandbox.openshell(["sandbox", "delete", name], {
-          artifactName: `cleanup-${agent}-delete`,
-          env: env(name, agent, inference),
-          onOutput: progress?.onOutput,
-          timeoutMs: 60_000,
-        }),
-      progress,
-      isMissingSandboxResult,
-    );
+    if (gatewayPresent) {
+      await runCleanupStep(
+        `delete ${agent} sandbox`,
+        () =>
+          sandbox.openshell(["sandbox", "delete", name], {
+            artifactName: `cleanup-${agent}-delete`,
+            env: env(name, agent, inference),
+            onOutput: progress?.onOutput,
+            timeoutMs: 60_000,
+          }),
+        progress,
+        isMissingSandboxResult,
+      );
+    }
   }
   await runCleanupStep(
     "stop Hermes API forward",
@@ -396,7 +415,7 @@ export async function cleanupTurnSandboxes(
   await runCleanupStep(
     "remove OpenShell gateway",
     () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
+      host.cleanupGatewayRegistration(gatewayName, {
         artifactName: "cleanup-gateway-destroy-turn-latency",
         env: buildAvailabilityProbeEnv(),
         onOutput: progress?.onOutput,
@@ -447,28 +466,33 @@ export async function route(
 }
 
 export async function openclawTurn(
-  sandbox: SandboxClient,
+  host: HostCliClient,
   inference: AgentTurnInference,
-  progress?: Pick<TestProgress, "onOutput">,
+  progress: Pick<TestProgress, "onOutput">,
   options: {
-    artifactName?: string;
-    prompt?: string;
-    sessionId?: string;
-  } = {},
+    artifactName: string;
+    args: string[];
+    stdin?: ShellProbeRunOptions["stdin"];
+  },
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
-  const prompt =
-    options.prompt ?? "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
-  const sessionId = options.sessionId ?? "e2e-turn-latency";
   const started = process.hrtime.bigint();
-  const result = await sandbox.execShell(
-    OPENCLAW_SANDBOX,
-    trustedSandboxShellScript(
-      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote(prompt)}`,
-    ),
+  const result = await host.nemoclaw(
+    [
+      OPENCLAW_SANDBOX,
+      "agent",
+      "--agent",
+      "main",
+      "--thinking",
+      "off",
+      "--session-id",
+      "e2e-turn-latency",
+      ...options.args,
+    ],
     {
-      artifactName: options.artifactName ?? "openclaw-agent-turn",
+      stdin: options.stdin,
+      artifactName: options.artifactName,
       env: env(OPENCLAW_SANDBOX, "openclaw", inference),
-      onOutput: progress?.onOutput,
+      onOutput: progress.onOutput,
       redactionValues: inference.redactionValues(),
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },
@@ -520,5 +544,5 @@ export function assertNoOpenClawTransportErrors(output: string): void {
 }
 
 export function hermesTurnCommand(payload: string): string {
-  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d '${payload.replace(/'/gu, `'\\''`)}'); else code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d '${payload.replace(/'/gu, `'\\''`)}'); fi; rc=$?; cat \"$tmp\"; rm -f \"$tmp\"; printf '\\n__NEMOCLAW_HTTP_STATUS__=%s\\n' \"\${code:-000}\"; exit \"$rc\"`;
+  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); if [ -n "\${API_SERVER_KEY:-}" ]; then code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" -d '${payload.replace(/'/gu, `'\\''`)}'); else code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d '${payload.replace(/'/gu, `'\\''`)}'); fi; rc=$?; cat "$tmp"; rm -f "$tmp"; printf '\\n__NEMOCLAW_HTTP_STATUS__=%s\\n' "\${code:-000}"; exit "$rc"`;
 }

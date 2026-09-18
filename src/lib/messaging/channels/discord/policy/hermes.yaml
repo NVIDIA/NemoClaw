@@ -57,9 +57,12 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
+    # OpenShell matches the resolved realpath exactly. Hermes' venv Python
+    # resolves to /usr/bin/python3.13 in the managed image, so retain both the
+    # operator-facing venv paths and the concrete runtime identities.
+    # Revisit the versioned path when the base image bumps Python.
     binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3* }
-      - { path: /usr/bin/python3.13 }
       - { path: /opt/hermes/.venv/bin/python3 }
       - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

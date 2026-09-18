@@ -9,6 +9,7 @@ import {
   sandboxNameArg,
   snapshotCommandError,
 } from "../../../lib/sandbox/snapshot-command-support";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../../lib/state/migrations/removed-immutability";
 
 export default class SnapshotRestoreCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:restore";
@@ -31,7 +32,10 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
     }),
   };
   static flags = {
-    to: Flags.string({ description: "Restore into another sandbox" }),
+    to: Flags.string({
+      description:
+        "Restore into another sandbox. Not available when the sandbox uses a NemoClaw-managed image.",
+    }),
     force: Flags.boolean({
       description:
         "When --to names an existing sandbox, delete it before restoring. Refuses by default.",
@@ -45,6 +49,10 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SnapshotRestoreCommand);
     try {
+      enforceRemovedImmutabilityMigrationBoundary(args.sandboxName);
+      if (flags.to && flags.to !== args.sandboxName) {
+        enforceRemovedImmutabilityMigrationBoundary(flags.to);
+      }
       await runSandboxSnapshot(args.sandboxName, {
         kind: "restore",
         selector: args.selector,
