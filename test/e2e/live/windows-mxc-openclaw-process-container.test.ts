@@ -11,10 +11,10 @@ import {
 
 const qualificationTest =
   process.env.NEMOCLAW_RUN_WINDOWS_MXC_OPENCLAW_E2E === "1" ? test : test.skip;
-// A cold Windows ARM64 host can spend more than 30 minutes in the mandatory
-// full-tree identity scans alone. Keep the qualification bounded without
-// racing those checks or the two complete sandbox lifecycles.
-const QUALIFICATION_TIMEOUT_MS = 90 * 60_000;
+// A cold Windows ARM64 host can spend more than 45 minutes in the mandatory
+// full-tree identity scans and startup for one cycle. Keep the qualification
+// bounded without racing either of the two complete sandbox lifecycles.
+const QUALIFICATION_TIMEOUT_MS = 150 * 60_000;
 const EXPECTED_STARTUP_OBSERVATION = {
   outcome: "ready",
   gatewayExitCode: null,
