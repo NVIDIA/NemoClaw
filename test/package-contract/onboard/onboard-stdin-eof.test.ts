@@ -256,4 +256,55 @@ sys.exit(exit_code)
       }
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "exits with status 130 when interrupted at the agent-selection prompt (#11039)",
+    async () => {
+      const driver = `
+const { runOnboardCommand } = require(${JSON.stringify(COMMAND_PATH)});
+const { prompt } = require(${JSON.stringify(STORE_PATH)});
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
+process.stdin.setRawMode = () => process.stdin;
+runOnboardCommand({
+  flags: {},
+  env: process.env,
+  runOnboard: async () => {
+    await prompt("  Choose [1]: ");
+  },
+  error: (message) => console.error(message),
+  exit: (code) => process.exit(code),
+});
+`;
+      const child = spawn(process.execPath, ["-e", driver], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let output = "";
+      let promptReady: (() => void) | undefined;
+      const ready = new Promise<void>((resolve) => {
+        promptReady = resolve;
+      });
+      const collect = (chunk: Buffer): void => {
+        output += chunk.toString();
+      };
+      child.stdout.on("data", collect);
+      child.stderr.on("data", collect);
+      child.stderr.once("data", () => promptReady?.());
+
+      try {
+        await ready;
+        child.stdin.write("\u0003");
+        const [status, signal] = (await once(child, "exit")) as [
+          number | null,
+          NodeJS.Signals | null,
+        ];
+
+        expect(spawnExitCode({ status, signal })).toBe(130);
+        expect(output).not.toContain("Error: Prompt interrupted");
+        expect(output).not.toMatch(/store\.js:\d+/u);
+      } finally {
+        child.kill("SIGKILL");
+      }
+    },
+  );
 });
