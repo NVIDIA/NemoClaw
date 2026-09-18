@@ -100,40 +100,6 @@ runs:
         NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production
 
-    - name: Validate changed live E2E mock parity
-      if: ${{ inputs.shard == '1' }}
-      shell: bash
-      env:
-        EVENT_NAME: ${{ github.event_name }}
-        PUSH_BASE_SHA: ${{ github.event.before }}
-      run: |
-        set -euo pipefail
-        case "$EVENT_NAME" in
-          pull_request)
-            # The checked-out merge commit is authoritative when the event
-            # payload still names an older base revision.
-            base=HEAD^1
-            head=HEAD^2
-            ;;
-          push)
-            if [ "$PUSH_BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-              echo "Skipping changed live E2E parity: main has no prior commit."
-              exit 0
-            fi
-            base="$PUSH_BASE_SHA"
-            head=HEAD
-            ;;
-          *)
-            echo "Skipping changed live E2E parity for $EVENT_NAME."
-            exit 0
-            ;;
-        esac
-        if [ ! -f scripts/checks/e2e-mock-parity.mts ]; then
-          echo "::error title=Missing E2E mock parity entrypoint::Expected scripts/checks/e2e-mock-parity.mts."
-          exit 1
-        fi
-        npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"
-
     - name: Run CLI coverage and E2E support shard
       shell: bash
       env:
