@@ -420,10 +420,10 @@ expect {
   }
 }
 
-# Idle dcode arms quit on the first Ctrl-C and exits on the second.
-send -- "\003"
-after 250
-catch {send -- "\003"}
+# DCode 0.1.55 binds Ctrl-D to its dedicated quit action. At the empty main
+# composer this starts graceful shutdown without passing through Ctrl-C's
+# interrupt/copy/quit-arm state machine.
+send -- "\004"
 
 set timeout 20
 expect {
@@ -433,15 +433,12 @@ expect {
     exit 0
   }
   timeout {
-    # A completed model turn can still be unwinding when the first quit pair
-    # arrives. Retry the complete two-key quit sequence once from the now-idle
-    # composer, then retain the same bounded failure if DCode still does not
-    # publish its exit status.
+    # Graceful teardown may still be draining background work. DCode treats a
+    # second Ctrl-D while exit is underway as a force-exit request, so retry it
+    # once and retain the same bounded failure if no exit status follows.
     append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"
     puts "\nNEMOCLAW_TUI_EXIT_RETRY"
-    catch {send -- "\003"}
-    after 250
-    catch {send -- "\003"}
+    catch {send -- "\004"}
 
     set timeout 20
     expect {
@@ -453,7 +450,7 @@ expect {
       timeout {
         append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
         puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
-        catch {send -- "\003"}
+        catch {send -- "\004"}
         exit 22
       }
       eof {
@@ -497,7 +494,7 @@ assert_clean_exit_code() {
     return
   fi
   case "$exit_code" in
-    0 | 130) pass "dcode TUI exited cleanly after Ctrl-C (exit ${exit_code})" ;;
+    0 | 130) pass "dcode TUI exited cleanly after quit request (exit ${exit_code})" ;;
     *) fail_test "dcode TUI exited with unexpected status ${exit_code}" ;;
   esac
 }
