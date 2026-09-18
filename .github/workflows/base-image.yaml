@@ -24,6 +24,7 @@ on:
       - ".github/workflows/base-image.yaml"
       - ".github/workflows/base-image-platform.yaml"
       - ".github/workflows/managed-images.yaml"
+      - ".github/scripts/security-scan-results.mts"
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
@@ -100,6 +101,11 @@ on:
         description: "OpenClaw version to install (leave blank to use the default in Dockerfile.base)"
         required: false
         default: ""
+      run_security_scans:
+        description: "On main with the default OpenClaw version, scan managed-image digests for Critical vulnerabilities, verified secrets, and malware"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -441,3 +447,8 @@ jobs:
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
       hermes-base-contract-base64: ${{ needs.build-and-push-hermes.outputs.contract-base64 }}
       openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}
+      run_security_scans: ${{ inputs.run_security_scans || false }}
+    secrets:
+      NGC_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.NGC_API_KEY || '' }}
+      PULSE_SSA_CLIENT_ID: ${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_ID || '' }}
+      PULSE_SSA_CLIENT_SECRET: ${{ github.ref == 'refs/heads/main' && secrets.PULSE_SSA_CLIENT_SECRET || '' }}

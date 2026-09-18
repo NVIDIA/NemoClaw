@@ -29,6 +29,18 @@ on:
       openclaw-base-contract-base64:
         required: true
         type: string
+      run_security_scans:
+        description: "On main, scan each published managed-image digest for Critical vulnerabilities, verified secrets, and malware"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      NGC_API_KEY:
+        required: false
+      PULSE_SSA_CLIENT_ID:
+        required: false
+      PULSE_SSA_CLIENT_SECRET:
+        required: false
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
@@ -36,6 +48,7 @@ on:
       - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
+      - ".github/scripts/security-scan-results.mts"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
@@ -1607,7 +1620,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
+      matrix: &managed_image_inventory
         include:
           - agent: openclaw
             arch: amd64
@@ -2332,11 +2345,303 @@ jobs:
           overwrite: true
           retention-days: 1
 
+  # Scan only final managed images: their archives contain the base layers too.
+  # llama-cpp-server remains owned by its separate publication workflow.
+  security-scan-managed-images:
+    name: Scan ${{ matrix.display_name }} managed image (${{ matrix.arch }})
+    if: >-
+      ${{
+        inputs.run_security_scans &&
+        github.repository == 'NVIDIA/NemoClaw' &&
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main'
+      }}
+    needs: build-and-validate
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: *managed_image_inventory
+    # Pulse Malware 1.1.2 and Pulse Secret 3.95.9-nvidia.1. Update these
+    # digests only after reviewing the matching internal Pulse releases.
+    env:
+      PULSE_MALWARE_IMAGE: nvcr.io/0898940053369630/pulse/pulse-malware-scanner-cli@sha256:d89b0e81b7690bfc9aa6de7c3472f17aeccbcd54eaa61e18875a93391e26312c
+      PULSE_SECRET_IMAGE: nvcr.io/0898940053369630/pulse/pulse-secret-scanner@sha256:5ba66735e5a5408c89025eb43f9fe0242e071d494a826e415964399bc9a85fc1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Download exact managed image contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-image-candidate-${{ github.run_id }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
+          path: ${{ runner.temp }}/managed-image-scan-candidate
+
+      - name: Prepare exact published digest for scanning
+        id: candidate
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          ARCH: ${{ matrix.arch }}
+          CONTRACT: ${{ runner.temp }}/managed-image-scan-candidate/contract.json
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$CONTRACT" ] || [ -L "$CONTRACT" ]; then
+            echo "ERROR: managed image candidate contract is missing or unsafe." >&2
+            exit 1
+          fi
+          jq -e \
+            --arg agent "$AGENT" \
+            --arg image "$IMAGE" \
+            --arg platform "$PLATFORM" '
+              .contractVersion == 2 and
+              .phase == "candidate" and
+              .agent == $agent and
+              .image == $image and
+              .platform == $platform and
+              (.digest | test("^sha256:[0-9a-f]{64}$")) and
+              .reference == (.image + "@" + .digest)
+            ' "$CONTRACT" >/dev/null
+          reference="$(jq -er '.reference' "$CONTRACT")"
+          scan_root="$RUNNER_TEMP/managed-image-scan"
+          install -d -m 0700 "$scan_root" security-reports
+          local_reference="nemoclaw-security-scan:${AGENT}-${ARCH}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'reference=%s\nlocal-reference=%s\n' "$reference" "$local_reference" >> "$GITHUB_OUTPUT"
+          docker pull --platform "$PLATFORM" "$reference"
+          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker tag "$image_id" "$local_reference"
+          docker save "$local_reference" > "$scan_root/image.tar"
+          gzip -1 -c "$scan_root/image.tar" > "$scan_root/image.tar.gz"
+          gzip -t "$scan_root/image.tar.gz"
+
+      - name: Pull exact Pulse scanner images
+        id: pulse-images
+        continue-on-error: true
+        env:
+          NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$NGC_API_KEY" ]; then
+            echo "ERROR: NGC_API_KEY is required when security scans are selected." >&2
+            exit 1
+          fi
+          docker_config="$(mktemp -d "$RUNNER_TEMP/pulse-docker-config-XXXXXX")"
+          chmod 700 "$docker_config"
+          export DOCKER_CONFIG="$docker_config"
+          trap 'docker logout nvcr.io >/dev/null 2>&1 || true; rm -rf "$docker_config"' EXIT
+          printf '%s' "$NGC_API_KEY" |
+            docker login nvcr.io --username '$oauthtoken' --password-stdin
+          docker pull "$PULSE_SECRET_IMAGE"
+          docker pull "$PULSE_MALWARE_IMAGE"
+
+      - name: Scan exact digest for Critical vulnerabilities
+        id: oss-scan
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        env:
+          GRYPE_PLATFORM: ${{ matrix.platform }}
+        with:
+          image: ${{ steps.candidate.outputs.reference }}
+          severity-cutoff: critical
+          fail-build: true
+          output-format: json
+          output-file: security-reports/oss-${{ matrix.agent }}-${{ matrix.arch }}.json
+
+      - name: Scan exact digest archive for verified secrets
+        id: secret-scan
+        continue-on-error: true
+        shell: bash
+        env:
+          REPORT: security-reports/secrets-${{ matrix.agent }}-${{ matrix.arch }}.jsonl
+        run: |
+          set -euo pipefail
+          umask 077
+          raw_results="$RUNNER_TEMP/pulse-secret-results.jsonl"
+          scanner_stderr="$RUNNER_TEMP/pulse-secret.stderr"
+          cleanup_secret_output() {
+            rm -f "$raw_results" "$scanner_stderr"
+          }
+          trap cleanup_secret_output EXIT
+
+          set +e
+          docker run --rm \
+            --volume "$RUNNER_TEMP/managed-image-scan:/scan:ro" \
+            --volume "$GITHUB_WORKSPACE/.nspect-allowlist.toml:/allowlist/.nspect-allowlist.toml:ro" \
+            "$PULSE_SECRET_IMAGE" \
+            docker --image file:///scan/image.tar \
+            --allowlist=/allowlist/.nspect-allowlist.toml \
+            --json --results=verified,unknown --fail \
+            > "$raw_results" 2> "$scanner_stderr"
+          exit_code=$?
+          set -e
+
+          node .github/scripts/security-scan-results.mts redact-secrets \
+            "$raw_results" "$scanner_stderr" "$REPORT"
+          classification="$(node .github/scripts/security-scan-results.mts classify-secret-exit "$exit_code")"
+          case "$classification" in
+            accepted)
+              echo "Secret scan passed."
+              ;;
+            advisory)
+              echo "WARNING: The secret scan found an unverified result. Review the redacted report." >&2
+              ;;
+            blocking)
+              echo "ERROR: The secret scan found a verified secret or failed with exit code $exit_code." >&2
+              exit 1
+              ;;
+            *)
+              echo "ERROR: The secret scan returned an unknown classification." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Scan exact digest archive for malware
+        id: malware-scan
+        continue-on-error: true
+        env:
+          PULSE_SSA_CLIENT_ID: ${{ secrets.PULSE_SSA_CLIENT_ID }}
+          PULSE_SSA_CLIENT_SECRET: ${{ secrets.PULSE_SSA_CLIENT_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$PULSE_SSA_CLIENT_ID" ] || [ -z "$PULSE_SSA_CLIENT_SECRET" ]; then
+            echo "ERROR: Pulse SSA credentials are required when security scans are selected." >&2
+            exit 1
+          fi
+          report_dir="$GITHUB_WORKSPACE/security-reports/malware-${{ matrix.agent }}-${{ matrix.arch }}"
+          install -d -m 0700 "$report_dir"
+          ssa_env_file="$(mktemp "$RUNNER_TEMP/pulse-ssa-token-XXXXXX.env")"
+          chmod 600 "$ssa_env_file"
+          trap 'rm -f "$ssa_env_file"' EXIT
+          token_response="$(
+            python3 - <<'PY'
+          import base64
+          import os
+          import urllib.parse
+          import urllib.request
+
+          credentials = (
+              os.environ["PULSE_SSA_CLIENT_ID"]
+              + ":"
+              + os.environ["PULSE_SSA_CLIENT_SECRET"]
+          ).encode()
+          request = urllib.request.Request(
+              "https://x9thwm-cootr2q1jdv5p7b8iw4fs4ob3x6nqqsoznyk.ssa.nvidia.com/token",
+              data=urllib.parse.urlencode(
+                  {
+                      "grant_type": "client_credentials",
+                      "scope": "nspect.verify pms.read.malware pms.scan.file",
+                  }
+              ).encode(),
+              headers={
+                  "Authorization": "Basic " + base64.b64encode(credentials).decode(),
+                  "Content-Type": "application/x-www-form-urlencoded",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              print(response.read().decode())
+          PY
+          )"
+          ssa_token="$(jq -er '.access_token' <<< "$token_response")"
+          echo "::add-mask::$ssa_token"
+          printf 'SSA_TOKEN=%s\n' "$ssa_token" > "$ssa_env_file"
+          unset ssa_token token_response
+
+          docker run --rm \
+            --env-file "$ssa_env_file" \
+            --volume "$RUNNER_TEMP/managed-image-scan:/scan:ro" \
+            --volume "$report_dir:/reports" \
+            --workdir /reports \
+            "$PULSE_MALWARE_IMAGE" \
+            pulse-malware-scanner-cli \
+            --nspect NSPECT-SQ44-PJFM \
+            --tenant general-access \
+            --output-dir=. \
+            file-scan --file /scan/image.tar.gz
+
+      - name: Upload managed image security reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-security-reports-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove security scan scratch files
+        if: always()
+        shell: bash
+        env:
+          MANAGED_REFERENCE: ${{ steps.candidate.outputs.reference }}
+          LOCAL_REFERENCE: ${{ steps.candidate.outputs.local-reference }}
+        run: |
+          set -euo pipefail
+          cleanup_failed=0
+          for reference in "$LOCAL_REFERENCE" "$MANAGED_REFERENCE" "$PULSE_SECRET_IMAGE" "$PULSE_MALWARE_IMAGE"; do
+            if [ -n "$reference" ] && docker image inspect "$reference" >/dev/null 2>&1; then
+              if ! docker image rm "$reference"; then
+                echo "ERROR: Could not remove a security scan image." >&2
+                cleanup_failed=1
+              fi
+            fi
+          done
+          rm -rf "$RUNNER_TEMP/managed-image-scan" "$RUNNER_TEMP/managed-image-scan-candidate"
+          rm -f "$RUNNER_TEMP"/pulse-secret-* "$RUNNER_TEMP"/pulse-ssa-token-*.env
+          exit "$cleanup_failed"
+
+      - name: Enforce managed image security results
+        if: always()
+        env:
+          MALWARE_SCAN_OUTCOME: ${{ steps.malware-scan.outcome }}
+          OSS_SCAN_OUTCOME: ${{ steps.oss-scan.outcome }}
+          PULSE_IMAGES_OUTCOME: ${{ steps.pulse-images.outcome }}
+          SECRET_SCAN_OUTCOME: ${{ steps.secret-scan.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "$PULSE_IMAGES_OUTCOME" \
+            "$OSS_SCAN_OUTCOME" \
+            "$SECRET_SCAN_OUTCOME" \
+            "$MALWARE_SCAN_OUTCOME"
+          do
+            if [ "$result" != "success" ]; then
+              echo "ERROR: A managed image security scan found a blocking result or did not complete." >&2
+              exit 1
+            fi
+          done
+
   promote:
     name: Promote complete multi-platform managed image cohort
     needs:
       - publication-identity
       - build-and-validate
+      - security-scan-managed-images
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.publication-identity.result == 'success' &&
+        needs.build-and-validate.result == 'success' &&
+        (needs.security-scan-managed-images.result == 'success' ||
+         needs.security-scan-managed-images.result == 'skipped')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

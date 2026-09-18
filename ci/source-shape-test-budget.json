@@ -132,6 +132,31 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "keeps publication scans off by default",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "limits scan credentials to trusted manual publications",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "scans all six published managed-image digests",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "reuses exact published digests and enforces scan results",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan-workflow.test.ts",
+      "test": "uploads sanitized reports before the optional promotion gate",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds trusted base publication to the generic NVIDIA GPU job",
       "category": "security"
