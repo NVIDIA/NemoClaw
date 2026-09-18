@@ -2459,12 +2459,32 @@ function isOwnedDockerImageRepository(imageRef: string): boolean {
   );
 }
 
+function dockerVolumeInspectionProvesAbsence(name: string, result: RunResult): boolean {
+  if (result.status !== 1 || result.error || result.signal) return false;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const detail = `${result.stderr} ${result.stdout}`.trim();
+  return [
+    new RegExp(
+      `^(?:Error response from daemon:\\s*)?(?:No such volume|No such object):?\\s*${escapedName}$`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?:Error response from daemon:\\s*)?get\\s+${escapedName}:\\s*no such volume$`,
+      "iu",
+    ),
+  ].some((pattern) => pattern.test(detail));
+}
+
 function removeDockerVolume(name: string, runtime: UninstallRuntime): boolean {
-  if (
-    runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !==
-    0
-  )
-    return true;
+  const inspection = runtime.runDocker(["volume", "inspect", name], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  if (inspection.status !== 0) {
+    if (dockerVolumeInspectionProvesAbsence(name, inspection)) return true;
+    runtime.warn(`Failed to inspect Docker volume ${name}`);
+    return false;
+  }
   if (
     runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" })
       .status === 0

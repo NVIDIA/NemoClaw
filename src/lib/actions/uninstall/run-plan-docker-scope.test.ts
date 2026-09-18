@@ -190,7 +190,7 @@ describe("uninstall Docker resource scope", () => {
         "volume inspect openshell-cluster-nemoclaw": () => ({
           status: 1,
           stdout: "",
-          stderr: "Error: no such volume",
+          stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
         }),
       };
       const runDocker = vi.fn((args: string[]) => {
@@ -231,23 +231,38 @@ describe("uninstall Docker resource scope", () => {
     },
   );
 
-  it.each(["container", "planned volume"] as const)(
-    "fails force-fresh cleanup when a required Docker %s cannot be removed",
-    async (resource) => {
-      const containerInventory: Record<typeof resource, string> = {
-        container: "owned-id nemoclaw-sandbox:test openshell-owned",
-        "planned volume": "",
-      };
-      const plannedVolumeInspection: Record<typeof resource, RunResult> = {
-        container: { status: 1, stdout: "", stderr: "not found" },
-        "planned volume": ok(),
-      };
+  it.each([
+    {
+      containerInventory: "owned-id nemoclaw-sandbox:test openshell-owned",
+      failureCommand: ["rm", "-f", "owned-id"],
+      plannedVolumeInspection: {
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: get openshell-cluster-nemoclaw: no such volume",
+      },
+      scenario: "container removal fails",
+    },
+    {
+      containerInventory: "",
+      failureCommand: ["volume", "rm", "-f", "openshell-cluster-nemoclaw"],
+      plannedVolumeInspection: ok(),
+      scenario: "planned-volume removal fails",
+    },
+    {
+      containerInventory: "",
+      failureCommand: ["volume", "inspect", "openshell-cluster-nemoclaw"],
+      plannedVolumeInspection: { status: 1, stdout: "", stderr: "permission denied" },
+      scenario: "planned-volume inspection is inconclusive",
+    },
+  ] as const)(
+    "fails force-fresh cleanup when $scenario",
+    async ({ containerInventory, failureCommand, plannedVolumeInspection }) => {
       const routes: Record<string, RunResult> = {
         info: ok(),
-        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(containerInventory[resource]),
+        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(containerInventory),
         "images --format {{.ID}} {{.Repository}}:{{.Tag}}": ok(),
         "rm -f owned-id": { status: 1, stdout: "", stderr: "busy" },
-        "volume inspect openshell-cluster-nemoclaw": plannedVolumeInspection[resource],
+        "volume inspect openshell-cluster-nemoclaw": plannedVolumeInspection,
         "volume rm -f openshell-cluster-nemoclaw": {
           status: 1,
           stdout: "",
@@ -284,6 +299,7 @@ describe("uninstall Docker resource scope", () => {
       );
 
       expect(result.exitCode).toBe(1);
+      expect(runDocker).toHaveBeenCalledWith(failureCommand, expect.any(Object));
     },
   );
 });
