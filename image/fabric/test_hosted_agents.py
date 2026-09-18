@@ -13,10 +13,21 @@ class HostedAgents(unittest.IsolatedAsyncioTestCase):
     def test_every_harness_rejects_multiple_declared_agents(self):
         inference = {"api": "openai-completions", "agents": [{"name": "alice"}, {"name": "bob"}]}
         for harness in (
-            "deepagents", "openclaw", "pi", "hermes", "claude", "codex",
-            "mini-swe-agent", "nooa", "nooa-bench", "remote-agent",
+            "deepagents",
+            "openclaw",
+            "pi",
+            "hermes",
+            "claude",
+            "codex",
+            "mini-swe-agent",
+            "nooa",
+            "nooa-bench",
+            "remote-agent",
         ):
-            with self.subTest(harness=harness), self.assertRaisesRegex(ValueError, "exactly one agent"):
+            with (
+                self.subTest(harness=harness),
+                self.assertRaisesRegex(ValueError, "exactly one agent"),
+            ):
                 configuration("alice", harness, model={"model": "primary"}, inference=inference)
 
     def test_openclaw_preserves_sandbox_runtime_and_native_agent_identities(self):

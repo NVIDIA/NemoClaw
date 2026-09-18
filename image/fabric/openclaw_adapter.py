@@ -444,11 +444,7 @@ class OpenClawRuntime:
         message = request.input
         if isinstance(message, dict) and set(message) == {"agent", "message"}:
             name, message = message["agent"], message["message"]
-        if (
-            not isinstance(message, str)
-            or not isinstance(name, str)
-            or name not in entries
-        ):
+        if not isinstance(message, str) or not isinstance(name, str) or name not in entries:
             raise ValueError("expected text or a declared agent and text message")
         if not configuration_matches(self.name, self.inference):
             raise lifecycle.LifecycleError(

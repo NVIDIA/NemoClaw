@@ -16,7 +16,7 @@ for (const [agentId, disclosure] of [
   ["primary", "direct"],
   ["primary", "progressive"],
   ["reader", "progressive"],
-]) {
+] as const) {
   const options = {
     api: "openai-completions",
     tuning: {},
@@ -66,7 +66,6 @@ for (const [agentId, disclosure] of [
       }
     }
   }
-
 }
 assert.equal(await fs.readFile(sentinel, "utf8"), "disclosure-fixture");
 console.log("Direct exposure and progressive search/call preserve the read-only allowlist.");
