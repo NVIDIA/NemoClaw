@@ -11,9 +11,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChildExitState } from "./child-exit-tracker";
+import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
 import { createDockerDriverGatewayStateOwnership } from "./gateway/state-ownership";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
-import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
 
 function makeExitState(partial: Partial<ChildExitState> = {}): ChildExitState {
   return {
@@ -351,12 +351,12 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       "migration 6 was previously applied and is missing in the resolved migrations\n",
     );
     const stateOwnership = createDockerDriverGatewayStateOwnership({
+      getDockerDriverGatewayPid: () => null,
       getDockerDriverGatewayStateDir: () => dir,
       isDockerDriverGatewayProcess: () => true,
       isPidAlive: () => true,
       readProcessEnvironment: () => null,
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
-      runCapture: () => "",
       runCaptureEx: () => ({ stdout: "", exitCode: 1, timedOut: false }),
     });
     try {
