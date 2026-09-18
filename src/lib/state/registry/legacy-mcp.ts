@@ -10,18 +10,6 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Normal serialization rewrites every sandbox, so optional caches must defer globally. */
-export function hasLegacyMcpRegistryProjection(): boolean {
-  const document = readConfigFile<unknown>(REGISTRY_FILE, {});
-  return (
-    isObjectRecord(document) &&
-    isObjectRecord(document.sandboxes) &&
-    Object.values(document.sandboxes).some(
-      (sandbox) => isObjectRecord(sandbox) && isObjectRecord(sandbox.mcp),
-    )
-  );
-}
-
 /** Read deprecated ownership evidence without admitting it to runtime registry state. */
 export function readLegacyMcpRegistryProjection(
   sandboxName: string,
@@ -30,6 +18,37 @@ export function readLegacyMcpRegistryProjection(
   if (!isObjectRecord(document) || !isObjectRecord(document.sandboxes)) return undefined;
   const sandbox = document.sandboxes[sandboxName];
   return isObjectRecord(sandbox) && isObjectRecord(sandbox.mcp) ? sandbox.mcp : undefined;
+}
+
+/** Retire exactly the ownership snapshot whose migration completed successfully. */
+export function retireLegacyMcpRegistryProjection(
+  sandboxName: string,
+  expectedProjection: Record<string, unknown> | undefined,
+): void {
+  withLock(() => {
+    const document = readConfigFile<unknown>(REGISTRY_FILE, {});
+    const sandbox =
+      isObjectRecord(document) && isObjectRecord(document.sandboxes)
+        ? document.sandboxes[sandboxName]
+        : undefined;
+    const current = isObjectRecord(sandbox) ? sandbox.mcp : undefined;
+    if (!isDeepStrictEqual(current, expectedProjection)) {
+      throw new Error("Legacy MCP ownership changed during migration; registry was preserved.");
+    }
+    if (
+      current === undefined ||
+      !isObjectRecord(document) ||
+      !isObjectRecord(document.sandboxes) ||
+      !isObjectRecord(sandbox)
+    )
+      return;
+    const nextSandbox = { ...sandbox };
+    delete nextSandbox.mcp;
+    writeConfigFile(REGISTRY_FILE, {
+      ...document,
+      sandboxes: { ...document.sandboxes, [sandboxName]: nextSandbox },
+    });
+  });
 }
 
 /** Retire only the removed entry's unchanged ownership proof, preserving survivors. */

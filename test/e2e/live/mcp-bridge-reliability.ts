@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { expect } from "vitest";
+import { MCP_MUTATION_TIMEOUT_MS, type McpAdapter } from "./mcp-bridge-cleanup.ts";
+import { applyMcpHostPolicyEdit } from "./mcp-bridge-sandbox.ts";
 import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcpInspectCommand,
@@ -37,6 +40,77 @@ import {
 } from "./mcp-bridge-hermes-http.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
+
+export async function addBridgeAndReadStatus(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  options: {
+    sandboxName: string;
+    mcpUrl: string;
+    expectedAdapter: McpAdapter;
+    artifactPrefix: string;
+    credential?: string;
+    serverName?: string;
+    credentialEnvName?: string;
+    applyHostPolicyEdit?: boolean;
+  },
+): Promise<string> {
+  await (options.applyHostPolicyEdit === false
+    ? Promise.resolve()
+    : applyMcpHostPolicyEdit(sandbox, options));
+  const credential = options.credential ?? MCP_BRIDGE_TEST_CREDENTIALS.host;
+  const serverName = options.serverName ?? "fake";
+  const credentialEnvName = options.credentialEnvName ?? "FAKE_MCP_SECRET";
+  const addArgs = [
+    options.sandboxName,
+    "mcp",
+    "add",
+    serverName,
+    "--url",
+    options.mcpUrl,
+    "--env",
+    credentialEnvName,
+    "--deny-tool",
+    MCP_BRIDGE_DENIED_TOOL_SELECTOR,
+  ];
+  const add = await host.nemoclaw(addArgs, {
+    artifactName: `${options.artifactPrefix}-mcp-add-fake-server`,
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      [credentialEnvName]: credential,
+    },
+    redactionValues: [credential],
+    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
+  });
+  assertExitZero(add, `${options.artifactPrefix} mcp add fake server`);
+  const status = await host.nemoclaw([options.sandboxName, "mcp", "status", serverName, "--json"], {
+    artifactName: `${options.artifactPrefix}-mcp-status-json`,
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      [credentialEnvName]: credential,
+    },
+    redactionValues: [credential],
+    timeoutMs: 60_000,
+  });
+  assertExitZero(status, `${options.artifactPrefix} mcp status --json`);
+  const statusJson = JSON.parse(status.stdout) as McpBridgeStatus;
+  expect(statusJson.support).toMatchObject({
+    adapter: options.expectedAdapter,
+  });
+  expect(statusJson).toMatchObject({
+    server: serverName,
+    url: options.mcpUrl,
+    env: { names: [credentialEnvName], ready: true },
+    provider: { present: true, state: "configured", attached: true },
+    policy: { name: `mcp-bridge-${serverName}`, present: true, state: "configured" },
+    adapter: { registered: true },
+  });
+  expect(statusJson.warnings).toEqual([]);
+  expect(status.stdout).not.toContain(credential);
+  expect(statusJson.provider.name).toBe(`${options.sandboxName}-mcp-${serverName}`);
+
+  return statusJson.provider.name!;
+}
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;

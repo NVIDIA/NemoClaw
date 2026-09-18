@@ -64,8 +64,6 @@ const ORIGINAL_HOME = process.env.HOME;
 process.env.HOME = TEST_HOME;
 
 const registry = await import("../state/registry.js");
-const { withMcpLifecycleLock, isMcpLifecycleLockHeld } =
-  await import("../state/mcp-lifecycle-lock.js");
 const { checkAgentVersion, formatStalenessWarning } = await import("./version.js");
 
 const TEST_REGISTRY_FILE = join(TEST_HOME, ".nemoclaw", "sandboxes.json");
@@ -189,33 +187,10 @@ describe("checkAgentVersion", async () => {
         detectionMethod: "ssh-exec",
         verificationFailed: false,
       });
-      expect(JSON.parse(readFileSync(TEST_REGISTRY_FILE, "utf8"))).toEqual(document);
+      expect(JSON.parse(readFileSync(TEST_REGISTRY_FILE, "utf8"))).toMatchObject(document);
+      expect(registry.getSandbox("test-sb")?.agentVersion).toBe("2026.5.27");
     },
   );
-
-  it.each([
-    ["outside a lifecycle operation", (operation: () => Promise<unknown>) => operation()],
-    [
-      "inside a lifecycle operation",
-      (operation: () => Promise<unknown>) => withMcpLifecycleLock("test-sb", operation),
-    ],
-  ] as const)("serializes the version cache write %s", async (_label, run) => {
-    registry.registerSandbox({ name: "test-sb", agent: null });
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "OpenClaw 2026.5.27",
-      stderr: "",
-    });
-    const update = registry.updateSandbox;
-    const cacheWrite = vi.spyOn(registry, "updateSandbox").mockImplementation((name, changes) => {
-      expect(isMcpLifecycleLockHeld(name)).toBe(true);
-      return update(name, changes);
-    });
-    await run(() => checkAgentVersion("test-sb"));
-    expect(cacheWrite).toHaveBeenCalledExactlyOnceWith("test-sb", { agentVersion: "2026.5.27" });
-    expect(registry.getSandbox("test-sb")?.agentVersion).toBe("2026.5.27");
-  });
 
   it("probes the sandbox's own recorded gateway, not OpenShell's ambient selection (#7429)", async () => {
     // A sandbox onboarded under a non-default NEMOCLAW_GATEWAY_PORT is

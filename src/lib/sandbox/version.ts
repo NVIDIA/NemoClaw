@@ -13,8 +13,6 @@ import { createCliOpenShellSandboxSshExecutor } from "../adapters/openshell/sand
 import { loadAgent } from "../agent/defs.js";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding.js";
 import * as registry from "../state/registry.js";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition.js";
-import { hasLegacyMcpRegistryProjection } from "../state/registry/legacy-mcp.js";
 import { evaluateStaleness } from "./version-scheme.js";
 
 export interface VersionCheckResult {
@@ -207,14 +205,8 @@ export async function checkAgentVersion(
   // Slow path: SSH exec into sandbox
   const probed = await probeAgentVersion(sandboxName, probeGatewayName);
   if (probed && sb) {
-    await withMcpLifecycleLock(sandboxName, () => {
-      // Normal registry serialization drops deprecated ownership evidence.
-      // Keep live version detection, but defer this optional cache while legacy
-      // registrations remain or their removal is awaiting registry cleanup.
-      if (!hasLegacyMcpRegistryProjection()) {
-        registry.updateSandbox(sandboxName, { agentVersion: probed });
-      }
-    });
+    // Registry persistence preserves any disk-only legacy ownership evidence.
+    registry.updateSandbox(sandboxName, { agentVersion: probed });
   }
 
   if (!probed) {

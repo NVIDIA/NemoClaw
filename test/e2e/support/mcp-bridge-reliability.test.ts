@@ -16,6 +16,7 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   captureRejectedOpenClawCredentialAliasState,
+  addBridgeAndReadStatus,
   confirmHermesMcpRegistrationAfterRestartSettlement,
   isHermesMcpAddPostProbeNotReady,
   isHermesMcpStatusAwaitingRestartSettlement,
@@ -31,6 +32,67 @@ import {
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+
+describe("real MCP add/status helper", () => {
+  it.each([
+    ["fake", "FAKE_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.host],
+    ["distinct", "DISTINCT_MCP_SECRET", MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost],
+  ])(
+    "keeps %s endpoint and credential identity in both real CLI calls",
+    async (server, envName, secret) => {
+      const url = `https://${server}.example.test/mcp`;
+      const providerName = `alpha-mcp-${server}`;
+      const nemoclaw = vi.fn().mockResolvedValue({
+        exitCode: 0,
+        timedOut: false,
+        stderr: "",
+        stdout: JSON.stringify({
+          support: { supported: true, adapter: "openclaw-config" },
+          server,
+          url,
+          env: { names: [envName], ready: true },
+          provider: { name: providerName, present: true, state: "configured", attached: true },
+          policy: { name: `mcp-bridge-${server}`, present: true, state: "configured" },
+          adapter: { registered: true },
+          warnings: [],
+        }),
+      });
+      expect(
+        await addBridgeAndReadStatus(
+          { nemoclaw } as unknown as HostCliClient,
+          {} as SandboxClient,
+          {
+            sandboxName: "alpha",
+            mcpUrl: url,
+            expectedAdapter: "openclaw-config",
+            artifactPrefix: server,
+            serverName: server,
+            credentialEnvName: envName,
+            credential: secret,
+            applyHostPolicyEdit: false,
+          },
+        ),
+      ).toBe(providerName);
+      expect(nemoclaw.mock.calls[0]?.[0]).toEqual([
+        "alpha",
+        "mcp",
+        "add",
+        server,
+        "--url",
+        url,
+        "--env",
+        envName,
+        "--deny-tool",
+        "fake_s*",
+      ]);
+      expect(nemoclaw.mock.calls[1]?.[0]).toEqual(["alpha", "mcp", "status", server, "--json"]);
+      expect(nemoclaw.mock.calls[0]?.[1].env[envName] === secret).toBe(true);
+      expect(nemoclaw.mock.calls[1]?.[1].env[envName] === secret).toBe(true);
+      expect(nemoclaw.mock.calls[0]?.[1].redactionValues.includes(secret)).toBe(true);
+      expect(nemoclaw.mock.calls[1]?.[1].redactionValues.includes(secret)).toBe(true);
+    },
+  );
+});
 
 describe("rejected OpenClaw credential alias state", () => {
   it.each([false, true])(

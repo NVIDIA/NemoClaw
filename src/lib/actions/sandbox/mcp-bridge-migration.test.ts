@@ -170,6 +170,14 @@ describe("explicit MCP migration", () => {
   });
 
   it("materializes native config, verifies it, then retires legacy state", async () => {
+    const registry =
+      await vi.importActual<typeof import("../../state/registry")>("../../state/registry");
+    const sibling = { name: "beta", mcp: { bridges: { github: entry } } };
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { name: "alpha", mcp: { bridges: { github: entry } } }, beta: sibling },
+    });
+    expect(registry.updateSandbox("alpha", { model: "new-model" })).toBe(true);
+    expect(mocks.readConfig().sandboxes.alpha.mcp.bridges.github).toEqual(entry);
     await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
       applied: true,
     });
@@ -180,7 +188,8 @@ describe("explicit MCP migration", () => {
     expect(mocks.reloadOpenClaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeLegacy.mock.invocationCallOrder[0],
     );
-    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
+    expect(mocks.readConfig().sandboxes.alpha).toEqual({ name: "alpha", model: "new-model" });
+    expect(mocks.readConfig().sandboxes.beta).toEqual(sibling);
   });
 
   it("validates restrictive live policy before the first native write", async () => {
@@ -191,6 +200,22 @@ describe("explicit MCP migration", () => {
     );
     expect(mocks.register).not.toHaveBeenCalled();
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
+  });
+
+  it("preserves changed ownership instead of retiring a different migration snapshot", async () => {
+    const original = { bridges: { github: entry } };
+    const replacement = { bridges: { github: { ...entry, providerId: "replacement" } } };
+    mocks.readConfig.mockReturnValue({ sandboxes: { alpha: { name: "alpha", mcp: original } } });
+    mocks.removeLegacy.mockImplementationOnce(async () => {
+      mocks.readConfig.mockReturnValue({
+        sandboxes: { alpha: { name: "alpha", mcp: replacement } },
+      });
+    });
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      "Legacy MCP ownership changed during migration",
+    );
+    expect(mocks.writeConfig).not.toHaveBeenCalled();
+    expect(mocks.readConfig().sandboxes.alpha.mcp).toEqual(replacement);
   });
 
   it("retains legacy state when OpenClaw activation fails", async () => {
@@ -217,6 +242,9 @@ describe("explicit MCP migration", () => {
       mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
     });
     mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { name: "alpha", mcp: { bridges: { github: deepEntry } } } },
+    });
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: deepEntry },
       sources: { native: {}, legacy: { github: deepEntry } },
@@ -235,10 +263,10 @@ describe("explicit MCP migration", () => {
     expect(rebuildSandbox).toHaveBeenCalledWith("alpha");
     expect(mocks.removeLegacy).toHaveBeenCalledWith(
       expect.objectContaining({ agent: deepEntry.agent }),
-      deepEntry,
+      { ...deepEntry, source: "legacy-registry", denyTools: [] },
       expect.any(Object),
     );
-    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
+    expect(mocks.readConfig().sandboxes.alpha).toEqual({ name: "alpha" });
   });
 
   it("does not report Deep Agents migration success when legacy cleanup fails", async () => {
@@ -573,6 +601,23 @@ describe("explicit MCP migration", () => {
     expect(mocks.detachProvider).toHaveBeenCalledOnce();
     expect(mocks.waitForDetached).toHaveBeenCalledOnce();
     expect(mocks.unregister).not.toHaveBeenCalled();
+  });
+
+  it("removes an owned legacy entry after an unrelated real registry update", async () => {
+    const registry =
+      await vi.importActual<typeof import("../../state/registry")>("../../state/registry");
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { name: "alpha", mcp: { bridges: { github: entry } } } },
+    });
+    expect(registry.updateSandbox("alpha", { agentVersion: "new-version" })).toBe(true);
+    mocks.inspectSources.mockResolvedValueOnce({ native: {}, legacy: {} });
+    await expect(removeMcpBridge("alpha", "github")).resolves.toBeUndefined();
+    expect(mocks.readConfig().sandboxes.alpha).toEqual({
+      name: "alpha",
+      agentVersion: "new-version",
+    });
+    expect(mocks.removeLegacy).toHaveBeenCalledOnce();
+    expect(mocks.removePolicy).toHaveBeenCalledOnce();
   });
 
   it("preserves a registry-only row when the policy's recorded provider identity changed", async () => {

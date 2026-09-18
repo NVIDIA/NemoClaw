@@ -7,6 +7,10 @@ import { findAmbiguousMcpCredentialTarget } from "../../domain/mcp-credential-ta
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
 import * as policies from "../../policy";
+import {
+  readLegacyMcpRegistryProjection,
+  retireLegacyMcpRegistryProjection,
+} from "../../state/registry/legacy-mcp";
 import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
   registerAgentAdapter,
@@ -56,11 +60,6 @@ export type McpMigrationPlan = {
   items: McpMigrationItem[];
   applied: boolean;
 };
-
-export function retireLegacyMcpRegistryProjection(sandboxName: string): void {
-  // A normal serialization omits the deprecated MCP registry projection.
-  registry.updateSandbox(sandboxName, {});
-}
 
 async function preflightMigrationOpenShellState(
   sandboxName: string,
@@ -120,10 +119,12 @@ export async function migrateMcpBridges(
     const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
     const agent = getSandboxAgent(sandbox);
     const adapter = getBridgeAdapter(agent);
+    const legacyProjection = readLegacyMcpRegistryProjection(sandboxName);
     const committedRegistryEntries = readCommittedLegacyRegistryEntries(
       sandboxName,
       agent.name,
       adapter,
+      legacyProjection,
     );
     const rawRegistryEntries = await joinMcpEntriesToOpenShell(
       sandbox,
@@ -271,7 +272,7 @@ export async function migrateMcpBridges(
         }
         throw error;
       }
-      retireLegacyMcpRegistryProjection(sandboxName);
+      retireLegacyMcpRegistryProjection(sandboxName, legacyProjection);
       return { sandbox: sandboxName, items, applied: true };
     }
 
@@ -308,9 +309,7 @@ export async function migrateMcpBridges(
           await removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
         }
       }
-      // Force a normal non-MCP registry serialization so legacy MCP fields are
-      // omitted immediately after the explicit migration succeeds.
-      retireLegacyMcpRegistryProjection(sandboxName);
+      retireLegacyMcpRegistryProjection(sandboxName, legacyProjection);
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {
       if (!cleanupStarted) {
