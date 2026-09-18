@@ -393,7 +393,20 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
       | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
   ): string {
-    if ("error" in result) return result.error.message;
+    if ("error" in result) {
+      const failure = "failure" in result ? result.failure : undefined;
+      let failureValue = "";
+      if (failure?.reason === "child_exited" && failure.exitStatus !== undefined) {
+        failureValue = ` status=${String(failure.exitStatus)}`;
+      }
+      if (failure?.reason === "child_signaled" && failure.signal) {
+        failureValue = ` signal=${failure.signal}`;
+      }
+      const suffix = failure
+        ? ` [forward-start ${failure.stage}/${failure.reason}${failureValue}]`
+        : "";
+      return `${result.error.message}${suffix}`;
+    }
     if ("observation" in result) {
       return result.observation.state === "foreign"
         ? "The host port is owned by a foreign listener."

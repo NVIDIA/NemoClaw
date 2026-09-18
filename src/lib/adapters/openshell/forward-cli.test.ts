@@ -695,6 +695,10 @@ describe("CLI OpenShell direct forward start", () => {
     expect(probePort).toHaveBeenNthCalledWith(1, forward, 15_000);
     expect(probePort).toHaveBeenNthCalledWith(2, forward, 30_000);
     expect(inspect).toHaveBeenNthCalledWith(3, forward, child.pid, 30_000);
+    expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
+    expect(child.once).toHaveBeenCalledWith("exit", expect.any(Function));
+    expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
+    expect(child.off).not.toHaveBeenCalledWith("error", expect.any(Function));
     expect(child.unref).toHaveBeenCalledOnce();
     expect(started.state).toBe("started");
     const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
@@ -964,6 +968,7 @@ describe("CLI OpenShell direct forward start", () => {
     const invalidChild = {
       exitCode: null,
       off: events.off.bind(events),
+      on: events.on.bind(events),
       once: events.once.bind(events),
       pid: undefined,
       signalCode: null,
@@ -978,6 +983,7 @@ describe("CLI OpenShell direct forward start", () => {
       forward,
       effect: "possible",
       error: errors.cleanup,
+      failure: { stage: "spawn", reason: "invalid_child_identity" },
     });
     expect(() => events.emit("error", new Error("delayed private spawn error"))).not.toThrow();
     expect(terminate).not.toHaveBeenCalled();
@@ -989,6 +995,7 @@ describe("CLI OpenShell direct forward start", () => {
     const child = {
       exitCode: null,
       off: vi.fn(),
+      on: vi.fn(),
       once: vi.fn(),
       pid: 4_321,
       signalCode: null,
@@ -1031,6 +1038,7 @@ describe("CLI OpenShell direct forward start", () => {
     const child = {
       exitCode: null,
       off: vi.fn(),
+      on: vi.fn(),
       once: vi.fn(),
       pid: 4_321,
       signalCode: null,
