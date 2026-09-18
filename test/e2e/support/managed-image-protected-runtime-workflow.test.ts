@@ -271,7 +271,7 @@ describe("protected managed-image runtime workflow", () => {
         const activation = namedMultiarchStep(value, "Validate candidate activation contract");
         activation.run = [String(activation.run), "npm \\", "  run build:cli"].join("\n");
       },
-    ],
+    ] as const,
     ...[
       'npm run "build:cli"',
       'npm run build:"cli"',
