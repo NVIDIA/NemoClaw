@@ -66,12 +66,18 @@ export function pendingSandboxCreateIdentityForBoundary(
   };
   if (!prior) return identity;
   const {
+    managedBootstrapIdentity: priorManagedBootstrapIdentity,
     exactFinalHandoffCommitStarted,
     exactFinalHandoffRuntimeId,
     exactFinalHandoffAcknowledged,
     ...priorIdentity
   } = prior;
-  if (!isDeepStrictEqual(priorIdentity, identity)) {
+  const { managedBootstrapIdentity, ...identityBeforeManagedBootstrap } = identity;
+  if (
+    !isDeepStrictEqual(priorIdentity, identityBeforeManagedBootstrap) ||
+    (priorManagedBootstrapIdentity !== undefined &&
+      priorManagedBootstrapIdentity !== managedBootstrapIdentity)
+  ) {
     throw new Error("Final-handoff receipt does not match the verified create boundary.");
   }
   return {
