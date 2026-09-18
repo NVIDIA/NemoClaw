@@ -448,6 +448,23 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   });
 
   itWithTclsh(
+    "retries the complete quit sequence after a completed turn is still unwinding",
+    () => {
+      const { markerText, result, traceText } = runTuiExpectStateMachine(
+        ["composer", "ready", "response", "timeout", "exit"],
+        { expectNamePrompt: false },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(traceText).toBe(expectedTuiSendTrace({ ctrlCCount: 4 }));
+      expect(markerText).toContain("NEMOCLAW_TUI_MODEL_TURN_COMPLETE");
+      expect(markerText).toContain("NEMOCLAW_TUI_EXIT_RETRY");
+      expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+      expect(markerText).not.toContain("NEMOCLAW_TUI_EXIT_TIMEOUT");
+    },
+  );
+
+  itWithTclsh(
     "passes the caller's TUI session ID to the sandbox process through a completed model turn (#11847)",
     () => {
       const sessionId = "12345678-1234-1234-1234-123456789abc";

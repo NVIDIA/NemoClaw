@@ -433,10 +433,35 @@ expect {
     exit 0
   }
   timeout {
-    append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
-    puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
-    send -- "\003"
-    exit 22
+    # A completed model turn can still be unwinding when the first quit pair
+    # arrives. Retry the complete two-key quit sequence once from the now-idle
+    # composer, then retain the same bounded failure if DCode still does not
+    # publish its exit status.
+    append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"
+    puts "\nNEMOCLAW_TUI_EXIT_RETRY"
+    catch {send -- "\003"}
+    after 250
+    catch {send -- "\003"}
+
+    set timeout 20
+    expect {
+      -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+        append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
+        puts "\nNEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
+        exit 0
+      }
+      timeout {
+        append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
+        puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
+        catch {send -- "\003"}
+        exit 22
+      }
+      eof {
+        append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
+        puts "\nNEMOCLAW_TUI_EOF_BEFORE_EXIT"
+        exit 23
+      }
+    }
   }
   eof {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
