@@ -56,7 +56,7 @@ with (root / "lock").open("w") as lock:
             value = {"errorDetail": {"message": "registry unavailable"}}
         else:
             state["image_missing"] = False
-            value = {"status": "complete"}
+            value = {"status": "Downloading", "id": "abcdef", "progressDetail": {"current": 50, "total": 100}}
     elif method == "GET" and path.startswith("/volumes/"):
         value = state.get("volume")
     elif method == "GET" and path == "/networks":

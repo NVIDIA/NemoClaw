@@ -330,3 +330,53 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
     assert!(recreated.id.contains("/replacement/"));
     assert_eq!(state.lock().unwrap().creates, 1);
 }
+
+#[tokio::test]
+async fn image_pull_reports_layer_bytes_without_claiming_whole_image_percentage() {
+    use crate::{ByteProgress, DownloadPhase, Progress, with_download_progress};
+    let fixture = Fixture::start(|request| {
+        if request.method == "POST" && request.path.starts_with("/images/create") {
+            Some((200, b"{\"status\":\"Downloading\",\"id\":\"abcdef\",\"progressDetail\":{\"current\":50,\"total\":100}}\n{\"status\":\"Extracting\",\"id\":\"abcdef\",\"progressDetail\":{\"current\":80,\"total\":100}}\n".to_vec()))
+        } else if request.method == "GET" && request.path.starts_with("/images/") {
+            Some((200, serde_json::to_vec(&json!({"Id":"sha256:image"})).unwrap()))
+        } else { panic!("unexpected request {} {}", request.method, request.path); }
+    }).await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let seen = events.clone();
+    let engine = fixture.engine_for("unix:///fixture");
+    with_download_progress(
+        "managed_gateway.gateway".into(),
+        Arc::new(move |event| {
+            if let Progress::Download(event) = event {
+                seen.lock().unwrap().push(event);
+            }
+        }),
+        engine.pull_image("image:tag"),
+    )
+    .await
+    .unwrap();
+    let events = events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.layer.as_deref() == Some("abcdef")
+                && event.phase == DownloadPhase::Downloading
+                && event.bytes
+                    == Some(ByteProgress {
+                        completed: 50,
+                        total: Some(100)
+                    }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.phase == DownloadPhase::Extracting)
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.layer.is_none())
+            .all(|event| event.bytes.is_none())
+    );
+    assert_eq!(events.last().unwrap().phase, DownloadPhase::Complete);
+}

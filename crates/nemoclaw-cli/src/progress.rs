@@ -17,8 +17,48 @@ fn duration(elapsed: Duration) -> String {
     }
 }
 
+fn byte_count(bytes: u64) -> String {
+    for (unit, divisor) in [("GiB", 1_u64 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)] {
+        if bytes >= divisor {
+            return format!("{:.1} {unit}", bytes as f64 / divisor as f64);
+        }
+    }
+    format!("{bytes} B")
+}
+
 pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
     match event {
+        Progress::Download(event) => {
+            use nemoclaw_sdk::DownloadPhase;
+            let phase = match event.phase {
+                DownloadPhase::Starting => "starting download of",
+                DownloadPhase::Downloading => "downloading",
+                DownloadPhase::Extracting => "extracting",
+                DownloadPhase::Verifying => "verifying",
+                DownloadPhase::Complete if event.layer.is_none() => "downloaded",
+                DownloadPhase::Complete => "finished layer of",
+            };
+            let mut text = format!("{}: {phase} {}", event.resource, event.artifact);
+            if let Some(layer) = event.layer {
+                text.push_str(&format!(" [{layer}]"));
+            }
+            if let Some(bytes) = event.bytes {
+                if let Some(total) = bytes
+                    .total
+                    .filter(|total| *total > 0 && bytes.completed <= *total)
+                {
+                    let percent = u128::from(bytes.completed) * 100 / u128::from(total);
+                    text.push_str(&format!(
+                        " {percent}% ({} / {})",
+                        byte_count(bytes.completed),
+                        byte_count(total)
+                    ));
+                } else {
+                    text.push_str(&format!(" {}", byte_count(bytes.completed)));
+                }
+            }
+            Some(text)
+        }
         Progress::Resource {
             resource,
             action,
@@ -62,6 +102,37 @@ pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn downloads_show_layer_percentages_and_handle_unknown_totals() {
+        use nemoclaw_sdk::{ByteProgress, DownloadPhase, DownloadProgress};
+        let mut download = DownloadProgress {
+            resource: "ollama_model.chat".into(),
+            artifact: "llama3:latest".into(),
+            layer: Some("sha256:abc".into()),
+            phase: DownloadPhase::Downloading,
+            bytes: Some(ByteProgress {
+                completed: 50,
+                total: Some(100),
+            }),
+        };
+        assert_eq!(
+            render(Progress::Download(download.clone()), false).unwrap(),
+            "ollama_model.chat: downloading llama3:latest [sha256:abc] 50% (50 B / 100 B)"
+        );
+        download.bytes.as_mut().unwrap().total = Some(0);
+        assert_eq!(
+            render(Progress::Download(download.clone()), false).unwrap(),
+            "ollama_model.chat: downloading llama3:latest [sha256:abc] 50 B"
+        );
+        download.layer = None;
+        download.phase = DownloadPhase::Complete;
+        download.bytes = None;
+        assert_eq!(
+            render(Progress::Download(download), false).unwrap(),
+            "ollama_model.chat: downloaded llama3:latest"
+        );
+    }
 
     #[test]
     fn validation_progress_describes_configuration_checks() {
@@ -142,7 +213,7 @@ mod tests {
             elapsed: Duration::from_secs(1),
             outcome: nemoclaw_sdk::StepOutcome::Succeeded,
         };
-        assert!(render(done, false).is_none());
+        assert!(render(done.clone(), false).is_none());
         assert_eq!(render(done, true).unwrap(), "tofu.apply succeeded 1s");
     }
 }

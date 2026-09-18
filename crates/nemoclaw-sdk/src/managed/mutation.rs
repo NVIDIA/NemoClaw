@@ -200,6 +200,11 @@ impl Engine {
         ))
     }
     pub(crate) async fn pull_image(&self, image: &str) -> Result<(), Error> {
+        use crate::{
+            ByteProgress, DownloadPhase,
+            download::{Reporter, layer_id},
+        };
+        let mut progress = Reporter::new(image);
         let options = CreateImageOptions {
             from_image: Some(image.into()),
             ..Default::default()
@@ -212,10 +217,32 @@ impl Engine {
                     "pinned image pull failed; inspect retained engine state",
                 ));
             }
+            // Never forward registry text. Only known phases and digest-like IDs
+            // are progress; authoritative errors continue through the pull result.
+            let phase = match event.status.as_deref() {
+                Some("Downloading") => Some(DownloadPhase::Downloading),
+                Some("Extracting") => Some(DownloadPhase::Extracting),
+                Some("Verifying Checksum") => Some(DownloadPhase::Verifying),
+                Some("Pull complete" | "Already exists") => Some(DownloadPhase::Complete),
+                _ => None,
+            };
+            if let (Some(phase), Some(layer)) = (phase, layer_id(event.id.as_deref())) {
+                let bytes = event.progress_detail.and_then(|detail| {
+                    Some(ByteProgress {
+                        completed: u64::try_from(detail.current?).ok()?,
+                        total: detail
+                            .total
+                            .and_then(|total| u64::try_from(total).ok())
+                            .filter(|total| *total > 0),
+                    })
+                });
+                progress.report(Some(layer), phase, bytes);
+            }
         }
         if self.image(image).await?.is_none() {
             return Err(Error::Conflict("pinned image pull incomplete"));
         }
+        progress.complete();
         Ok(())
     }
     /// Observe an owned network, or check that its subnet is available for creation.

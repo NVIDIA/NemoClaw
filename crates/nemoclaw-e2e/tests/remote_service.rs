@@ -17,8 +17,10 @@ fn read(root: &Path, name: &str) -> Value {
     serde_json::from_slice(&fs::read(root.join(name)).unwrap()).unwrap()
 }
 async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: bool) -> Vec<u8> {
+    let pulls_before = read(root, "engine.json")["pulls"].as_u64().unwrap();
     let mut process = tokio::process::Command::new(bundle.join("bin/nemoclaw"));
     process
+        .arg("--verbose")
         .arg("--state-dir")
         .arg(root.join("deployment"))
         .arg(command);
@@ -47,6 +49,19 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         "{command}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    if read(root, "engine.json")["pulls"].as_u64().unwrap() > pulls_before
+        && read(root, "control.json")["pull_failure"] != true
+    {
+        let progress = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            progress.contains("[abcdef] 50% (50 B / 100 B)"),
+            "missing pull progress: {progress}"
+        );
+    }
+    if success && command == "apply" {
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["outcome"], "succeeded");
+    }
     output.stdout
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -50,6 +50,10 @@ pub(crate) async fn run_with_progress(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    // Progress is optional: endpoint failures must not prevent an operation.
+    let downloads = progress
+        .as_ref()
+        .and_then(|callback| crate::download::Listener::start(callback.clone()).ok());
     let mut command = CommandWrap::with_new(binary, |command| {
         command
             .args(args)
@@ -68,6 +72,9 @@ pub(crate) async fn run_with_progress(
             }
         }
         command.envs(overrides);
+        if let Some(downloads) = &downloads {
+            command.env("NEMOCLAW_INTERNAL_PROGRESS_ENDPOINT", &downloads.endpoint);
+        }
     });
     command.wrap(KillOnDrop);
     #[cfg(unix)]
