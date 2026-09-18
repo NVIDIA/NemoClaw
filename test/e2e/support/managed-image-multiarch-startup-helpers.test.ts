@@ -8,8 +8,16 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+  validateDockerEngine27SeedIsolation,
+} from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
+import {
+  DOCKER_ENGINE_27_PROBE_TIMEOUT_MS,
+  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
+  registerDockerEngine27ReceiptCleanup,
+  shouldRunDockerEngine27ReceiptProbe,
 } from "../live/managed-image-multiarch-startup-helpers.ts";
 
 const sha = "a".repeat(40);
@@ -38,6 +46,57 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("runs one bounded Docker 27 probe and registers exact cleanup first", () => {
+    const daemonName = dockerEngine27ReceiptDaemonName(123, 4);
+    const dispose = vi.fn();
+    const trackDisposable = vi.fn();
+
+    registerDockerEngine27ReceiptCleanup({ trackDisposable }, daemonName, dispose);
+    const registeredCleanup = trackDisposable.mock.calls[0]?.[1];
+    registeredCleanup?.();
+
+    expect(daemonName).toBe("nemoclaw-receipt-engine27-123-4");
+    expect(shouldRunDockerEngine27ReceiptProbe("linux/amd64")).toBe(true);
+    expect(shouldRunDockerEngine27ReceiptProbe("linux/arm64")).toBe(false);
+    expect(DOCKER_ENGINE_27_PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+    );
+    expect(trackDisposable).toHaveBeenCalledWith(
+      `remove owned Docker Engine 27 daemon ${daemonName}`,
+      dispose,
+    );
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("requires numeric root and every receipt seed isolation control", () => {
+    const secureSeed = {
+      Config: { User: "0" },
+      HostConfig: {
+        CapDrop: ["ALL"],
+        Mounts: [
+          {
+            Type: "volume",
+            Target: "/run/nemoclaw/managed-startup-receipt-transfer",
+          },
+        ],
+        NetworkMode: "none",
+        ReadonlyRootfs: true,
+        SecurityOpt: ["no-new-privileges"],
+      },
+    };
+
+    expect(() => validateDockerEngine27SeedIsolation(secureSeed)).not.toThrow();
+    expect(() =>
+      validateDockerEngine27SeedIsolation({ ...secureSeed, Config: { User: "0:0" } }),
+    ).toThrow("receipt seed did not use numeric root");
+    expect(() =>
+      validateDockerEngine27SeedIsolation({
+        ...secureSeed,
+        HostConfig: { ...secureSeed.HostConfig, CapDrop: [] },
+      }),
+    ).toThrow("receipt seed retained capabilities");
+  });
+
   it("parses exact protected dispatch identity", () => {
     expect(protectedManagedImageDispatchEnvironment()).toMatchObject({
       baseSha: sha,

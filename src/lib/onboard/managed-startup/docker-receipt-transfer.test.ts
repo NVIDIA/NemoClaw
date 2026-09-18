@@ -51,19 +51,21 @@ describe("Docker daemon receipt transfer", () => {
     });
 
     expect(calls.map((args) => args[0])).toEqual(["volume", "create", "cp", "rm"]);
-    expect(calls[1]).toEqual(
+    const seedArgs = calls[1] ?? [];
+    expect(seedArgs).toEqual(
       expect.arrayContaining([
         "--network",
         "none",
         "--read-only",
         "--user",
-        "0:0",
         "--security-opt",
         "no-new-privileges",
         "--cap-drop",
         "ALL",
       ]),
     );
+    expect(seedArgs.at(seedArgs.indexOf("--user") + 1)).toBe("0");
+    expect(seedArgs).not.toContain("0:0");
     expect(calls[2]).toEqual(
       expect.arrayContaining([
         "-a",

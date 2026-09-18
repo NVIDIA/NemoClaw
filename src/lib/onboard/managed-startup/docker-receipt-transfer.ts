@@ -121,7 +121,7 @@ export function transferDockerReceiptToDaemon(
         "none",
         "--read-only",
         "--user",
-        "0:0",
+        "0",
         "--security-opt",
         "no-new-privileges",
         "--cap-drop",
