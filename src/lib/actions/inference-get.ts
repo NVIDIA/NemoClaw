@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../adapters/openshell/runtime";
-import { createCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
 import type {
   OpenShellInferenceRouteError,
   OpenShellInferenceRouteObserver,
@@ -79,7 +79,7 @@ export class InferenceGetError extends Error {
 
 function defaultDeps(): InferenceGetDeps {
   return {
-    inferenceRouteObserver: createCliOpenShellInferenceRouteObserver(captureOpenshell),
+    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
     getSandboxTargetGatewayName,
     listSandboxes: listPersistedSandboxTargets,
     log: console.log,
