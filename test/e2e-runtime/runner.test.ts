@@ -280,7 +280,11 @@ describe("runner env merging", () => {
       socketPath: null,
     });
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       vi.stubEnv("DOCKER_CONTEXT", "selected-context");
@@ -369,7 +373,11 @@ describe("runner env merging", () => {
     const platform = require(platformPath);
     const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue(null);
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       vi.stubEnv("DOCKER_CONTEXT", "unresolved-context");
@@ -1427,6 +1435,19 @@ describe("regression guards", () => {
       expect(baseVersion).toBeDefined();
       expect(runtimeVersion).toBeDefined();
       expect(runtimeVersion).toBe(baseVersion);
+    });
+  });
+
+  describe("OpenClaw external restart verification", () => {
+    const repoRoot = path.join(import.meta.dirname, "..", "..");
+
+    it("ships pinned lsof in both fresh and stale-base managed images", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      expect(baseSrc).toContain("lsof=4.99.4+dfsg-2");
+      expect(runtimeSrc).toContain("needs_lsof=1");
+      expect(runtimeSrc).toContain("apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2");
+      expect(runtimeSrc).toContain("command -v lsof >/dev/null");
     });
   });
 });

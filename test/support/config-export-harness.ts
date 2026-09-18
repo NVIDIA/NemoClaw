@@ -11,8 +11,8 @@ import {
 import type { SandboxEntry } from "../../src/lib/state/registry/types";
 import { load as loadRegistry } from "../../src/lib/state/registry/persistence";
 import { getSandboxEntryInference } from "../../src/lib/state/registry-entry-view";
-import { getLiveGatewayInference } from "../../src/lib/inference/live";
 import { connectManagedOpenShellSdk } from "../../src/lib/adapters/openshell/sdk";
+import { captureSanitizedResolvedOpenshell } from "../../src/lib/adapters/openshell/sanitized-capture";
 import { observeStableExportSource } from "../../src/lib/actions/config/observe-export-source";
 import { createLiveExportSnapshotReader } from "../../src/lib/adapters/config/live-export-source";
 import {
@@ -30,12 +30,15 @@ vi.mock("../../src/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/platform")>()),
   isWsl: vi.fn(() => false),
 }));
-vi.mock("../../src/lib/state/registry/persistence", () => ({ load: vi.fn() }));
+vi.mock("../../src/lib/state/registry/persistence", () => ({
+  load: vi.fn(),
+  REGISTRY_FILE: "/unused-export-registry.json",
+}));
 vi.mock("../../src/lib/state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
-vi.mock("../../src/lib/inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
 vi.mock("../../src/lib/adapters/openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
+  captureSanitizedResolvedOpenshellAsync: vi.fn(),
 }));
 vi.mock("../../src/lib/adapters/openshell/sandbox-config", async (importOriginal) => {
   const actual =
@@ -71,11 +74,9 @@ export function mockSupportedLiveSource(
     provider: "nvidia-prod",
     model: "model-a",
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "nvidia-prod", model: "model-a" },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: model-a\n",
   });
   vi.mocked(connectManagedOpenShellSdk).mockResolvedValue({ raw });
   raw.getProvider.mockResolvedValue(provider());

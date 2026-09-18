@@ -823,7 +823,7 @@ The in-sandbox OpenClaw gateway can drop its HTTP listener while its process sta
 
 NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
-- The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
+- The generated sandbox config pins `gateway.reload.mode` to `off`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
 - A serving watchdog inside the sandbox stops a gateway process that does not serve, and the supervisor relaunches it.
 
 The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup. These probe outcomes count as not serving:
@@ -866,7 +866,7 @@ When the gateway is not serving, `openclaw health` can report `gateway_transport
 
 The watchdog converts a gateway that cannot serve into a process exit that the sandbox supervisor already knows how to relaunch. It does not correct the OpenClaw lifecycle condition that left the process running. It stays necessary until an OpenClaw gateway that cannot serve exits on its own.
 
-Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts. For example, `openclaw plugins install` logs that message until the gateway restarts. Apply them with a supervised restart:
+Because `gateway.reload.mode` is pinned to `off`, configuration changes made inside the sandbox do not hot-reload. For example, `openclaw plugins install` can update the configuration while the running gateway continues using its previous configuration. Apply changes with a supervised restart:
 
 ```bash
 $$nemoclaw <name> gateway restart
@@ -2173,11 +2173,11 @@ Hermes and OpenAI-compatible-only agents use the endpoint's `/v1/chat/completion
 
 Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint. The official Anthropic provider does not run this check and is not affected. If an OpenClaw sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint. If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming sequence and forced tool-call checks. Streaming or native tool-call defects then surface at runtime instead of during onboarding.
 
-### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not disable pairing
 
-This is expected behavior. `NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image. Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. NemoClaw accepts `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance input only while managed Dockerfile callers transition, but it does not emit an OpenClaw device-auth bypass key. Changing the input before or after a build does not skip device pairing.
 
-If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration. For the security trade-offs, refer to [Security Best Practices](../security/best-practices).
+Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
 
 ### `openclaw.json` is empty after changing inference
 

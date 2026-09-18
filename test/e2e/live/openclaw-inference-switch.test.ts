@@ -946,7 +946,7 @@ test(
         "install.sh --non-interactive onboards an OpenClaw sandbox",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
-        "OpenClaw gateway is supervisor-restarted only when the inference API family changes",
+        "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
         "OpenShell route points at the switched provider/model",
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
@@ -1077,9 +1077,9 @@ test(
 
     progress.phase("switch the route and verify restart semantics");
     expect(baseline.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
-    const gatewayRestartExpected = SWITCH_MOCK_ANTHROPIC === "1";
+    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
     expect(SWITCH_INFERENCE_API).toBe(
-      gatewayRestartExpected ? "anthropic-messages" : "openai-completions",
+      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
     );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
@@ -1092,20 +1092,18 @@ test(
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
     expect(
       resultText(switchResult).includes(
-        `Restarting the OpenClaw gateway in '${SANDBOX_NAME}' to apply the new inference API family`,
+        `Restarting the OpenClaw gateway in '${SANDBOX_NAME}' to apply the updated inference configuration`,
       ),
-      `managed cross-family restart marker mismatch: ${resultText(switchResult)}`,
-    ).toBe(gatewayRestartExpected);
+      `managed config restart marker mismatch: ${resultText(switchResult)}`,
+    ).toBe(true);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);
     const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
     if (gatewayPidStable !== null) {
       expect(
         gatewayPidStable,
-        gatewayRestartExpected
-          ? `OpenClaw gateway process did not change for API-family switch (${pidBefore} -> ${pidAfter})`
-          : `OpenClaw gateway process changed for same-family switch (${pidBefore} -> ${pidAfter})`,
-      ).toBe(!gatewayRestartExpected);
+        `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
+      ).toBe(false);
     }
 
     progress.phase("inspect route configuration and recorded state");
@@ -1156,7 +1154,7 @@ test(
         runtimeProviderAvailable: true,
         installCompleted: install.exitCode === 0,
         inferenceSetCompleted: switchResult.exitCode === 0,
-        gatewayRestartExpected,
+        gatewayRestartExpected: true,
         gatewayPidStable,
         routeChecked: true,
         configChecked: true,

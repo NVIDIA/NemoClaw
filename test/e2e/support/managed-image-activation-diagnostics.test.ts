@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
@@ -26,11 +30,101 @@ function commandResult(stdout: string, exitCode = 0, stderr = "") {
   };
 }
 
+function runPostRestartAgentTurnFixture(statuses: string[], times: number[]) {
+  const fixture = createHostProcessWorkspace("nemoclaw-openclaw-restart-ready-");
+  const command = ["openclaw", "agent", "--session-id", "quoted session"];
+  const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+  expect(script).not.toBeNull();
+
+  writeFileSync(fixture.path("curl-statuses"), `${statuses.join("\n")}\n`);
+  writeFileSync(fixture.path("times"), `${times.join("\n")}\n`);
+  fixture.writeExecutable(
+    "curl",
+    `#!/bin/sh
+attempt=0
+if [ -f "$MANAGED_ACTIVATION_FIXTURE/curl-attempts" ]; then
+  IFS= read -r attempt <"$MANAGED_ACTIVATION_FIXTURE/curl-attempts"
+fi
+attempt=$((attempt + 1))
+printf '%s\n' "$attempt" >"$MANAGED_ACTIVATION_FIXTURE/curl-attempts"
+index=0
+selected=000
+while IFS= read -r status; do
+  index=$((index + 1))
+  if [ "$index" -eq "$attempt" ]; then
+    selected=$status
+    break
+  fi
+done <"$MANAGED_ACTIVATION_FIXTURE/curl-statuses"
+printf '%s' "$selected"
+`,
+  );
+  fixture.writeExecutable(
+    "date",
+    `#!/bin/sh
+attempt=0
+if [ -f "$MANAGED_ACTIVATION_FIXTURE/date-attempts" ]; then
+  IFS= read -r attempt <"$MANAGED_ACTIVATION_FIXTURE/date-attempts"
+fi
+attempt=$((attempt + 1))
+printf '%s\n' "$attempt" >"$MANAGED_ACTIVATION_FIXTURE/date-attempts"
+index=0
+selected=0
+while IFS= read -r value; do
+  index=$((index + 1))
+  if [ "$index" -eq "$attempt" ]; then
+    selected=$value
+    break
+  fi
+done <"$MANAGED_ACTIVATION_FIXTURE/times"
+printf '%s\n' "$selected"
+`,
+  );
+  fixture.writeExecutable(
+    "sleep",
+    `#!/bin/sh
+printf '%s\n' "$1" >>"$MANAGED_ACTIVATION_FIXTURE/sleeps"
+`,
+  );
+  fixture.writeExecutable(
+    "openclaw",
+    `#!/bin/sh
+printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
+`,
+  );
+
+  try {
+    const result = fixture.run(
+      "/bin/sh",
+      ["-lc", `PATH=${JSON.stringify(fixture.binDir)}\nexport PATH\n${String(script)}`],
+      {
+        env: { MANAGED_ACTIVATION_FIXTURE: fixture.root },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
+      },
+    );
+    const readLines = (name: string): string[] => {
+      const file = join(fixture.root, name);
+      return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean) : [];
+    };
+    return {
+      result,
+      curlAttempts: readLines("curl-attempts"),
+      sleeps: readLines("sleeps"),
+      openclawArgs: readLines("openclaw-args"),
+    };
+  } finally {
+    fixture.remove();
+  }
+}
+
 describe("managed image activation failure diagnostics", () => {
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();
 
-    expect(script).toContain('openclaw plugins install "$source_dir" --force');
+    expect(script).toContain(
+      'openclaw plugins install --force --accept-capabilities "$source_dir"',
+    );
     expect(script).toContain("/sandbox/managed-activation-native-plugin");
     expect(script).not.toContain("plugins.allow");
     expect(script).not.toContain("openclawImagePluginInstalls");
@@ -93,6 +187,48 @@ describe("managed image activation failure diagnostics", () => {
       }),
     );
   });
+  it("gates only the post-restart OpenClaw turn on inner gateway readiness (#7744)", () => {
+    const command = ["openclaw", "agent", "--session-id", "quoted session"];
+    const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+
+    expect(script).toContain("http://127.0.0.1:18789/health");
+    expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
+    expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
+    expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();
+    expect(managedActivationPostRestartAgentTurnScript("openclaw", "boundary", command)).toBeNull();
+    expect(managedActivationPostRestartAgentTurnScript("hermes", "after", command)).toBeNull();
+  });
+
+  it("retries post-restart OpenClaw readiness before executing the agent turn", () => {
+    const execution = runPostRestartAgentTurnFixture(["503", "200"], [100, 100, 101]);
+
+    expect(execution.result.status).toBe(0);
+    expect(execution.curlAttempts).toEqual(["2"]);
+    expect(execution.sleeps).toEqual(["2"]);
+    expect(execution.openclawArgs).toEqual(["agent", "--session-id", "quoted session"]);
+  });
+
+  it("accepts post-restart OpenClaw authentication readiness", () => {
+    const execution = runPostRestartAgentTurnFixture(["401"], [100, 100]);
+
+    expect(execution.result.status).toBe(0);
+    expect(execution.curlAttempts).toEqual(["1"]);
+    expect(execution.sleeps).toEqual([]);
+    expect(execution.openclawArgs).toEqual(["agent", "--session-id", "quoted session"]);
+  });
+
+  it("suppresses the OpenClaw agent turn when post-restart readiness times out", () => {
+    const execution = runPostRestartAgentTurnFixture(["503"], [100, 100, 160]);
+
+    expect(execution.result.status).toBe(1);
+    expect(execution.result.stderr).toContain(
+      "OpenClaw gateway did not become ready after OpenShell restart (last HTTP status: 503)",
+    );
+    expect(execution.curlAttempts).toEqual(["1"]);
+    expect(execution.sleeps).toEqual(["2"]);
+    expect(execution.openclawArgs).toEqual([]);
+  });
+
   it("initializes cleanup then removes gateway state before cold onboarding", async () => {
     const calls: string[] = [];
     const host = {
@@ -137,7 +273,7 @@ describe("managed image activation failure diagnostics", () => {
     expect(calls).toEqual([]);
   });
 
-  it("waits for a transient Deleting sandbox before verifying Docker cleanup", async () => {
+  it("waits for a transient Deleting sandbox while verifying Docker cleanup", async () => {
     const sandbox = {
       list: vi
         .fn()
@@ -162,25 +298,37 @@ describe("managed image activation failure diagnostics", () => {
     expect(sandbox.list).toHaveBeenCalledTimes(2);
     expect(sandbox.list).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ artifactName: "post-destroy-openshell-list-mi-act-hermes-2" }),
+      expect.objectContaining({
+        artifactName: "post-destroy-absence-mi-act-hermes-attempt-02-openshell-list",
+      }),
     );
-    expect(host.command).toHaveBeenCalledExactlyOnceWith(
+    expect(host.command).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenNthCalledWith(
+      2,
       "docker",
       ["ps", "-aq", "--filter", "label=openshell.ai/sandbox-name=mi-act-hermes"],
-      expect.objectContaining({ artifactName: "post-destroy-docker-inventory-mi-act-hermes" }),
+      expect.objectContaining({
+        artifactName: "post-destroy-absence-mi-act-hermes-attempt-02-docker-inventory",
+      }),
     );
   });
 
-  it("bounds cleanup convergence and preserves the last OpenShell inventory", async () => {
+  it("bounds cleanup convergence and preserves both last inventories", async () => {
     const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
     const sandbox = { list: vi.fn(async () => deleting) };
-    const host = { command: vi.fn() };
+    const host = { command: vi.fn(async () => commandResult("remaining-container")) };
 
     await expect(
       verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 2, intervalMs: 0 }),
-    ).rejects.toThrow(/remained present after 2 cleanup probes within 60000ms:.*Deleting/su);
+    ).rejects.toMatchObject({
+      reason: "exhausted",
+      lastAttempt: {
+        attempt: 2,
+        value: { openshellList: deleting, containers: commandResult("remaining-container") },
+      },
+    });
     expect(sandbox.list).toHaveBeenCalledTimes(2);
-    expect(host.command).not.toHaveBeenCalled();
+    expect(host.command).toHaveBeenCalledTimes(2);
   });
 
   it("caps probes to the remaining cleanup deadline", async () => {
@@ -188,7 +336,12 @@ describe("managed image activation failure diagnostics", () => {
     try {
       const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
       const sandbox = { list: vi.fn(async (_options: CleanupListOptions) => deleting) };
-      const host = { command: vi.fn() };
+      const host = {
+        command: vi.fn(
+          async (..._args: Parameters<Parameters<typeof verifyExactCleanup>[0]["command"]>) =>
+            commandResult(""),
+        ),
+      };
       const verification = verifyExactCleanup(
         host,
         sandbox,
@@ -200,9 +353,10 @@ describe("managed image activation failure diagnostics", () => {
           timeoutMs: 1_500,
         },
       );
-      const rejected = expect(verification).rejects.toThrow(
-        /remained present after 2 cleanup probes within 1500ms:.*Deleting/su,
-      );
+      const rejected = expect(verification).rejects.toMatchObject({
+        reason: "exhausted",
+        lastAttempt: { attempt: 2, value: { openshellList: deleting } },
+      });
 
       await vi.advanceTimersByTimeAsync(1_500);
       await rejected;
@@ -210,7 +364,9 @@ describe("managed image activation failure diagnostics", () => {
       expect(sandbox.list).toHaveBeenCalledTimes(2);
       expect(sandbox.list.mock.calls[0]?.[0]?.timeoutMs).toBeLessThanOrEqual(1_500);
       expect(sandbox.list.mock.calls[1]?.[0]?.timeoutMs).toBeLessThanOrEqual(500);
-      expect(host.command).not.toHaveBeenCalled();
+      expect(host.command).toHaveBeenCalledTimes(2);
+      expect(host.command.mock.calls[0]?.[2]?.timeoutMs).toBeLessThanOrEqual(1_500);
+      expect(host.command.mock.calls[1]?.[2]?.timeoutMs).toBeLessThanOrEqual(500);
     } finally {
       vi.useRealTimers();
     }
@@ -227,5 +383,28 @@ describe("managed image activation failure diagnostics", () => {
     ).rejects.toThrow(/list OpenShell sandboxes.*gateway unavailable/u);
     expect(sandbox.list).toHaveBeenCalledTimes(1);
     expect(host.command).not.toHaveBeenCalled();
+  });
+
+  it("waits for Docker removal after OpenShell reports absence", async () => {
+    const sandbox = { list: vi.fn(async () => commandResult("No sandboxes found.\n")) };
+    const host = {
+      command: vi
+        .fn()
+        .mockResolvedValueOnce(commandResult("remaining-container"))
+        .mockResolvedValueOnce(commandResult("")),
+    };
+    await verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 2, intervalMs: 0 });
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails immediately when the Docker inventory probe errors", async () => {
+    const sandbox = { list: vi.fn(async () => commandResult("No sandboxes found.\n")) };
+    const host = { command: vi.fn(async () => commandResult("", 1, "Docker unavailable")) };
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 3, intervalMs: 0 }),
+    ).rejects.toThrow(/inspect Docker inventory.*Docker unavailable/u);
+    expect(sandbox.list).toHaveBeenCalledTimes(1);
+    expect(host.command).toHaveBeenCalledTimes(1);
   });
 });

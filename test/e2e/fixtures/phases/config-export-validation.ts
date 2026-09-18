@@ -7,13 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import YAML from "yaml";
-import type {
-  NemoClawAgentConfig,
-  NemoClawSandboxConfig,
-  ValidatedNemoClawConfig,
-} from "../../../../src/lib/config/model.ts";
-import { validateNemoClawConfig } from "../../../../src/lib/config/schema.ts";
+import {
+  V1ALPHA1_EXPORT_API_VERSION,
+  type V1Alpha1Export,
+} from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
@@ -40,6 +40,9 @@ import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
+const { Type } = require("typebox") as typeof TypeBoxModule;
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+
 export const CONFIG_EXPORT_EVIDENCE_CONTRACT = "nemoclaw.config-export-evidence/v1" as const;
 const EVIDENCE_FILE = "config-export-evidence.v1.json";
 const CONFIG_EXPORT_CAPTURE_LIMIT_BYTES = 64 * 1024;
@@ -47,6 +50,174 @@ const CONFIG_EXPORT_FILE_LIMIT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_LENGTH = 2_048;
 const INTERNAL_TRANSPORT_PATTERN = /NEMOCLAW_[A-Z0-9_]+|openshell:resolve:env:/u;
 const INTERNAL_TRANSPORT_MARKERS = ["NEMOCLAW_", "openshell:resolve:env"] as const;
+const V1ALPHA1_NAME_PATTERN = "^[a-z][a-z0-9-]{0,39}$";
+const V1ALPHA1_UUID_PATTERN =
+  "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
+const V1ALPHA1_IMAGE_PATTERN = "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$";
+
+const NonEmptyStringSchema = Type.String({ minLength: 1 });
+const LocalNameSchema = Type.String({ pattern: V1ALPHA1_NAME_PATTERN });
+const UnknownRecordSchema = Type.Record(Type.String(), Type.Unknown());
+const CredentialSchema = Type.Object(
+  { env: NonEmptyStringSchema },
+  { additionalProperties: false },
+);
+const ExportRouteSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    providerRef: LocalNameSchema,
+    overrides: Type.Object({ model: NonEmptyStringSchema }, { additionalProperties: true }),
+  },
+  { additionalProperties: false },
+);
+const ExportAgentSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    inference: Type.Object(
+      { routes: Type.Array(ExportRouteSchema, { minItems: 1 }) },
+      { additionalProperties: false },
+    ),
+    auth: Type.Optional(
+      Type.Object({ method: Type.Literal("api-key") }, { additionalProperties: false }),
+    ),
+    tools: Type.Optional(
+      Type.Union([
+        Type.Object(
+          { disclosure: Type.Union([Type.Literal("direct"), Type.Literal("progressive")]) },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
+          { additionalProperties: false },
+        ),
+      ]),
+    ),
+    integrationRefs: Type.Optional(
+      Type.Array(Type.Literal("brave-search"), { minItems: 1, maxItems: 1 }),
+    ),
+  },
+  { additionalProperties: false },
+);
+const ExportHarnessFields = {
+  execution: Type.Optional(
+    Type.Object(
+      {
+        timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
+        heartbeatEvery: Type.Optional(NonEmptyStringSchema),
+      },
+      { additionalProperties: false, minProperties: 1 },
+    ),
+  ),
+  interfaces: Type.Optional(UnknownRecordSchema),
+  observability: Type.Optional(UnknownRecordSchema),
+};
+const ExportSandboxFields = {
+  name: LocalNameSchema,
+  runtime: Type.Object({ provider: Type.Literal("docker") }, { additionalProperties: false }),
+  network: Type.Object(
+    {
+      policy: Type.Object({ explicit: UnknownRecordSchema }, { additionalProperties: false }),
+      proxy: Type.Optional(
+        Type.Object(
+          { host: NonEmptyStringSchema, port: Type.Integer({ minimum: 1, maximum: 65_535 }) },
+          { additionalProperties: false },
+        ),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  integrations: Type.Optional(
+    Type.Object(
+      {
+        "brave-search": Type.Object(
+          {
+            kind: Type.Literal("webSearch"),
+            provider: Type.Literal("brave"),
+            credential: CredentialSchema,
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  ),
+};
+const DeepAgentsExportSandboxSchema = Type.Object(
+  {
+    ...ExportSandboxFields,
+    image: Type.Object(
+      { ref: Type.String({ pattern: V1ALPHA1_IMAGE_PATTERN }) },
+      { additionalProperties: false },
+    ),
+    harness: Type.Object(
+      { kind: Type.Literal("deepagents"), ...ExportHarnessFields },
+      { additionalProperties: false },
+    ),
+    agent: ExportAgentSchema,
+  },
+  { additionalProperties: false },
+);
+const LegacyExportSandboxSchema = Type.Object(
+  {
+    ...ExportSandboxFields,
+    harness: Type.Object(
+      {
+        kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
+        ...ExportHarnessFields,
+      },
+      { additionalProperties: false },
+    ),
+    agents: Type.Array(ExportAgentSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+const ConfigExportDocumentSchema = Type.Object(
+  {
+    apiVersion: Type.Literal(V1ALPHA1_EXPORT_API_VERSION),
+    kind: Type.Literal("NemoClawConfig"),
+    metadata: Type.Object(
+      {
+        name: LocalNameSchema,
+        uid: Type.String({ pattern: V1ALPHA1_UUID_PATTERN }),
+      },
+      { additionalProperties: false },
+    ),
+    spec: Type.Object(
+      {
+        gateway: Type.Object(
+          {
+            management: Type.Literal("managed"),
+            endpoint: NonEmptyStringSchema,
+          },
+          { additionalProperties: false },
+        ),
+        inferenceProviders: Type.Array(
+          Type.Object(
+            {
+              name: LocalNameSchema,
+              provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
+              api: Type.Union([
+                Type.Literal("anthropic-messages"),
+                Type.Literal("openai-completions"),
+                Type.Literal("openai-responses"),
+              ]),
+              endpoint: NonEmptyStringSchema,
+              credential: Type.Optional(CredentialSchema),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1 },
+        ),
+        sandboxes: Type.Array(
+          Type.Union([DeepAgentsExportSandboxSchema, LegacyExportSandboxSchema]),
+          { minItems: 1, maxItems: 1 },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export type ConfigExportClassification =
   | "success"
@@ -142,14 +313,19 @@ export type ConfigExportRegistryEntry = Pick<
   | "endpointUrl"
   | "model"
   | "credentialEnv"
+  | "dcodeAutoApprovalMode"
   | "workload"
+  | "observabilityEnabled"
+  | "toolDisclosure"
+  | "webSearchEnabled"
+  | "webSearchProvider"
 >;
 
 export interface ConfigExportRegistry {
   sandboxes: Record<string, ConfigExportRegistryEntry>;
 }
 
-export type ConfigExportDocument = ValidatedNemoClawConfig;
+export type ConfigExportDocument = V1Alpha1Export;
 
 export interface ConfigExportValidationDependencies {
   closeFile(file: number): void;
@@ -236,7 +412,11 @@ function requiredString(value: unknown, field: string): string {
 }
 
 export function parseConfigExport(raw: string): ConfigExportDocument {
-  return validateNemoClawConfig(YAML.parse(raw));
+  const document: unknown = YAML.parse(raw);
+  if (!Check(ConfigExportDocumentSchema, document)) {
+    throw new Error("exported configuration must match the complete v1alpha1 export contract");
+  }
+  return document as ConfigExportDocument;
 }
 
 function readRegistry(): ConfigExportRegistry {
@@ -259,6 +439,44 @@ function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
+}
+
+function exportedHarnessKind(agent: string | null | undefined): string | null {
+  if (agent === "langchain-deepagents-code") return "deepagents";
+  return agent ?? null;
+}
+
+function exportedProviderName(provider: string | null | undefined): string | null {
+  if (!provider) return null;
+  const normalized = provider
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/gu, "-")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, "");
+  return `hosted-${normalized || "provider"}`.slice(0, 40).replace(/[^a-z0-9]+$/gu, "");
+}
+
+function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
+  const policy = structuredClone(requiredRecord(value, "effective policy"));
+  const process = policy.process as Record<string, unknown> | undefined;
+  if (process && typeof process === "object" && !Array.isArray(process)) {
+    if (process.run_as_user === "sandbox") process.run_as_user = "1000";
+    if (process.run_as_group === "sandbox") process.run_as_group = "1000";
+  }
+  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
+  if (filesystem && typeof filesystem === "object" && !Array.isArray(filesystem)) {
+    const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
+    const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
+    const roots = [
+      "/opt/fabric",
+      "/opt/nemoclaw",
+      ...(agent === "openclaw" ? ["/app"] : agent === "hermes" ? ["/opt/hermes"] : []),
+    ];
+    for (const root of roots) {
+      if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
+    }
+    filesystem.read_only = readOnly;
+  }
+  return policy;
 }
 
 function readProducer(): ConfigExportProducer {
@@ -286,18 +504,17 @@ function readProducer(): ConfigExportProducer {
 
 function enabledManifestFeatures(manifest: LoadedManifest): string[] {
   return Object.entries(manifest.document.spec.onboarding.features ?? {})
-    .filter(([, value]) => value === true)
+    .filter(([name, value]) => ["observability", "webSearch"].includes(name) && value === true)
     .map(([name]) => name)
     .sort();
 }
 
 function observedFeatures(
-  sandbox: NemoClawSandboxConfig | undefined,
-  agent: NemoClawAgentConfig | undefined,
+  sandbox: V1Alpha1Export["spec"]["sandboxes"][number] | undefined,
 ): string[] {
   const features: string[] = [];
-  if (sandbox?.integrations?.webSearch) features.push("webSearch");
-  if (agent?.type === "openclaw" && agent.observability) features.push("observability");
+  if (sandbox?.integrations?.["brave-search"]) features.push("webSearch");
+  if (sandbox?.harness.observability) features.push("observability");
   return features.sort();
 }
 
@@ -354,16 +571,17 @@ async function readEffectivePolicyDocument(
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
   const sandbox = document.spec.sandboxes[0];
-  const agent = sandbox?.agents[0];
+  const agent =
+    sandbox === undefined ? undefined : "agent" in sandbox ? sandbox.agent : sandbox.agents[0];
   const route = agent?.inference.routes[0];
   const provider = document.spec.inferenceProviders.find(
     (candidate) => candidate.name === route?.providerRef,
   );
   return {
     sandboxName: sandbox?.name ?? null,
-    agent: agent?.type ?? null,
+    agent: sandbox?.harness.kind ?? null,
     runtimeProvider: sandbox?.runtime.provider ?? null,
-    imageRef: sandbox?.runtime.image.ref ?? null,
+    imageRef: sandbox !== undefined && "image" in sandbox ? sandbox.image.ref : null,
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
@@ -374,7 +592,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     routeName: route?.name ?? null,
     routeProviderReference: route?.providerRef ?? null,
     policySha256: sandbox ? sha256(canonicalJson(sandbox.network.policy.explicit)) : null,
-    enabledFeatures: observedFeatures(sandbox, agent),
+    enabledFeatures: observedFeatures(sandbox),
   };
 }
 
@@ -388,10 +606,16 @@ async function expectedSemantics(
   const manifest = dependencies.loadManifest(path.join(REPO_ROOT, target.manifestPath));
   const entry = dependencies.loadRegistry().sandboxes[instance.sandboxName];
   if (!entry) throw new Error("the live sandbox is missing from the NemoClaw registry");
+  if (
+    entry.name !== instance.sandboxName ||
+    entry.agent !== manifest.document.spec.onboarding.agent
+  ) {
+    throw new Error("the live sandbox identity does not match the target manifest");
+  }
   if (entry.workload?.kind !== "managed-image") {
     throw new Error("automatic config export validation requires an immutable managed image");
   }
-  const imageRef = requiredString(entry.workload.reference, "registry workload reference");
+  requiredString(entry.workload.reference, "registry workload reference");
   if (!entry.gatewayName) throw new Error("the live sandbox is missing its gateway binding");
   if (unsafeEndpointUrlViolation(entry.endpointUrl)) {
     throw new Error("the live inference endpoint is unsafe");
@@ -416,21 +640,38 @@ async function expectedSemantics(
   if (credentialReference && !declaredCredentialReferences.includes(credentialReference)) {
     throw new Error("the live credential reference is not declared by the target manifest");
   }
+  if (entry.agent === "langchain-deepagents-code") {
+    if (
+      entry.dcodeAutoApprovalMode !== "disabled" ||
+      entry.observabilityEnabled !== false ||
+      entry.webSearchEnabled === true ||
+      (entry.webSearchProvider !== undefined && entry.webSearchProvider !== null) ||
+      (entry.toolDisclosure !== undefined && entry.toolDisclosure !== "progressive")
+    ) {
+      throw new Error("the live Deep Agents sandbox is not at the exportable disabled baseline");
+    }
+  }
+  const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument), entry.agent);
   return {
     sandboxName: instance.sandboxName,
-    agent: manifest.document.spec.onboarding.agent,
+    agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
     runtimeProvider: entry.openshellDriver ?? null,
-    imageRef,
-    inferenceProviderName: null,
-    inferenceProvider: entry.provider ?? null,
+    imageRef:
+      entry.agent === "langchain-deepagents-code"
+        ? requiredString(entry.workload.reference, "registry workload reference")
+        : null,
+    inferenceProviderName: exportedProviderName(entry.provider),
+    inferenceProvider:
+      entry.preferredInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
     inferenceApi: entry.preferredInferenceApi ?? null,
     inferenceEndpoint: entry.endpointUrl ?? null,
     model: entry.model ?? null,
     credentialReference,
     routeName: "primary",
     routeProviderReference: null,
-    policySha256: sha256(canonicalJson(YAML.parse(policyDocument))),
-    enabledFeatures: enabledManifestFeatures(manifest),
+    policySha256: sha256(canonicalJson(expectedPolicy)),
+    enabledFeatures:
+      entry.agent === "langchain-deepagents-code" ? [] : enabledManifestFeatures(manifest),
   };
 }
 
@@ -443,6 +684,7 @@ function compareSemantics(
     "agent",
     "runtimeProvider",
     "imageRef",
+    "inferenceProviderName",
     "inferenceProvider",
     "inferenceApi",
     "inferenceEndpoint",
@@ -630,6 +872,7 @@ export class ConfigExportValidationPhaseFixture {
       expectation === "required" ? "observation" : "transport";
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
+    let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
       if (expectation === "required") {
@@ -640,6 +883,11 @@ export class ConfigExportValidationPhaseFixture {
           this.secrets,
           this.dependencies,
         );
+        const registry = this.dependencies.loadRegistry();
+        if (!registry.sandboxes[instance.sandboxName]) {
+          throw new Error("the live sandbox disappeared before config export");
+        }
+        registryBeforeExport = structuredClone(registry.sandboxes);
       }
       failureStage = "transport";
       const result = await this.host.nemoclaw(
@@ -742,6 +990,13 @@ export class ConfigExportValidationPhaseFixture {
         failureStage = "verification";
         if (!expected) throw new Error("config export expectations were not captured");
         verifications = compareSemantics(expected, observed);
+        const registryAfterExport = this.dependencies.loadRegistry().sandboxes;
+        verifications.push({
+          id: "sourceRegistryUnchanged",
+          passed: isDeepStrictEqual(registryAfterExport, registryBeforeExport),
+          expected: registryBeforeExport,
+          actual: registryAfterExport,
+        });
         const failed = verifications.filter((verification) => !verification.passed);
         if (failed.length > 0) {
           throw new Error(
