@@ -23,7 +23,6 @@ mod tests {
     const ISSUE_12038: &str = "https://github.com/NVIDIA/NemoClaw/issues/12038";
     const ISSUE_12040: &str = "https://github.com/NVIDIA/NemoClaw/issues/12040";
     const ISSUE_12042: &str = "https://github.com/NVIDIA/NemoClaw/issues/12042";
-    const ISSUE_12045: &str = "https://github.com/NVIDIA/NemoClaw/issues/12045";
 
     // Independent source catalogs keep the coverage assertion from merely
     // comparing the scenario table with itself. Public flags come from
@@ -250,6 +249,7 @@ mod tests {
         GatewayEndpointLifecycle,
         HermesInterfacesLifecycle,
         PodmanRuntime,
+        ProxyPolicyLifecycle,
         ToolsObservabilityLifecycle,
         WebSearchLifecycle,
     }
@@ -872,14 +872,12 @@ mod tests {
                 v0_source: "docs/reference/commands.mdx onboarding configuration",
                 v0_inputs: &["NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
                 v0_behavior: "preserve an explicit sandbox proxy while requiring policy review for private destinations",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-NETWORK-PROXY-TRUST",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12045,
-                    "proxy and explicit network policy parse but generated egress qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::FullFeatured,
+                    Qualification::ProxyPolicyLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::FullFeatured),
             },
             Scenario {
                 id: "V0-NETWORK-TRUSTED-PRIVATE-HOSTS",
@@ -1503,6 +1501,10 @@ mod tests {
                     "10.200.0.1"
                 );
                 assert_eq!(
+                    value["spec"]["sandboxes"][0]["network"]["proxy"]["management"],
+                    "external"
+                );
+                assert_eq!(
                     value["spec"]["sandboxes"][0]["network"]["proxy"]["port"],
                     3128
                 );
@@ -1623,6 +1625,20 @@ mod tests {
                 assert!(
                     include_str!("../../nemoclaw-e2e/tests/remote_service.rs").contains(
                         "async fn managed_pi_model_lifecycle_preserves_data_without_generation"
+                    )
+                );
+            }
+            Qualification::ProxyPolicyLifecycle => {
+                assert!(deployment.contains(
+                    "async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent"
+                ));
+                assert!(
+                    include_str!("../../nemoclaw-sdk/tests/network_config.rs")
+                        .contains("fn explicit_policy_and_proxy_survive_yaml_and_compilation")
+                );
+                assert!(
+                    include_str!("../../nemoclaw-e2e/tests/openshell.rs").contains(
+                        "async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift"
                     )
                 );
             }
@@ -1809,8 +1825,8 @@ mod tests {
                 .iter()
                 .filter(|scenario| scenario.disposition == DispositionKind::Representable)
                 .count(),
-            9
+            10
         );
-        assert_eq!(gaps.len(), 38);
+        assert_eq!(gaps.len(), 37);
     }
 }
