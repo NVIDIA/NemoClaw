@@ -48,6 +48,7 @@ module.GATEWAY_RECOVERY_REQUEST_PATH = (
 module.GATEWAY_RECOVERY_WAITING_PATH = (
     module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-waiting"
 )
+module._self_process_identity = lambda: (321, 654)
 module.ROOT_UID = os.geteuid()
 module.ROOT_GID = os.getegid()
 module.NEMOCLAW_HOME.mkdir(mode=0o755)
@@ -1069,7 +1070,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
     expect(result.stdout).toContain("RECOVERY_REQUEST:present");
     const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
-    expect(readFileSync(requestPath, "utf8")).toBe(`v1 ${"c".repeat(64)}\n`);
+    expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"c".repeat(64)} 321 654\n`);
     expect(lstatSync(requestPath).mode & 0o777).toBe(0o444);
   });
 
@@ -1119,7 +1120,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('"disposition":"not-required"');
     const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
-    expect(readFileSync(requestPath, "utf8")).toBe(`v1 ${"e".repeat(64)}\n`);
+    expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"e".repeat(64)} 321 654\n`);
   });
 
   it("reports false when no gateway recovery generation appears", () => {

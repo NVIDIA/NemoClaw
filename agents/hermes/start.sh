@@ -2949,9 +2949,10 @@ launch_hermes_gateway_current_user() {
 # held until the privileged recovery transaction has restored its cron gate;
 # other failures propagate to OpenShell unchanged.
 readonly HERMES_SERVICE_RESTART_STATUS=75
+readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30
 
 hermes_gateway_recovery_request_value() {
-  local generation metadata request
+  local extra generation metadata request requester_pid requester_start version
   if [ ! -e "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ] \
     && [ ! -L "$HERMES_GATEWAY_RECOVERY_REQUEST_FILE" ]; then
     printf '%s\n' absent
@@ -2977,10 +2978,8 @@ hermes_gateway_recovery_request_value() {
     echo "[SECURITY] Hermes gateway recovery request is unreadable" >&2
     return 1
   }
-  case "$request" in
-    "v1 "*) generation="${request#v1 }" ;;
-    *) generation= ;;
-  esac
+  read -r version generation requester_pid requester_start extra <<<"$request"
+  [ "$version" = v2 ] || generation=
   if [ "${#generation}" -ne 64 ]; then
     echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
     return 1
@@ -2991,7 +2990,69 @@ hermes_gateway_recovery_request_value() {
       return 1
       ;;
   esac
+  case "$requester_pid" in
+    '' | 0 | 1 | *[!0-9]*)
+      echo "[SECURITY] Hermes gateway recovery requester identity is invalid" >&2
+      return 1
+      ;;
+  esac
+  case "$requester_start" in
+    '' | *[!0-9]*)
+      echo "[SECURITY] Hermes gateway recovery requester identity is invalid" >&2
+      return 1
+      ;;
+  esac
+  if [ -n "$extra" ]; then
+    echo "[SECURITY] Hermes gateway recovery request is invalid" >&2
+    return 1
+  fi
   printf '%s\n' "$request"
+}
+
+hermes_recovery_requester_start_time() {
+  local pid="$1"
+  local proc_stat stat_path stat_suffix start_time
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 2 ;;
+  esac
+  stat_path="/proc/${pid}/stat"
+  [ -e "$stat_path" ] || return 1
+  [ -r "$stat_path" ] || return 2
+  if ! IFS= read -r proc_stat <"$stat_path"; then
+    [ -e "$stat_path" ] || return 1
+    return 2
+  fi
+  stat_suffix="${proc_stat##*) }"
+  start_time="$(awk '{print $20}' <<<"$stat_suffix")"
+  case "$start_time" in
+    '' | *[!0-9]*) return 2 ;;
+  esac
+  printf '%s' "$start_time"
+}
+
+wait_for_hermes_recovery_requester_exit() {
+  local requester_pid="$1"
+  local requester_start="$2"
+  local attempt observation_status observed_start
+
+  attempt=0
+  while [ "$attempt" -lt "$HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS" ]; do
+    observation_status=0
+    observed_start="$(hermes_recovery_requester_start_time "$requester_pid" 2>/dev/null)" \
+      || observation_status=$?
+    if [ "$observation_status" -eq 1 ]; then
+      return 0
+    fi
+    if [ "$observation_status" -eq 0 ] \
+      && [ "$observed_start" != "$requester_start" ]; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "[SECURITY] Hermes gateway recovery controller did not exit after publishing its request" >&2
+  return 1
 }
 
 publish_hermes_gateway_recovery_generation() {
@@ -3016,17 +3077,16 @@ publish_hermes_gateway_recovery_generation() {
 }
 
 wait_for_hermes_gateway_recovery_request() {
-  local current
+  local current request_generation requester_pid requester_start version
   publish_hermes_gateway_recovery_generation || return 1
   echo "[gateway] Hermes gateway stopped cleanly; awaiting gated host recovery" >&2
   while :; do
     current="$(hermes_gateway_recovery_request_value)" || return 1
-    if [ "$current" = "v1 ${HERMES_GATEWAY_RECOVERY_GENERATION}" ]; then
+    read -r version request_generation requester_pid requester_start <<<"$current"
+    if [ "$version" = v2 ] \
+      && [ "$request_generation" = "$HERMES_GATEWAY_RECOVERY_GENERATION" ]; then
+      wait_for_hermes_recovery_requester_exit "$requester_pid" "$requester_start" || return $?
       echo "[gateway] Gated host recovery requested; relaunching under the existing OpenShell entrypoint" >&2
-      # The privileged controller publishes the request immediately before it
-      # flushes its receipt and exits. Give that exec session one polling
-      # interval to finish before gateway relaunch can invalidate it.
-      sleep 1
       return 0
     fi
     sleep 1

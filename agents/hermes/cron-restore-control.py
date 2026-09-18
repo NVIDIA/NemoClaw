@@ -459,11 +459,33 @@ def _wait_for_gateway_recovery_generation() -> str | None:
         time.sleep(POLL_SECONDS)
 
 
-def _publish_gateway_recovery_request(generation: str) -> None:
+def _self_process_identity() -> tuple[int, int]:
+    """Return the controller PID and Linux process start time."""
+    pid = os.getpid()
+    try:
+        raw = Path("/proc/self/stat").read_text(encoding="ascii")
+    except OSError as error:
+        raise ControlError("Hermes recovery controller identity is unavailable") from error
+    closing_paren = raw.rfind(")")
+    fields = raw[closing_paren + 2 :].split() if closing_paren >= 0 else []
+    try:
+        start_time = int(fields[19])
+    except (IndexError, ValueError) as error:
+        raise ControlError("Hermes recovery controller identity is invalid") from error
+    if pid <= 1 or start_time < 0:
+        raise ControlError("Hermes recovery controller identity is invalid")
+    return pid, start_time
+
+
+def _publish_gateway_recovery_request(
+    generation: str, requester_pid: int, requester_start_time: int
+) -> None:
     """Publish one root-owned request after recovery gating is durable."""
     runtime_root = GATEWAY_RECOVERY_REQUEST_PATH.parent
     _require_secure_directory(runtime_root, "NemoClaw runtime root")
-    payload = f"v1 {generation}\n".encode("ascii")
+    payload = f"v2 {generation} {requester_pid} {requester_start_time}\n".encode(
+        "ascii"
+    )
     descriptor = -1
     staged_path: Path | None = None
     try:
@@ -1014,7 +1036,10 @@ def prepare_recovery() -> None:
         drain_acquired = _prepare_owned_drain() is not None
         generation = _wait_for_gateway_recovery_generation()
         if generation is not None:
-            _publish_gateway_recovery_request(generation)
+            requester_pid, requester_start_time = _self_process_identity()
+            _publish_gateway_recovery_request(
+                generation, requester_pid, requester_start_time
+            )
         _prepare_recovery_receipt(drain_acquired, generation is not None)
 
 
