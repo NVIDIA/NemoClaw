@@ -21,6 +21,7 @@ import {
   hermesTurnIndex,
   hermesMessagesAfter,
   hermesTranscriptRoute,
+  applyHermesSocketObservations,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -290,6 +291,76 @@ test("live Hermes transcript polls cannot reuse a completed-turn URL", () => {
     hermesTranscriptRoute("saved-real", "profile real", 2),
   );
   assert.throws(() => hermesTranscriptRoute("saved-real", "profile-real", 0), /poll identity/u);
+});
+
+test("in-page Hermes socket observations preserve real PTY lifecycle evidence", () => {
+  const state = createHermesPtyState();
+  const channel = "actual-pty";
+  const ptyUrl = `ws://127.0.0.1:49152/api/pty?channel=${channel}`;
+  const eventsUrl = `ws://127.0.0.1:49152/api/events?channel=${channel}`;
+  const event = (type: string, seq: number, payload?: object) =>
+    JSON.stringify({
+      method: "event",
+      params: {
+        type,
+        session_id: "runtime-real",
+        seq,
+        ...(payload === undefined ? {} : { payload }),
+      },
+    });
+  applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+    overflow: false,
+    records: [
+      { kind: "open", url: ptyUrl },
+      { kind: "open", url: eventsUrl },
+      { kind: "message", url: ptyUrl },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("session.info", 1, {
+          version: "0.21.1",
+          lazy: false,
+          running: false,
+          stored_session_id: "saved-real",
+          profile_name: "profile-real",
+        }),
+      },
+    ],
+  });
+  state.assertHealthy();
+  assert.equal(state.usable(), true);
+  const mark = state.markTurn();
+  applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+    overflow: false,
+    records: [
+      { kind: "message", url: eventsUrl, text: event("message.start", 2) },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("message.complete", 3, { status: "complete", text: "done" }),
+      },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("session.info", 4, {
+          version: "0.21.1",
+          lazy: false,
+          running: false,
+          stored_session_id: "saved-real",
+          profile_name: "profile-real",
+        }),
+      },
+    ],
+  });
+  assert.equal(state.settledAfter(mark), true);
+  assert.throws(
+    () =>
+      applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+        overflow: true,
+        records: [],
+      }),
+    /exceeded its bound/u,
+  );
 });
 
 test("closing one same-channel PTY connection preserves the remaining live connection", () => {
