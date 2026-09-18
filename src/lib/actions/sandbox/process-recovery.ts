@@ -367,10 +367,20 @@ async function collectOpenClawRuntimeFailureLogs(
   deps: OpenClawPostRestoreDoctorDeps,
 ): Promise<string[]> {
   try {
+    const probeUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
     const result = await executeOpenClawDoctorGateCommand(
       deps,
       sandboxName,
-      "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+      [
+        `probe_url=${probeUrl}`,
+        'ambient_code="$(curl -so /dev/null -w \'%{http_code}\' --max-time 3 "$probe_url" 2>/dev/null)"',
+        'ambient_status="$?"',
+        "direct_code=\"$(curl --noproxy '*' -so /dev/null -w '%{http_code}' --max-time 3 \"$probe_url\" 2>/dev/null)\"",
+        'direct_status="$?"',
+        'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
+        "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
+        "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+      ].join("; "),
       15_000,
       runtimeSelection,
     );
@@ -1077,7 +1087,7 @@ export async function finishOpenClawPostRestoreDoctor(
   const logDetail = [
     ...(runtimeFailureLogs.length > 0
       ? [
-          `Recent redacted OpenClaw gateway log:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
+          `Recent redacted OpenClaw runtime diagnostics:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
         ]
       : []),
     ...(failureLogs.length > 0
