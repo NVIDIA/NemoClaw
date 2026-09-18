@@ -67,6 +67,25 @@ class ImageBuilds(unittest.TestCase):
         self.assertEqual(set(targets), {"ollama-proxy"})
         self.assertEqual(targets["ollama-proxy"]["dockerfile"], "image/ollama-proxy/Dockerfile")
 
+    def test_proxy_and_its_tests_use_the_selected_platform(self):
+        for platform in ("linux/arm64", "linux/amd64"):
+            targets = self.plan("ollama-proxy", "proxy-tests", platform=platform)["target"]
+            for target in targets.values():
+                self.assertEqual(target["platforms"], [platform])
+
+    def test_builds_require_an_explicit_platform(self):
+        environment = os.environ.copy()
+        environment.pop("AGENT_PLATFORM", None)
+        result = subprocess.run(
+            ["docker", "buildx", "bake", "--print", "agents"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AGENT_PLATFORM", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

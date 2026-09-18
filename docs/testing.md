@@ -57,12 +57,12 @@ A denied license or source requires reviewing the dependency and policy; do not 
 ## Image Source Checks
 
 Use the [agent image build prerequisites](build.md#build-agent-images) and host Python 3.12 or newer for the target-selection test.
-From the repository root:
+For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 python3 -B -m unittest discover -s image -p test_builds.py
-docker buildx bake --check agents ollama-proxy
-docker buildx bake check
+AGENT_PLATFORM=linux/arm64 docker buildx bake --check agents ollama-proxy
+AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.

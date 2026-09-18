@@ -133,9 +133,9 @@ Follow the [agent image build prerequisites](build.md#build-agent-images), then 
 
 ```sh
 # On Linux ARM64:
-docker buildx bake openclaw --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 # For Hermes:
-docker buildx bake hermes --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load
 # On Linux AMD64:
 AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load
 ```
@@ -224,10 +224,10 @@ OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completion
 For Pi, omit provider `api` and supply `piModel` metadata when the model is absent from its registry; see the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
-Build the proxy image from the repository root:
+Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
 
 ```sh
-docker buildx bake ollama-proxy --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load
 docker image inspect nc-fabric:ollama-proxy --format '{{index .RepoDigests 0}}'
 ```
 

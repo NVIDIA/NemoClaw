@@ -419,7 +419,7 @@ The explicit Hermes agent probe invokes the already-running Fabric runtime with 
 The probe does not extend the Fabric conversation or store a Responses continuation; native session records may remain.
 Apply checks configuration and readiness without invoking this probe.
 Managed support does not establish that a particular model has enough context or reliable tool behavior.
-Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `docker buildx bake hermes --load` and use its immutable digest.
+Follow the [image prerequisites](inference.md#build-an-image-with-the-configuration-interface), then build with `AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load` and use its immutable digest.
 Existing images and native state are not automatically migrated; use a fresh deployment UID and state directory when switching from the embedded Hermes adapter.
 
 ## Pi Model Selection
@@ -474,7 +474,7 @@ Existing sandbox images are immutable, so use a separate deployment to move from
 The [Pi example](../examples/fabric-pi.yaml) includes explicit custom-model metadata.
 
 ```sh
-docker buildx bake pi --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake pi --load
 python3 tools/fabric-adapter-experiment.py --harness pi
 python3 tools/fabric-adapter-experiment.py --harness pi --pi-catalog
 ```
@@ -497,7 +497,7 @@ Changing YAML alone does not migrate agent files or conversations.
 Build a local Linux ARM64 image with:
 
 ```sh
-docker buildx bake openclaw --load
+AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 ```
 
 The [agent image builder](build.md#build-agent-images) runs the pinned toolchains inside Docker.
@@ -514,7 +514,7 @@ The adapter preserves unrelated native configuration and rejects conflicts in de
 With the [offline fixture prerequisites](testing/fixtures.md#inference-api-fixtures), run from the repository root:
 
 ```sh
-docker buildx bake check
+AGENT_PLATFORM=linux/arm64 docker buildx bake check
 python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inference-api openai-responses
 ```
 

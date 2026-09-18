@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeArtifact {
-    #[serde(default = "default_platform")]
     pub platform: String,
     pub name: String,
     pub image: String,
@@ -13,10 +12,6 @@ pub struct RuntimeArtifact {
     pub files: Vec<String>,
     pub downloads: BTreeMap<String, Download>,
 }
-fn default_platform() -> String {
-    "linux_arm64".into()
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Download {
