@@ -107,6 +107,7 @@ export interface TargetDefinition {
   environment: TargetEnvironment;
   expectedStateId: string;
   configExport: ConfigExportContract;
+  suiteIds: string[];
   requiredSecrets: string[];
   gatewayRuntimes: E2eGatewayRuntimeSupport;
 }

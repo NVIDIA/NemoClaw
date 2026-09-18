@@ -11,11 +11,7 @@ import {
 } from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import {
-  buildGatewayInferenceGetArgs,
-  parseGatewayInference,
-  planInferenceRouteReconcile,
-} from "../../inference/config";
+import { planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -60,6 +56,7 @@ import {
 import {
   captureLaunchReadiness,
   createBoundLaunchReadinessDeps,
+  createLaunchReadinessInferenceRouteObserver,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
@@ -649,20 +646,6 @@ class LaunchReadinessPolicyObservationError extends Error {
   }
 }
 
-function reportsInferenceNotConfigured(output: string): boolean {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split("\n");
-  let inGatewayInference = false;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGatewayInference = true;
-      continue;
-    }
-    if (inGatewayInference && /^\S.*:$/.test(line)) return false;
-    if (inGatewayInference && /^Not configured$/i.test(line.trim())) return true;
-  }
-  return false;
-}
-
 async function captureLaunchIdentity(
   sandboxName: string,
   gatewayName: string,
@@ -753,30 +736,31 @@ async function captureLaunchIdentity(
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
   const inferenceGetStartedAt = performance.now();
-  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  let inferenceResult: Awaited<
+    ReturnType<NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]>
+  >;
   try {
-    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-      buildGatewayInferenceGetArgs(gatewayName),
-    );
+    const observer =
+      deps.inferenceRouteObserver ??
+      createLaunchReadinessInferenceRouteObserver(
+        deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
+      );
+    inferenceResult = await observer.observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+    });
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw error;
   } finally {
     recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
   }
-  if (inferenceResult.status !== 0) {
+  if (!inferenceResult.ok) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw new LaunchReadinessEvidenceError();
   }
-  let liveInference: ReturnType<typeof parseGatewayInference>;
-  let liveInferenceAbsent: boolean;
-  try {
-    liveInference = parseGatewayInference(inferenceResult.output);
-    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
-  } catch (error) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw error;
-  }
+  const liveInference =
+    inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
+  const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
   if (inference.kind === "configured") {
     if (!liveInference && !liveInferenceAbsent) {
       recordLaunchReadinessObservationFailure(deps, "inference-get");

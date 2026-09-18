@@ -421,6 +421,14 @@ the Hermes agent type, immutable managed image, hosted route, effective policy, 
 credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The scenario verifies the export failure before restoring the registry.
 
+The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
+Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
+the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+credential reference, and independently observed effective policy.
+The fixture compares the registry before and after export, and state validation confirms that the
+sandbox remains ready after the read-only command.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
