@@ -66,10 +66,8 @@ import {
   runOllamaPullScenario,
 } from "../support/onboard-selection-test-helpers.js";
 
-const CREDENTIAL_RETRY_PROMPT =
-  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
-const CREDENTIAL_RETRY_PROMPT_RE =
-  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const CREDENTIAL_RETRY_PROMPT = "  Options: retry, back, exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE = /Options: retry, back, exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
