@@ -522,6 +522,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
       // Exact #11251 template after immutable stable-override validation.
       "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+      // Exact #12076 template with digest-backed managed user-local install ownership.
+      "9e5f1b67cb1d3bad223607967c639725badafb1ffd4dbc4cef33f2a1d9c04c1f",
     ],
     manifests: [
       {
