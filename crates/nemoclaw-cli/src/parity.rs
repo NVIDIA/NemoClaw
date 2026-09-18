@@ -21,9 +21,10 @@ mod tests {
     const ISSUE_12036: &str = "https://github.com/NVIDIA/NemoClaw/issues/12036";
     const ISSUE_12037: &str = "https://github.com/NVIDIA/NemoClaw/issues/12037";
     const ISSUE_12038: &str = "https://github.com/NVIDIA/NemoClaw/issues/12038";
-    const ISSUE_12039: &str = "https://github.com/NVIDIA/NemoClaw/issues/12039";
     const ISSUE_12040: &str = "https://github.com/NVIDIA/NemoClaw/issues/12040";
     const ISSUE_12042: &str = "https://github.com/NVIDIA/NemoClaw/issues/12042";
+    const ISSUE_12044: &str = "https://github.com/NVIDIA/NemoClaw/issues/12044";
+    const ISSUE_12045: &str = "https://github.com/NVIDIA/NemoClaw/issues/12045";
 
     // Independent source catalogs keep the coverage assertion from merely
     // comparing the scenario table with itself. Public flags come from
@@ -239,8 +240,18 @@ mod tests {
     enum Evidence {
         Authoring(AuthoringCase),
         Fixture(FixtureCase),
+        QualifiedFixture(FixtureCase, Qualification),
         Mutation(Mutation),
         None,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Qualification {
+        DashboardLifecycle,
+        GatewayEndpointLifecycle,
+        PodmanRuntime,
+        ToolsObservabilityLifecycle,
+        WebSearchLifecycle,
     }
 
     #[derive(Clone, Copy)]
@@ -677,14 +688,12 @@ mod tests {
                 v0_source: "src/lib/onboard/command-support.ts; docs/get-started/quickstart.mdx runtime section",
                 v0_inputs: &["NEMOCLAW_GATEWAY_RUNTIME"],
                 v0_behavior: "select Docker or native Podman for managed gateway and sandbox execution",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-RUNTIME-PODMAN",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
-                    "runtime provider intent parses but generated host qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::Podman,
+                    Qualification::PodmanRuntime,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Podman),
             },
             Scenario {
                 id: "V0-RUNTIME-GPU-CONTROLS",
@@ -749,14 +758,12 @@ mod tests {
                 v0_source: "src/lib/onboard/context.ts gateway port environment controls",
                 v0_inputs: &["NEMOCLAW_GATEWAY_PORT"],
                 v0_behavior: "choose the local gateway endpoint port",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-RUNTIME-GATEWAY-PORT",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
-                    "V1 parses an explicit gateway endpoint port but generated lifecycle qualification remains downstream",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::Podman,
+                    Qualification::GatewayEndpointLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Podman),
             },
             Scenario {
                 id: "V0-HOST-MOUNTS",
@@ -796,14 +803,12 @@ mod tests {
                     "NEMOCLAW_TOOL_DISCLOSURE",
                 ],
                 v0_behavior: "preserve multi-agent model choices, explicit policy, tool presentation, and trace export",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-TOOLS-OBSERVABILITY",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
-                    "the combined shape parses but generated runtime qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::FullFeatured,
+                    Qualification::ToolsObservabilityLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::FullFeatured),
             },
             Scenario {
                 id: "V0-HERMES-PROVIDER-TOOLS",
@@ -839,14 +844,12 @@ mod tests {
                     "NEMOCLAW_DASHBOARD_PORT",
                 ],
                 v0_behavior: "publish the agent dashboard or control UI on an explicit host port",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-INTERFACES-DASHBOARD",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
-                    "the interface shape parses but generated publication qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::Dashboard,
+                    Qualification::DashboardLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::Dashboard),
             },
             Scenario {
                 id: "V0-INTERFACES-HERMES-API",
@@ -859,7 +862,7 @@ mod tests {
                 gap: gap(
                     "GAP-V0-INTERFACES-HERMES-API",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
+                    ISSUE_12044,
                     "the Hermes API interface parses but generated host publication qualification is pending",
                 ),
                 evidence: Evidence::Fixture(FixtureCase::HermesInterfaces),
@@ -875,7 +878,7 @@ mod tests {
                 gap: gap(
                     "GAP-V0-NETWORK-PROXY-TRUST",
                     Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
+                    ISSUE_12045,
                     "proxy and explicit network policy parse but generated egress qualification is pending",
                 ),
                 evidence: Evidence::Fixture(FixtureCase::FullFeatured),
@@ -906,14 +909,12 @@ mod tests {
                 v0_source: "docs/get-started/quickstart.mdx optional integrations",
                 v0_inputs: &["NEMOCLAW_WEB_SEARCH_PROVIDER", "BRAVE_API_KEY"],
                 v0_behavior: "attach a credentialed web-search provider to selected agents",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-INTEGRATION-WEB-SEARCH",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12039,
-                    "the integration parses but generated credential and runtime qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::WebSearch,
+                    Qualification::WebSearchLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::WebSearch),
             },
             Scenario {
                 id: "V0-INTEGRATION-TAVILY",
@@ -1299,6 +1300,11 @@ mod tests {
             });
             return serde_saphyr::to_string(&value).unwrap().into_bytes();
         }
+        if matches!(case, FixtureCase::Podman) {
+            let mut value: Value = serde_saphyr::from_slice(source).unwrap();
+            value["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17891");
+            return serde_saphyr::to_string(&value).unwrap().into_bytes();
+        }
         let Some(credential) = credential else {
             return source.to_vec();
         };
@@ -1461,6 +1467,16 @@ mod tests {
                     1
                 );
                 assert_eq!(
+                    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["network_policies"]
+                        ["documentation"]["endpoints"][0]["host"],
+                    "docs.example.com"
+                );
+                assert_eq!(
+                    value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["filesystem_policy"]
+                        ["include_workdir"],
+                    false
+                );
+                assert_eq!(
                     value["spec"]["harnesses"]["assistant"]["observability"]["otlp"]["enabled"],
                     true
                 );
@@ -1526,13 +1542,18 @@ mod tests {
                 );
             }
             FixtureCase::Podman => {
+                assert_eq!(value["spec"]["gateway"]["management"], "managed");
+                assert_eq!(
+                    value["spec"]["gateway"]["engine"],
+                    "unix:///run/user/1000/podman/podman.sock"
+                );
                 assert_eq!(
                     value["spec"]["sandboxes"][0]["runtime"]["provider"],
                     "podman"
                 );
                 assert_eq!(
                     value["spec"]["gateway"]["endpoint"],
-                    "http://127.0.0.1:17681"
+                    "http://127.0.0.1:17891"
                 );
             }
             FixtureCase::WebSearch => {
@@ -1541,6 +1562,7 @@ mod tests {
                     value["spec"]["integrations"]["search"]["credential"]["env"],
                     "BRAVE_API_KEY"
                 );
+                assert_eq!(document.credential_names(), ["BRAVE_API_KEY"]);
             }
             FixtureCase::HermesInterfaces => {
                 assert_eq!(value["spec"]["sandboxes"][0]["harness"]["kind"], "hermes");
@@ -1551,6 +1573,56 @@ mod tests {
                 assert_eq!(
                     value["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["tui"]["enabled"],
                     true
+                );
+            }
+        }
+    }
+
+    fn assert_qualification(qualification: Qualification) {
+        let deployment = include_str!("../../nemoclaw-e2e/tests/deployment.rs");
+        match qualification {
+            Qualification::DashboardLifecycle => assert!(deployment.contains(
+                "async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift"
+            )),
+            Qualification::GatewayEndpointLifecycle => {
+                assert!(deployment.contains(
+                    "async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state"
+                ));
+                assert!(
+                    deployment
+                        .contains("document.spec.gateway.endpoint = fixture.endpoint.clone()")
+                );
+                assert!(deployment.contains("assert_eq!(exported, document)"));
+            }
+            Qualification::PodmanRuntime => {
+                assert!(
+                    include_str!("../../nemoclaw-sdk/tests/managed_podman.rs").contains(
+                        "fn managed_podman_selects_one_driver_and_mounts_the_declared_socket"
+                    )
+                );
+                assert!(
+                    include_str!("../../nemoclaw-e2e/tests/remote_service.rs").contains(
+                        "async fn managed_pi_model_lifecycle_preserves_data_without_generation"
+                    )
+                );
+            }
+            Qualification::ToolsObservabilityLifecycle => {
+                for test in [
+                    "async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent",
+                    "async fn execution_settings_cli_export_reapply_and_drift",
+                    "async fn multiple_agents_cli_export_reapply_and_policy_drift",
+                    "async fn tool_disclosure_cli_export_reapply_and_drift",
+                    "async fn observability_cli_export_reapply_and_drift",
+                ] {
+                    assert!(deployment.contains(test), "missing qualification {test}");
+                }
+            }
+            Qualification::WebSearchLifecycle => {
+                assert!(deployment.contains("async fn web_search_cli_export_reapply_and_destroy"));
+                assert!(
+                    include_str!("../../nemoclaw-e2e/tests/web_search.rs").contains(
+                        "async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_profile_drift"
+                    )
                 );
             }
         }
@@ -1654,6 +1726,17 @@ mod tests {
                     assert_fixture(case, &document);
                 }
                 (
+                    DispositionKind::Representable,
+                    Evidence::QualifiedFixture(case, qualification),
+                ) => {
+                    let bytes = fixture(case);
+                    let document = Document::parse(bytes.as_slice()).unwrap_or_else(|error| {
+                        panic!("{} must remain parser-accepted: {error}", scenario.id)
+                    });
+                    assert_fixture(case, &document);
+                    assert_qualification(qualification);
+                }
+                (
                     DispositionKind::ParseRejected | DispositionKind::ProposedShapeRejected,
                     Evidence::Mutation(mutation),
                 ) => {
@@ -1706,8 +1789,8 @@ mod tests {
                 .iter()
                 .filter(|scenario| scenario.disposition == DispositionKind::Representable)
                 .count(),
-            3
+            8
         );
-        assert_eq!(gaps.len(), 44);
+        assert_eq!(gaps.len(), 39);
     }
 }
