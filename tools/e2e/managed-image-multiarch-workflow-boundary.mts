@@ -89,6 +89,29 @@ function requireFragments(
   }
 }
 
+function requireExecutableCommand(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  command: string,
+): void {
+  if (!step) return;
+  let heredocDelimiter: string | undefined;
+  let found = false;
+
+  for (const line of text(step.run).split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (heredocDelimiter) {
+      if (trimmed === heredocDelimiter) heredocDelimiter = undefined;
+      continue;
+    }
+    if (trimmed === command) found = true;
+    const heredoc = line.match(/<<-?\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
+    heredocDelimiter = heredoc?.[1] ?? heredoc?.[2] ?? heredoc?.[3];
+  }
+
+  if (!found) errors.push(`${JOB_ID} step '${step.name}' must execute ${command}`);
+}
+
 function requireOrderedSteps(
   errors: string[],
   steps: readonly WorkflowStep[],
@@ -259,11 +282,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
   requireFragments(errors, policyBoundary, [
     "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
-    "npm run build:policy-boundary",
     "nemoclaw/dist/shared/openshell-policy-boundary.cjs",
     "nemoclaw/dist/shared/sandbox-name.cjs",
     '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
   ]);
+  requireExecutableCommand(errors, policyBoundary, "npm run build:policy-boundary");
   if (
     ["npm run build:cli", "npm --prefix nemoclaw run build"].some((command) =>
       text(policyBoundary?.run).includes(command),

@@ -118,7 +118,6 @@ describe("protected managed-image runtime workflow", () => {
   });
 
   it.each([
-    ["npm run build:policy-boundary", "npm run build:cli"],
     ["nemoclaw/dist/shared/openshell-policy-boundary.cjs", "nemoclaw/dist/shared/missing.cjs"],
     ["nemoclaw/dist/shared/sandbox-name.cjs", "nemoclaw/dist/shared/missing.cjs"],
   ])("rejects a shared boundary step without %s", (required, replacement) => {
@@ -128,6 +127,19 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       `managed-image-multiarch-startup step 'Build shared policy boundary' must include ${required}`,
+    );
+  });
+
+  it.each([
+    ["a commented command", "# npm run build:policy-boundary"],
+    ["heredoc data", "cat <<'EOF'\nnpm run build:policy-boundary\nEOF"],
+  ])("rejects %s in place of the shared boundary build", (_description, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace("npm run build:policy-boundary", replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup step 'Build shared policy boundary' must execute npm run build:policy-boundary",
     );
   });
 
