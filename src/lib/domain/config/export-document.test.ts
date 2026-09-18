@@ -244,4 +244,61 @@ describe("export config builder", () => {
       endpoint: "https://api.openai.com/v1",
     });
   });
+
+  it.each([
+    { label: "default ports", daemonPort: 11_434, proxyPort: 11_435 },
+    { label: "custom ports", daemonPort: 21_434, proxyPort: 21_435 },
+  ])(
+    "maps attached Ollama with $label into the accepted v1alpha1 shape (#12012)",
+    ({ daemonPort, proxyPort }) => {
+      const model = "qwen3.5:9b";
+      const result = buildExportConfig(
+        {
+          ...source,
+          inference: {
+            provider: "ollama-local",
+            model,
+            api: "openai-completions",
+            overrides: { contextWindow: 32_768, maxTokens: 4096 },
+            serving: {
+              backend: "ollama",
+              daemon: { management: "external", hostPort: daemonPort },
+              proxy: { management: "nemoclaw", hostPort: proxyPort },
+              model: { servedName: model, digest },
+            },
+          },
+        } as unknown as VerifiedExportSource,
+        {
+          documentName: alphaDocumentName,
+          documentUid: firstUid,
+        },
+      );
+
+      expect(result.spec.inferenceProviders).toEqual([
+        {
+          name: "local",
+          provider: "openai",
+          api: "openai-completions",
+          management: "external",
+          endpoint: `http://127.0.0.1:${daemonPort}/v1`,
+          ollamaProxy: {
+            management: "managed",
+            engine: "unix:///var/run/docker.sock",
+            endpoint: `http://host.openshell.internal:${proxyPort}/v1`,
+            model: {
+              management: "external",
+              digest: "a".repeat(64),
+            },
+          },
+        },
+      ]);
+      expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
+      expect(result.spec.inferenceProviders[0]!.ollamaProxy).not.toHaveProperty("image");
+      expect(result.spec.sandboxes[0]!.agents[0]!.inference.routes[0]).toEqual({
+        name: "primary",
+        providerRef: "local",
+        overrides: { model, contextWindow: 32_768, maxTokens: 4096 },
+      });
+    },
+  );
 });

@@ -8,7 +8,9 @@ import {
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
 import os from "node:os";
+import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
@@ -51,9 +53,9 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
   };
 }
 
-function mockOllamaSource(model: string = "qwen3.5:9b") {
+function mockOllamaSource(model: string = "qwen3.5:9b", environment: NodeJS.ProcessEnv = {}) {
   vi.spyOn(os, "platform").mockReturnValue("linux");
-  const { source, observed } = ollamaSource(model);
+  const { source, observed } = ollamaSource(model, environment);
   mockSupportedLiveSource(3, 3, source);
   const effective = configuration();
   effective.policy.network_policies.api.endpoints = [
@@ -136,34 +138,81 @@ describe("attached Ollama export pipeline", () => {
       readProfile: () => Promise.reject({ code: 5 }),
     },
   ])(
-    "exports the $name binding without reading gateway credentials (#11857)",
+    "exports the $name binding without reading gateway credentials (#11857, #12012)",
     async ({ workspace, credentialEnv, readProfile, model = "qwen3.5:9b" }) => {
       const { source, probe, readCredential, localProvider } = mockOllamaSource(model);
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toMatchObject({
-        ok: false,
-        failure: {
-          kind: "observation",
-          findings: [
-            {
-              field: "spec.inferenceProviders",
-              category: "unsupported",
-              diagnostic:
-                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+      expect(document.spec.inferenceProviders).toEqual([
+        {
+          name: "local",
+          provider: "openai",
+          api: "openai-completions",
+          management: "external",
+          endpoint: "http://127.0.0.1:11439/v1",
+          ollamaProxy: {
+            management: "managed",
+            engine: "unix:///var/run/docker.sock",
+            endpoint: "http://host.openshell.internal:11440/v1",
+            model: {
+              management: "external",
+              digest: "a".repeat(64),
             },
-          ],
+          },
         },
+      ]);
+      expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]).toMatchObject({
+        providerRef: "local",
+        overrides: { model },
       });
+      expect(writeStdout.mock.calls[0]![0]).not.toContain("credential");
+      expect(writeStdout.mock.calls[0]![0]).not.toContain("image:");
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
-      expect(writeStdout).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves selected Ollama route tuning without exporting credentials (#12012)", async () => {
+    mockOllamaSource("qwen2.5:0.5b", {
+      NEMOCLAW_CONTEXT_WINDOW: "32768",
+      NEMOCLAW_MAX_TOKENS: "2048",
+      NEMOCLAW_REASONING: "true",
+      NEMOCLAW_REASONING_EFFORT: "medium",
+    });
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+      model: "qwen2.5:0.5b",
+      contextWindow: 32_768,
+      maxTokens: 2048,
+      reasoning: true,
+      reasoningEffort: "medium",
+    });
+    expect(document.spec.inferenceProviders[0]).not.toHaveProperty("credential");
+  });
+
+  it("refuses attached Ollama without retained workload authority (#12012)", async () => {
+    const { source } = mockOllamaSource();
+    source.workload = undefined;
+    expectExportRefusal(await exportLiveSource(), { category: "missing-provenance" });
+  });
+
+  it("refuses a stable proxy-port drift without publication (#12012)", async () => {
+    const { observed } = mockOllamaSource();
+    observed.serving.proxy.hostPort = 21_435;
+    vi.mocked(createOllamaExportProbe).mockReturnValue(ollamaProbe(observed));
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.inferenceProviders[].ollamaProxy",
+      category: "drifted",
+    });
+  });
 
   it.each([
     {

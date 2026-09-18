@@ -174,7 +174,7 @@ describe("managed vLLM export pipeline", () => {
             field: "spec.inferenceProviders",
             category: "unsupported",
             diagnostic:
-              "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+              "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
           },
         ],
       },
@@ -218,7 +218,7 @@ describe("managed vLLM export pipeline", () => {
             field: "spec.inferenceProviders",
             category: "unsupported",
             diagnostic:
-              "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+              "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
           },
         ],
       },
@@ -283,7 +283,7 @@ describe("managed vLLM export pipeline", () => {
               field: "spec.inferenceProviders",
               category: "unsupported",
               diagnostic:
-                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+                "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
             },
           ],
         },
