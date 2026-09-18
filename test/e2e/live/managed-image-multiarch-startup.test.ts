@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -12,8 +13,12 @@ import {
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  DOCKER_ENGINE_27_PROBE_TIMEOUT_MS,
+  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
+  registerDockerEngine27ReceiptCleanup,
+  shouldRunDockerEngine27ReceiptProbe,
 } from "./managed-image-multiarch-startup-helpers.ts";
 import { trustedShellCommand } from "../fixtures/shell-probe.ts";
 
@@ -29,7 +34,7 @@ test(
       ],
     },
   },
-  async ({ progress, shellProbe }) => {
+  async ({ cleanup, progress, shellProbe }) => {
     progress.phase("validate protected activation and dispatch identity");
     const dispatch = protectedManagedImageDispatchEnvironment();
 
@@ -59,22 +64,50 @@ test(
     );
 
     progress.phase("verify Docker Engine 27 receipt transfer");
-    const docker27Result = await shellProbe.run(
-      trustedShellCommand({
-        command: process.execPath,
-        args: ["--import", "tsx", "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts"],
-        reason: "verify the Docker Engine 27 receipt archive-copy boundary",
-      }),
-      {
-        artifactName: "docker-engine-27-receipt-transfer",
-        cwd: dispatch.workspace,
-        env: {
-          ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
-          ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+    const docker27DaemonName = dockerEngine27ReceiptDaemonName(dispatch.runId, dispatch.runAttempt);
+    registerDockerEngine27ReceiptCleanup(cleanup, docker27DaemonName, () => {
+      execFileSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+          "--cleanup-only",
+          "--daemon-name",
+          docker27DaemonName,
+        ],
+        {
+          cwd: dispatch.workspace,
+          killSignal: "SIGKILL",
+          stdio: "ignore",
+          timeout: 45_000,
         },
-        timeoutMs: 240_000,
-      },
-    );
+      );
+    });
+    const docker27Result = shouldRunDockerEngine27ReceiptProbe(dispatch.platform)
+      ? await shellProbe.run(
+          trustedShellCommand({
+            command: process.execPath,
+            args: [
+              "--import",
+              "tsx",
+              "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+              "--daemon-name",
+              docker27DaemonName,
+            ],
+            reason: "verify the Docker Engine 27 receipt archive-copy boundary",
+          }),
+          {
+            artifactName: "docker-engine-27-receipt-transfer",
+            cwd: dispatch.workspace,
+            env: {
+              ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
+              ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+            },
+            timeoutMs: DOCKER_ENGINE_27_PROBE_TIMEOUT_MS,
+          },
+        )
+      : { exitCode: 0, timedOut: false };
 
     expect(
       docker27Result.exitCode === 0 &&

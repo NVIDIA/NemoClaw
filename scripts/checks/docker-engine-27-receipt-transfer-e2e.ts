@@ -18,6 +18,17 @@ const DIND_IMAGE =
 const RECEIPT_IMAGE =
   "docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc";
 const RECEIPT_VOLUME_DIRECTORY = "/run/nemoclaw/managed-startup-receipt-transfer";
+const DAEMON_OWNER_LABEL = "io.nvidia.nemoclaw.e2e.docker27-receipt";
+export const DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS = 120_000;
+export const DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS = 30_000;
+export const DOCKER_ENGINE_27_READINESS_ATTEMPTS = 45;
+export const DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS = 5_000;
+export const DOCKER_ENGINE_27_READINESS_INTERVAL_MS = 1_000;
+export const DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS =
+  DOCKER_ENGINE_27_READINESS_ATTEMPTS *
+    (DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS + DOCKER_ENGINE_27_READINESS_INTERVAL_MS) +
+  DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS +
+  DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS;
 
 type CommandResult = {
   readonly error?: Error;
@@ -31,7 +42,37 @@ function runDocker(args: readonly string[]): CommandResult {
     encoding: "utf8",
     killSignal: "SIGKILL",
     maxBuffer: 8 * 1024 * 1024,
-    timeout: 240_000,
+    timeout: DOCKER_ENGINE_27_OPERATION_TIMEOUT_MS,
+  });
+  return {
+    ...(result.error ? { error: result.error } : {}),
+    status: result.status,
+    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? "",
+  };
+}
+
+function runDockerReadiness(args: readonly string[]): CommandResult {
+  const result = spawnSync("docker", [...args], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
+    timeout: DOCKER_ENGINE_27_READINESS_COMMAND_TIMEOUT_MS,
+  });
+  return {
+    ...(result.error ? { error: result.error } : {}),
+    status: result.status,
+    stderr: result.stderr ?? "",
+    stdout: result.stdout ?? "",
+  };
+}
+
+function runDockerCleanup(args: readonly string[]): CommandResult {
+  const result = spawnSync("docker", [...args], {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
+    timeout: DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS,
   });
   return {
     ...(result.error ? { error: result.error } : {}),
@@ -56,12 +97,12 @@ function requireCondition(condition: unknown, detail: string): asserts condition
   if (!condition) throw new Error(detail);
 }
 
-async function waitForDocker27(
-  innerDocker: (args: readonly string[]) => CommandResult,
-): Promise<void> {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    if (innerDocker(["info"]).status === 0) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+async function waitForDocker27(daemonName: string): Promise<void> {
+  for (let attempt = 0; attempt < DOCKER_ENGINE_27_READINESS_ATTEMPTS; attempt += 1) {
+    if (runDockerReadiness(["exec", daemonName, "docker", "info"]).status === 0) return;
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, DOCKER_ENGINE_27_READINESS_INTERVAL_MS),
+    );
   }
   throw new Error("Docker Engine 27 daemon did not become ready");
 }
@@ -127,9 +168,31 @@ function requireAbsent(result: CommandResult, resource: string): void {
   requireCondition(result.status !== 0, `${resource} remained after receipt-transfer cleanup`);
 }
 
-async function verifyDockerEngine27ReceiptTransfer(): Promise<void> {
+export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
+  const inspected = runDockerCleanup([
+    "container",
+    "inspect",
+    "--format",
+    `{{ index .Config.Labels "${DAEMON_OWNER_LABEL}" }}`,
+    daemonName,
+  ]);
+  if (inspected.status !== 0) {
+    requireCondition(
+      /No such (?:container|object)/iu.test(commandDetail(inspected)),
+      `could not inspect Docker Engine 27 daemon during cleanup: ${commandDetail(inspected)}`,
+    );
+    return;
+  }
+  requireCondition(
+    inspected.stdout.trim() === daemonName,
+    "refusing to remove a Docker Engine 27 daemon with mismatched ownership",
+  );
+  requireSuccess(runDockerCleanup(["rm", "-f", daemonName]), "remove Docker Engine 27 daemon");
+  requireAbsent(runDockerCleanup(["container", "inspect", daemonName]), "Docker Engine 27 daemon");
+}
+
+async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<void> {
   const suffix = randomUUID().replaceAll("-", "");
-  const daemonName = `nemoclaw-receipt-engine27-${suffix}`;
   const legacySeed = `nemoclaw-receipt-legacy-seed-${suffix}`;
   const legacyVolume = `nemoclaw-receipt-legacy-volume-${suffix}`;
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-receipt-engine27-"));
@@ -151,6 +214,8 @@ async function verifyDockerEngine27ReceiptTransfer(): Promise<void> {
         "--detach",
         "--name",
         daemonName,
+        "--label",
+        `${DAEMON_OWNER_LABEL}=${daemonName}`,
         "--env",
         "DOCKER_TLS_CERTDIR=",
         DIND_IMAGE,
@@ -158,7 +223,7 @@ async function verifyDockerEngine27ReceiptTransfer(): Promise<void> {
       ]),
       "start isolated Docker Engine 27 daemon",
     );
-    await waitForDocker27(innerDocker);
+    await waitForDocker27(daemonName);
     const engineVersion = requireSuccess(
       innerDocker(["version", "--format", "{{.Server.Version}}"]),
       "read isolated Docker version",
@@ -295,13 +360,28 @@ async function verifyDockerEngine27ReceiptTransfer(): Promise<void> {
     innerDocker(["rm", "-f", legacySeed]);
     innerDocker(["volume", "rm", legacyVolume]);
     if (successfulVolume) innerDocker(["volume", "rm", successfulVolume]);
-    runDocker(["rm", "-f", daemonName]);
+    cleanupDockerEngine27ReceiptDaemon(daemonName);
     fs.rmSync(fixtureRoot, { force: true, recursive: true });
   }
 }
 
+function parseDaemonName(args: readonly string[]): string {
+  const index = args.indexOf("--daemon-name");
+  const daemonName = index < 0 ? "" : String(args[index + 1] ?? "");
+  requireCondition(
+    /^nemoclaw-receipt-engine27-[a-z0-9-]{1,80}$/u.test(daemonName),
+    "Docker Engine 27 probe requires a safe owned daemon name",
+  );
+  return daemonName;
+}
+
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-  void verifyDockerEngine27ReceiptTransfer().catch((error: unknown) => {
+  const args = process.argv.slice(2);
+  const daemonName = parseDaemonName(args);
+  const operation = args.includes("--cleanup-only")
+    ? Promise.resolve().then(() => cleanupDockerEngine27ReceiptDaemon(daemonName))
+    : verifyDockerEngine27ReceiptTransfer(daemonName);
+  void operation.catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });
