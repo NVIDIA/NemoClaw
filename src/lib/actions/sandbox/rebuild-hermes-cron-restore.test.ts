@@ -599,6 +599,47 @@ describe("Hermes cron rebuild restore contract", () => {
     );
   });
 
+  it("reconciles one empty prepare-recover transport failure through its idempotent receipt", () => {
+    processMocks.executePrivilegedSandboxCommand
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: preparationReceipt("gate-prepared", { gateway_recovery_requested: false }),
+        stderr: "",
+      });
+
+    expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+      disposition: "gate-prepared",
+      gatewayRecoveryRequested: false,
+    });
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not hide a repeated empty prepare-recover transport failure", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed",
+    );
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["another nonzero status", { status: 2, stdout: "", stderr: "" }],
+    ["partial stdout", { status: 1, stdout: "partial receipt", stderr: "" }],
+  ])("does not reconcile %s as an ambiguous prepare-recover result", (_description, result) => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue(result);
+
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed",
+    );
+    expect(processMocks.executePrivilegedSandboxCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("composes the recovery transport budget from every controller phase (#7806)", () => {
     processMocks.executePrivilegedSandboxCommand.mockImplementation(
       (_sandboxName: string, argv: string[]) => {

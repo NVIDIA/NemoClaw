@@ -491,10 +491,12 @@ function parseCronRestoreControlError(stderr: string): { code: string; message: 
 
 class HermesCronRestoreControlFailure extends Error {
   readonly action: HermesCronRestoreAction;
+  readonly status: number;
+  readonly stdout: string;
   readonly stderr: string;
   readonly controlCode?: string;
 
-  constructor(action: HermesCronRestoreAction, stderr: string) {
+  constructor(action: HermesCronRestoreAction, status: number, stdout: string, stderr: string) {
     const controlError = parseCronRestoreControlError(stderr);
     const detail =
       controlError?.message ??
@@ -506,6 +508,8 @@ class HermesCronRestoreControlFailure extends Error {
     super(`Hermes cron ${action} failed${detail ? `: ${detail}` : ""}`);
     this.name = "HermesCronRestoreControlFailure";
     this.action = action;
+    this.status = status;
+    this.stdout = stdout;
     this.stderr = stderr;
     this.controlCode = controlError?.code;
   }
@@ -559,7 +563,7 @@ function executeCronRestoreControl(
     throw new Error(`Hermes cron ${action} transport was unavailable`);
   }
   if (result.status !== 0) {
-    throw new HermesCronRestoreControlFailure(action, result.stderr);
+    throw new HermesCronRestoreControlFailure(action, result.status, result.stdout, result.stderr);
   }
   return result.stdout;
 }
@@ -669,6 +673,16 @@ function isLegacyCronRestoreControl(
   );
 }
 
+function isAmbiguousPrepareRecoveryTransportFailure(error: unknown): boolean {
+  return (
+    error instanceof HermesCronRestoreControlFailure &&
+    error.action === "prepare-recover" &&
+    error.status === 1 &&
+    error.stdout === "" &&
+    error.stderr === ""
+  );
+}
+
 export function prepareHermesCronRestoreRecovery(
   sandboxName: string,
 ): HermesCronRestorePreparationOutcome {
@@ -677,7 +691,14 @@ export function prepareHermesCronRestoreRecovery(
     stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   } catch (error) {
     if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
-    throw error;
+    if (!isAmbiguousPrepareRecoveryTransportFailure(error)) throw error;
+
+    // The controller publishes its recovery request before it exits. Under
+    // Docker exec, the supervisor can consume that request and replace the
+    // gateway before the buffered status and receipt reach the host. Reconcile
+    // that ambiguous post-commit result once through prepare-recover's
+    // idempotent contract, then require an ordinary validated receipt.
+    stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   }
   return parseCronRestorePreparationReceipt(stdout);
 }
