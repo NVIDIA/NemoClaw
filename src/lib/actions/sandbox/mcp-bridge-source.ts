@@ -32,6 +32,19 @@ export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry)
   );
 }
 
+export function assertNoLegacyMcpSources(
+  sandboxName: string,
+  legacySources: Readonly<Record<string, McpSourceEntry>>,
+  operation: string,
+): void {
+  const legacyNames = Object.keys(legacySources).sort();
+  if (legacyNames.length === 0) return;
+  throw new McpBridgeError(
+    `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it before ${operation}.`,
+    2,
+  );
+}
+
 export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
