@@ -82,6 +82,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
     },
     async ({
       artifacts,
+      cleanup,
       configExportValidation,
       environment,
       host,
@@ -167,6 +168,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        cleanup,
         dcodeBaseImageReference,
         host,
         secrets,

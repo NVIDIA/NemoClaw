@@ -149,6 +149,8 @@ export interface ManagedStartupInference {
   readonly routeProvider: string;
   /** User-selected provider upstream of the managed inference route. */
   readonly upstreamProvider: string;
+  /** Exact managed-inference catalog preset, when onboarding selected one. */
+  readonly servingPreset?: string | null;
   readonly model: string;
   /** Sandbox-facing managed inference route (normally inference.local). */
   readonly routedBaseUrl: string;
@@ -512,6 +514,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_MODEL", "inference.model"),
     affordance("NEMOCLAW_INFERENCE_PROVIDER_ID", "inference.routeProvider"),
     affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
+    affordance("NEMOCLAW_SERVING_PRESET", "inference.servingPreset"),
     affordance("NEMOCLAW_PRIMARY_MODEL_REF", "inference.primaryModelRef"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
@@ -909,6 +912,7 @@ const PROFILE_KEYS = new Set([
 const INFERENCE_KEYS = new Set([
   "routeProvider",
   "upstreamProvider",
+  "servingPreset",
   "model",
   "routedBaseUrl",
   "upstreamEndpointUrl",
@@ -1981,6 +1985,12 @@ function validateInference(
     inference.upstreamProvider,
     "inference.upstreamProvider",
   );
+  const servingPreset =
+    inference.servingPreset === undefined
+      ? undefined
+      : inference.servingPreset === null
+        ? null
+        : requireBoundedString(inference.servingPreset, "inference.servingPreset");
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
@@ -2038,6 +2048,7 @@ function validateInference(
   return {
     routeProvider,
     upstreamProvider,
+    ...(servingPreset === undefined ? {} : { servingPreset }),
     model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,

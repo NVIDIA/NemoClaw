@@ -56,6 +56,7 @@ interface DockerFixturePaths {
   readonly apiKeyPath: string;
   readonly modelPath: string;
   readonly networkName: string;
+  readonly serverPort?: number;
 }
 
 export function createDockerFixture(
@@ -65,6 +66,11 @@ export function createDockerFixture(
   publishedHostIp = "127.0.0.1",
   publishedBindingCount = 0,
 ): DockerFixture {
+  const launchContract = {
+    ...contract(),
+    serve: { ...contract().serve, port: paths.serverPort ?? contract().serve.port },
+  };
+  const portKey = `${launchContract.serve.port}/tcp`;
   const effectivePublishedHostPort = publishedHostPort ?? (configuredHostPort || "49152");
   let networkId = NETWORK_ID;
   let networkPresent = false;
@@ -121,7 +127,7 @@ export function createDockerFixture(
         NetworkMode: paths.networkName,
         RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 },
         PortBindings: configuredHostPort
-          ? { "8081/tcp": [{ HostIp: "127.0.0.1", HostPort: configuredHostPort }] }
+          ? { [portKey]: [{ HostIp: "127.0.0.1", HostPort: configuredHostPort }] }
           : {},
         ReadonlyRootfs: !hardeningDrift,
         CapDrop: ["ALL"],
@@ -155,7 +161,7 @@ export function createDockerFixture(
           },
         },
         Ports: {
-          "8081/tcp":
+          [portKey]:
             startedOnce && publishedBindingCount > 0
               ? Array.from({ length: publishedBindingCount }, () => ({
                   HostIp: publishedHostIp,
@@ -421,7 +427,7 @@ export function createDockerFixture(
         running,
         status: running ? "running" : "created",
         transactionId: journal.transactionId,
-        command: [...buildLlamaCppRequestGuardCommandArgv(contract())],
+        command: [...buildLlamaCppRequestGuardCommandArgv(launchContract)],
         entrypoint: [LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH],
       };
     },

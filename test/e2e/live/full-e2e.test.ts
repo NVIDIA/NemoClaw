@@ -452,13 +452,15 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 }
 
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await repoNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "cleanup-nemoclaw-destroy").catch(
-    () => undefined,
-  );
+async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+  await repoNemoclaw(
+    host,
+    [SANDBOX_NAME, "destroy", "--yes"],
+    "pre-cleanup-nemoclaw-destroy",
+  ).catch(() => undefined);
   await sandbox
     .openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-sandbox-delete",
+      artifactName: "pre-cleanup-openshell-sandbox-delete",
       env: env(),
       timeoutMs: 60_000,
     })
@@ -466,7 +468,7 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
   await withOwnedFullE2eGateway(gateway, () =>
     sandbox
       .openshell(["gateway", "destroy", "-g", gateway.env.OPENSHELL_GATEWAY], {
-        artifactName: "cleanup-openshell-gateway-destroy",
+        artifactName: "pre-cleanup-openshell-gateway-destroy",
         env: env(),
         timeoutMs: 60_000,
       })
@@ -762,7 +764,7 @@ test(
       redactionValues: [hosted.apiKey],
       timeoutMs: 120_000,
     });
-    await cleanup(host, sandbox);
+    await preCleanup(host, sandbox);
     await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
 
     const coldOnboard = createColdOnboardCapture();
@@ -994,7 +996,12 @@ test(
       : null;
 
     progress.phase("remove full-E2E sandbox");
-    await cleanup(host, sandbox);
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "verify-cleanup-nemoclaw-destroy",
+      env: env(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
     const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
     expect(registryText).not.toContain(SANDBOX_NAME);
