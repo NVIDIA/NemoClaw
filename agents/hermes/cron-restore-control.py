@@ -39,7 +39,7 @@ SANDBOX_HOME = Path("/sandbox")
 NEMOCLAW_HOME = SANDBOX_HOME / ".nemoclaw"
 CONTROL_LOCK_PATH = Path("/run/nemoclaw/hermes-cron-restore-control.lock")
 GATEWAY_RECOVERY_REQUEST_PATH = Path(
-    "/run/nemoclaw/hermes-gateway-recovery-request"
+    "/tmp/nemoclaw-hermes-gateway-recovery/request"
 )
 GATEWAY_RECOVERY_WAITING_PATH = Path(
     "/tmp/nemoclaw-hermes-gateway-recovery-waiting"
@@ -477,12 +477,48 @@ def _self_process_identity() -> tuple[int, int]:
     return pid, start_time
 
 
+def _prepare_gateway_recovery_runtime_root(runtime_root: Path) -> None:
+    """Create the root-owned handoff directory that survives sandbox Landlock."""
+    try:
+        runtime_root.mkdir(mode=0o755)
+    except FileExistsError:
+        pass
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(runtime_root, flags)
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != ROOT_UID
+            or metadata.st_gid != ROOT_GID
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise ControlError("Hermes gateway recovery runtime metadata is unsafe")
+        os.fchmod(descriptor, 0o755)
+        if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o755:
+            raise ControlError("Hermes gateway recovery runtime metadata is unsafe")
+    except OSError as error:
+        raise ControlError("Hermes gateway recovery runtime is unavailable") from error
+    finally:
+        os.close(descriptor)
+
+
 def _publish_gateway_recovery_request(
     generation: str, requester_pid: int, requester_start_time: int
 ) -> None:
     """Publish one root-owned request after recovery gating is durable."""
     runtime_root = GATEWAY_RECOVERY_REQUEST_PATH.parent
-    _require_secure_directory(runtime_root, "NemoClaw runtime root")
+    _prepare_gateway_recovery_runtime_root(runtime_root)
     payload = f"v2 {generation} {requester_pid} {requester_start_time}\n".encode(
         "ascii"
     )

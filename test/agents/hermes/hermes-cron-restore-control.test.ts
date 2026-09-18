@@ -43,7 +43,7 @@ module.SANDBOX_HOME = module.HERMES_HOME.parent
 module.NEMOCLAW_HOME = module.SANDBOX_HOME / ".nemoclaw"
 module.CONTROL_LOCK_PATH = module.SANDBOX_HOME / "run" / "cron-restore.lock"
 module.GATEWAY_RECOVERY_REQUEST_PATH = (
-    module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-request"
+    module.SANDBOX_HOME / "recovery-run" / "hermes-gateway-recovery-request"
 )
 module.GATEWAY_RECOVERY_WAITING_PATH = (
     module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-waiting"
@@ -387,6 +387,21 @@ try:
         module._wait_for_release_disposition = fail_release
         fail_directory_sync_on(3)
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "prepare-handoff-world-writable":
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
+        handoff = module.GATEWAY_RECOVERY_REQUEST_PATH.parent
+        handoff.mkdir()
+        os.chmod(handoff, 0o777)
+        module.prepare_recovery()
+    elif scenario == "prepare-handoff-symlink":
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
+        target = module.SANDBOX_HOME / "recovery-run-target"
+        target.mkdir()
+        module.GATEWAY_RECOVERY_REQUEST_PATH.parent.symlink_to(
+            target,
+            target_is_directory=True,
+        )
+        module.prepare_recovery()
     elif scenario == "prepare-recovery-only":
         module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         module._load_gateway_modules = forbid_gateway_or_validation
@@ -633,6 +648,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "drain-unlink-sync-failure"
       | "recovery-unlink-sync-failure"
       | "rollback-publication-sync-failure"
+      | "prepare-handoff-world-writable"
+      | "prepare-handoff-symlink"
       | "prepare-recovery-only"
       | "prepare-matching"
       | "prepare-matching-sync-failure"
@@ -1069,9 +1086,26 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
     expect(result.stdout).toContain("RECOVERY_REQUEST:present");
-    const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
+    const requestRoot = path.join(root, "recovery-run");
+    const requestPath = path.join(requestRoot, "hermes-gateway-recovery-request");
     expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"c".repeat(64)} 321 654\n`);
+    expect(lstatSync(requestRoot).mode & 0o777).toBe(0o755);
     expect(lstatSync(requestPath).mode & 0o777).toBe(0o444);
+  });
+
+  it.each([
+    ["prepare-handoff-world-writable", "gateway recovery runtime metadata is unsafe"],
+    ["prepare-handoff-symlink", "gateway recovery runtime is unavailable"],
+  ] as const)("rejects an unsafe recovery handoff in %s", (scenario, message) => {
+    const result = runLifecycle(scenario);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+    expect(result.stdout).not.toContain('"action":"prepare-recover"');
+    expect(result.stdout).toContain("OWN_MARKER:present");
+    expect(result.stdout).toContain("RECOVERY_STATE:present");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
+    expect(result.stdout).toContain("CRON_VALIDATIONS:0");
   });
 
   it("keeps matching prepared recovery authority idempotent (#8472)", () => {
@@ -1119,7 +1153,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('"disposition":"not-required"');
-    const requestPath = path.join(root, "run", "hermes-gateway-recovery-request");
+    const requestPath = path.join(root, "recovery-run", "hermes-gateway-recovery-request");
     expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"e".repeat(64)} 321 654\n`);
   });
 

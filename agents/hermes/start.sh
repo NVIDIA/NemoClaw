@@ -326,7 +326,7 @@ fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 HERMES_STARTUP_READY_FILE="/run/nemoclaw/hermes-startup-ready"
-HERMES_GATEWAY_RECOVERY_REQUEST_FILE="/run/nemoclaw/hermes-gateway-recovery-request"
+HERMES_GATEWAY_RECOVERY_REQUEST_FILE="/tmp/nemoclaw-hermes-gateway-recovery/request"
 HERMES_GATEWAY_RECOVERY_WAITING_FILE="/tmp/nemoclaw-hermes-gateway-recovery-waiting"
 HERMES_RESTART_SEALED=0
 
