@@ -112,6 +112,8 @@ credentials.prompt = async (message) => {
 };
 runner.runCapture = () => "";
 require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
 
 const { setupNim } = require(${onboardPath});
 
@@ -199,6 +201,8 @@ credentials.prompt = async (message) => {
 runner.runCapture = () => "";
 
 require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
 const { setupNim } = require(${onboardPath});
 
 (async () => {

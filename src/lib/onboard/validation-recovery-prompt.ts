@@ -34,6 +34,13 @@ export interface ValidationRecoveryPromptHelpers {
   ): Promise<"credential" | "selection" | "retry" | "model">;
 }
 
+export function isSecureCredentialPromptAvailable(
+  stdinIsTty: boolean = Boolean(process.stdin.isTTY),
+  stderrIsTty: boolean = Boolean(process.stderr.isTTY),
+): boolean {
+  return stdinIsTty && stderrIsTty;
+}
+
 export function createValidationRecoveryPromptHelpers(
   deps: ValidationRecoveryPromptDeps,
 ): ValidationRecoveryPromptHelpers {
@@ -90,10 +97,8 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "credential" && credentialEnv) {
-      // Piped input cannot echo terminal keystrokes. The unsafe fallback is an
-      // interactive stdin paired with redirected stderr.
       const secretPromptAvailable =
-        deps.isSecretPromptAvailable?.() ?? (!process.stdin.isTTY || Boolean(process.stderr.isTTY));
+        deps.isSecretPromptAvailable?.() ?? isSecureCredentialPromptAvailable();
       if (!secretPromptAvailable) {
         console.error(
           "  Secure credential recovery requires interactive terminal input and error output.",

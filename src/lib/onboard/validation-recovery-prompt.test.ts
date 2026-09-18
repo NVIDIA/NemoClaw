@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
 
-import { createValidationRecoveryPromptHelpers } from "./validation-recovery-prompt";
+import {
+  createValidationRecoveryPromptHelpers,
+  isSecureCredentialPromptAvailable,
+} from "./validation-recovery-prompt";
 
 const CREDENTIAL_RECOVERY = { kind: "credential", retry: "credential" } as const;
 
@@ -47,6 +50,18 @@ describe("validation recovery credential prompt", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+
+  it.each([
+    { stdinIsTty: false, stderrIsTty: false, available: false },
+    { stdinIsTty: false, stderrIsTty: true, available: false },
+    { stdinIsTty: true, stderrIsTty: false, available: false },
+    { stdinIsTty: true, stderrIsTty: true, available: true },
+  ])(
+    "requires terminal input and error output for a secure prompt ($stdinIsTty, $stderrIsTty)",
+    ({ stdinIsTty, stderrIsTty, available }) => {
+      expect(isSecureCredentialPromptAvailable(stdinIsTty, stderrIsTty)).toBe(available);
+    },
+  );
 
   it("explains that retry opens the secure credential prompt (#12079)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-bad");

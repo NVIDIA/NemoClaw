@@ -3142,7 +3142,7 @@ const runner = require(${runnerPath});
 
 const { messages, prompts } = installPromptQueue(credentials, ["", "", "retry", "nvapi-good"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
@@ -3276,7 +3276,7 @@ const runner = require(${runnerPath});
 
 const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
