@@ -2014,7 +2014,7 @@ async function handleRemoteProviderSelection(
       state.nvidiaFeaturedModels!,
       apiKeyNavigation,
       credentialPrompt.shouldReturnToProviderSelection,
-      requestedModel,
+      { requestedModel, constrainedModel: state.model },
       recoveredFromSandbox ? recoveredModel : null,
       isNonInteractive(),
       process.env.NEMOCLAW_MODEL,

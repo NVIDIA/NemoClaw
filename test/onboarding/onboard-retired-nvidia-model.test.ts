@@ -18,12 +18,25 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 describe("recovered NVIDIA model onboarding", () => {
-  it(
-    "replaces a retired model before production validation (#11364)",
+  it.each([
+    {
+      scenario: "replaces a retired model",
+      constrained: false,
+      expectedOutput: /recovered NVIDIA model .* is retired; using/u,
+    },
+    {
+      scenario: "preserves the shared-route model",
+      constrained: true,
+      expectedOutput: /Using NVIDIA Endpoints with model: meta\/llama-3\.3-70b-instruct/u,
+    },
+  ])(
+    "$scenario before production validation (#11364)",
     testTimeoutOptions(90_000),
-    () => {
+    ({ constrained, expectedOutput }) => {
       const retiredModel = "minimaxai/minimax-m3";
-      const replacement = "nvidia/nemotron-3-super-120b-a12b";
+      const replacement = constrained
+        ? "meta/llama-3.3-70b-instruct"
+        : "nvidia/nemotron-3-super-120b-a12b";
       const workspace = createOnboardProcessWorkspace("nemoclaw-retired-model-", {
         separateHome: true,
       });
@@ -75,9 +88,10 @@ process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test";
 delete process.env.NEMOCLAW_MODEL;
 delete process.env.NEMOCLAW_PROVIDER;
 delete process.env.VITEST;
+if (${constrained}) process.env.NEMOCLAW_PROVIDER = "build";
 
 const registry = require(${registryPath});
-registry.registerSandbox({
+if (!${constrained}) registry.registerSandbox({
   name: "alpha",
   provider: "nvidia-prod",
   model: ${JSON.stringify(retiredModel)},
@@ -88,7 +102,19 @@ registry.registerSandbox({
 });
 const { setupNim } = require(${onboardPath});
 
-setupNim(null, "alpha", null)
+const requiredModel = ${JSON.stringify(replacement)};
+const constrainRoute = (route) => {
+  if (route.model && route.model !== requiredModel) {
+    throw new Error("Shared route model was replaced: " + route.model);
+  }
+  return {
+    requiredModel: route.model ? null : requiredModel,
+    requiredEndpointUrl: null,
+    requiredInferenceApi: null,
+  };
+};
+setupNim(null, ${constrained} ? null : "alpha", null, ${constrained} ? false : undefined, null, null,
+  ${constrained} ? constrainRoute : undefined)
   .then((result) => console.log(JSON.stringify(result)))
   .catch((error) => {
     console.error(error && error.stack ? error.stack : String(error));
@@ -109,6 +135,7 @@ setupNim(null, "alpha", null)
         assert.equal(result.status, 0, result.output);
         const selected = trailingJsonPayload<{ model: string }>(result.stdout);
         assert.notEqual(selected.model, retiredModel);
+        assert.equal(selected.model, replacement);
 
         assert.ok(fs.existsSync(payloadLogPath), result.output);
         const validationPayloads = fs.readFileSync(payloadLogPath, "utf8");
@@ -117,7 +144,7 @@ setupNim(null, "alpha", null)
           validationPayloads,
           new RegExp(retiredModel.replaceAll("/", "\\/"), "u"),
         );
-        assert.match(result.output, /recovered NVIDIA model .* is retired; using/u);
+        assert.match(result.output, expectedOutput);
       } finally {
         workspace.remove();
       }

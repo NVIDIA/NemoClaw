@@ -4350,6 +4350,11 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4e9f579183477b984c009cce0f47a1361e5eddef
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
       - name: Validate candidate activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}

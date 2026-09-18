@@ -98,11 +98,19 @@ export async function selectFeaturedModelAfterCredentialPrompt(
   session: NvidiaFeaturedModelSession,
   credentialNavigation: unknown,
   shouldReturnToProviderSelection: (result: unknown) => boolean,
-  requestedModel: string | null,
+  selection: { requestedModel: string | null; constrainedModel?: ModelPromptResult | null },
   recoveredModel: string | null,
   nonInteractive: boolean,
   envModel?: string,
 ): Promise<ModelPromptResult> {
   if (shouldReturnToProviderSelection(credentialNavigation)) return BACK_TO_SELECTION;
-  return session.select(requestedModel, recoveredModel, nonInteractive, envModel);
+  const { requestedModel, constrainedModel } = selection;
+  const effectiveRequestedModel =
+    requestedModel ??
+    (typeof constrainedModel === "string" &&
+    constrainedModel.trim() &&
+    constrainedModel !== recoveredModel
+      ? constrainedModel
+      : null);
+  return session.select(effectiveRequestedModel, recoveredModel, nonInteractive, envModel);
 }
