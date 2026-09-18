@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
@@ -44,6 +45,7 @@ const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
+const MANAGED_ACTIVATION_DELETE_SETTLEMENT_DELAYS_MS = [1_000, 1_000, 1_000] as const;
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   setupStarted: "Setting up NemoClaw",
 } as const;
@@ -412,17 +414,50 @@ export async function preclean(
   });
 }
 
+function outputContainsDeletingSandbox(
+  result: Parameters<typeof outputContainsSandbox>[0],
+  sandboxName: string,
+): boolean {
+  return resultText(result)
+    .replace(/\u001b\[[0-9;]*m/gu, "")
+    .split(/\r?\n/u)
+    .some((line) => {
+      const fields = line.trim().split(/\s+/u);
+      return fields[0] === sandboxName && fields.at(-1) === "Deleting";
+    });
+}
+
+/** Wait only for OpenShell's accepted delete to leave its read-only Deleting phase. */
+export async function waitForManagedActivationSandboxDeletion(
+  sandbox: Pick<SandboxClient, "list">,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  options: { readonly sleep?: (delayMs: number) => Promise<void> } = {},
+): Promise<Awaited<ReturnType<SandboxClient["list"]>>> {
+  const wait = options.sleep ?? (async (delayMs: number) => await sleep(delayMs));
+  for (let attempt = 1; ; attempt += 1) {
+    const observation = await sandbox.list({
+      artifactName: `post-destroy-openshell-list-${sandboxName}-attempt-${attempt}`,
+      env,
+      timeoutMs: 30_000,
+    });
+    if (observation.exitCode !== 0) return observation;
+    if (!outputContainsSandbox(observation, sandboxName)) return observation;
+    const delayMs = MANAGED_ACTIVATION_DELETE_SETTLEMENT_DELAYS_MS[attempt - 1];
+    if (delayMs === undefined || !outputContainsDeletingSandbox(observation, sandboxName)) {
+      return observation;
+    }
+    await wait(delayMs);
+  }
+}
+
 async function verifyExactCleanup(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
+  const openshellList = await waitForManagedActivationSandboxDeletion(sandbox, sandboxName, env);
   assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";

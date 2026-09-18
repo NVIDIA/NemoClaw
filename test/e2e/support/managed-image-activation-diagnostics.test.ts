@@ -16,9 +16,98 @@ import {
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
   summarizeOnboardFailureStartupSignals,
+  waitForManagedActivationSandboxDeletion,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
 describe("managed image activation failure diagnostics", () => {
+  it("waits only for the exact OpenShell Deleting phase and records each observation", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "NAME CREATED PHASE\n" });
+    const settleSleep = vi.fn(async () => {});
+
+    const result = await waitForManagedActivationSandboxDeletion(
+      { list } as never,
+      "mi-act-dcode",
+      { OPENSHELL_GATEWAY: "nemoclaw" },
+      { sleep: settleSleep },
+    );
+
+    expect(result.stdout).not.toContain("mi-act-dcode");
+    expect(settleSleep.mock.calls).toEqual([[1_000], [1_000]]);
+    expect(list.mock.calls.map((call) => call[0]?.artifactName)).toEqual([
+      "post-destroy-openshell-list-mi-act-dcode-attempt-1",
+      "post-destroy-openshell-list-mi-act-dcode-attempt-2",
+      "post-destroy-openshell-list-mi-act-dcode-attempt-3",
+    ]);
+  });
+
+  it("does not retry a live sandbox or hide a persistent deletion", async () => {
+    const ready = {
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME CREATED PHASE\nmi-act-dcode now Ready\n",
+    };
+    const readyList = vi.fn(async () => ready);
+    const readySleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: readyList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: readySleep },
+      ),
+    ).resolves.toBe(ready);
+    expect(readyList).toHaveBeenCalledOnce();
+    expect(readySleep).not.toHaveBeenCalled();
+
+    const deleting = {
+      exitCode: 0,
+      stderr: "",
+      stdout: "NAME CREATED PHASE\nmi-act-dcode now Deleting\n",
+    };
+    const deletingList = vi.fn(async () => deleting);
+    const deletingSleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: deletingList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: deletingSleep },
+      ),
+    ).resolves.toBe(deleting);
+    expect(deletingList).toHaveBeenCalledTimes(4);
+    expect(deletingSleep.mock.calls).toEqual([[1_000], [1_000], [1_000]]);
+
+    const failed = {
+      exitCode: 1,
+      stderr: "gateway unavailable",
+      stdout: "mi-act-dcode now Deleting\n",
+    };
+    const failedList = vi.fn(async () => failed);
+    const failedSleep = vi.fn(async () => {});
+    await expect(
+      waitForManagedActivationSandboxDeletion(
+        { list: failedList } as never,
+        "mi-act-dcode",
+        {},
+        { sleep: failedSleep },
+      ),
+    ).resolves.toBe(failed);
+    expect(failedList).toHaveBeenCalledOnce();
+    expect(failedSleep).not.toHaveBeenCalled();
+  });
+
   it("retains redacted Docker logs for failed startup diagnosis", () => {
     expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
   });
