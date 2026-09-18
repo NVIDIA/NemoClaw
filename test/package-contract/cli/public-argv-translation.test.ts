@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,6 +14,7 @@ import {
   sandboxRouteTokens,
 } from "../../../dist/lib/cli/public-route-metadata";
 
+/** Verify the compiled command ID and forwarded arguments without executing the command. */
 function expectNative(
   result: PublicTranslationResult,
   commandId: string,
@@ -38,6 +40,7 @@ describe("public route/display separation", () => {
     vi.doMock("../../../dist/lib/cli/oclif-metadata", async (importOriginal) => {
       const actual = await importOriginal<typeof import("../../../dist/lib/cli/oclif-metadata")>();
       const realMetadata = actual.getRegisteredOclifCommandsMetadata();
+      /** Change display wording while preserving the registered dispatch identity. */
       const withUsage = (commandId: string, usage: string) => {
         const metadata = realMetadata[commandId];
         const displayEntry = metadata.publicDisplay?.[0];
@@ -128,7 +131,57 @@ describe("public route/display separation", () => {
   });
 });
 
+/** Verify that the compiled CLI preserves public dispatch and usage-error results. */
 describe("translatePublicGlobalArgv", () => {
+  it("derives parent usage and dispatch from an additional registered group", () => {
+    // The compiled CommonJS translator reads this registry through require, not Vitest's ESM mocks.
+    const metadataModule = createRequire(import.meta.url)(
+      "../../../dist/lib/cli/oclif-metadata.js",
+    ) as typeof import("../../../dist/lib/cli/oclif-metadata");
+    const metadata = metadataModule.getRegisteredOclifCommandsMetadata();
+    expect(metadata).not.toHaveProperty("diagnostics");
+    expect(metadata).not.toHaveProperty("diagnostics:inspect");
+    try {
+      metadata.diagnostics = { id: "diagnostics" };
+      metadata["diagnostics:inspect"] = { id: "diagnostics:inspect" };
+      expectNative(
+        translatePublicGlobalArgv("diagnostics", ["inspect", "--json"]),
+        "diagnostics:inspect",
+        ["--json"],
+      );
+      const result = translatePublicGlobalArgv("diagnostics", ["bogus", "private-argument"]);
+      expect(result).toEqual({
+        kind: "publicUsageError",
+        lines: expect.arrayContaining(["inspect"]),
+      });
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("bogus");
+      expect(serialized).not.toContain("private-argument");
+      expectNative(translatePublicGlobalArgv("diagnostics", []), "diagnostics", ["--help"]);
+    } finally {
+      delete metadata.diagnostics;
+      delete metadata["diagnostics:inspect"];
+    }
+  });
+
+  /** Child-only groups must not dispatch help to an absent parent command. */
+  it.each([
+    { command: "profiles", action: "list", args: [] },
+    { command: "profiles", action: "list", args: ["help"] },
+    { command: "profiles", action: "list", args: ["--help"] },
+    { command: "profiles", action: "list", args: ["-h"] },
+    { command: "config", action: "export", args: [] },
+    { command: "host", action: "probe", args: [] },
+  ])(
+    "lists child routes for $command $args without a parent command",
+    ({ command, action, args }) => {
+      expect(translatePublicGlobalArgv(command, args)).toEqual({
+        kind: "publicUsageError",
+        lines: expect.arrayContaining([action]),
+      });
+    },
+  );
+
   it("translates simple and nested global commands to native oclif argv", () => {
     expectNative(translatePublicGlobalArgv("list", ["--json"]), "list", ["--json"]);
     expectNative(translatePublicGlobalArgv("update", ["--check"]), "update", ["--check"]);
@@ -145,7 +198,8 @@ describe("translatePublicGlobalArgv", () => {
     expectNative(translatePublicGlobalArgv("version", []), "root:version", []);
   });
 
-  it("translates global parent help and errors to native oclif argv", () => {
+  /** Help remains an oclif command; unknown actions must return public usage guidance. */
+  it("routes global help to oclif and rejects unknown actions with usage", () => {
     expectNative(
       translatePublicGlobalArgv("credentials", []),
       "credentials",
@@ -158,12 +212,10 @@ describe("translatePublicGlobalArgv", () => {
       ["--help"],
       ["tunnel", "--help"],
     );
-    expectNative(
-      translatePublicGlobalArgv("inference", ["bogus"]),
-      "inference:bogus",
-      [],
-      ["inference", "bogus"],
-    );
+    expect(translatePublicGlobalArgv("inference", ["bogus"])).toEqual({
+      kind: "publicUsageError",
+      lines: expect.arrayContaining(["get", "set"]),
+    });
     expect(translatePublicGlobalArgv("bogus", [])).toEqual({ kind: "publicUsageError", lines: [] });
   });
 });
