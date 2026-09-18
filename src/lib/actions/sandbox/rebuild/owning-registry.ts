@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { snapshotKnownCredentialEnv } from "../../../onboard/credential-env";
 import { isValidName } from "../../../sandbox-name-contract";
 import { assertGatewayStatePathSafe, listGatewayStateRoots } from "../../../state/gateway-registry";
@@ -338,6 +339,12 @@ export function findRebuildRecoveryStorageRoot(
       if (route.gatewayPort !== state.gatewayPort) {
         throw new Error(
           `Rebuild recovery gateway port ${String(route.gatewayPort)} does not match state root port ${String(state.gatewayPort)}. Recovery remains at '${backupPath}'.`,
+        );
+      }
+      const stateGatewayName = resolveGatewayName(state.gatewayPort);
+      if (route.gatewayName !== stateGatewayName) {
+        throw new Error(
+          `Rebuild recovery gateway name '${route.gatewayName}' does not match state root gateway '${stateGatewayName}'. Recovery remains at '${backupPath}'.`,
         );
       }
       matches.push({

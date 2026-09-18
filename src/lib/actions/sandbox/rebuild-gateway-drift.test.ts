@@ -22,6 +22,7 @@ import {
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
 import {
+  delegateRecoveryRetirementToOwningRegistry,
   delegateRebuildToOwningRegistry,
   findRebuildRecoveryStorageRoot,
   rebuildOwningRegistryDependencies,
@@ -532,47 +533,67 @@ describe("rebuild owning registry routing", () => {
     }
   });
 
-  it("rejects a recovery marker whose gateway port differs from its state root", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-root-port-"));
-    const transactionId = "11111111-1111-4111-8111-111111111111";
-    const timestamp = "2026-09-17T00-00-00-000Z";
-    const backupPath = path.join(
-      home,
-      ".nemoclaw",
-      "gateways",
-      "9000",
-      "rebuild-backups",
-      "alpha",
-      timestamp,
-    );
-    const recoveryFile = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
-    try {
-      fs.mkdirSync(backupPath, { recursive: true });
-      fs.writeFileSync(
-        recoveryFile,
-        `${JSON.stringify({
-          schemaVersion: 3,
-          transactionId,
-          sandboxName: "alpha",
-          backupTimestamp: timestamp,
-          gatewayName: "nemoclaw-9001",
-          gatewayPort: 9001,
-          phase: "restore",
-        })}\n`,
-        { mode: 0o600 },
+  it.each([
+    {
+      description: "gateway port differs from its state root",
+      gatewayName: "nemoclaw-9001",
+      gatewayPort: 9001,
+      expected: "gateway port 9001 does not match state root port 9000",
+    },
+    {
+      description: "gateway name differs from its state root",
+      gatewayName: "nemoclaw-9001",
+      gatewayPort: 9000,
+      expected: "gateway name 'nemoclaw-9001' does not match state root gateway 'nemoclaw-9000'",
+    },
+  ])(
+    "rejects a recovery marker whose $description before worker delegation",
+    async ({ gatewayName, gatewayPort, expected }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-root-port-"));
+      const transactionId = "11111111-1111-4111-8111-111111111111";
+      const timestamp = "2026-09-17T00-00-00-000Z";
+      const backupPath = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "9000",
+        "rebuild-backups",
+        "alpha",
+        timestamp,
       );
+      const recoveryFile = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+      vi.spyOn(rebuildOwningRegistryDependencies, "isHostFenceHeld").mockReturnValue(false);
+      const runWorker = vi.spyOn(rebuildOwningRegistryDependencies, "runWorker");
+      try {
+        fs.mkdirSync(backupPath, { recursive: true });
+        fs.writeFileSync(
+          recoveryFile,
+          `${JSON.stringify({
+            schemaVersion: 3,
+            transactionId,
+            sandboxName: "alpha",
+            backupTimestamp: timestamp,
+            gatewayName,
+            gatewayPort,
+            phase: "restore",
+          })}\n`,
+          { mode: 0o600 },
+        );
 
-      expect(() =>
-        findRebuildRecoveryStorageRoot(
-          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
-          home,
-        ),
-      ).toThrow("gateway port 9001 does not match state root port 9000");
-      expect(fs.existsSync(recoveryFile)).toBe(true);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          delegateRecoveryRetirementToOwningRegistry(
+            { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+            home,
+            path.join(home, ".nemoclaw", "sandboxes.json"),
+          ),
+        ).rejects.toThrow(expected);
+        expect(runWorker).not.toHaveBeenCalled();
+        expect(fs.existsSync(recoveryFile)).toBe(true);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects traversal-shaped recovery names before reading gateway roots", () => {
     const readDirectory = vi.spyOn(fs, "readdirSync");
