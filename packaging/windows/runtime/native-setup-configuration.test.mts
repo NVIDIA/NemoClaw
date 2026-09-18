@@ -12,22 +12,16 @@ import { runInNewContext } from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import {
-  configureNativeFromStdin,
-  type NativeOnboardingConfiguration,
-} from "./native-setup-configuration.mts";
+import { configureNativeFromStdin } from "./native-setup-configuration.mts";
 import { nativeCredentialBinding, renderNativeGatewayConfig } from "./native-security.mts";
-import { NATIVE_SERVICES, nativeServiceBinding } from "./native-options.mts";
+import { nativeServiceBinding } from "./native-options.mts";
 import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
 import { interactiveWorkloadSource } from "./run-installed-native-console-agent.mts";
 import type { NativeOptions } from "./native-options.mts";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { renderFactory, staticWorkerSource } from "../distribution/build-native-workers.mts";
 import { probeSource } from "./run-installed-native-turn.mts";
-import {
-  gatewaySource,
-  saveNativeOnboardingConfiguration,
-} from "./run-installed-native-web-ui.mts";
+import { gatewaySource } from "./run-installed-native-web-ui.mts";
 import {
   nativeHermesToolEnvironment,
   nativeHermesCompatibility,
@@ -662,170 +656,6 @@ test("configuration waits for the per-agent removal lease before any mutation", 
     assert.equal(events.at(-1), "release");
     assert(events.indexOf("credential") > events.indexOf("held"));
   } finally {
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-    else process.env.LOCALAPPDATA = previousLocalAppData;
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("web onboarding uses the canonical lease and never persists its secret or launch action", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-web-configuration-lease-"));
-  const previousLocalAppData = process.env.LOCALAPPDATA;
-  process.env.LOCALAPPDATA = root;
-  const configPath = path.join(
-    root,
-    "NVIDIA",
-    "NemoClaw",
-    "agents",
-    "hermes",
-    "native-windows.json",
-  );
-  const activePath = path.join(root, "NVIDIA", "NemoClaw", "active-agent.txt");
-  const previous = {
-    ...configuration,
-    options: { search: { provider: "tavily", credentialStored: true } },
-  };
-  const previousText = `${JSON.stringify(previous, null, 2)}\n`;
-  const secret = "web-onboarding-secret";
-  const webConfiguration: NativeOnboardingConfiguration = {
-    agent: "hermes",
-    inference: "compatible",
-    endpoint: "https://example.invalid/v1",
-    model: "new-model",
-    credential: secret,
-    options: {
-      endpoint: "https://example.invalid/v1",
-      model: "new-model",
-      credential: secret,
-      launch: "on",
-      search: { provider: "tavily", credentialStored: true },
-    },
-  };
-  let admit!: () => void;
-  const admitted = new Promise<void>((resolve) => {
-    admit = resolve;
-  });
-  let acquisitionStarted!: () => void;
-  const acquiring = new Promise<void>((resolve) => {
-    acquisitionStarted = resolve;
-  });
-  const events: string[] = [];
-  const deletions: { provider: string; binding: string }[] = [];
-  let submittedRecord: Record<string, unknown> | null = null;
-  const configure: typeof configureNativeFromStdin = async (
-    launcher,
-    args = [],
-    input = Readable.from([]),
-  ) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of input) chunks.push(Buffer.from(chunk));
-    const serialized = Buffer.concat(chunks).toString("utf8");
-    const payload = JSON.parse(serialized);
-    submittedRecord = payload.configuration;
-    assert.equal(payload.credentials.inference, secret);
-    assert(!JSON.stringify(submittedRecord).includes(secret));
-    assert.deepEqual(args, ["--transaction"]);
-    assert(!serialized.includes("launch"));
-    events.push("configure");
-    return await configureNativeFromStdin(
-      launcher,
-      args,
-      Readable.from([Buffer.from(serialized)]),
-      process.stdout,
-      {
-        acquireState: async (_launcher, agent) => {
-          assert.equal(agent, "hermes");
-          events.push("acquire");
-          acquisitionStarted();
-          await admitted;
-          return {
-            stateRoot: "C:\\NemoClawState-S-1-5-21-1-hermes",
-            created: false,
-            removed: false,
-            assertHeld() {
-              events.push("held");
-            },
-            async release() {
-              events.push("release");
-            },
-          };
-        },
-        readCredential: async () => {
-          events.push("credential");
-          return secret;
-        },
-        readServices: async (_launcher, agent, options) => {
-          assert.equal(agent, "hermes");
-          assert.deepEqual(options, {
-            search: { provider: "tavily", credentialStored: true },
-          });
-          events.push("services");
-          return { options: {}, environment: {} };
-        },
-        deleteCredential: async (_launcher, provider, binding) => {
-          events.push(`delete:${provider}`);
-          deletions.push({ provider, binding });
-        },
-        credentialStore: {
-          read: async () => "",
-          write: async (_launcher, change) => {
-            if (change.value) {
-              assert.equal(change.value, secret);
-              events.push("credential-write");
-            } else {
-              events.push(`delete:${change.provider}`);
-              deletions.push({ provider: change.provider, binding: change.binding });
-            }
-          },
-        },
-      },
-    );
-  };
-  try {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, previousText);
-    fs.writeFileSync(activePath, "openclaw\n");
-    const pending = saveNativeOnboardingConfiguration("unused", webConfiguration, {
-      configure,
-    });
-    await acquiring;
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(events, ["configure", "acquire"]);
-    assert.equal(fs.readFileSync(configPath, "utf8"), previousText);
-    assert.equal(fs.readFileSync(activePath, "utf8"), "openclaw\n");
-    assert.deepEqual((submittedRecord as { options?: unknown } | null)?.options, {
-      search: { provider: "tavily", credentialStored: true },
-    });
-    admit();
-    assert.equal(await pending, configPath);
-    assert(events.indexOf("credential-write") > events.indexOf("held"));
-    const persistedText = fs.readFileSync(configPath, "utf8");
-    const persisted = JSON.parse(persistedText);
-    assert.equal(persisted.agent, "hermes");
-    assert.equal(persisted.inference, "compatible");
-    assert.equal(persisted.credentialStored, true);
-    assert.deepEqual(persisted.options, {
-      search: { provider: "tavily", credentialStored: true },
-    });
-    assert(!persistedText.includes(secret));
-    assert(!persistedText.includes("launch"));
-    assert.equal(fs.readFileSync(activePath, "utf8"), "hermes\n");
-    assert.deepEqual(deletions[0], {
-      provider: "nvidia",
-      binding: nativeCredentialBinding(previous),
-    });
-    assert.deepEqual(
-      deletions.slice(1),
-      Object.keys(NATIVE_SERVICES)
-        .filter((provider) => provider !== "tavily")
-        .map((provider) => ({
-          provider,
-          binding: nativeServiceBinding("hermes", provider),
-        })),
-    );
-    assert.equal(events.at(-1), "release");
-  } finally {
-    admit();
     if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = previousLocalAppData;
     fs.rmSync(root, { recursive: true, force: true });

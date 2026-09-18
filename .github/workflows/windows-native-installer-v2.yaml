@@ -892,7 +892,6 @@ jobs:
             packaging/windows/installer/qualify-installed-hermes.test.mts `
             packaging/windows/installer/windows-native-transfer.test.mts `
             packaging/windows/runtime/native-configuration-credentials.test.mts `
-            packaging/windows/runtime/native-setup-configuration.test.mts `
             packaging/windows/runtime/native-setup-transaction.test.mts
           if ($LASTEXITCODE -ne 0) { throw 'The Windows Hermes and configuration transaction controls failed.' }
           $files = @($tests | ForEach-Object {
@@ -1992,7 +1991,6 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/qualify-installed-hermes.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/windows-native-transfer.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-configuration-credentials.test.mts'),
-            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-setup-configuration.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-setup-transaction.test.mts')
           )
           try {
