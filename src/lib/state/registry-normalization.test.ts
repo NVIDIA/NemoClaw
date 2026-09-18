@@ -115,6 +115,47 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
   });
 
+  it.each(["alpha", "beta"])(
+    "preserves legacy ownership across an unrelated update to %s until explicit retirement",
+    async (updatedSandbox) => {
+      const legacy = { bridges: { github: { providerId: "owned-provider" } } };
+      const { home, registry } = await loadRegistryDocument({
+        sandboxes: { alpha: { name: "alpha", mcp: legacy }, beta: { name: "beta" } },
+      });
+      const { readLegacyMcpRegistryProjection, removeLegacyMcpRegistryEntry } =
+        await import("./registry/legacy-mcp");
+
+      expect(registry.updateSandbox(updatedSandbox, { model: "replacement" })).toBe(true);
+      expect(readLegacyMcpRegistryProjection("alpha")).toEqual(legacy);
+      expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+      expect(registry.getSandbox(updatedSandbox)?.model).toBe("replacement");
+      const staleRuntimeSnapshot = registry.load();
+      removeLegacyMcpRegistryEntry("alpha", "github", legacy);
+      registry.save(staleRuntimeSnapshot);
+      registry.updateSandbox(updatedSandbox, { agentVersion: "new-version" });
+      expect(readLegacyMcpRegistryProjection("alpha")).toBeUndefined();
+      const persisted = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      );
+      expect(persisted.sandboxes.alpha).not.toHaveProperty("mcp");
+      expect(persisted.sandboxes[updatedSandbox].agentVersion).toBe("new-version");
+    },
+  );
+
+  it("preserves only persisted legacy ownership, not a caller-supplied replacement", async () => {
+    const legacy = { bridges: { github: { providerId: "owned-provider" } } };
+    const { registry } = await loadRegistryDocument({
+      sandboxes: { alpha: { name: "alpha", mcp: legacy }, beta: { name: "beta" } },
+    });
+    const { readLegacyMcpRegistryProjection } = await import("./registry/legacy-mcp");
+    const updates = { model: "replacement", mcp: { bridges: {} } };
+    registry.updateSandbox("alpha", updates);
+    registry.updateSandbox("beta", updates);
+    expect(readLegacyMcpRegistryProjection("alpha")).toEqual(legacy);
+    expect(readLegacyMcpRegistryProjection("beta")).toBeUndefined();
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("mcp");
+  });
+
   it("preserves a stale pointer for diagnostics but repairs it on registration", async () => {
     const registry = await loadRegistryWith({ mismatched: { name: "different" } }, "mismatched");
 
