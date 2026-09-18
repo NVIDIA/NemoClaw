@@ -55,17 +55,17 @@ describe("export config builder", () => {
       documentUid: firstUid,
     });
 
-    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result).toMatchObject({
-      apiVersion: "nemoclaw.nvidia.com/v1",
+      apiVersion: "nemoclaw.nvidia.com/v1alpha1",
       kind: "NemoClawConfig",
       metadata: { name: "work-agents", uid: firstUid },
       spec: {
-        gateway: { management: "nemoclaw", name: "nemoclaw", port: 8080 },
+        gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
         inferenceProviders: [
           {
             name: "hosted-openai-api",
-            provider: "openai-api",
+            provider: "openai",
             api: "openai-responses",
             endpoint: "https://api.openai.com/v1",
             credential: { env: "OPENAI_API_KEY" },
@@ -76,13 +76,23 @@ describe("export config builder", () => {
             name: "alpha",
             runtime: {
               provider: "docker",
-              image: { ref: `nvcr.io/nvidia/nemoclaw@${digest}` },
             },
-            network: { policy: { explicit: policy } },
+            network: {
+              policy: {
+                explicit: {
+                  ...policy,
+                  process: { run_as_user: "1000", run_as_group: "1000" },
+                  filesystem_policy: {
+                    ...policy.filesystem_policy,
+                    read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
+                  },
+                },
+              },
+            },
+            harness: { kind: "openclaw" },
             agents: [
               {
                 name: "primary",
-                type: "openclaw",
                 inference: {
                   routes: [
                     {
@@ -113,12 +123,43 @@ describe("export config builder", () => {
         documentUid: firstUid,
       },
     );
-    expect(document.spec.sandboxes[0]!.integrations).toEqual({ webSearch });
+    expect(document.spec.sandboxes[0]!.integrations).toEqual({
+      "brave-search": {
+        kind: "webSearch",
+        provider: "brave",
+        credential: { env: "BRAVE_API_KEY" },
+      },
+    });
+    expect(document.spec.sandboxes[0]!.agents[0]!.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
         .sandboxes[0],
     ).not.toHaveProperty("integrations");
+  });
+
+  it("grants Brave only to the declared primary agent", () => {
+    const document = buildExportConfig(
+      {
+        ...source,
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+        },
+        additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
+      } as unknown as VerifiedExportSource,
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+
+    expect(document.spec.sandboxes[0]!.agents).toMatchObject([
+      { name: "primary", integrationRefs: ["brave-search"] },
+      { name: "researcher" },
+    ]);
+    expect(document.spec.sandboxes[0]!.agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -149,8 +190,14 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.agents[0]?.type).toBe("hermes");
-    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
+      process: { run_as_user: "1000", run_as_group: "1000" },
+      filesystem_policy: {
+        read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/opt/hermes"],
+      },
+    });
   });
 
   it("binds verified Hermes API-key authentication to its inference provider (#11432)", () => {
@@ -176,7 +223,6 @@ describe("export config builder", () => {
 
     expect(result.spec.sandboxes[0]?.agents[0]?.auth).toEqual({
       method: "api-key",
-      providerRef: "hosted-hermes-provider",
     });
   });
 
@@ -193,7 +239,7 @@ describe("export config builder", () => {
       }).spec.inferenceProviders[0],
     ).toEqual({
       name: "hosted-openai-api",
-      provider: "openai-api",
+      provider: "openai",
       api: "openai-responses",
       endpoint: "https://api.openai.com/v1",
     });

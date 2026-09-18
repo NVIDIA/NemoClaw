@@ -203,10 +203,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable-identity",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
-const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
-  "device-auth-health",
-  "model-router-provider-routed-inference",
-]);
+const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set(["model-router-provider-routed-inference"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "external-gateway-health",
   "staging-brev-launchable",
@@ -2890,8 +2887,16 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
-  if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("live job must depend on base-image-publication and generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live job must depend on base-image-publication, generate-matrix, and package-openshell-sdk",
+    );
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");
@@ -3183,6 +3188,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors,
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
   );
   requireUploadPathContains(
     errors,
