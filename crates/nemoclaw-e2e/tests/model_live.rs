@@ -5,7 +5,7 @@ use nemoclaw_sdk::{
     CancellationToken, Deployment, config::Document, docker::Engine, managed::Spec,
     recipes::huggingface,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     fs,
@@ -92,7 +92,12 @@ async fn exercise(fresh: bool) {
         assert!(directory.join("runtime/terraform.tfstate").is_file());
     }
     deployment.apply(&document, &cancel).await.unwrap();
-    let applied_reply = nemoclaw_e2e::verify_agent(&document, &directory).await;
+    assert!(
+        !nemoclaw_e2e::verify_agent(&document, &directory)
+            .await
+            .trim()
+            .is_empty()
+    );
     let before = bindings(&directory);
     assert_eq!(before.len(), 8);
     let (spec, id) = service(&directory);
@@ -132,7 +137,6 @@ async fn exercise(fresh: bool) {
     );
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);
-    fs::write(directory.join("exported.yaml"), exported.yaml().unwrap()).unwrap();
     assert!(
         deployment
             .apply(&exported, &cancel)
@@ -185,7 +189,12 @@ async fn exercise(fresh: bool) {
         "automatic restart loop"
     );
     deployment.apply(&document, &cancel).await.unwrap();
-    let recovered_reply = nemoclaw_e2e::verify_agent(&document, &directory).await;
+    assert!(
+        !nemoclaw_e2e::verify_agent(&document, &directory)
+            .await
+            .trim()
+            .is_empty()
+    );
     assert_eq!(bindings(&directory), before);
     assert_eq!(
         engine
@@ -219,10 +228,4 @@ async fn exercise(fresh: bool) {
         assert_eq!(retained.get(address), before.get(address));
         assert!(retained.contains_key(address));
     }
-    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied_reply,"recoveredReply":recovered_reply,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
-    fs::write(
-        directory.join("model-proof.json"),
-        serde_json::to_vec_pretty(&proof).unwrap(),
-    )
-    .unwrap();
 }

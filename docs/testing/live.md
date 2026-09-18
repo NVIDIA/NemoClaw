@@ -32,7 +32,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
 
 The test waits for the real apply CLI to exit, then requires a reply from the hosted agent through OpenShell.
 It checks export/reapply and stable resource/runtime identities before destroying its owned workloads and registrations.
-It retains the workspace, persistent storage, apply output, and `upgrade-proof.json`; failures retain state and resources for diagnosis and explicit cleanup.
+It retains the workspace and persistent storage; failures retain state and resources for diagnosis and explicit cleanup.
+CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
 The gate passed with OpenShell `1fe79f539` on Linux ARM64; see the [upgrade qualification and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
@@ -56,60 +57,41 @@ Refer to [retained volume evidence](../validation/rust-storage-linux-arm64.json)
 
 ## Spark and Fabric
 
-For complete DGX Spark qualification, use the concrete `examples/spark/spark-inline.yaml` on an available GB10 host.
-The Spark lifecycle and image-upgrade tests require OpenClaw or Hermes for their explicit agent-response check.
-Change its deployment UID, gateway port, and network only when creating a separate deployment.
-Build the pinned local runtime artifact first, check capacity, and preserve the same state directory throughout:
+The Spark test reads a copy of `examples/spark/spark-inline.yaml` and asserts the public plan and apply results.
+Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
+Choose a fresh deployment UID, available gateway port and subnet, and a new state-directory path whose parent exists.
+Keep the example's provider name `qwen`, sandbox name `assistant`, and agent name `assistant`; these identify the expected resources.
 
-```sh
-nemoclaw plan --state-dir .local/spark examples/spark/spark-inline.yaml
-nemoclaw apply --state-dir .local/spark examples/spark/spark-inline.yaml
-nemoclaw export --state-dir .local/spark --output .local/spark-export.yaml
-nemoclaw apply --state-dir .local/spark .local/spark-export.yaml
-```
-
-The live lifecycle test explicitly verifies an agent response through OpenShell after apply.
-Apply itself checks configuration and readiness without generation.
-Unchanged apply must have no resource changes and retain process/storage IDs and artifact receipts.
-The download and preparation fixtures cover deterministic interruption boundaries; live evidence also records an interrupted download and explicit recovery.
-
-Test capacity rejection with synthetic capacity observations, not deliberate host exhaustion.
-Test the resident supervisor's SIGUSR1 operator trip only on an explicitly owned test deployment, then confirm that it remains stopped until explicit apply.
-Do not confuse that controlled trip with a naturally occurring host-pressure event.
-
-The lifecycle test stops and recovers inference, then leaves workloads running.
-It writes `spark-validation.json` in the supplied state directory.
-After failure, retain state for [explicit recovery](../usage.md#updates-and-recovery).
-Use [the destroy procedure](../usage.md#destroy) when finished.
-
-Run the maintained lifecycle test with absolute paths, separately from the image upgrade test:
+From the repository root, with absolute paths:
 
 ```sh
 NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/spark-inline.yaml \
-NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/state \
+NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test spark spark_apply_export_capacity -- --ignored
+  cargo test -p nemoclaw-e2e --test spark spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
-Use a dedicated immutable bundle copy for a long live run.
-Rebuilding `dist` replaces development artifacts and is not safe while an operation still uses that directory.
-[Agent fixture instructions](../agents.md#runtime-lifecycle) cover Fabric's offline harness qualification.
+The first plan must create four runtime resources and defer OpenShell registration until the gateway exists.
+Apply must create those resources plus the provider profile, provider registration, sandbox, and workspace.
+A second plan and apply must report no changes.
+The test checks readiness without requesting a model response and leaves workloads running.
+It writes no separate test report.
+After failure, retain state for [explicit recovery](../usage.md#updates-and-recovery); use [destroy](../usage.md#destroy) when finished.
+
+Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
+Change only the inference image pin in the YAML.
+The test compares the input with exported configuration, then requires plan and apply to replace only `nemoclaw_inference_service.inference_qwen`.
+Storage retention and watchdog recovery have separate tests under [runtime boundaries](fixtures.md#runtime-boundaries) and [generic models](#generic-models).
+
+Use an immutable bundle copy for a long live run.
+Rebuilding `dist` replaces development artifacts; keep the selected bundle unchanged until the operation ends.
 
 The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, and `NEMOCLAW_TEST_BUNDLE` paths.
 Use a dedicated UID and state directory with an external gateway and inference endpoint.
 It applies the deployment, checks unchanged apply and export/reapply, exercises the native agent/Fabric SDK, and destroys its owned registrations and sandbox.
-
-It retains JSON evidence and the workspace.
 The hosted Fabric runtime must keep its identity throughout native access and reconciliation.
-This test makes a real model request.
-
-Agent-response checks belong to the explicitly selected live tests, including verification after unchanged apply.
-
-Use the separate `spark_image_change` test filter with the same three DGX Spark paths to qualify an explicit runtime image upgrade.
-The new YAML may differ from retained intent only by its inference image pin.
-The test requires complete artifact receipts, allows an established stopped service, and verifies that plan is read-only and apply replaces only that process while preserving all other bindings and prepared data.
-
-It retains `spark-artifact-validation.json`.
+This test makes a real model request and reports assertion failures through the test runner.
+The workspace remains after destroy.
 
 ## Generic Models
 
@@ -126,7 +108,8 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
 
 It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
 Explicit recovery must preserve resource identities and the snapshot receipt.
-Successful completion destroys workloads, retains storage, and writes `model-proof.json` in the supplied state directory.
+Successful completion destroys workloads and retains storage.
+Assertions report failures through the test runner; the test writes no separate report.
 
 Failures retain resources for diagnosis; reconcile that state before starting another run.
 Retained gateway storage includes its network, so a different deployment needs a different subnet.
@@ -140,17 +123,10 @@ A read-only plan cannot observe workspace resources through a stopped gateway an
 
 ## Hosted NVIDIA OpenClaw Parity
 
-The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) parses a redacted, exact-hash raw v0 export through the ordinary v1 path and compares the v1 export with that parsed document.
-It requires a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, the SDK-pinned runtime images, and an ownership marker.
-
-The ignored test accepts the `issue-11810-local-feedback` acknowledgement for non-qualifying Docker Desktop feedback.
-Docker Desktop feedback may require an explicitly recorded operator-owned forwarding layer for the managed gateway and sandbox callback paths; native Linux qualification must not use it.
-Docker Desktop socket-source canonicalization remains unsupported and fails closed.
-The `issue-11810` gate, a clean v1 checkout, and fresh owned state produce a qualification candidate.
-The aligned v0 export contains the v1 process principal and runtime policy; no caller-supplied compatibility mapping is used.
-The runner records `qualified: false`; qualification requires external artifact-provenance and evidence review.
-It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
-Do not run it as part of an ignored-test aggregate.
+The [hosted OpenClaw test](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) compares a redacted v0 export with separately authored v1 YAML, then checks expected plan, apply, export/reapply, and destroy results.
+It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, and the declared NVIDIA credential.
+It checks configuration and readiness without requesting a model response.
+Select it explicitly; do not run live tests as an ignored-test aggregate.
 
 ## SSH Engine Transport
 

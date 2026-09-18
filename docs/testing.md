@@ -156,6 +156,11 @@ There is no coverage threshold or CI coverage job.
 
 ## Integration and Live Qualification
 
+Write integration tests as input, operation, and expected result.
+For deployment tests, keep the YAML and expected plan/apply resource actions easy to find.
+Use assertions and the test runner's output for failures; do not add evidence reports, host inventories, or qualification bookkeeping to tests.
+Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
+
 - [Run fixture qualification](testing/fixtures.md) with explicit OpenTofu and bundle paths.
 - [Run live qualification](testing/live.md) only against explicitly owned resources.
 - [Inspect retained evidence](validation/README.md) for tested configurations and remaining limits.

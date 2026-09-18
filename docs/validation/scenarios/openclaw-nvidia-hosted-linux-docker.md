@@ -20,9 +20,7 @@ It does not adopt a v0 deployment or migrate its workspace, conversations, crede
 
 ## Artifact and Parser Contract
 
-The caller supplies absolute paths to the manually curated, redacted raw v0 export and a separately authored current v1 configuration.
-The runner computes and records the SHA-256 and redacted bytes of each input.
-An optional free-form source note may identify the producing scenario or revision for later audits; it is not an execution or qualification gate.
+The caller supplies absolute paths to the redacted raw v0 export and a separately authored current v1 configuration.
 
 The runner parses the authored configuration through the ordinary v1 `Document::parse` path.
 A test-only comparison replaces the raw export’s single-entry `agents` list with `agent` in memory and checks that its parsed intent equals the authored configuration.
@@ -45,104 +43,53 @@ cargo test -p nemoclaw-e2e --test hosted_parity
 
 ## Live Verification
 
-The live test performs this v1 lifecycle:
+The live test checks the public deployment operations:
 
-1. Verify both inputs are redacted, parse the authored v1 configuration, compare its intent with the test-only projection of the raw export, and record both hashes.
-2. Plan and apply the authored desired state in an owned state directory.
-3. Require a real OpenClaw reply through the NVIDIA hosted endpoint.
-4. Require unchanged plan and apply with stable resource identities.
-5. Export v1 desired state and compare it with the authored input.
-6. Reapply the v1 export without changes.
-7. Preview and destroy the owned workloads.
-8. Confirm that only the owned workspace and gateway storage remain.
+1. Parse the authored v1 YAML and compare it with the raw export's portable intent.
+2. Expect the initial plan to create managed gateway storage and the gateway, with OpenShell registration deferred.
+3. Expect apply to create those resources plus the provider profile, provider registration, sandbox, and workspace.
+4. Expect a subsequent plan to report no changes.
+5. Export the configuration, compare it with the input, and expect reapply to report no changes.
+6. Expect destroy planning and execution to remove the provider profile, provider registration, sandbox, and gateway while retaining the workspace and gateway storage.
 
-Apply failure retains state and resources for diagnosis.
-A feedback-only run may reapply the identical pending intent after a failure.
-A Linux qualification candidate must start from fresh state.
-
-The test writes `openclaw-nvidia-hosted-parity.json` and `exported.yaml` under the state directory.
-The evidence records both input hashes and redacted inputs, the raw export’s optional source note, their intent comparison, parsed v1 input, v1 revision and bundle, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
-Review retained files for credentials before sharing them.
+The test reports assertion failures through Cargo and writes no separate report.
+Apply checks configuration and readiness without requesting a model response.
+Use the [native agent procedure](../../agents.md#run-one-headless-openclaw-request) separately to verify a reply.
 
 ## Prerequisites and Ownership
 
-Use an owned Docker daemon, deployment UID, port, subnet, state directory, and NVIDIA API key.
-The key must be available only as `NVIDIA_INFERENCE_API_KEY`; do not place its value in YAML, arguments, state, evidence, or repository files.
-The test does not revoke it.
+Use an owned native Linux Docker daemon, a fresh deployment UID, available gateway port and subnet, and an unused state-directory path whose parent exists.
+Supply the referenced NVIDIA credential through the process environment; never put its value in YAML or command arguments.
+The test installs that credential in OpenShell and does not revoke the upstream key.
 
 Preserve the raw export unchanged and author a separate current configuration by replacing its single-entry `agents` list with `agent`.
-Both inputs must describe the same owned deployment UID and portable intent; do not repurpose another deployment’s identity.
-Build a verified bundle and ensure that the immutable gateway and agent images pinned by the SDK revision exist in the owned Docker daemon.
-Create a private state directory with this marker before running:
+Both inputs must describe the same owned deployment UID and portable intent.
+Keep the fixture's provider name `hosted-nvidia-prod`, sandbox name `assistant`, and agent name `primary`; the expected results name those resources.
+Build a matching bundle and make the YAML's immutable gateway and agent images available to the selected Docker daemon.
+A GPU is not required because the configuration selects hosted inference.
 
-```json
-{
-  "scenario": "openclaw-nvidia-hosted-linux-docker",
-  "deploymentUid": "the-uid-from-the-v0-export",
-  "owned": true
-}
-```
-
-Set absolute paths and exact identities:
+From the repository root, set absolute paths and run the selected test:
 
 ```sh
-export NEMOCLAW_LIVE_V1_REVISION="$(git rev-parse HEAD)"
-export NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml
-export NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml
-# Optional audit note; the runner does not resolve or validate this identity.
-export NEMOCLAW_LIVE_V0_SOURCE='producer scenario or revision'
-export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-state
-export NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle
-```
-
-For a Linux qualification candidate, use a clean checkout and the candidate acknowledgement:
-
-```sh
-export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-11810
-cargo test -p nemoclaw-e2e --test hosted_parity \
+NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
+NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
+NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
+  cargo test -p nemoclaw-e2e --test hosted_parity \
   authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
-  -- --ignored --nocapture
+  -- --ignored
 ```
 
-Do not include this paid, credentialed test in an ignored-test aggregate.
-The runner records `qualified: false` in every result.
-Assign qualification only after reviewing the curated input and redacted lifecycle evidence.
-
-## Docker Desktop Feedback
-
-Docker Desktop is useful for early feedback but does not qualify the Linux baseline.
-Run the Linux ARM64 test and bundle inside an owned Linux controller container with the Docker Desktop socket mounted at `/var/run/docker.sock`.
-Use the feedback-only acknowledgement:
-
-```sh
-export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-11810-local-feedback
-```
-
-Docker Desktop may replace the requested socket source with `/run/host-services/docker.proxy.sock`.
-The managed-runtime observer treats that replacement as binding drift and fails closed.
-Supporting the replacement requires a separate product decision and does not belong to this native-Linux scenario.
-
-The managed gateway uses Linux host networking.
-Docker Desktop does not reproduce the native Linux gateway and sandbox callback topology from a controller container without an additional operator-owned forwarding layer.
-Record any such layer as a feedback-only environment adaptation; do not treat that run as unmodified lifecycle or qualification evidence.
-
-## Linux Baseline
-
-Use a disposable native Linux Docker host with matching Fabric and gateway images.
-The current Fabric image build is qualified for native Linux ARM64, so ARM64 is the least-friction environment for this run; architecture remains an observed property rather than a scenario matrix.
-A GPU is not required because inference uses the hosted NVIDIA endpoint.
-Record the host release, kernel, architecture, Docker client and server versions, daemon identity, image digests, bundle manifest, v1 revision, artifact identity, and artifact hash.
-
-A Brev CPU VM is suitable for ad hoc qualification.
-Review its price before creation, keep credentials out of startup metadata and shell history, retrieve the redacted evidence, and delete the billable VM after owned resources have been handled.
+The test creates the state directory and rejects an existing path.
+It does not require a Git revision variable, a clean checkout, an issue acknowledgement, or an ownership-marker file.
+Do not run live tests as an ignored-test aggregate.
 
 ## Recovery and Cleanup
 
-After a failed apply, keep both exact input artifacts, the bundle, and the state directory.
-Reapply only the identical desired state while diagnosing a pending intent.
-Do not create a second state directory for the same deployment UID.
+After a failed apply, keep both inputs, the bundle, and the state directory.
+Follow [interrupted-operation recovery](../../usage.md#recover-an-interrupted-operation) with the same v1 YAML and state.
+Do not create another state directory for the same deployment UID.
 
-After observation, preview destroy and destroy only the deployment bound to the owned state.
-Confirm that its sandbox and managed gateway container are absent.
-The v1 destroy contract retains its workspace and gateway storage identities.
-Do not mark issue #11810 complete; this scenario covers only its first configuration.
+Use [destroy](../../usage.md#destroy) to remove a failed test's owned workloads when appropriate.
+Successful test completion already destroys those workloads and retains the workspace and gateway storage.
+Retire the upstream NVIDIA key separately when it is no longer needed.

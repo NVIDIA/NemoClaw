@@ -519,7 +519,7 @@ python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inf
 ```
 
 The check targets provide their verified source and dependencies inside disposable build stages.
-The harness tests use disposable containers and retain evidence under `.local`.
+The harness tests use disposable containers and report failures through assertions and subprocess output.
 They do not send external messages.
 [Harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguishes protocol fixtures from complete live inference qualification.
 The [historical native messaging result](validation/rust-native-openclaw-linux-arm64.json) records the retired Telegram fixture with its source hashes; current tests leave messaging-channel pairing and message delivery to OpenClaw.
