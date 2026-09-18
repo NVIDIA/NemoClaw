@@ -17,7 +17,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
-| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081` and is reachable from `host.openshell.internal:8081`. |
 | Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
@@ -31,6 +31,14 @@ Use this path when you operate `llama-server` and want NemoClaw to register its 
 The server must satisfy all of these requirements:
 
 - Listen over HTTP on `127.0.0.1:8081` and expose its OpenAI-compatible API under `/v1`.
+- Remain reachable from the sandbox at `host.openshell.internal:8081`.
+  Onboarding probes that hop after the host fingerprint.
+  A failed TCP reachability check blocks attachment and requires a sandbox-reachable listener.
+  An unavailable probe is non-fatal and leaves sandbox reachability unverified.
+  On a native Docker-bridge route, a loopback-only publish (`-p 127.0.0.1:8081:8081`) or a `127.0.0.1`-only host bind can fail the TCP check.
+  In that case, if the server runs in Docker, publish the port on the Docker gateway IP as well (`-p <gateway-ip>:8081:8081`).
+  If you run `llama-server` on the host, bind it on the Docker gateway IP or allow the sandbox subnet; a `127.0.0.1`-only bind is not enough.
+  On native Podman, bind or publish the listener on the sandbox host address instead of a Docker gateway mapping.
 - Require the same native bearer key supplied through `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`.
 - Expose bounded native llama.cpp evidence through `/v1/models`, `/health`, `/props`, and either `/metrics` or the native metrics-not-supported response.
 - Report a stable, non-path served model alias.

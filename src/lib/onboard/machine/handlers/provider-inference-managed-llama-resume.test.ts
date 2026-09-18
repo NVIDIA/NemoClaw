@@ -87,6 +87,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
       expect(recoverManagedLlamaCpp).toHaveBeenCalledOnce();
       expect(recoverManagedLlamaCpp).toHaveBeenCalledWith("llama-cpp-local", "spark-agent");
+      expect(calls.probeLlamaCppSandboxReachability).not.toHaveBeenCalled();
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
       );
@@ -136,6 +137,48 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: llamaCppProfile,
     });
+  });
+
+  it("does not skip operator-attached llama.cpp resume when the sandbox hop fails (#11626)", async () => {
+    const session = createSession({
+      sandboxName: "operator-agent",
+      provider: "llama-cpp-local",
+      model: "team/model-alias",
+      endpointUrl: "http://host.openshell.internal:8081/v1",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "complete";
+    const probeLlamaCppSandboxReachability = vi.fn(async () => ({
+      ok: false as const,
+      reason: "tcp_failed" as const,
+      networkName: "openshell",
+      gatewayIp: "172.18.0.1",
+    }));
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      probeLlamaCppSandboxReachability,
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "operator-agent",
+      }),
+    ).rejects.toThrow("exit 1");
+    expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("host.openshell.internal:8081"),
+    );
   });
 
   it("persists installer vLLM profile provenance returned by provider setup (#11896)", async () => {

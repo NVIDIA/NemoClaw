@@ -196,6 +196,7 @@ export interface SetupNimFlowDeps {
     state: SetupNimSelectionState,
     requestedModel: string | null,
     recoveredModel: string | null,
+    options?: { skipSandboxReachability?: boolean },
   ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
@@ -1241,7 +1242,9 @@ export function createSetupNim(
             continue selectionLoop;
           }
           state.model = installed.model;
-          const result = await deps.handleLlamaCppSelection(state, installed.model, null);
+          const result = await deps.handleLlamaCppSelection(state, installed.model, null, {
+            skipSandboxReachability: true,
+          });
           ({
             model,
             provider,

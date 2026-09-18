@@ -10,13 +10,15 @@ export interface HostServiceUnreachableResult {
   readonly networkName: string;
   readonly subnet?: string;
   readonly gatewayIp?: string;
+  readonly sandboxHostAddress?: string | null;
+  readonly runtimeProviderId?: string;
 }
 
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 
 export function formatHostServiceUnreachableMessage(
   result: HostServiceUnreachableResult,
-  options: { serviceLabel: string; port?: number },
+  options: { serviceLabel: string; port?: number; extraLines?: readonly string[] },
 ): string {
   if (result.ok || result.reason !== "tcp_failed") return "";
 
@@ -33,6 +35,7 @@ export function formatHostServiceUnreachableMessage(
 
   return [
     `  ✗ Sandbox containers cannot reach the ${options.serviceLabel} at ${HOST_INTERNAL_NAME}:${port}.`,
+    ...(options.extraLines ?? []),
     "    A host firewall may be blocking traffic from the OpenShell Docker bridge.",
     "    To allow it:",
     allowCmd,

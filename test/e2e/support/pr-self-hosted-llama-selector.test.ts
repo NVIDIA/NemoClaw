@@ -44,6 +44,9 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
+  "src/lib/onboard/llama-cpp-selection/index.ts",
+  "src/lib/onboard/llama-cpp-selection/sandbox-reachability.ts",
+  "src/lib/onboard/host-service-reachability.ts",
 ] as const;
 
 type RunProcessResult = {

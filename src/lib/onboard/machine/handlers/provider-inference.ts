@@ -18,6 +18,11 @@ import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
+import {
+  formatLlamaCppSandboxUnreachableMessage,
+  probeLlamaCppSandboxReachability,
+  type LlamaCppSandboxReachabilityResult,
+} from "../../llama-cpp-selection/sandbox-reachability";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
 import { resolveModelRouterPort } from "../../model-router";
 import { promptOnboardConfigurationReview } from "../../prompt-helpers";
@@ -217,6 +222,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<boolean>;
+    probeLlamaCppSandboxReachability?(): Promise<LlamaCppSandboxReachabilityResult>;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -684,9 +690,21 @@ async function ensureLegacyManagedLlamaCppResumeReady(
     provider: string | null | undefined,
     sandboxName: string | null | undefined,
   ) => Promise<boolean>,
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "error" | "exitProcess" | "probeLlamaCppSandboxReachability"
+  >,
 ): Promise<void> {
-  if (selection?.setupOptions.hostLocalInference) return;
-  await ensure(provider, sandboxName);
+  const recoveredManagedLlamaCpp = selection?.setupOptions.hostLocalInference
+    ? true
+    : await ensure(provider, sandboxName);
+  if (recoveredManagedLlamaCpp || provider !== "llama-cpp-local") return;
+  const sandboxReach = await (
+    deps.probeLlamaCppSandboxReachability ?? probeLlamaCppSandboxReachability
+  )();
+  if (sandboxReach.ok || sandboxReach.reason !== "tcp_failed") return;
+  deps.error(formatLlamaCppSandboxUnreachableMessage(sandboxReach));
+  deps.exitProcess(1);
 }
 
 function endpointSourceForCurrentUrl(
@@ -1350,6 +1368,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
+        deps,
       );
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
