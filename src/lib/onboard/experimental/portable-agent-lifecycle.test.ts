@@ -56,6 +56,9 @@ import {
   buildHermesPortableCommandEnvironment,
   buildHermesPortableOnboardingCommandAuthority,
   assertHermesPortableAgentLifecycleAuthority,
+  assertHermesPortableCommandSupported,
+  assertHermesPortableCommandUnavailable,
+  HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -624,5 +627,61 @@ describe("portable agent lifecycle dispatch", () => {
       expect.any(Object),
     );
     expect(mocks.stopHermes).not.toHaveBeenCalled();
+  });
+});
+
+function portableRefusalMessage(refuse: () => void): string {
+  try {
+    refuse();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return "";
+}
+
+describe("hermes portable command refusals (#11966)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.inspectClassification.mockImplementation((...args) => mocks.inspect(...args));
+    mocks.hasCandidate.mockReturnValue(true);
+    mocks.inspect.mockReturnValue(hermes("active"));
+  });
+
+  it("appends receipt guidance when refusing dashboard-url on a Hermes portable sandbox", () => {
+    const message = portableRefusalMessage(() =>
+      assertHermesPortableCommandUnavailable("alpha", "sandbox:dashboard-url"),
+    );
+
+    expect(message).toContain(
+      `${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: sandbox:dashboard-url`,
+    );
+    expect(message).toContain("portable receipt");
+    expect(message).toContain("dashboardPort");
+  });
+
+  it("appends the same guidance when the supported-command guard refuses dashboard-url", () => {
+    const message = portableRefusalMessage(() =>
+      assertHermesPortableCommandSupported("sandbox:dashboard-url", "alpha", []),
+    );
+
+    expect(message).toContain("Command: sandbox:dashboard-url");
+    expect(message).toContain("dashboardPort");
+  });
+
+  it.each([
+    "launch",
+    "sandbox:connect",
+    "sandbox:doctor",
+    "sandbox:recover",
+    "sandbox:start",
+    "sandbox:status",
+    "sandbox:stop",
+  ])("keeps the bare refusal for %s", (commandId) => {
+    const message = portableRefusalMessage(() =>
+      assertHermesPortableCommandUnavailable("alpha", commandId),
+    );
+
+    expect(message).toBe(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+    expect(message).not.toContain("dashboardPort");
   });
 });

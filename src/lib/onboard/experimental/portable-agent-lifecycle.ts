@@ -60,6 +60,35 @@ export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
   "The --fix option is not supported for an experimental Hermes portable sandbox.";
 
+const HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID = "sandbox:dashboard-url";
+
+/**
+ * Name where the Hermes portable dashboard URL actually comes from so the
+ * refusal stays actionable instead of a bare "not supported".
+ *
+ * The portable receipt persists the value onboarding resolved and printed as
+ * `dashboardPort`, so the operator can recover the URL from the state dir
+ * instead of scrolling back through the onboarding transcript.
+ */
+export function hermesPortableDashboardUrlGuidance(stateDir: string): string {
+  return `The portable profile prints the dashboard URL during onboarding and persists it as 'dashboardPort' on the portable receipt in ${stateDir}; read it there instead.`;
+}
+
+/**
+ * Build the portable-profile refusal for one command id.
+ *
+ * Only `sandbox:dashboard-url` appends the actionable hint; every other
+ * excluded command keeps the bare unsupported-command sentence.
+ */
+export function hermesPortableUnsupportedCommandMessage(
+  commandId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const message = `${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`;
+  if (commandId !== HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID) return message;
+  return `${message} ${hermesPortableDashboardUrlGuidance(defaultPortableDemoStateDir(env))}`;
+}
+
 const HERMES_PORTABLE_COMMANDS = new Set([
   "launch",
   "sandbox:connect",
@@ -142,7 +171,7 @@ export function assertHermesPortableCommandSupported(
   if (doctorFix) {
     throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
   }
-  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+  throw new Error(hermesPortableUnsupportedCommandMessage(commandId, process.env));
 }
 
 export type PortableAgentReceiptDisposition =
@@ -568,7 +597,7 @@ export function assertHermesPortableCommandUnavailable(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (inspectPortableAgentReceiptDisposition(sandboxName, env).kind !== "hermes") return;
-  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+  throw new Error(hermesPortableUnsupportedCommandMessage(commandId, env));
 }
 
 function requireMatchingAgent(

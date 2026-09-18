@@ -56,7 +56,8 @@ function getRuntimeBridge(): DashboardUrlRuntimeBridge {
 export default class DashboardUrlCliCommand extends NemoClawCommand {
   static id = "sandbox:dashboard-url";
   static strict = true;
-  static summary = "Print the dashboard URL";
+  static summary =
+    "Print the dashboard URL (not supported for the experimental Hermes portable profile)";
   static description = "Print the browser-facing dashboard URL for a running sandbox.";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
