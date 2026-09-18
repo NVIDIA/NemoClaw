@@ -47,7 +47,7 @@ Build a verified bundle containing the CLI, OpenTofu, provider, and matching con
 Keep that bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-[Native platform evidence](validation/rust-native-platforms.json) records the tested revisions; it does not qualify GPU deployment on all five platforms.
+[Native platform test results](validation/rust-native-platforms.json) identify the tested revisions; they do not qualify GPU deployment on all five platforms.
 
 Prebuilt release downloads and a supported installation/upgrade channel: **TBD**.
 Use the existing [source-build procedure](build.md) for the documented development workflow.
@@ -75,9 +75,9 @@ The example deployment UUIDs, endpoints, and local image digests must be replace
 | General DGX Station deployment and setup procedure | **TBD** — requires current implementation and host qualification |
 | Linux AMD64 Fabric deployment | **TBD** — the native Deep Agents and OpenClaw image builds and tests do not establish gateway provisioning or an end-to-end agent response |
 | AMD64 Nemotron image and GPU inference | **TBD** — configuration and build-platform tests do not establish a successful image build, model load, or agent response on the target host |
-| Windows/WSL or macOS local GPU deployment | **TBD** — native client evidence does not establish runtime support |
+| Windows/WSL or macOS local GPU deployment | **TBD** — native client test results do not establish runtime support |
 | Separate physical SSH model host | **TBD** — the retained two-daemon live result used one DGX Spark |
 | Distributed inference across two Sparks or Stations | **TBD** — SSH placement alone does not implement distributed inference |
-| Every harness/provider/model combination | **TBD** — requires evidence for the specific combination |
+| Every harness/provider/model combination | **TBD** — requires test results for the specific combination |
 
-Use [validation evidence](validation/README.md) for the configurations tested so far.
+Use [recorded test results](validation/README.md) for the configurations tested so far.

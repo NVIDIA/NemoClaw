@@ -521,7 +521,7 @@ python3 tools/fabric-adapter-experiment.py --harness openclaw --interfaces --inf
 The check targets provide their verified source and dependencies inside disposable build stages.
 The harness tests use disposable containers and report failures through assertions and subprocess output.
 They do not send external messages.
-[Harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguishes protocol fixtures from complete live inference qualification.
+[Harness test results](validation/rust-fabric-adapters-linux-arm64.json) distinguish protocol fixtures from complete live inference qualification.
 The [historical native messaging result](validation/rust-native-openclaw-linux-arm64.json) records the retired Telegram fixture with its source hashes; current tests leave messaging-channel pairing and message delivery to OpenClaw.
 
 Real messaging deployment still needs generic egress, mounted secrets, and retained sandbox storage that this desired-state schema does not provision.
@@ -548,7 +548,7 @@ Native agent capabilities do not by themselves establish a complete NemoClaw dep
 | Gmail with an app password | **TBD** — needs a verified native client, protected credential delivery, egress policy, and file-retention procedure |
 | Managed MCP bridge and server add/update/remove | **TBD** — no equivalent current NemoClaw CLI workflow |
 | Arbitrary OpenClaw or Hermes plugin installation | **TBD** — requires a verified image, configuration, and lifecycle procedure; the declared Brave integration is documented above |
-| Memory search and embedding-service setup | **TBD** — needs evidence for the endpoint, credentials, policy, and native settings |
+| Memory search and embedding-service setup | **TBD** — needs tests of the endpoint, credentials, policy, and native settings |
 | Context compaction configuration | **TBD** — verify behavior against the pinned native runtime before reusing earlier guidance |
 | Auxiliary-model sub-agents | **TBD** — model choices are configurable, but delegation and consultation behavior are not configured |
 | Deep Agents tracing and managed collector lifecycle | **TBD** — the implemented OpenClaw tracing profile uses an existing local collector |

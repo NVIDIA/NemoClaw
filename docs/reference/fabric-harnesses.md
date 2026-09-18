@@ -33,5 +33,5 @@ Keep the image, schema, and bundle matched to the desired configuration.
 Hermes uses the local API/dashboard adapter by default; experimental [Relay tracing](../agents.md#hermes-relay-tracing) keeps that adapter when `interfaces` is explicit, otherwise selecting an upstream adapter without those interfaces.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) enforces the harness restrictions.
-[Retained evidence](../validation/README.md) distinguishes native protocol fixtures from live inference at specific revisions.
+[Recorded test results](../validation/README.md) distinguish native protocol fixtures from live inference at specific revisions.
 Complete first-message procedures and a release-qualified harness/model/platform matrix: **TBD**.

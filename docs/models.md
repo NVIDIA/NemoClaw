@@ -18,8 +18,8 @@ There is no repository allowlist.
 | Capacity and context | Weight size, runtime memory, KV cache, context length, and concurrency fit the configured host/GPU budget |
 | Agent limits and tools | Native agent context/output/reasoning settings agree with the server and model; parser acceptance is not a tool-use qualification |
 
-Start with a model/configuration covered by [retained evidence](validation/README.md), then verify it against your current images and host.
-Older evidence is not a release-wide support matrix.
+Start with a model/configuration covered by [recorded test results](validation/README.md), then verify it against your current images and host.
+Older test results do not establish support across an entire release.
 For an external endpoint, its operator owns installation and capacity; use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
 
 ## Pin and Serve the Model
@@ -124,7 +124,7 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
 | Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
 | Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
-| Inference process exited | Resolve the native error using the selected model, runtime image, and recipe evidence |
+| Inference process exited | Diagnose the native error using runtime logs, the selected model and image, and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.

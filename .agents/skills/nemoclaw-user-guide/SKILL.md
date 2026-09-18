@@ -40,7 +40,7 @@ Do not assume generic Markdown headers establish version-scoped search or a work
 | Earlier-product migration or security | [Migration](../../../docs/migration.md), [security](../../../docs/security.md), [sandbox policy](../../../docs/sandbox-network.md) |
 
 Read only the sources relevant to the user's task and follow their verification and recovery steps.
-Treat **TBD** as missing implementation evidence or an unverified procedure.
+Treat **TBD** as an implementation or procedure that still needs verification.
 Distinguish parser acceptance, fixture coverage, and live results at their recorded revisions.
 Keep client, sandbox engine, and inference host requirements separate.
 Preserve credential references, immutable image pins, the original bundle, and deployment state.

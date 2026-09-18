@@ -101,7 +101,7 @@ The earlier experimental Okta/Entra runtime-identity profiles and OAuth refresh 
 A v1 runtime-identity procedure remains **TBD** pending an accepted implementation and tenant-scoped qualification.
 Provider authentication references do not implement that older identity workflow.
 
-## Implementation Evidence
+## Implementation and Tests
 
 The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-sdk/src/inference_auth.rs), [runtime authentication](../crates/nemoclaw-runtime/src/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
 Use [retained validation records](validation/README.md) for their tested environments and limits.

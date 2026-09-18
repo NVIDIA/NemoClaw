@@ -146,9 +146,9 @@ The live test and a delayed-delete fixture protect the correction.
 This result covers an external native OpenShell gateway and rootless Podman sandboxes on this Linux host.
 That earlier result did not qualify managed Podman resources.
 The [managed gateway contract](../usage.md#use-a-managed-podman-gateway) anchors identity in its retained owned network and signing keys.
-[New managed Podman evidence](../validation/rust-managed-podman-linux-arm64.md) qualifies Deep Agents inference and the lifecycle on local rootless Podman 5.8.7 with OpenShell `1fe79f539`.
+[New managed Podman test results](../validation/rust-managed-podman-linux-arm64.md) qualify Deep Agents inference and the lifecycle on local rootless Podman 5.8.7 with OpenShell `1fe79f539`.
 Managed Podman inference servers, rootful operation, remote placement, and other operating systems remain unqualified.
-See the [Podman evidence](../validation/rust-podman-rootless-linux-arm64.json).
+See the [Podman test results](../validation/rust-podman-rootless-linux-arm64.json).
 
 ### SSH Transport Validation
 

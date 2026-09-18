@@ -95,7 +95,7 @@ Within the existing crates:
 
 The recipe selects a qualified backend/hardware combination.
 The existing YAML backend identifier remains unchanged for compatibility; this refactor does not add supported combinations or an arbitrary launch-argument mechanism.
-A new hardware profile or backend normally adds a module and qualification evidence.
+A new hardware profile or backend normally adds a module and records test results for the new configuration.
 
 A crate is justified by a dependency or deployment boundary, not a new GPU name.
 
@@ -165,4 +165,4 @@ With the corrected settings, Qwen3-4B passed actual Fabric OpenClaw replies, unc
 Resource identities and snapshot completion records stayed stable during recovery; intentional destroy retained storage, and a later apply reused it.
 The same generic runtime image served both tested models.
 
-See the [retained evidence](../validation/rust-selected-model-linux-arm64.json).
+See the [recorded test results](../validation/rust-selected-model-linux-arm64.json).

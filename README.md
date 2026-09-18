@@ -8,7 +8,7 @@ The CLI delegates `plan`, `apply`, `export`, and `destroy` to the SDK.
 OpenTofu owns graph execution and resource state.
 
 The [design decision](docs/design/scope.md) defines implementation boundaries and invariants.
-[Validation evidence and limits](docs/validation/README.md) identify tested configurations.
+[Recorded test results and limits](docs/validation/README.md) identify tested configurations.
 
 ## Start Here
 

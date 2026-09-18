@@ -132,7 +132,7 @@ The isolated policy permits inference routing without general network egress.
 
 The isolated preset uses OpenShell's `best_effort` Landlock mode and depends on the host kernel.
 Unavailable Landlock restrictions are not enforced.
-The [validation evidence](validation/README.md) records policy tests, not a security qualification.
+The [recorded test results](validation/README.md) cover policy tests, not a security qualification.
 
 Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
 

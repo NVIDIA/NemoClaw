@@ -85,7 +85,7 @@ redirects:
     destination: "/nemoclaw/latest/user-guide/openclaw/home"
   - source: "/nemoclaw/latest/home"
     destination: "/nemoclaw/latest/user-guide/openclaw/home"
-  # Version-specific review pages are internal engineering evidence. Preserve their former public
+  # Version-specific review pages are internal engineering review records. Preserve their former public
   # routes by sending readers to the current security guidance in one hop.
   - source: "/nemoclaw/latest/user-guide/:variant/security/openshell-0.0.72-compatibility-review.html"
     destination: "/nemoclaw/latest/user-guide/:variant/security/security-controls/gateway-authentication-controls"

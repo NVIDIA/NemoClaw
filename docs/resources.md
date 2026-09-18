@@ -36,7 +36,7 @@ Read docs/README.md, docs/overview.md, and the guide for my task from this check
 Use docs/reference/cli.md and docs/reference/configuration.md from the same revision as my bundle.
 For hosted documentation, use the v1 (Development) selector and /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
-Treat TBD as missing implementation evidence or an unverified procedure, not a promised feature.
+Treat TBD as an implementation or procedure that still needs verification, not a promised feature.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.
 Describe which resources an operation changes or retains and how to verify its result.
 Use credential references; do not request secret values in chat or put them in YAML or command arguments.

@@ -190,7 +190,7 @@ After an interrupted pull, retain the original YAML and state and explicitly rea
 Destroy removes the owned service and OpenShell registration while retaining model storage and the pre-existing network.
 See [state retention](state.md) before removing any retained data.
 
-The [service contract](../crates/nemoclaw-sdk/src/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/ollama/models.rs), and [recovery evidence](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
+The [service contract](../crates/nemoclaw-sdk/src/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/ollama/models.rs), and [recovery test results](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
 The [original live result](validation/rust-ollama-linux-arm64.json) used CPU inference and records the host-network port-publication failure; it does not qualify GPU execution.
 
 ## Authenticate a Managed vLLM Service
@@ -420,7 +420,7 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Workflow or claim | Documentation status |
 |---|---|
 | Managed llama.cpp or NVIDIA NIM installation | **TBD** — no corresponding managed backend in the current configuration contract |
-| Managed model router and model-pool lifecycle | **TBD** — requires implementation and lifecycle evidence |
+| Managed model router and model-pool lifecycle | **TBD** — requires an implementation and lifecycle test results |
 | Distributed inference across multiple Sparks or Stations | **TBD** — SSH engine placement does not establish multi-node inference |
 | Separate physical inference host | **TBD** — requires qualification beyond the retained same-host two-daemon result |
 | Vendor-specific catalog selection and validation | **TBD** — compatible API selection does not implement the earlier onboarding catalogs |
@@ -428,4 +428,4 @@ Use [inline recipes](recipes.md) for declared model preparation and [SSH placeme
 | Gated model repositories, custom remote-code models, GGUF, and nested checkpoints in the generic managed backend | **TBD** — outside the current [managed-model contract](models.md) |
 
 These gaps do not prevent use of a separately verified external endpoint with an accepted API.
-They do prevent treating an old provider or platform guide as evidence for the current implementation.
+They do prevent treating an old provider or platform guide as verification of the current implementation.

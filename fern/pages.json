@@ -52,7 +52,7 @@
         {"title": "Tests", "source": "docs/testing.md", "slug": "testing"},
         {"title": "Run integration tests", "source": "docs/testing/fixtures.md", "slug": "testing/fixtures"},
         {"title": "Run live tests", "source": "docs/testing/live.md", "slug": "testing/live"},
-        {"title": "Validation evidence", "source": "docs/validation/README.md", "slug": "validation"},
+        {"title": "Recorded test results", "source": "docs/validation/README.md", "slug": "validation"},
         {"title": "Contribute documentation", "source": "docs/CONTRIBUTING.md", "slug": "contributing"},
         {"title": "Maintain the configuration schema", "source": "docs/configuration-schema.md", "slug": "configuration-schema"},
         {"title": "Build and publish documentation", "source": "docs/AUTOMATION.md", "slug": "documentation-build"}

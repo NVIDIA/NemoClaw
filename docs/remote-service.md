@@ -41,7 +41,7 @@ Destroy retains model data and network.
 
 The bundled fixture lifecycle and a live two-daemon DGX Spark test are qualified.
 The live test used a second Docker daemon in a network namespace, SSH control, rootless Podman sandboxes, and actual OpenClaw replies through OpenShell.
-See [the validation evidence](validation/rust-dual-daemon-linux-arm64.json).
+See [the recorded test results](validation/rust-dual-daemon-linux-arm64.json).
 
 Both daemons shared the physical host and GPU; a separate-host deployment and other hardware remain qualification gates.
 
