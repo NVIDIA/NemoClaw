@@ -343,7 +343,10 @@ mod tests {
         use nix::{pty::openpty, sys::termios};
         use std::fs::File;
 
-        let terminal = File::from(openpty(None, None).unwrap().slave);
+        let pair = openpty(None, None).unwrap();
+        // Keep the master open so the slave remains a usable terminal during cancellation.
+        let _master = pair.master;
+        let terminal = File::from(pair.slave);
         let observer = terminal.try_clone().unwrap();
         let original = termios::tcgetattr(&observer).unwrap();
         let echo = EchoGuard::new(Terminal::File(terminal)).unwrap();
