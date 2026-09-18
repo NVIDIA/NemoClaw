@@ -335,7 +335,10 @@ async function stopSandboxWithinLifecycleFence(
   try {
     const portableAuthorityRecorded =
       resolved.bundle.identity.id === "docker" &&
-      typeof resolved.sandbox.lifecycleGeneration === "string";
+      ((resolved.sandbox.portableLifecycleProfile === "hermes" &&
+        resolved.sandbox.agent === "hermes") ||
+        (resolved.sandbox.portableLifecycleProfile === "openclaw" &&
+          resolved.sandbox.agent === "openclaw"));
     const portable = portableAuthorityRecorded
       ? await (deps.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle)(
           sandboxName,
@@ -367,15 +370,7 @@ async function stopSandboxWithinLifecycleFence(
       };
     } else {
       beforeStop();
-      outcome = await mutateStandardSandboxLifecycle("stop", input, {
-        ...deps,
-        persistSandboxIdentity:
-          deps.persistSandboxIdentity ??
-          ((name, fingerprint) =>
-            (deps.updateSandbox ?? registry.updateSandbox)(name, {
-              lifecycleLiveIdentityFingerprint: fingerprint,
-            })),
-      });
+      outcome = await mutateStandardSandboxLifecycle("stop", input, deps);
     }
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };

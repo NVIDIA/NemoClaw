@@ -13,10 +13,6 @@ import type {
 
 export interface StandardSandboxLifecycleDeps {
   readonly openShellLifecycle?: OpenShellSandboxStateLifecycle;
-  readonly persistSandboxIdentity?: (
-    sandboxName: string,
-    sandboxIdentityFingerprint: string,
-  ) => boolean;
 }
 
 /** Standard Docker and Podman lifecycle has one OpenShell SDK owner. */
@@ -25,38 +21,15 @@ export async function mutateStandardSandboxLifecycle(
   input: RuntimeProviderLifecycleInput,
   deps: StandardSandboxLifecycleDeps = {},
 ): Promise<RuntimeProviderLifecycleResult | RuntimeProviderLifecycleStopOutcome> {
+  const sandboxIdentityFingerprint = input.sandbox.lifecycleLiveIdentityFingerprint;
+  if (!sandboxIdentityFingerprint) {
+    return {
+      exitCode: 1,
+      message: `  OpenShell cannot ${action} legacy sandbox '${input.sandboxName}' because its registry row predates immutable lifecycle identity. NemoClaw retained the row without mutation; rebuild the sandbox to migrate it safely.`,
+    };
+  }
   const lifecycle =
     deps.openShellLifecycle ?? createSdkOpenShellSandboxStateLifecycle({ env: input.environment });
-  let sandboxIdentityFingerprint = input.sandbox.lifecycleLiveIdentityFingerprint;
-  if (!sandboxIdentityFingerprint) {
-    const identify = lifecycle.identifySandbox;
-    if (!identify || !deps.persistSandboxIdentity) {
-      return {
-        exitCode: 1,
-        message: `  OpenShell cannot ${action} legacy sandbox '${input.sandboxName}' until its immutable identity is migrated. Run '${input.sandboxName} status' and retry.`,
-      };
-    }
-    const identified = await identify({
-      sandboxName: input.sandboxName,
-      target: {
-        kind: "named",
-        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
-      },
-    });
-    if (identified.kind === "failed") {
-      return {
-        exitCode: 1,
-        message: `  OpenShell could not migrate sandbox '${input.sandboxName}' identity: ${identified.error.message}`,
-      };
-    }
-    sandboxIdentityFingerprint = identified.sandboxIdentityFingerprint;
-    if (!deps.persistSandboxIdentity(input.sandboxName, sandboxIdentityFingerprint)) {
-      return {
-        exitCode: 1,
-        message: `  OpenShell identified legacy sandbox '${input.sandboxName}', but NemoClaw could not persist its immutable identity.`,
-      };
-    }
-  }
   const request = {
     sandboxName: input.sandboxName,
     sandboxIdentityFingerprint,

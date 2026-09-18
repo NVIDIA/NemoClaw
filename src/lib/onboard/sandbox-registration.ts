@@ -277,6 +277,9 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+    ...(input.hermesPortableLifecycle === true
+      ? { portableLifecycleProfile: "hermes" as const }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     ...(input.hostMounts && input.hostMounts.length > 0
@@ -344,6 +347,7 @@ export function prepareCreatedSandboxRegistration(
       );
     }
     entry.agent = "openclaw";
+    entry.portableLifecycleProfile = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,

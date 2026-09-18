@@ -300,6 +300,7 @@ describe("stopSandbox", () => {
 
   it("gracefully stops in-sandbox channels before stopping through OpenShell (#6026)", async () => {
     const h = harness();
+    h.getSandbox.mockReturnValue(sandbox({ lifecycleGeneration: "standard-generation" }));
 
     const result = await stopSandbox("my-sandbox", h.deps);
 
@@ -454,6 +455,7 @@ describe("stopSandbox", () => {
         gatewayName: "nemoclaw",
         lifecycleGeneration: "generation-alpha",
         openshellDriver: "docker",
+        portableLifecycleProfile: "openclaw",
       }),
     );
     h.stopPortableSandbox.mockImplementation(async (_name, _context, beforeStop) => {
@@ -487,6 +489,7 @@ describe("stopSandbox", () => {
         lifecycleLiveIdentityFingerprint: "identity-alpha",
         model: "qwen2.5:7b",
         openshellDriver: "docker",
+        portableLifecycleProfile: "hermes",
         provider: "ollama/qwen3-vl:4b",
       }),
     );
@@ -509,6 +512,7 @@ describe("stopSandbox", () => {
       lifecycleLiveIdentityFingerprint: "identity-alpha",
       model: "qwen2.5:7b",
       openshellDriver: "docker",
+      portableLifecycleProfile: "hermes",
       provider: "ollama/qwen3-vl:4b",
     });
     const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });

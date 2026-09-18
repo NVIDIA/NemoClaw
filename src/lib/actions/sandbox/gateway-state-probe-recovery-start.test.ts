@@ -24,16 +24,6 @@ function harness(
     readonly openshellDriver?: "docker" | "podman";
     readonly phase?: string;
     readonly registered?: SandboxEntry | null;
-    readonly identityResult?:
-      | Readonly<{ kind: "accepted"; sandboxIdentityFingerprint: string }>
-      | Readonly<{
-          kind: "failed";
-          error: Readonly<{
-            kind: "transport";
-            reason: "identity_mismatch";
-            message: string;
-          }>;
-        }>;
     readonly startResult?:
       | Readonly<{ kind: "accepted" }>
       | Readonly<{
@@ -46,11 +36,6 @@ function harness(
         }>;
   } = {},
 ) {
-  const identifySandbox = vi.fn(async () =>
-    Promise.resolve(
-      input.identityResult ?? ({ kind: "accepted", sandboxIdentityFingerprint } as const),
-    ),
-  );
   const startSandbox = vi.fn(async () => input.startResult ?? ({ kind: "accepted" } as const));
   const stopSandbox = vi.fn(async () => ({ kind: "accepted" }) as const);
   const capture = vi.fn(() => ({
@@ -62,14 +47,11 @@ function harness(
       ? (input.registered ?? null)
       : registeredSandbox(input.openshellDriver ?? "docker"),
   );
-  const persistSandboxIdentity = vi.fn(() => true);
   return {
     capture: capture as never,
     captureSpy: capture,
     getSandbox,
-    identifySandbox,
-    openShellLifecycle: { identifySandbox, startSandbox, stopSandbox },
-    persistSandboxIdentity,
+    openShellLifecycle: { startSandbox, stopSandbox },
     startSandbox,
     stopSandbox,
   };
@@ -123,33 +105,13 @@ describe("startStoppedSandboxContainerForProbeRecovery", () => {
     expect(deps.startSandbox).not.toHaveBeenCalled();
   });
 
-  it("migrates a legacy registered identity before submitting start", async () => {
+  it("retains a legacy row without submitting an identity-less start", async () => {
     const deps = harness({
       registered: { ...registeredSandbox(), lifecycleLiveIdentityFingerprint: undefined },
-    });
-
-    await expect(startStoppedSandboxContainerForProbeRecovery("alpha", deps)).resolves.toBe(true);
-
-    expect(deps.persistSandboxIdentity).toHaveBeenCalledWith("alpha", sandboxIdentityFingerprint);
-    expect(deps.startSandbox).toHaveBeenCalledOnce();
-  });
-
-  it("reports no recovery when legacy identity observation is ambiguous", async () => {
-    const deps = harness({
-      registered: { ...registeredSandbox(), lifecycleLiveIdentityFingerprint: undefined },
-      identityResult: {
-        kind: "failed",
-        error: {
-          kind: "transport",
-          reason: "identity_mismatch",
-          message: "OpenShell sandbox identity changed.",
-        },
-      },
     });
 
     await expect(startStoppedSandboxContainerForProbeRecovery("alpha", deps)).resolves.toBe(false);
 
-    expect(deps.persistSandboxIdentity).not.toHaveBeenCalled();
     expect(deps.startSandbox).not.toHaveBeenCalled();
   });
 });

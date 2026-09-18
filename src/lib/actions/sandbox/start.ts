@@ -199,7 +199,10 @@ async function startSandboxWithinLifecycleFence(
   try {
     const portableAuthorityRecorded =
       resolved.bundle.identity.id === "docker" &&
-      typeof resolved.sandbox.lifecycleGeneration === "string";
+      ((resolved.sandbox.portableLifecycleProfile === "hermes" &&
+        resolved.sandbox.agent === "hermes") ||
+        (resolved.sandbox.portableLifecycleProfile === "openclaw" &&
+          resolved.sandbox.agent === "openclaw"));
     if (portableAuthorityRecorded && resolved.sandbox.agent === "hermes") {
       await (deps.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority)(sandboxName, {
         env: input.environment,
@@ -228,15 +231,7 @@ async function startSandboxWithinLifecycleFence(
         ? resolved.sandbox.agent === "hermes"
           ? { exitCode: 0, hermesPortableVerified: true }
           : { exitCode: 0 }
-        : await mutateStandardSandboxLifecycle("start", input, {
-            ...deps,
-            persistSandboxIdentity:
-              deps.persistSandboxIdentity ??
-              ((name, fingerprint) =>
-                (deps.updateSandbox ?? registry.updateSandbox)(name, {
-                  lifecycleLiveIdentityFingerprint: fingerprint,
-                })),
-          });
+        : await mutateStandardSandboxLifecycle("start", input, deps);
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }

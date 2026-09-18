@@ -160,6 +160,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   gatewayPort?: number | null;
   /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
   stopped?: boolean;
+  /** Explicit retained Portable lifecycle owner; absent for every standard sandbox. */
+  portableLifecycleProfile?: "openclaw" | "hermes";
 }
 
 export type SandboxWorkloadReceipt =

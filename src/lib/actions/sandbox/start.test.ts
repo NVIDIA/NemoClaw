@@ -146,6 +146,9 @@ describe("startSandbox native lifecycle", () => {
 
   it("waits for OpenShell readiness before observing native gateway health", async () => {
     const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({ lifecycleGeneration: "standard-generation", stopped: true }),
+    );
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
       exitCode: 0,
@@ -177,6 +180,7 @@ describe("startSandbox native lifecycle", () => {
         lifecycleGeneration: "generation-alpha",
         lifecycleLiveIdentityFingerprint: "identity-alpha",
         openshellDriver: "docker",
+        portableLifecycleProfile: "hermes",
       }),
     );
     h.recoverPortableSandbox.mockImplementation(async () => {
