@@ -5,7 +5,7 @@
 
 `reference.json` records expected managed specifications, ownership labels, container configuration, host configuration, and gateway TOML for the Spark fixture.
 
-The retained cases cover gateway process layout 2 and the inference service.
+The retained cases cover gateway process layout 2 and a managed service process.
 Obsolete gateway process layouts 0 and 1 are rejected before engine access.
 Gateway storage retains its separate layout-0 specification and durable identity.
 Generation is the synthetic 32-character value `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`.

@@ -3,10 +3,10 @@
 #![cfg(target_os = "linux")]
 use nemoclaw_sdk::{
     CancellationToken, Deployment,
-    config::{Document, Service, ServiceDefinition},
+    config::{Document, ServiceDefinition},
     docker::Engine,
     managed::{RuntimeObservation, Spec},
-    recipes::huggingface,
+    services::installers::vllm::{Service, recipes::huggingface},
 };
 
 fn vllm(document: &Document) -> &Service {
@@ -112,15 +112,16 @@ async fn capture(directory: &Path) -> Value {
     let observed = engine.observe_runtime(&spec, &id).await.unwrap().unwrap();
     engine.verify_artifacts(&observed).await.unwrap();
     let mut receipts = BTreeMap::new();
-    let service = spec.service.as_ref().unwrap();
+    let service: Service =
+        serde_json::from_str(&spec.process.as_ref().unwrap().configuration).unwrap();
     for path in [
         format!(
             "/data/{}/.nemoclaw-complete.json",
-            huggingface::directory(service)
+            huggingface::directory(&service)
         ),
         format!(
             "/data/prepared/{}/complete.json",
-            service.recipe.as_ref().unwrap().key(service)
+            service.recipe.as_ref().unwrap().key(&service)
         ),
     ] {
         let bytes = engine

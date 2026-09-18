@@ -71,7 +71,7 @@ async fn status_requires_complete_current_evidence_and_never_mutates() {
 
 #[test]
 fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
-    let service = observed().spec.service.unwrap();
+    let service = crate::services::installers::vllm::configured_service(&observed().spec).unwrap();
     let recipe = service.recipe.as_ref().unwrap();
     let manifest = recipe.snapshot.as_ref().unwrap().clone();
     let modified = timestamp("2026-09-14T00:00:00.123456789Z")
@@ -116,7 +116,7 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
     stat.file_mode = 0o600;
     stat.link_target = "elsewhere".into();
     assert!(verify_stat(file, &stat).is_err());
-    let mut prep = crate::recipes::preparation::Completion {
+    let mut prep = crate::services::installers::vllm::recipes::preparation::Completion {
         key: recipe.key(&service),
         files: ["prepared.bin".to_owned(), "prepared.json".to_owned()]
             .into_iter()
@@ -130,18 +130,31 @@ fn artifact_receipts_require_exact_provenance_and_unchanged_regular_files() {
             })
             .collect(),
     };
-    crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep).unwrap();
+    crate::services::installers::vllm::recipes::preparation::validate_receipt(
+        recipe,
+        &recipe.key(&service),
+        &prep,
+    )
+    .unwrap();
     let original = prep.clone();
     prep.files[1] = prep.files[0].clone();
     assert!(
-        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
-            .is_err()
+        crate::services::installers::vllm::recipes::preparation::validate_receipt(
+            recipe,
+            &recipe.key(&service),
+            &prep,
+        )
+        .is_err()
     );
     prep = original;
     prep.key = "wrong".into();
     assert!(
-        crate::recipes::preparation::validate_receipt(recipe, &recipe.key(&service), &prep)
-            .is_err()
+        crate::services::installers::vllm::recipes::preparation::validate_receipt(
+            recipe,
+            &recipe.key(&service),
+            &prep,
+        )
+        .is_err()
     );
 }
 #[tokio::test]
@@ -155,10 +168,14 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
         for generic in [false, true] {
             let mut observation = observed();
             if generic {
-                let service = observation.spec.service.as_mut().unwrap();
+                let mut service =
+                    crate::services::installers::vllm::configured_service(&observation.spec)
+                        .unwrap();
                 service.recipe = None;
                 service.model.repository = "owner/model".into();
                 service.model.revision = "a".repeat(40);
+                observation.spec.process.as_mut().unwrap().configuration =
+                    serde_json::to_string(&service).unwrap();
             }
             assert!(
                 Engine::connect(&fixture.endpoint)

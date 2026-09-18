@@ -304,7 +304,6 @@ fn retained_bindings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    const MODEL_STORAGE: &str = "nemoclaw_inference_storage.inference_qwen";
 
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {
         let document =
@@ -327,6 +326,37 @@ mod tests {
         (record, bindings)
     }
 
+    fn service_resource(record: &Record, select: impl Fn(&str) -> bool) -> String {
+        compile::runtime_targets(&record.document, &record.generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| select(&target.kind))
+            .unwrap()
+            .address
+    }
+
+    fn service_process(record: &Record) -> String {
+        service_resource(record, |kind| {
+            crate::services::resource_behavior(kind).runtime_process
+        })
+    }
+
+    fn service_storage(record: &Record) -> String {
+        service_resource(record, |kind| {
+            crate::services::resource_behavior(kind).retained_storage
+        })
+    }
+
+    fn update_service(
+        definition: &mut crate::services::ServiceDefinition,
+        pointer: &str,
+        update: impl FnOnce(&mut serde_json::Value),
+    ) {
+        let mut value = serde_json::to_value(&*definition).unwrap();
+        update(value.pointer_mut(pointer).unwrap());
+        *definition = serde_json::from_value(value).unwrap();
+    }
+
     #[test]
     fn multiple_services_retain_each_volume_and_require_its_own_binding() {
         let (mut record, _) = runtime_state();
@@ -334,10 +364,9 @@ mod tests {
         provider.name = "other".into();
         provider.service_ref = Some("other".into());
         let mut definition = record.document.spec.services["qwen"].clone();
-        let crate::config::ServiceDefinition::Vllm(service) = &mut definition else {
-            panic!("expected vLLM service");
-        };
-        service.serving.port += 1;
+        update_service(&mut definition, "/serving/port", |port| {
+            *port = serde_json::json!(port.as_i64().unwrap() + 1);
+        });
         record
             .document
             .spec
@@ -365,19 +394,22 @@ mod tests {
         let expected = teardown_expected(&record, &bindings, true).unwrap();
         let retained = retained_addresses(&record, &bindings, true).unwrap();
         assert_eq!(retained.len(), 3);
+        let storage_kind = service_storage(&record)
+            .split_once('.')
+            .unwrap()
+            .0
+            .to_owned();
+        let process_kind = service_process(&record)
+            .split_once('.')
+            .unwrap()
+            .0
+            .to_owned();
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
         assert_eq!(
-            graph["resource"]["nemoclaw_inference_storage"]
-                .as_object()
-                .unwrap()
-                .len(),
+            graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
         );
-        assert!(
-            graph["resource"]
-                .get("nemoclaw_inference_service")
-                .is_none()
-        );
+        assert!(graph["resource"].get(&process_kind).is_none());
         for address in retained {
             let mut missing = bindings.clone();
             missing.remove(&address);
@@ -391,7 +423,8 @@ mod tests {
     #[test]
     fn teardown_requires_independent_storage_for_each_bound_process() {
         let (record, bindings) = runtime_state();
-        for missing in [GATEWAY_STORAGE, MODEL_STORAGE] {
+        let retained_storage = service_storage(&record);
+        for missing in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let mut incomplete = bindings.clone();
             incomplete.remove(missing);
             assert!(
@@ -405,20 +438,20 @@ mod tests {
     #[test]
     fn teardown_preserves_bound_process_specs_and_retains_only_storage_in_the_graph() {
         let (mut record, bindings) = runtime_state();
-        let crate::config::ServiceDefinition::Vllm(service) =
-            record.document.spec.services.get_mut("qwen").unwrap()
-        else {
-            panic!("expected vLLM service");
-        };
-        service.runtime.image = format!("local@sha256:{}", "a".repeat(64));
+        update_service(
+            record.document.spec.services.get_mut("qwen").unwrap(),
+            "/runtime/image",
+            |image| *image = serde_json::json!(format!("local@sha256:{}", "a".repeat(64))),
+        );
         let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let process = "nemoclaw_inference_service.inference_qwen";
-        assert_eq!(expected[process]["spec"], bindings[process].spec);
+        let process = service_process(&record);
+        let retained_storage = service_storage(&record);
+        assert_eq!(expected[&process]["spec"], bindings[&process].spec);
         let retained = retained_addresses(&record, &bindings, true).unwrap();
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 2);
-        for address in [GATEWAY_STORAGE, MODEL_STORAGE] {
+        for address in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let (kind, name) = address.split_once('.').unwrap();
             assert_eq!(
                 graph["resource"][kind][name]["spec"],
@@ -438,12 +471,11 @@ mod tests {
         undeclared.insert("foreign.resource".into(), StateBinding::default());
         assert!(teardown_expected(&record, &undeclared, true).is_err());
         let mut changed_storage = bindings.clone();
-        changed_storage.get_mut(MODEL_STORAGE).unwrap().spec = "{}".into();
+        let retained_storage = service_storage(&record);
+        changed_storage.get_mut(&retained_storage).unwrap().spec = "{}".into();
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
         let mut changed_owner = bindings;
-        let binding = changed_owner
-            .get_mut("nemoclaw_inference_service.inference_qwen")
-            .unwrap();
+        let binding = changed_owner.get_mut(&service_process(&record)).unwrap();
         let mut spec: Spec = serde_json::from_str(&binding.spec).unwrap();
         spec.generation = "a".repeat(32);
         binding.spec = spec.json().unwrap();

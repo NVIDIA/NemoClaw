@@ -13,10 +13,7 @@ mod inference;
 mod interfaces;
 mod providers;
 pub(crate) mod references;
-pub use crate::services::{
-    ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaModel, OllamaProxy,
-    ServiceDefinition, ServiceRuntime,
-};
+pub use crate::services::{ServiceDefinition, ServiceRuntime};
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
@@ -288,8 +285,3 @@ impl Gateway {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-
-pub use crate::services::installers::vllm::{
-    Memory, Model, Service, ServiceAuthentication, ServiceContainer, ServiceHardware, ServiceIpc,
-    ServicePlacement, ServicePublication, Serving,
-};

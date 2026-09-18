@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Data-only recipe contract. Executables run only in the managed runtime.
 pub(crate) mod limits;
-use crate::{
-    config::{ConfigError, Service},
-    snapshot::Manifest,
-};
+use super::super::Service;
+use crate::{config::ConfigError, snapshot::Manifest};
 use limits as l;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

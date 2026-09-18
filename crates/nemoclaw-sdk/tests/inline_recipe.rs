@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{Document, Service, ServiceDefinition};
+use nemoclaw_sdk::{
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::Service,
+};
 
 fn service(document: &Document) -> &Service {
     let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
@@ -47,7 +50,7 @@ fn inline_recipe_round_trips_without_a_builtin_model_identifier() {
 async fn preparation_recovers_staging_reuses_completion_and_rejects_changed_data() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Fixture {
@@ -126,7 +129,7 @@ fn preparation_keys_track_model_and_tool_identity() {
 async fn failed_verification_never_publishes_a_completion_receipt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     struct UntrustedEvidence(Vec<u8>);
     #[async_trait::async_trait]
@@ -201,7 +204,7 @@ fn model_specific_backend_names_are_rejected() {
 async fn published_directory_without_a_receipt_is_not_rebuilt() {
     use nemoclaw_sdk::{
         CancellationToken, Error,
-        recipes::preparation::{self, Action, Request, Runner},
+        services::installers::vllm::recipes::preparation::{self, Action, Request, Runner},
     };
     struct NoTools;
     #[async_trait::async_trait]

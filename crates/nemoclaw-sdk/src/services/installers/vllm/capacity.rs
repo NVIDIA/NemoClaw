@@ -17,16 +17,13 @@ impl Engine {
                 "capacity engine differs from runtime specification",
             ));
         }
-        let service = spec
-            .service
-            .as_ref()
-            .ok_or(Error::Conflict("capacity requires an inference service"))?;
+        let service = super::configured_service(spec)?;
         {
             let work = async {
                 let host = self.host_observer.observe(self).await?;
                 let info = self.info().await?;
                 let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-                let directory = super::recipes::huggingface::directory(service);
+                let directory = super::recipes::huggingface::directory(&service);
                 let cached = if let Some(observed) = observed {
                     self.read_file(
                         &observed.container_id,
@@ -41,8 +38,8 @@ impl Engine {
                     None
                 };
                 let manifest = match cached {
-                    Some(bytes) => super::recipes::huggingface::decode_manifest(service, &bytes)?,
-                    None => super::recipes::huggingface::resolve_manifest(service).await?,
+                    Some(bytes) => super::recipes::huggingface::decode_manifest(&service, &bytes)?,
+                    None => super::recipes::huggingface::resolve_manifest(&service).await?,
                 };
                 let mut download = manifest.bytes()?;
                 let preparation = service

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::{Service, constraints as c};
 use crate::{
     Error,
-    config::{ConfigError, Service, constraints as c},
+    config::{ConfigError, constraints},
     hardware::GIB,
     snapshot::Manifest,
 };
@@ -25,12 +26,15 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
     service.validate_hardware()?;
-    crate::recipes::huggingface::validate_model(service)?;
+    super::recipes::huggingface::validate_model(service)?;
     if let Some(recipe) = &service.recipe {
         recipe.validate(service)?;
     }
     let v = &service.serving;
-    if (!v.model_name.is_empty() && !regex::Regex::new(c::MODEL).unwrap().is_match(&v.model_name))
+    if (!v.model_name.is_empty()
+        && !regex::Regex::new(constraints::MODEL)
+            .unwrap()
+            .is_match(&v.model_name))
         || !["", "flashinfer"].contains(&v.mamba_backend.as_str())
         || (service.recipe.is_some()
             && (!v.model_name.is_empty()
@@ -55,7 +59,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
             "serving settings are unsupported by the generic vLLM backend",
         ));
     }
-    crate::hardware::validate_memory(&service.memory)?;
+    super::spark::validate_memory(&service.memory)?;
     if service.recipe.is_some() {
         return Ok(());
     }

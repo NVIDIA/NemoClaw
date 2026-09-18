@@ -133,6 +133,4 @@ pub mod managed;
 
 pub mod hardware;
 
-pub mod recipes;
-
 mod tofu_ui;

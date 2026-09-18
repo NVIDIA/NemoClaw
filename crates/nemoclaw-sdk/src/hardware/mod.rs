@@ -120,11 +120,6 @@ impl Watchdog {
     }
 }
 
-pub use crate::services::installers::vllm::hardware_capacity::{
-    check_capacity, check_memory, check_service_budgets, serving_memory,
-};
-pub(crate) use crate::services::installers::vllm::spark::validate_memory;
-
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod nvidia;

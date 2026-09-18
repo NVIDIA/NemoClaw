@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Pinned model identity and snapshot resolution.
-use crate::{
-    Error,
-    config::{ConfigError, Service, constraints as c},
-    snapshot::Manifest,
-};
+use super::super::{Service, constraints as c};
+use crate::{Error, config::ConfigError, snapshot::Manifest};
 use sha2::{Digest, Sha256};
 pub const MANIFEST_FILE: &str = ".nemoclaw-manifest.json";
 pub fn directory(service: &Service) -> String {

@@ -5,17 +5,29 @@
 
 use super::{
     ManagedOllama, OllamaProxy, ServiceRuntime,
-    contract::{InstallPlan, InstallStage, Installer, RemovePlan, ResolvedInference},
+    contract::{InstallPlan, InstallStage, Installer, RemovePlan},
     installers,
 };
 use crate::{
     ObservationError,
     backend::{Backend, Row},
     compile::{Generations, Target},
-    config::{ConfigError, Document, Gateway, InferenceProvider, Service},
+    config::{ConfigError, Document, Gateway, InferenceProvider},
     state::StateBinding,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Inference-specific connection data produced by the service registry.
+///
+/// This is deliberately separate from the installer lifecycle contract: a
+/// managed service need not be an inference server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedInference {
+    pub endpoint: String,
+    pub served_model: String,
+    pub authentication: Option<String>,
+    pub resource_dependencies: Vec<String>,
+}
 
 #[derive(
     Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
@@ -28,7 +40,7 @@ pub enum ServiceDefinition {
     /// Managed authentication proxy for an external Ollama daemon and model.
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
-    Vllm(Box<Service>),
+    Vllm(Box<installers::vllm::Service>),
 }
 
 /// OpenTofu schema behavior owned by a service installer resource.
@@ -129,12 +141,12 @@ pub fn resource_schemas() -> [ResourceSchema; 8] {
             mutable: &["model"],
         },
         ResourceSchema {
-            kind: crate::managed::SERVICE_KIND,
+            kind: installers::vllm::SERVICE_KIND,
             fields: &["spec", "running"],
             mutable: &["running"],
         },
         ResourceSchema {
-            kind: crate::managed::STORAGE_KIND,
+            kind: installers::vllm::STORAGE_KIND,
             fields: &["spec"],
             mutable: &[],
         },
@@ -144,16 +156,36 @@ pub fn resource_schemas() -> [ResourceSchema; 8] {
 pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
         computed_digest: kind == "ollama_model",
-        observed_running: kind == crate::managed::SERVICE_KIND,
-        retained_storage: kind == crate::managed::STORAGE_KIND,
-        runtime_process: kind == crate::managed::SERVICE_KIND,
+        observed_running: kind == installers::vllm::SERVICE_KIND,
+        retained_storage: kind == installers::vllm::STORAGE_KIND,
+        runtime_process: kind == installers::vllm::SERVICE_KIND,
     }
+}
+
+pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
+    match kind {
+        installers::vllm::SERVICE_KIND => Some("inference service"),
+        "ollama" => Some("Ollama service"),
+        "ollama_proxy" => Some("Ollama proxy"),
+        _ => None,
+    }
+}
+
+pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
+    installers::ollama::constrain_schema(defs);
+    installers::vllm::schema::constrain(defs);
 }
 
 enum RegisteredInstaller<'a> {
     Ollama(&'a ManagedOllama),
     OllamaProxy(&'a OllamaProxy),
-    Vllm(&'a Service),
+    Vllm(&'a installers::vllm::Service),
+}
+
+enum RegisteredInference<'a> {
+    Ollama(&'a ManagedOllama),
+    OllamaProxy(&'a OllamaProxy),
+    Vllm(&'a installers::vllm::Service),
 }
 
 impl<'a> RegisteredInstaller<'a> {
@@ -185,6 +217,14 @@ impl<'a> RegisteredInstaller<'a> {
         }
     }
 
+    fn inference(&self) -> Option<RegisteredInference<'_>> {
+        Some(match self {
+            Self::Ollama(service) => RegisteredInference::Ollama(service),
+            Self::OllamaProxy(service) => RegisteredInference::OllamaProxy(service),
+            Self::Vllm(service) => RegisteredInference::Vllm(service),
+        })
+    }
+
     async fn check_running(
         &self,
         document: &Document,
@@ -193,7 +233,7 @@ impl<'a> RegisteredInstaller<'a> {
         connections: &crate::docker::Connections,
         bindings: &BTreeMap<String, StateBinding>,
         cancel: &crate::CancellationToken,
-    ) -> Result<ResolvedInference, crate::Error> {
+    ) -> Result<(), crate::Error> {
         match self {
             Self::Ollama(service) => {
                 service
@@ -226,42 +266,6 @@ impl<'a> RegisteredInstaller<'a> {
         }
     }
 
-    fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
-        Ok(match self {
-            Self::Ollama(service) => ResolvedInference {
-                name: name.into(),
-                endpoint: service.endpoint.clone(),
-                served_model: service.model.name.clone(),
-                authentication: None,
-                ready_after: vec![format!("nemoclaw_ollama_model.{name}")],
-                resource_dependencies: vec![format!("nemoclaw_ollama_model.{name}")],
-            },
-            Self::OllamaProxy(service) => ResolvedInference {
-                name: name.into(),
-                endpoint: service.endpoint.clone(),
-                served_model: service.upstream.model.name.clone(),
-                authentication: Some(String::new()),
-                ready_after: vec![format!("nemoclaw_ollama_proxy.{name}")],
-                resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
-            },
-            Self::Vllm(service) => ResolvedInference {
-                name: name.into(),
-                endpoint: match &service.publication {
-                    Some(publication) => publication.endpoint.clone(),
-                    None => format!(
-                        "http://{}:{}/v1",
-                        document.spec.gateway.bridge()?,
-                        service.serving.port
-                    ),
-                },
-                served_model: service.served_model().into(),
-                authentication: service.authentication.as_ref().map(|_| String::new()),
-                ready_after: vec![format!("nemoclaw_inference_service.inference_{name}")],
-                resource_dependencies: Vec::new(),
-            },
-        })
-    }
-
     fn validate_definition(&self) -> Result<(), ConfigError> {
         match self {
             Self::Ollama(service) => service.validate(),
@@ -270,7 +274,7 @@ impl<'a> RegisteredInstaller<'a> {
         }
     }
 
-    fn validate_provider(&self, gateway: &Gateway) -> Result<(), ConfigError> {
+    fn validate_installation(&self, gateway: &Gateway) -> Result<(), ConfigError> {
         if let Self::Vllm(service) = self {
             crate::config::validation::require(
                 (gateway.management == "managed"
@@ -281,23 +285,6 @@ impl<'a> RegisteredInstaller<'a> {
             )?;
         }
         Ok(())
-    }
-
-    fn validate_route(
-        &self,
-        provider: &InferenceProvider,
-        sandbox_runtime: &str,
-        harness: &str,
-        model: &str,
-    ) -> Result<(), ConfigError> {
-        match self {
-            Self::Ollama(_) => Ok(()),
-            Self::OllamaProxy(service) => service.validate(provider, model, harness),
-            Self::Vllm(service) => crate::config::validation::require(
-                sandbox_runtime == "docker" || service.placement.is_some(),
-                "vLLM service requires compatible sandbox placement",
-            ),
-        }
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
@@ -319,6 +306,70 @@ impl<'a> RegisteredInstaller<'a> {
             )?,
             port: service.serving.port,
         }))
+    }
+}
+
+impl RegisteredInference<'_> {
+    fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
+        Ok(match self {
+            Self::Ollama(service) => ResolvedInference {
+                endpoint: service.endpoint.clone(),
+                served_model: service.model.name.clone(),
+                authentication: None,
+                resource_dependencies: vec![format!("nemoclaw_ollama_model.{name}")],
+            },
+            Self::OllamaProxy(service) => ResolvedInference {
+                endpoint: service.endpoint.clone(),
+                served_model: service.upstream.model.name.clone(),
+                authentication: Some(String::new()),
+                resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
+            },
+            Self::Vllm(service) => ResolvedInference {
+                endpoint: match &service.publication {
+                    Some(publication) => publication.endpoint.clone(),
+                    None => format!(
+                        "http://{}:{}/v1",
+                        document.spec.gateway.bridge()?,
+                        service.serving.port
+                    ),
+                },
+                served_model: service.served_model().into(),
+                authentication: service.authentication.as_ref().map(|_| String::new()),
+                resource_dependencies: Vec::new(),
+            },
+        })
+    }
+
+    fn validate_route(
+        &self,
+        provider: &InferenceProvider,
+        sandbox_runtime: &str,
+        harness: &str,
+        model: &str,
+    ) -> Result<(), ConfigError> {
+        match self {
+            Self::Ollama(_) => Ok(()),
+            Self::OllamaProxy(service) => service.validate(provider, model, harness),
+            Self::Vllm(service) => crate::config::validation::require(
+                sandbox_runtime == "docker" || service.placement.is_some(),
+                "vLLM service requires compatible sandbox placement",
+            ),
+        }
+    }
+
+    fn credential_source(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+    ) -> Result<Option<String>, crate::Error> {
+        match self {
+            Self::Ollama(_) => Ok(None),
+            Self::OllamaProxy(service) => {
+                service.credential_source(document, generations).map(Some)
+            }
+            Self::Vllm(service) => service.credential_source(document, name, generations),
+        }
     }
 }
 
@@ -383,6 +434,8 @@ pub(crate) fn resolve(
         return Ok(None);
     };
     RegisteredInstaller::from_definition(definition)
+        .inference()
+        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
         .resolve(document, name)
         .map(Some)
 }
@@ -395,25 +448,16 @@ pub(crate) fn provider_authenticated(
         || resolve(document, provider)?.is_some_and(|service| service.authentication.is_some()))
 }
 
-pub(crate) fn selected(
-    document: &Document,
-) -> Result<Vec<(&str, &ServiceDefinition)>, ConfigError> {
-    let mut selected = BTreeMap::new();
-    for provider in document.selected_inference_providers()? {
-        if let Some((name, definition)) = definition(document, provider)? {
-            selected.insert(name, definition);
-        }
-    }
-    Ok(selected.into_iter().collect())
-}
-
 fn plans(
     document: &Document,
     generations: &Generations,
     stage: InstallStage,
 ) -> Result<Vec<InstallPlan>, crate::Error> {
-    selected(document)?
-        .into_iter()
+    document
+        .spec
+        .services
+        .iter()
+        .map(|(name, definition)| (name.as_str(), definition))
         .filter(|(_, definition)| RegisteredInstaller::from_definition(definition).stage() == stage)
         .map(|(name, definition)| {
             RegisteredInstaller::from_definition(definition).install(document, name, generations)
@@ -421,17 +465,22 @@ fn plans(
         .collect()
 }
 
-pub(crate) fn has_runtime(document: &Document) -> Result<bool, ConfigError> {
-    Ok(selected(document)?
-        .into_iter()
-        .any(|(_, definition)| matches!(definition, ServiceDefinition::Vllm(_))))
+pub(crate) fn has_runtime(document: &Document) -> bool {
+    document
+        .spec
+        .services
+        .values()
+        .map(RegisteredInstaller::from_definition)
+        .any(|installer| installer.stage() == InstallStage::Runtime)
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     use crate::config::validation::{SLUG, require};
     for (name, definition) in &document.spec.services {
         require(SLUG.is_match(name), "service names must be lowercase slugs")?;
-        RegisteredInstaller::from_definition(definition).validate_definition()?;
+        let installer = RegisteredInstaller::from_definition(definition);
+        installer.validate_definition()?;
+        installer.validate_installation(&document.spec.gateway)?;
     }
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
@@ -439,7 +488,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     if gateway.management == "managed" {
         networks.insert(gateway.engine.clone(), gateway.network_cidr.clone());
     }
-    for (_, definition) in selected(document)? {
+    for definition in document.spec.services.values() {
         let installer = RegisteredInstaller::from_definition(definition);
         let Some(allocation) = installer.allocation(gateway)? else {
             continue;
@@ -452,7 +501,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
         )?;
         require(
             publications.insert((allocation.engine, allocation.bind_address, allocation.port)),
-            "managed inference publication addresses must be distinct on each engine",
+            "managed service publication addresses must be distinct on each engine",
         )?;
     }
     Ok(())
@@ -461,17 +510,21 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
 pub(crate) fn validate_provider(
     document: &Document,
     provider: &InferenceProvider,
-    gateway: &Gateway,
 ) -> Result<bool, ConfigError> {
     use crate::config::validation::require;
     let Some((_, definition)) = definition(document, provider)? else {
         return Ok(false);
     };
     require(
+        RegisteredInstaller::from_definition(definition)
+            .inference()
+            .is_some(),
+        "serviceRef must name an inference-capable service",
+    )?;
+    require(
         provider.endpoint.is_empty() && provider.credential.is_none(),
         "serviceRef excludes endpoint and external credentials",
     )?;
-    RegisteredInstaller::from_definition(definition).validate_provider(gateway)?;
     require(
         provider.provider == "openai",
         "managed services require the OpenAI provider implementation",
@@ -490,7 +543,11 @@ pub(crate) fn validate_route(
     let Some((_, definition)) = definition(document, provider)? else {
         return Ok(());
     };
-    let resolved = RegisteredInstaller::from_definition(definition).resolve(
+    let installer = RegisteredInstaller::from_definition(definition);
+    let inference = installer
+        .inference()
+        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?;
+    let resolved = inference.resolve(
         document,
         provider.service_ref.as_deref().unwrap_or_default(),
     )?;
@@ -498,12 +555,7 @@ pub(crate) fn validate_route(
         model == resolved.served_model,
         "service requires its declared served model",
     )?;
-    RegisteredInstaller::from_definition(definition).validate_route(
-        provider,
-        sandbox_runtime,
-        harness,
-        model,
-    )
+    inference.validate_route(provider, sandbox_runtime, harness, model)
 }
 
 pub(crate) fn runtime_targets(
@@ -547,26 +599,22 @@ pub(crate) fn credential_source_json(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(None);
     };
-    let installer = RegisteredInstaller::from_definition(definition);
-    if installer.resolve(document, name)?.authentication.is_none() {
-        return Ok(None);
-    }
-    Ok(installer
-        .install(document, name, generations)
-        .map_err(|_| ConfigError::new("invalid managed credential source"))?
-        .inference
-        .authentication)
+    RegisteredInstaller::from_definition(definition)
+        .inference()
+        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
+        .credential_source(document, name, generations)
+        .map_err(|_| ConfigError::new("invalid managed credential source"))
 }
 
 pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>, ConfigError> {
     let mut kinds = BTreeSet::new();
-    for (_, definition) in selected(document)? {
+    for definition in document.spec.services.values() {
         match definition {
             ServiceDefinition::Ollama(_) | ServiceDefinition::OllamaProxy(_) => {
                 kinds.insert("ollama");
             }
             ServiceDefinition::Vllm(_) => {
-                kinds.insert(crate::managed::SERVICE_KIND);
+                kinds.insert(installers::vllm::SERVICE_KIND);
             }
         }
     }
@@ -577,8 +625,11 @@ pub(crate) fn remove_plans(
     document: &Document,
     generations: &Generations,
 ) -> Result<Vec<RemovePlan>, crate::Error> {
-    selected(document)?
-        .into_iter()
+    document
+        .spec
+        .services
+        .iter()
+        .map(|(name, definition)| (name.as_str(), definition))
         .map(|(name, definition)| {
             RegisteredInstaller::from_definition(definition).remove(document, name, generations)
         })
@@ -600,7 +651,7 @@ pub(crate) fn required_storage_address(
 /// combined-engine checks. Generic deployment code never inspects its package.
 pub(crate) struct RuntimeCapacity {
     engine: String,
-    service: Service,
+    service: installers::vllm::Service,
     starting: bool,
 }
 
@@ -609,13 +660,14 @@ pub(crate) async fn check_runtime_capacity(
     spec: &crate::managed::Spec,
     observed: Option<&crate::managed::RuntimeObservation>,
 ) -> Result<Option<RuntimeCapacity>, crate::Error> {
-    let Some(service) = &spec.service else {
+    if spec.kind != installers::vllm::SERVICE_KIND {
         return Ok(None);
-    };
+    }
+    let service = installers::vllm::configured_service(spec)?;
     engine.check_capacity(spec, observed).await?;
     Ok(Some(RuntimeCapacity {
         engine: spec.engine().into(),
-        service: service.clone(),
+        service,
         starting: observed.is_none_or(|runtime| !runtime.running),
     }))
 }
@@ -624,7 +676,7 @@ pub(crate) async fn check_combined_capacity(
     connections: &crate::docker::Connections,
     checks: Vec<RuntimeCapacity>,
 ) -> Result<(), crate::Error> {
-    let mut grouped: BTreeMap<String, Vec<(Service, bool)>> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, Vec<(installers::vllm::Service, bool)>> = BTreeMap::new();
     for check in checks {
         grouped
             .entry(check.engine)
@@ -648,7 +700,7 @@ pub(crate) async fn check_combined_capacity(
             .iter()
             .map(|(service, starting)| (service, *starting))
             .collect();
-        crate::hardware::check_service_budgets(&services, &capacity)?;
+        installers::vllm::hardware_capacity::check_service_budgets(&services, &capacity)?;
     }
     Ok(())
 }
@@ -660,19 +712,16 @@ pub(crate) async fn check_running(
     connections: &crate::docker::Connections,
     bindings: &BTreeMap<String, StateBinding>,
     cancel: &crate::CancellationToken,
-) -> Result<Vec<ResolvedInference>, crate::Error> {
-    let mut result = Vec::new();
-    for (name, definition) in selected(document)? {
+) -> Result<(), crate::Error> {
+    for (name, definition) in &document.spec.services {
         let installer = RegisteredInstaller::from_definition(definition);
         if installer.install(document, name, generations)?.stage == stage {
-            result.push(
-                installer
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await?,
-            );
+            installer
+                .check_running(document, name, generations, connections, bindings, cancel)
+                .await?;
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Resolves a provider resource row to its package-owned backend.
@@ -690,6 +739,20 @@ impl<'a> BackendRegistry<'a> {
         kind: &str,
         row: &Row,
     ) -> Result<Option<RegisteredBackend>, ObservationError> {
+        if matches!(
+            kind,
+            installers::vllm::SERVICE_KIND | installers::vllm::STORAGE_KIND
+        ) {
+            let engine = crate::managed::runtime_engine(self.connections, kind, row)
+                .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
+            return Ok(Some(RegisteredBackend(Box::new(
+                crate::managed::ManagedBackend::service(
+                    engine,
+                    installers::vllm::SERVICE_KIND,
+                    installers::vllm::STORAGE_KIND,
+                ),
+            ))));
+        }
         if crate::managed::ManagedBackend::supports(kind) {
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;

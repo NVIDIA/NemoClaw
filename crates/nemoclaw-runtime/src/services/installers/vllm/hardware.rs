@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::{CancellationToken, Error, config::Service, hardware::Capacity};
+use nemoclaw_sdk::{
+    CancellationToken, Error, hardware::Capacity, services::installers::vllm::Service,
+};
 use std::time::Duration;
 pub(crate) fn memory() -> Result<Capacity, Error> {
     nemoclaw_sdk::hardware::linux::memory()
@@ -12,6 +14,8 @@ pub(crate) async fn before_start(
     let mut capacity = memory()?;
     let gpu = nemoclaw_sdk::hardware::nvidia::populate(&mut capacity);
     tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=tokio::time::timeout(Duration::from_secs(30),gpu)=>result.map_err(|_|Error::State("GPU availability observation timed out"))?? };
-    nemoclaw_sdk::hardware::check_memory(spec, &capacity, true)?;
+    nemoclaw_sdk::services::installers::vllm::hardware_capacity::check_memory(
+        spec, &capacity, true,
+    )?;
     Ok(capacity)
 }

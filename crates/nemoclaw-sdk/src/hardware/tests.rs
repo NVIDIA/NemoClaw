@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::config::{Service, ServiceDefinition};
+use crate::{
+    config::ServiceDefinition,
+    services::installers::vllm::{Service, hardware_capacity::check_service_budgets},
+};
 fn service() -> Service {
     let mut document = crate::config::Document::parse(
         include_str!("../../tests/fixtures/config/spark.yaml").as_bytes(),

@@ -3,8 +3,9 @@
 
 //! vLLM-specific YAML input owned by the vLLM installer.
 
+use super::constraints;
 use crate::{
-    config::{ConfigError, ManagedManagement, ManagedResource, constraints},
+    config::{ConfigError, ManagedManagement, ManagedResource},
     services::ServiceRuntime,
 };
 use serde::{Deserialize, Serialize};
@@ -37,9 +38,9 @@ pub struct Service {
     /// Docker runner and immutable NemoClaw vLLM runtime image.
     pub runtime: ServiceRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "Box<crate::recipes::inline::InlineRecipe>")]
+    #[schemars(default, with = "Box<super::recipes::inline::InlineRecipe>")]
     /// Optional inline preparation and serving contract supplied by the pinned runtime image.
-    pub recipe: Option<Box<crate::recipes::inline::InlineRecipe>>,
+    pub recipe: Option<Box<super::recipes::inline::InlineRecipe>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ServicePlacement")]
     /// SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.

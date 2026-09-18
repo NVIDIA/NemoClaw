@@ -36,15 +36,19 @@ impl Source {
             Self::ManagedService { spec }
                 if spec.validate().is_ok()
                     && spec.owner == owner
-                    && spec.service.as_ref().is_some_and(|s| {
-                        s.authentication.is_some()
-                            && s.publication.as_ref().map_or_else(
+                    && super::installers::vllm::configured_service(spec).is_ok_and(|service| {
+                        service.authentication.is_some()
+                            && service.publication.as_ref().map_or_else(
                                 || {
-                                    spec.bridge().is_ok_and(|b| {
-                                        endpoint == format!("http://{b}:{}/v1", s.serving.port)
+                                    spec.bridge().is_ok_and(|bridge| {
+                                        endpoint
+                                            == format!(
+                                                "http://{bridge}:{}/v1",
+                                                service.serving.port
+                                            )
                                     })
                                 },
-                                |p| p.endpoint == endpoint,
+                                |publication| publication.endpoint == endpoint,
                             )
                     }) => {}
             _ => return Err(ObservationError::BindingMismatch),
@@ -118,20 +122,28 @@ mod tests {
             serde_json::from_str(include_str!("../managed/reference.json")).unwrap();
         let mut spec: Box<crate::managed::Spec> =
             serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-        spec.service.as_mut().unwrap().authentication =
-            Some(crate::config::ServiceAuthentication::Bearer);
+        let mut service = crate::services::installers::vllm::configured_service(&spec).unwrap();
+        service.authentication =
+            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
+        spec.process.as_mut().unwrap().configuration = serde_json::to_string(&service).unwrap();
+        spec.process.as_mut().unwrap().image_labels.insert(
+            "org.nemoclaw.inference.authentication".into(),
+            "bearer-v1".into(),
+        );
         let endpoint = format!(
             "http://{}:{}/v1",
             spec.bridge().unwrap(),
-            spec.service.as_ref().unwrap().serving.port
+            service.serving.port
         );
         let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
         Source::parse(&source, &spec.owner, &endpoint).unwrap();
         assert!(Source::parse(&source, "foreign", &endpoint).is_err());
         assert!(Source::parse(&source, &spec.owner, "http://192.168.1.1:8080/v1").is_err());
-        let mut image: bollard::models::ImageInspect =
-            serde_json::from_value(serde_json::json!({"Config":{"Labels":{}}})).unwrap();
-        assert!(spec.validate_image_authentication(&image).is_err());
+        let mut image: bollard::models::ImageInspect = serde_json::from_value(
+            serde_json::json!({"Id":"sha256:image","Architecture":"arm64","Os":"linux","Config":{"Labels":{}}}),
+        )
+        .unwrap();
+        assert!(spec.validate_process_image(&image).is_err());
         image
             .config
             .as_mut()
@@ -143,8 +155,25 @@ mod tests {
                 "org.nemoclaw.inference.authentication".into(),
                 "bearer-v1".into(),
             );
-        spec.validate_image_authentication(&image).unwrap();
-        spec.service.as_mut().unwrap().authentication = None;
+        image
+            .config
+            .as_mut()
+            .unwrap()
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert("org.nemoclaw.recipe.protocol".into(), "v1".into());
+        image
+            .config
+            .as_mut()
+            .unwrap()
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert("org.nemoclaw.backend".into(), "vllm".into());
+        spec.validate_process_image(&image).unwrap();
+        service.authentication = None;
+        spec.process.as_mut().unwrap().configuration = serde_json::to_string(&service).unwrap();
         let source = serde_json::to_string(&Source::ManagedService { spec: spec.clone() }).unwrap();
         assert!(Source::parse(&source, &spec.owner, &endpoint).is_err());
     }

@@ -27,6 +27,7 @@ fn reference() -> (Spec, Value, Value, Value) {
 #[tokio::test]
 async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
     let (spec, container, volume, network) = reference();
+    let process = spec.process.clone().unwrap();
     let state = Arc::new(Mutex::new((
         Some(container),
         Some(volume),
@@ -65,7 +66,15 @@ async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_par
                 .map(|v| (200, v))
                 .unwrap_or((404, json!({"message":"missing"})))
         } else if request.path.starts_with("/images/") {
-            (200, json!({"Id":"sha256:runtime","Config":{"Env":[]}}))
+            (
+                200,
+                json!({
+                    "Id":"sha256:runtime",
+                    "Architecture":process.architecture,
+                    "Os":"linux",
+                    "Config":{"Env":[],"Labels":process.image_labels}
+                }),
+            )
         } else {
             panic!("unexpected path {}", request.path)
         };

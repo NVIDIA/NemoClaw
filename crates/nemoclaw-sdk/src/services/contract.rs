@@ -37,17 +37,6 @@ pub struct ServiceRuntime {
     pub image: String,
 }
 
-/// Package-independent provider information returned by an installer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ResolvedInference {
-    pub name: String,
-    pub endpoint: String,
-    pub served_model: String,
-    pub authentication: Option<String>,
-    pub ready_after: Vec<String>,
-    pub resource_dependencies: Vec<String>,
-}
-
 /// OpenTofu stage that executes an installer plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallStage {
@@ -58,7 +47,6 @@ pub(crate) enum InstallStage {
 /// Declarative install result. OpenTofu performs the mutations in dependency order.
 pub(crate) struct InstallPlan {
     pub stage: InstallStage,
-    pub inference: ResolvedInference,
     pub targets: Vec<crate::compile::Target>,
     pub dependencies: std::collections::BTreeMap<String, Vec<String>>,
 }
@@ -87,7 +75,7 @@ pub(crate) trait Installer {
         connections: &crate::docker::Connections,
         bindings: &std::collections::BTreeMap<String, crate::state::StateBinding>,
         cancel: &crate::CancellationToken,
-    ) -> Result<ResolvedInference, crate::Error>;
+    ) -> Result<(), crate::Error>;
 
     fn remove(
         &self,

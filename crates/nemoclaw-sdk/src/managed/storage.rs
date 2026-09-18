@@ -13,7 +13,6 @@ use bollard::models::VolumeCreateRequest;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
 
-pub const STORAGE_KIND: &str = "inference_storage";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub struct Storage {
@@ -24,7 +23,7 @@ pub struct Storage {
 }
 impl Storage {
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-inference(?:-[a-z][a-z0-9-]{0,62})?-data$")
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}-data$")
             .unwrap()
             .is_match(&self.name)
             || !regex::Regex::new(r"^[a-f0-9-]{36}$")

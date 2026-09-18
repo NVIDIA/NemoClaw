@@ -4,7 +4,7 @@
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{
     config::{Document, ServiceDefinition},
-    recipes::huggingface,
+    services::installers::vllm::recipes::huggingface,
 };
 use serde_json::{Value, json};
 use std::{

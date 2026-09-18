@@ -130,7 +130,7 @@ impl OllamaProxy {
             || !regex::Regex::new("^[a-f0-9]{64}$")
                 .unwrap()
                 .is_match(&self.upstream.model.digest)
-            || !regex::Regex::new(constraints::OLLAMA_MODEL)
+            || !regex::Regex::new(super::MODEL_PATTERN)
                 .unwrap()
                 .is_match(&self.upstream.model.name)
             || self.upstream.model.name != model

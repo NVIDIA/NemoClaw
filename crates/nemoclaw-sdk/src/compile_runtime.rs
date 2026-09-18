@@ -21,7 +21,7 @@ pub fn runtime_targets(
         owner: document.metadata.uid.clone(),
         generation: generation(generations, GATEWAY_KIND)?.into(),
         gateway: document.spec.gateway.runtime_settings(),
-        service: None,
+        process: None,
     };
     let mut storage = gateway.clone();
     storage.layout = 0;

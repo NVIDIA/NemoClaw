@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::recipe::PreparedModel;
-use nemoclaw_sdk::{Error, config::Service};
+use super::recipe::PreparedModel;
+use nemoclaw_sdk::{Error, services::installers::vllm::Service};
 use process_wrap::tokio::CommandWrap;
 use std::{process::Stdio, time::Duration};
 /// Backend-owned probe location. The shared supervisor owns the loading deadline.
@@ -91,25 +91,38 @@ mod tests {
     async fn bearer_key_reaches_only_the_backend_child_and_authenticated_readiness() {
         let root = tempfile::tempdir().unwrap();
         let mut document = nemoclaw_sdk::config::Document::parse(
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_bytes(),
+            include_str!("../../../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_bytes(),
         )
         .unwrap();
-        let nemoclaw_sdk::config::ServiceDefinition::Vllm(mut service) =
+        let nemoclaw_sdk::services::ServiceDefinition::Vllm(mut service) =
             document.spec.services.remove("qwen").unwrap()
         else {
             panic!("expected vLLM service");
         };
-        service.authentication = Some(nemoclaw_sdk::config::ServiceAuthentication::Bearer);
-        let key = crate::authentication::load(root.path()).unwrap();
-        let module = root.path().join("vllm/entrypoints/openai");
-        std::fs::create_dir_all(&module).unwrap();
-        // A disposable Python module stands in for vLLM and verifies the process
-        // boundary. The readiness fixture independently checks the HTTP header.
-        std::fs::write(module.join("api_server.py"), "import os, pathlib\nassert os.environ['VLLM_API_KEY'] == pathlib.Path(os.environ['TEST_KEY_FILE']).read_text()\n").unwrap();
+        service.authentication =
+            Some(nemoclaw_sdk::services::installers::vllm::ServiceAuthentication::Bearer);
+        let key = super::super::authentication::load(root.path()).unwrap();
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let python = bin.join("python3");
+        // A disposable executable stands in for Python/vLLM and verifies the
+        // process boundary. The readiness fixture independently checks HTTP.
+        std::fs::write(
+            &python,
+            "#!/bin/sh\ntest \"$VLLM_API_KEY\" = \"$(/bin/cat \"$TEST_KEY_FILE\")\"\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&python).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&python, permissions).unwrap();
+        }
         let prepared = PreparedModel {
             model: root.path().join("model"),
             environment: [
-                ("PYTHONPATH".into(), root.path().as_os_str().to_owned()),
+                ("PATH".into(), bin.into_os_string()),
                 (
                     "TEST_KEY_FILE".into(),
                     root.path().join("inference-key").into_os_string(),

@@ -11,8 +11,7 @@ pub struct InferenceConnection {
 }
 impl Document {
     pub fn has_runtime(&self) -> bool {
-        self.spec.gateway.management == "managed"
-            || crate::services::has_runtime(self).unwrap_or(false)
+        self.spec.gateway.management == "managed" || crate::services::has_runtime(self)
     }
     /// Validate the document and resolve its inference connection.
     /// Managed inference retains its publication; external inference uses its explicit URL.

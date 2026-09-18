@@ -78,7 +78,7 @@ impl Models {
             loop {
                 match self.read(name).await {
                     Ok(_) => return Ok(()),
-                    Err(Error::OllamaStarting) => {
+                    Err(Error::ServiceStarting) => {
                         tokio::time::sleep(Duration::from_millis(200)).await
                     }
                     Err(error) => return Err(error),
@@ -201,7 +201,7 @@ fn transport(error: &reqwest::Error) -> Error {
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
         {
-            return Error::OllamaStarting;
+            return Error::ServiceStarting;
         }
         source = cause.source();
     }

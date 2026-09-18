@@ -16,9 +16,7 @@ use crate::{
     backend::Backend,
     compile::{Generations, Target},
     config::Document,
-    services::contract::{
-        InstallPlan, InstallStage, Installer, RemovePlan, ResolvedInference, validate_runtime,
-    },
+    services::contract::{InstallPlan, InstallStage, Installer, RemovePlan, validate_runtime},
     state::StateBinding,
 };
 use std::{
@@ -28,8 +26,19 @@ use std::{
 };
 use url::Url;
 
+pub(crate) const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
 static OLLAMA_MODEL: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(crate::config::constraints::OLLAMA_MODEL).unwrap());
+    LazyLock::new(|| regex::Regex::new(MODEL_PATTERN).unwrap());
+
+pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>) {
+    for name in ["OllamaModel", "ExternalOllamaModel"] {
+        crate::config::schema::validation::property(
+            &mut defs[name],
+            "name",
+            serde_json::json!({"pattern": MODEL_PATTERN}),
+        );
+    }
+}
 
 fn private(ip: IpAddr) -> bool {
     match ip {
@@ -230,18 +239,9 @@ impl Installer for ManagedOllama {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
-        let model = address("ollama_model", name);
         let service = address("ollama", name);
         Ok(InstallPlan {
             stage: InstallStage::Deployment,
-            inference: ResolvedInference {
-                name: name.into(),
-                endpoint: self.endpoint.clone(),
-                served_model: self.model.name.clone(),
-                authentication: None,
-                ready_after: vec![model.clone()],
-                resource_dependencies: vec![model],
-            },
             targets: managed_targets(document, name, self, generations)?,
             dependencies: BTreeMap::from([(service, vec![address("ollama_storage", name)])]),
         })
@@ -255,13 +255,13 @@ impl Installer for ManagedOllama {
         connections: &crate::docker::Connections,
         bindings: &BTreeMap<String, StateBinding>,
         cancel: &crate::CancellationToken,
-    ) -> Result<ResolvedInference, Error> {
+    ) -> Result<(), Error> {
         let plan = self.install(document, name, generations)?;
         tokio::select! {
             () = cancel.cancelled() => Err(Error::Cancelled),
             result = check_targets(plan.targets, connections, bindings) => {
                 result?;
-                Ok(plan.inference)
+                Ok(())
             }
         }
     }
@@ -286,23 +286,9 @@ impl Installer for OllamaProxy {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
-        let spec = proxy::specification(document, self, generations)?;
-        let source = crate::services::authentication::Source::OllamaProxy {
-            engine: self.runtime.engine.clone(),
-            spec: Box::new(spec),
-        }
-        .json()?;
         let service = address(proxy::PROXY, name);
         Ok(InstallPlan {
             stage: InstallStage::Deployment,
-            inference: ResolvedInference {
-                name: name.into(),
-                endpoint: self.endpoint.clone(),
-                served_model: self.upstream.model.name.clone(),
-                authentication: Some(source),
-                ready_after: vec![service.clone()],
-                resource_dependencies: vec![service.clone()],
-            },
             targets: proxy::targets(document, name, self, generations)?,
             dependencies: BTreeMap::from([(
                 service,
@@ -319,13 +305,13 @@ impl Installer for OllamaProxy {
         connections: &crate::docker::Connections,
         bindings: &BTreeMap<String, StateBinding>,
         cancel: &crate::CancellationToken,
-    ) -> Result<ResolvedInference, Error> {
+    ) -> Result<(), Error> {
         let plan = self.install(document, name, generations)?;
         tokio::select! {
             () = cancel.cancelled() => Err(Error::Cancelled),
             result = check_targets(plan.targets, connections, bindings) => {
                 result?;
-                Ok(plan.inference)
+                Ok(())
             }
         }
     }
@@ -340,5 +326,19 @@ impl Installer for OllamaProxy {
             retained: vec![address(proxy::STORAGE, name)],
             required_storage: Vec::new(),
         })
+    }
+}
+
+impl OllamaProxy {
+    pub(crate) fn credential_source(
+        &self,
+        document: &Document,
+        generations: &Generations,
+    ) -> Result<String, Error> {
+        Ok(crate::services::authentication::Source::OllamaProxy {
+            engine: self.runtime.engine.clone(),
+            spec: Box::new(proxy::specification(document, self, generations)?),
+        }
+        .json()?)
     }
 }

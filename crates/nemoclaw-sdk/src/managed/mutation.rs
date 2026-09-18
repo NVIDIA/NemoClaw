@@ -5,7 +5,7 @@
 mod tests;
 
 use super::{
-    GATEWAY_KIND, RuntimeObservation, SERVICE_KIND, Spec,
+    GATEWAY_KIND, RuntimeObservation, Spec,
     observation::{verify_network, verify_volume},
 };
 use crate::{
@@ -58,7 +58,7 @@ impl Engine {
         {
             return Ok(observed.clone());
         }
-        if spec.kind == SERVICE_KIND {
+        if spec.process.is_some() {
             capacity.check(self, spec, observed.as_ref()).await?;
         }
         if observed.is_none() {
@@ -118,66 +118,30 @@ impl Engine {
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
         let mut image = self.image(spec.image()).await?;
         if image.is_none() {
-            if spec.kind == SERVICE_KIND {
-                return Err(Error::Conflict(
-                    "pinned Spark artifact is not loaded; build the reproducible runtime locally",
-                ));
+            if spec
+                .process
+                .as_ref()
+                .is_some_and(|process| !process.pull_image)
+            {
+                return Err(Error::Conflict("pinned service image is not loaded"));
             }
             self.pull_image(spec.image()).await?;
             image = self.image(spec.image()).await?;
         }
         let image = image.ok_or(ObservationError::Incomplete)?;
-        spec.validate_image_authentication(&image)?;
-        let architecture = image.architecture.as_deref();
-        let architecture_matches = if let Some(service) = &spec.service {
-            architecture
-                == Some(
-                    service
-                        .hardware
-                        .as_ref()
-                        .map(|hardware| hardware.architecture.as_str())
-                        .or_else(|| {
-                            service
-                                .recipe
-                                .as_ref()
-                                .map(|recipe| recipe.compatibility.architecture.as_str())
-                        })
-                        .unwrap_or("arm64"),
-                )
+        if spec.process.is_some() {
+            spec.validate_process_image(&image)?;
         } else {
             let engine = self.info().await?;
-            gateway_architecture_matches(architecture, engine.architecture.as_deref())
-        };
-        if image.id.as_ref().is_none_or(String::is_empty)
-            || !architecture_matches
-            || image.os.as_deref() != Some("linux")
-        {
-            return Err(Error::Conflict(
-                "runtime image is unavailable or incompatible with the execution target",
-            ));
-        }
-        if let Some(service) = &spec.service {
-            let labels = image
-                .config
-                .as_ref()
-                .and_then(|config| config.labels.as_ref())
-                .ok_or(ObservationError::Incomplete)?;
-            if let Some(recipe) = &service.recipe
-                && recipe
-                    .compatibility
-                    .image_labels
-                    .iter()
-                    .any(|(key, value)| labels.get(key) != Some(value))
+            if image.id.as_ref().is_none_or(String::is_empty)
+                || !gateway_architecture_matches(
+                    image.architecture.as_deref(),
+                    engine.architecture.as_deref(),
+                )
+                || image.os.as_deref() != Some("linux")
             {
                 return Err(Error::Conflict(
-                    "runtime image lacks declared recipe capabilities",
-                ));
-            }
-            if labels.get("org.nemoclaw.backend").map(String::as_str)
-                != Some(crate::config::constraints::BACKEND)
-            {
-                return Err(Error::Conflict(
-                    "image does not contain the pinned Spark backend",
+                    "runtime image is unavailable or incompatible with the execution target",
                 ));
             }
         }
@@ -206,7 +170,11 @@ impl Engine {
         if let Some(network) = self.network(&spec.network()).await? {
             return verify_network(spec, &network);
         }
-        if spec.kind != GATEWAY_KIND && spec.service.as_ref().is_none_or(|s| s.placement.is_none())
+        if spec.kind != GATEWAY_KIND
+            && spec
+                .process
+                .as_ref()
+                .is_none_or(|process| !process.create_network)
         {
             return Err(Error::Conflict("managed gateway network is absent"));
         }
@@ -248,7 +216,7 @@ impl Engine {
         verify_network(spec, &network)
     }
     pub async fn replace_runtime(&self, spec: &Spec, id: &str) -> Result<(), Error> {
-        if !matches!(spec.kind.as_str(), GATEWAY_KIND | SERVICE_KIND) || id.is_empty() {
+        if (spec.kind != GATEWAY_KIND && spec.process.is_none()) || id.is_empty() {
             return Err(Error::Conflict(
                 "only a bound managed process container may be replaced",
             ));

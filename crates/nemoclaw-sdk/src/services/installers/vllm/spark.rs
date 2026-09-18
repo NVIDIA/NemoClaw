@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::constraints as c;
 use crate::{
     Error,
-    config::constraints as c,
     hardware::{Capacity, GIB},
 };
 
@@ -19,9 +19,7 @@ pub(super) fn check_compatibility(c: &Capacity) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn validate_memory(
-    memory: &crate::config::Memory,
-) -> Result<(), crate::config::ConfigError> {
+pub(crate) fn validate_memory(memory: &super::Memory) -> Result<(), crate::config::ConfigError> {
     fn require(condition: bool, message: &'static str) -> Result<(), crate::config::ConfigError> {
         if condition {
             Ok(())

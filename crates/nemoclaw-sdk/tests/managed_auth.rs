@@ -35,7 +35,9 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
     assert_eq!(source["kind"], "managedService");
     assert_eq!(source["spec"]["owner"], doc.metadata.uid);
-    assert_eq!(source["spec"]["service"]["authentication"], "bearer");
+    let configuration: Value =
+        serde_json::from_str(source["spec"]["process"]["configuration"].as_str().unwrap()).unwrap();
+    assert_eq!(configuration["authentication"], "bearer");
     assert!(provider.values["credential_env"].is_empty());
     assert!(doc.credential_names().is_empty());
     assert_eq!(

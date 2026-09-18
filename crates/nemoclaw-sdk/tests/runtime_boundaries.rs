@@ -3,8 +3,9 @@
 use nemoclaw_sdk::{
     config::{Document, ServiceDefinition},
     hardware::{Capacity, GIB},
+    services::installers::vllm::{Service, hardware_capacity},
 };
-fn service() -> nemoclaw_sdk::config::Service {
+fn service() -> Service {
     let mut document =
         Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let ServiceDefinition::Vllm(service) = document.spec.services.remove("qwen").unwrap() else {
@@ -25,7 +26,7 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
         disk_free: 200 * GIB,
         ..Default::default()
     };
-    nemoclaw_sdk::hardware::check_capacity(
+    hardware_capacity::check_capacity(
         &service,
         &capacity,
         true,
@@ -44,7 +45,7 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
     );
     let mut wrong_hardware = capacity;
     wrong_hardware.gpu = "other GPU".into();
-    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
+    assert!(hardware_capacity::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
     service.model.revision = "0".repeat(40);
     assert!(service.validate().is_err());
     let mut document = serde_json::to_value(
@@ -70,12 +71,12 @@ fn declared_compatibility_does_not_bypass_capacity_or_memory_policy() {
         disk_free: 200 * GIB,
         ..Default::default()
     };
-    nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).unwrap();
+    hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).unwrap();
     capacity.available = 0;
-    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).is_err());
+    assert!(hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).is_err());
     capacity.available = 116 * GIB;
     capacity.disk_free = 0;
-    assert!(nemoclaw_sdk::hardware::check_capacity(&service, &capacity, true, 0, 0).is_err());
+    assert!(hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).is_err());
     service.memory.host_reserve_gib = 0;
     assert!(service.validate().is_err());
 }

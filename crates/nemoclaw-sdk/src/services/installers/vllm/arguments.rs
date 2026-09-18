@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Spark serving-budget rounding follows the qualified serving recipe guidance.
 // Upstream AGPL-3.0-or-later recipe and revision: crates/nemoclaw-sdk/NOTICE.md.
-use crate::{Error, config::Service, hardware::GIB};
+use super::Service;
+use crate::{Error, hardware::GIB};
 
 struct Settings<'a> {
     name: &'a str,

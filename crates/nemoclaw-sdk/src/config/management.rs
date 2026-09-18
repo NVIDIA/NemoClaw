@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Management {
-    /// The deployment manages the declared service or Ollama daemon.
+    /// The deployment manages the declared service.
     Managed,
     /// The deployment uses the endpoint without managing its server.
     External,
@@ -61,7 +61,7 @@ pub struct ExternalNetwork {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ExternalManagement")]
     pub management: Option<ExternalManagement>,
-    /// Existing network name on the Ollama Docker engine.
+    /// Existing network name on the service Docker engine.
     pub name: String,
 }
 impl Default for NetworkReference {

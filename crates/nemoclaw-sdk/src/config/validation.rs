@@ -154,7 +154,7 @@ impl Document {
         crate::services::validate(self)?;
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
-            self.validate_provider(definition, gateway)?;
+            self.validate_provider(definition)?;
         }
         let mut sandbox_names = std::collections::BTreeSet::new();
         for sandbox in &self.spec.sandboxes {
@@ -285,12 +285,8 @@ impl Gateway {
     }
 }
 impl Document {
-    fn validate_provider(
-        &self,
-        provider: &InferenceProvider,
-        gateway: &Gateway,
-    ) -> Result<(), ConfigError> {
-        let managed = crate::services::validate_provider(self, provider, gateway)?;
+    fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
+        let managed = crate::services::validate_provider(self, provider)?;
         let management = if managed {
             Management::Managed
         } else {

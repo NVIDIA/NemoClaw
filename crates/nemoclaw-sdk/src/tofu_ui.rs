@@ -61,14 +61,21 @@ impl Ui {
         };
         // Only fixed labels cross the progress boundary. IDs, provider messages,
         // outputs, and arbitrary configuration values can contain credentials.
-        let resource = match value["hook"]["resource"]["resource_type"].as_str() {
+        let kind = value["hook"]["resource"]["resource_type"].as_str();
+        let resource = match kind {
             Some("nemoclaw_workspace") => "workspace",
             Some("nemoclaw_sandbox") => "sandbox",
             Some("nemoclaw_provider") => "provider",
             Some("nemoclaw_provider_profile") => "provider profile",
             Some("nemoclaw_managed_gateway") => "gateway",
-            Some("nemoclaw_inference_service") => "inference service",
-            _ => return,
+            Some(kind) => {
+                let kind = kind.strip_prefix("nemoclaw_").unwrap_or(kind);
+                let Some(label) = crate::services::resource_label(kind) else {
+                    return;
+                };
+                label
+            }
+            None => return,
         };
         let action = if value["type"]
             .as_str()

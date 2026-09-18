@@ -117,7 +117,7 @@ async fn readiness_waits_for_connection_refused_startup_but_never_retries_invent
     let client = Models::new(&format!("http://{address}/v1")).unwrap();
     assert!(matches!(
         client.read("fixture:latest").await,
-        Err(Error::OllamaStarting)
+        Err(Error::ServiceStarting)
     ));
     let task = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;

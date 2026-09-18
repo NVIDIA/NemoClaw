@@ -3,5 +3,5 @@
 
 //! Package-specific service installers.
 
-pub(crate) mod ollama;
-pub(crate) mod vllm;
+pub mod ollama;
+pub mod vllm;

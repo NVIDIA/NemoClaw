@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{GATEWAY_KIND, SERVICE_KIND, STORAGE_KIND, Spec, Storage};
+use super::{GATEWAY_KIND, Spec, Storage};
 use crate::{
     Error, ObservationError,
     backend::{Backend, Mutation, Row},
@@ -9,16 +9,30 @@ use crate::{
 pub const GATEWAY_STORAGE_KIND: &str = "gateway_storage";
 pub struct ManagedBackend {
     engine: Engine,
+    process_kind: Option<&'static str>,
+    storage_kind: Option<&'static str>,
 }
 impl ManagedBackend {
     pub fn new(engine: Engine) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            process_kind: None,
+            storage_kind: None,
+        }
+    }
+    pub(crate) fn service(
+        engine: Engine,
+        process_kind: &'static str,
+        storage_kind: &'static str,
+    ) -> Self {
+        Self {
+            engine,
+            process_kind: Some(process_kind),
+            storage_kind: Some(storage_kind),
+        }
     }
     pub fn supports(kind: &str) -> bool {
-        matches!(
-            kind,
-            GATEWAY_KIND | SERVICE_KIND | STORAGE_KIND | GATEWAY_STORAGE_KIND
-        )
+        matches!(kind, GATEWAY_KIND | GATEWAY_STORAGE_KIND)
     }
     async fn observe(
         &self,
@@ -27,13 +41,19 @@ impl ManagedBackend {
         apply: bool,
         removing: bool,
     ) -> Result<Option<Row>, Error> {
+        if !Self::supports(kind)
+            && self.process_kind != Some(kind)
+            && self.storage_kind != Some(kind)
+        {
+            return Err(ObservationError::BindingMismatch.into());
+        }
         if self.engine.endpoint() != connection_endpoint(kind, row)? {
             return Err(ObservationError::BindingMismatch.into());
         }
         let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = Row::from([("spec".into(), encoded.clone())]);
-        let identity = if kind == STORAGE_KIND {
+        let identity = if self.storage_kind == Some(kind) {
             let spec: Storage =
                 serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
             spec.validate()?;
@@ -75,7 +95,7 @@ fn specification(kind: &str, encoded: &str) -> Result<Spec, Error> {
     } else {
         kind
     };
-    if !matches!(expected, GATEWAY_KIND | SERVICE_KIND) || spec.kind != expected {
+    if spec.kind != expected {
         return Err(ObservationError::BindingMismatch.into());
     }
     spec.validate()?;
@@ -119,7 +139,7 @@ impl Backend for ManagedBackend {
         if self.engine.endpoint() != connection_endpoint(kind, prior)? {
             return Err(ObservationError::BindingMismatch);
         }
-        if !matches!(kind, GATEWAY_KIND | SERVICE_KIND) {
+        if kind != GATEWAY_KIND && self.process_kind != Some(kind) {
             return Err(ObservationError::Backend(
                 "persistent storage deletion is forbidden",
             ));
@@ -176,7 +196,12 @@ mod tests {
             ("spec".into(), storage.json().unwrap()),
             ("id".into(), String::new()),
         ]);
-        let backend = ManagedBackend::new(Engine::connect(&fixture.endpoint).unwrap());
+        const STORAGE_KIND: &str = "test_storage";
+        let backend = ManagedBackend::service(
+            Engine::connect(&fixture.endpoint).unwrap(),
+            "test_process",
+            STORAGE_KIND,
+        );
         assert_eq!(backend.read(STORAGE_KIND, &row, false).await.unwrap(), None);
         *response.lock().unwrap() = (
             200,
@@ -216,16 +241,23 @@ mod tests {
 /// Extract connection selection before constructing the resource backend.
 pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
     let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
-    if kind == STORAGE_KIND {
+    if let Ok(spec) = serde_json::from_str::<Spec>(encoded) {
+        if spec.kind
+            != if kind == GATEWAY_STORAGE_KIND {
+                GATEWAY_KIND
+            } else {
+                kind
+            }
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        spec.validate().map_err(|error| diagnostic(&error))?;
+        Ok(spec.engine().to_owned())
+    } else {
         let spec: Storage =
             serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
         spec.validate().map_err(|error| diagnostic(&error))?;
         Ok(spec.engine)
-    } else {
-        Ok(specification(kind, encoded)
-            .map_err(|error| diagnostic(&error))?
-            .engine()
-            .to_owned())
     }
 }
 
@@ -236,10 +268,11 @@ pub fn runtime_engine(
     row: &Row,
 ) -> Result<Engine, Error> {
     let engine = connections.resolve(&connection_endpoint(kind, row)?)?;
-    if kind == SERVICE_KIND
-        && engine.endpoint().starts_with("ssh://")
-        && !engine.host_observer_explicit
-    {
+    let service = row
+        .get("spec")
+        .and_then(|encoded| serde_json::from_str::<Spec>(encoded).ok())
+        .is_some_and(|spec| spec.process.is_some());
+    if service && engine.endpoint().starts_with("ssh://") && !engine.host_observer_explicit {
         return Ok(engine.with_host_observer(std::sync::Arc::new(crate::hardware::SshHost)));
     }
     Ok(engine)

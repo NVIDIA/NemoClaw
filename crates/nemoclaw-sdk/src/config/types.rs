@@ -39,7 +39,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages are named once and activated through serviceRef.
+/// The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -55,7 +55,7 @@ pub struct Spec {
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
-    /// Named managed container services. Definitions are validated but create no resources until selected through serviceRef.
+    /// Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef.
     pub services: std::collections::BTreeMap<String, ServiceDefinition>,
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.

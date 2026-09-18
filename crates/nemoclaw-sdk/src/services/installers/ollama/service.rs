@@ -103,7 +103,7 @@ impl ServiceSpec {
                     Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
                     _ => false,
                 }
-                || !regex::Regex::new(crate::config::constraints::OLLAMA_MODEL)
+                || !regex::Regex::new(super::MODEL_PATTERN)
                     .unwrap()
                     .is_match(&proxy.model)
                 || !regex::Regex::new("^[a-f0-9]{64}$")

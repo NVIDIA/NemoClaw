@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    config::{Document, Service, ServiceDefinition, schema::input_schema},
+    config::{Document, ServiceDefinition, schema::input_schema},
     hardware::GIB,
+    services::installers::vllm::Service,
 };
 use serde_json::{Value, json};
 
@@ -70,7 +71,10 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
 
 #[test]
 fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
-    use nemoclaw_sdk::hardware::{Capacity, DedicatedGpu, check_capacity};
+    use nemoclaw_sdk::{
+        hardware::{Capacity, DedicatedGpu},
+        services::installers::vllm::hardware_capacity::check_capacity,
+    };
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
     let service = service(&doc);
     let capacity = Capacity {
@@ -188,16 +192,13 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
     let container = serde_json::to_value(spec.container("/data").unwrap()).unwrap();
     assert_eq!(container["HostConfig"]["IpcMode"], "host");
     assert_eq!(container["HostConfig"]["ShmSize"], 32 * GIB);
+    let runtime_service: Service =
+        serde_json::from_str(spec.runtime_configuration().unwrap()).unwrap();
     assert_eq!(
-        spec.runtime_service()
-            .unwrap()
-            .hardware
-            .unwrap()
-            .architecture,
+        runtime_service.hardware.as_ref().unwrap().architecture,
         "amd64"
     );
-    assert!(spec.runtime_service().unwrap().placement.is_none());
-    let runtime_service = spec.service.as_ref().unwrap();
+    assert!(runtime_service.placement.is_none());
     assert!(runtime_service.arguments("/data/model", 80 * GIB).is_err());
     assert!(!container.to_string().contains("VLLM_API_KEY"));
     let mut fractional = input();

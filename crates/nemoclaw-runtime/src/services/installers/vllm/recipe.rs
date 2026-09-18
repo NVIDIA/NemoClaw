@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::runtime::report;
+use super::runtime::report;
 use nemoclaw_sdk::{CancellationToken, Error, snapshot};
 use std::{
     path::{Path, PathBuf},
@@ -11,13 +11,13 @@ pub(crate) struct PreparedModel {
     pub environment: std::collections::BTreeMap<String, std::ffi::OsString>,
 }
 pub(crate) async fn prepare(
-    service: &nemoclaw_sdk::config::Service,
+    service: &nemoclaw_sdk::services::installers::vllm::Service,
     root: &Path,
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
-    use nemoclaw_sdk::recipes::huggingface as hf;
+    use nemoclaw_sdk::services::installers::vllm::recipes::huggingface as hf;
     if let Some(recipe) = &service.recipe {
-        crate::inline_recipe::PackagedRecipe(recipe).validate_files()?;
+        super::inline_recipe::PackagedRecipe(recipe).validate_files()?;
     }
 
     let model = snapshot::directory(root, &hf::directory(service))?;
@@ -81,11 +81,11 @@ pub(crate) async fn prepare(
             ));
         }
         let root = root.join("prepared");
-        let receipt = nemoclaw_sdk::recipes::preparation::prepare(
+        let receipt = nemoclaw_sdk::services::installers::vllm::recipes::preparation::prepare(
             &root,
             &model,
             service,
-            &crate::inline_recipe::PackagedRecipe(recipe),
+            &super::inline_recipe::PackagedRecipe(recipe),
             cancel,
         )
         .await?;

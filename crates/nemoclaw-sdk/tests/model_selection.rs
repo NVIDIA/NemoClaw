@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{Document, Service, ServiceDefinition};
+use nemoclaw_sdk::{
+    config::{Document, ServiceDefinition},
+    services::installers::vllm::Service,
+};
 
 fn service(document: &mut Document) -> &mut Service {
     let ServiceDefinition::Vllm(service) = document.spec.services.get_mut("qwen").unwrap() else {
@@ -45,7 +48,7 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
 #[test]
 fn model_identity_and_capacity_are_not_a_repository_allowlist() {
     use nemoclaw_sdk::{
-        recipes::huggingface as hf,
+        services::installers::vllm::recipes::huggingface as hf,
         snapshot::{File, Manifest},
     };
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();

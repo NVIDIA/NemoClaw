@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Generic preparation protocol and durable completion receipts.
+use super::super::Service;
 use super::inline::{InlineRecipe, relative};
 use crate::{
     CancellationToken, Error,
-    config::Service,
     snapshot::{File, VerifiedFile},
     state::save_json,
 };

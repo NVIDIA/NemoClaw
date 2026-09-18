@@ -26,7 +26,7 @@ fn managed_ollama_service() -> Value {
 }
 
 #[test]
-fn referenced_services_compile_once_and_unused_definitions_create_nothing() {
+fn declared_services_install_once_and_service_ref_selects_the_inference_connection() {
     let value = managed_ollama_service();
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox", "ollama"]
@@ -34,7 +34,7 @@ fn referenced_services_compile_once_and_unused_definitions_create_nothing() {
         .into();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["nemoclaw_ollama"]["ollama-server"].is_object());
-    assert!(graph["resource"]["nemoclaw_ollama"].get("unused").is_none());
+    assert!(graph["resource"]["nemoclaw_ollama"]["unused"].is_object());
     assert_eq!(
         document.inference_endpoint().unwrap(),
         "http://172.20.0.1:11436/v1"

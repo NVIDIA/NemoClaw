@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! vLLM installer launch behavior; model and hardware qualification belongs to recipes.
 mod config;
+mod constraints;
 use crate::Error;
 pub use config::{
     Memory, Model, Service, ServiceAuthentication, ServiceContainer, ServiceHardware, ServiceIpc,
@@ -14,6 +15,7 @@ pub(crate) mod capacity;
 pub mod hardware_capacity;
 mod hardware_policy;
 pub mod recipes;
+pub(crate) mod schema;
 pub(crate) mod spark;
 pub(crate) mod validation;
 impl Service {
@@ -28,7 +30,7 @@ impl Service {
         download_remaining: u64,
         preparation_remaining: u64,
     ) -> Result<(), Error> {
-        crate::hardware::check_capacity(
+        hardware_capacity::check_capacity(
             self,
             capacity,
             starting,
@@ -48,14 +50,27 @@ mod tests;
 use crate::{
     compile::{Generations, Target},
     config::{ConfigError, Document},
-    managed::{SERVICE_KIND, STORAGE_KIND, Spec, Storage},
-    services::contract::{
-        InstallPlan, InstallStage, Installer, RemovePlan, ResolvedInference, validate_runtime,
-    },
+    managed::{Process, Spec, Storage},
+    services::contract::{InstallPlan, InstallStage, Installer, RemovePlan, validate_runtime},
     state::StateBinding,
 };
 use std::{collections::BTreeMap, time::Duration};
 use url::Url;
+
+pub(crate) const SERVICE_KIND: &str = "inference_service";
+pub(crate) const STORAGE_KIND: &str = "inference_storage";
+
+pub(crate) fn configured_service(spec: &Spec) -> Result<Service, Error> {
+    let configuration = spec
+        .process
+        .as_ref()
+        .map(|process| process.configuration.as_str())
+        .ok_or(Error::Conflict("vLLM runtime has no service configuration"))?;
+    let service: Service = serde_json::from_str(configuration)
+        .map_err(|_| Error::Conflict("vLLM runtime configuration is invalid"))?;
+    service.validate()?;
+    Ok(service)
+}
 
 fn private(ip: std::net::IpAddr) -> bool {
     match ip {
@@ -134,6 +149,70 @@ fn targets(
         .ok_or(crate::config::ConfigError::new(
             "missing resource generation",
         ))?;
+    let mut runtime_service = service.runtime_settings();
+    runtime_service.placement = None;
+    runtime_service.publication = None;
+    runtime_service.runtime.engine = "unix:///var/run/docker.sock".into();
+    let mut image_labels = service
+        .recipe
+        .as_ref()
+        .map(|recipe| recipe.compatibility.image_labels.clone())
+        .unwrap_or_default();
+    image_labels.insert("org.nemoclaw.backend".into(), "vllm".into());
+    if service.authentication.is_some() {
+        image_labels.insert(
+            "org.nemoclaw.inference.authentication".into(),
+            "bearer-v1".into(),
+        );
+    }
+    let network_cidr = service
+        .placement
+        .as_ref()
+        .map_or(document.spec.gateway.network_cidr.clone(), |placement| {
+            placement.network_cidr.clone()
+        });
+    let bind_address = service.publication.as_ref().map_or_else(
+        || document.spec.gateway.bridge(),
+        |publication| Ok(publication.bind_address.clone()),
+    )?;
+    let architecture = service
+        .hardware
+        .as_ref()
+        .map(|hardware| hardware.architecture.clone())
+        .or_else(|| {
+            service
+                .recipe
+                .as_ref()
+                .map(|recipe| recipe.compatibility.architecture.clone())
+        })
+        .unwrap_or_else(|| "arm64".into());
+    let process = Process {
+        engine: service.runtime.engine.clone(),
+        image: service.runtime.image.clone(),
+        network_cidr,
+        create_network: service.placement.is_some(),
+        architecture,
+        image_labels,
+        pull_image: false,
+        configuration: serde_json::to_string(&runtime_service)
+            .map_err(|_| Error::State("cannot serialize service runtime configuration"))?,
+        entrypoint: vec!["/usr/local/bin/nemoclaw-runtime".into()],
+        command: Vec::new(),
+        mount_target: "/data".into(),
+        bind_address,
+        port: service.serving.port as u16,
+        shared_memory_bytes: service
+            .container
+            .as_ref()
+            .map_or(8, |container| container.shared_memory_gi_b)
+            * crate::hardware::GIB,
+        host_ipc: service
+            .container
+            .as_ref()
+            .is_some_and(|container| container.ipc == ServiceIpc::Host),
+        memory_bytes: 104 * crate::hardware::GIB,
+        gpu: true,
+    };
     let spec = Spec {
         layout: 0,
         compute_driver: service.runtime.provider.clone(),
@@ -146,7 +225,7 @@ fn targets(
         } else {
             document.spec.gateway.runtime_settings()
         },
-        service: Some(service.runtime_settings()),
+        process: Some(process),
     };
     let storage = Storage {
         name: format!("{}-data", spec.name),
@@ -175,25 +254,7 @@ impl Installer for Service {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
-        let (targets, spec) = targets(document, name, self, generations)?;
-        let endpoint = match &self.publication {
-            Some(publication) => publication.endpoint.clone(),
-            None => format!(
-                "http://{}:{}/v1",
-                document.spec.gateway.bridge()?,
-                self.serving.port
-            ),
-        };
-        let authentication = self
-            .authentication
-            .as_ref()
-            .map(|_| {
-                crate::services::authentication::Source::ManagedService {
-                    spec: Box::new(spec.clone()),
-                }
-                .json()
-            })
-            .transpose()?;
+        let (targets, _) = targets(document, name, self, generations)?;
         let service = address(SERVICE_KIND, name);
         let mut service_dependencies = vec![address(STORAGE_KIND, name)];
         if document.spec.gateway.management == "managed" && self.placement.is_none() {
@@ -201,16 +262,6 @@ impl Installer for Service {
         }
         Ok(InstallPlan {
             stage: InstallStage::Runtime,
-            inference: ResolvedInference {
-                name: name.into(),
-                endpoint,
-                served_model: self.served_model().into(),
-                authentication,
-                ready_after: vec![service.clone()],
-                // Runtime and deployment use separate OpenTofu states. The
-                // bounded check completes before provider registration begins.
-                resource_dependencies: Vec::new(),
-            },
             targets,
             dependencies: BTreeMap::from([(service, service_dependencies)]),
         })
@@ -224,7 +275,7 @@ impl Installer for Service {
         connections: &crate::docker::Connections,
         bindings: &BTreeMap<String, StateBinding>,
         cancel: &crate::CancellationToken,
-    ) -> Result<ResolvedInference, Error> {
+    ) -> Result<(), Error> {
         let plan = self.install(document, name, generations)?;
         let target = plan
             .targets
@@ -251,7 +302,7 @@ impl Installer for Service {
                 let status = engine.runtime_status(&observed).await?;
                 if status.phase == "ready" {
                     engine.verify_artifacts(&observed).await?;
-                    return Ok(plan.inference);
+                    return Ok(());
                 }
                 if status.phase == "stopped" {
                     return Err(Error::State(
@@ -279,5 +330,25 @@ impl Installer for Service {
             retained: vec![address(STORAGE_KIND, name)],
             required_storage: vec![(address(SERVICE_KIND, name), address(STORAGE_KIND, name))],
         })
+    }
+}
+
+impl Service {
+    pub(crate) fn credential_source(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+    ) -> Result<Option<String>, Error> {
+        if self.authentication.is_none() {
+            return Ok(None);
+        }
+        let (_, spec) = targets(document, name, self, generations)?;
+        Ok(Some(
+            crate::services::authentication::Source::ManagedService {
+                spec: Box::new(spec),
+            }
+            .json()?,
+        ))
     }
 }

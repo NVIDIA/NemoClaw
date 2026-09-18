@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::OllamaProxy;
 use super::*;
 use crate::{
     Error, ObservationError,
     backend::Row,
     compile::{Generations, Target},
-    config::{Document, OllamaProxy},
+    config::Document,
 };
 pub const PROXY: &str = "ollama_proxy";
 pub const STORAGE: &str = "ollama_proxy_storage";

@@ -324,8 +324,6 @@ impl Deployment {
         }
         let work = async {
             for target in targets {
-                let engine =
-                    crate::managed::runtime_engine(&self.engines, &target.kind, &target.values)?;
                 let binding = bindings.get(&target.address).ok_or(Error::Conflict(
                     "export requires established runtime identity",
                 ))?;
@@ -336,7 +334,9 @@ impl Deployment {
                 }
                 let mut row = target.values.clone();
                 row.insert("id".into(), binding.id.clone());
-                crate::managed::ManagedBackend::new(engine.clone())
+                crate::services::BackendRegistry::new(&self.engines)
+                    .resolve(&target.kind, &row)?
+                    .ok_or(Error::State("runtime backend is unavailable"))?
                     .read(&target.kind, &row, false)
                     .await?
                     .ok_or(Error::Conflict(

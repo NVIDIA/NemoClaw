@@ -6,7 +6,7 @@ use nemoclaw_sdk::{
     config::{Document, ServiceDefinition},
     docker::Engine,
     managed::Spec,
-    recipes::huggingface,
+    services::installers::vllm::recipes::huggingface,
 };
 use serde_json::{Value, json};
 use std::{

@@ -62,15 +62,11 @@ impl Engine {
     /// or starting a container. Only the runtime publishes completed receipts.
     pub async fn verify_artifacts(&self, observed: &RuntimeObservation) -> Result<(), Error> {
         let work = async {
-            let service = observed
-                .spec
-                .service
-                .as_ref()
-                .ok_or(Error::State("missing inference specification"))?;
+            let service = super::configured_service(&observed.spec)?;
             if service.authentication.is_some() {
                 crate::services::authentication::read_key(self, &observed.container_id).await?;
             }
-            let model = format!("/data/{}", super::recipes::huggingface::directory(service));
+            let model = format!("/data/{}", super::recipes::huggingface::directory(&service));
             let bytes = self
                 .read_file(
                     &observed.container_id,
@@ -79,7 +75,7 @@ impl Engine {
                 )
                 .await?
                 .ok_or(Error::State("selected model manifest is unobservable"))?;
-            let manifest = super::recipes::huggingface::decode_manifest(service, &bytes)?;
+            let manifest = super::recipes::huggingface::decode_manifest(&service, &bytes)?;
             let bytes = self
                 .read_file(
                     &observed.container_id,
@@ -96,7 +92,7 @@ impl Engine {
                     .await?;
             }
             if let Some(recipe) = &service.recipe {
-                let key = recipe.key(service);
+                let key = recipe.key(&service);
                 let prepared = format!("/data/prepared/{key}");
                 let bytes = self
                     .read_file(

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use crate::supervisor::{self, Monitors};
-use nemoclaw_sdk::{CancellationToken, Error, config::Service};
+use nemoclaw_sdk::{CancellationToken, Error, services::installers::vllm::Service};
 use process_wrap::tokio::{KillOnDrop, ProcessGroup};
 use std::{fs, io::Write, path::Path, time::Duration};
 const ROOT: &str = "/data";
@@ -54,19 +54,21 @@ async fn run_owned(
 ) -> Result<(), Error> {
     let credential = spec
         .authentication
-        .map(|_| crate::authentication::load(Path::new(ROOT)))
+        .map(|_| super::authentication::load(Path::new(ROOT)))
         .transpose()?;
-    let prepared = crate::recipe::prepare(spec, Path::new(ROOT), cancel).await?;
+    let prepared = super::recipe::prepare(spec, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
             "memory protection tripped by operator; explicit apply required",
         ));
     }
-    let capacity = crate::hardware::before_start(spec, cancel).await?;
-    let (mut command, readiness) = crate::vllm::launch(
+    let capacity = super::hardware::before_start(spec, cancel).await?;
+    let (mut command, readiness) = super::process::launch(
         spec,
         &prepared,
-        nemoclaw_sdk::hardware::serving_memory(spec, &capacity)?,
+        nemoclaw_sdk::services::installers::vllm::hardware_capacity::serving_memory(
+            spec, &capacity,
+        )?,
         credential,
     )?;
     command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
@@ -86,13 +88,13 @@ async fn run_owned(
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            if samples_tx.send(crate::hardware::memory()).await.is_err() {
+            if samples_tx.send(super::hardware::memory()).await.is_err() {
                 break;
             }
         }
     });
     let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move { crate::vllm::wait_ready(readiness, ready_tx).await });
+    let health = tokio::spawn(async move { super::process::wait_ready(readiness, ready_tx).await });
     let result = supervisor::supervise(
         supervisor::Policy {
             startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),

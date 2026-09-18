@@ -5,7 +5,7 @@ use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
-fn property(schema: &mut Value, field: &str, extra: Value) {
+pub(crate) fn property(schema: &mut Value, field: &str, extra: Value) {
     let Value::Object(extra) = extra else {
         panic!("property constraints must be objects");
     };
@@ -14,7 +14,7 @@ fn property(schema: &mut Value, field: &str, extra: Value) {
         .expect("derived field exists")
         .extend(extra);
 }
-fn integer(schema: &mut Value, field: &str, rule: &c::DefaultedInteger) {
+pub(crate) fn integer(schema: &mut Value, field: &str, rule: &c::DefaultedInteger) {
     property(
         schema,
         field,
@@ -35,12 +35,12 @@ fn optional_string(schema: &mut Value, field: &str, default: &str, constraint: &
         }),
     );
 }
-fn forbid(names: &[&str]) -> Value {
+pub(crate) fn forbid(names: &[&str]) -> Value {
     json!({"not": {"anyOf": names.iter().map(|name| json!({"required": [name]})).collect::<Vec<_>>()}})
 }
 // Required ancestors make a condition false when a field is omitted.
 // Consequences constrain only fields that are present, allowing SDK defaults.
-fn at(path: &str, rule: Value, required: bool) -> Value {
+pub(crate) fn at(path: &str, rule: Value, required: bool) -> Value {
     path.split('/').rev().fold(rule, |child, segment| {
         if segment == "[]" {
             json!({"items": child})
@@ -298,16 +298,6 @@ pub(super) fn constrain(root: &mut Value) {
         json!({"pattern": c::SLUG}),
     );
     property(
-        &mut defs["OllamaModel"],
-        "name",
-        json!({"pattern":c::OLLAMA_MODEL}),
-    );
-    property(
-        &mut defs["ExternalOllamaModel"],
-        "name",
-        json!({"pattern":c::OLLAMA_MODEL}),
-    );
-    property(
         &mut defs["OpenClawDashboard"],
         "port",
         json!({"not":{"minimum":8642,"maximum":8652}}),
@@ -353,7 +343,7 @@ pub(super) fn constrain(root: &mut Value) {
     defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"kind":{"enum":["openclaw","hermes"]}},"allOf":[
         {"if":{"properties":{"kind":{"const":"openclaw"}}},"then":{"properties":{"interfaces":{"$ref":"#/$defs/OpenClawInterfaces"}}},"else":{"properties":{"interfaces":{"$ref":"#/$defs/HermesInterfaces"}}}}
     ]}}));
-    service_constraints(defs);
+    crate::services::constrain_schema(defs);
 
     root["allOf"] = json!([]);
     let route_path = "spec/sandboxes/[]/agent/inference/routes/[]";
@@ -418,282 +408,10 @@ pub(super) fn constrain(root: &mut Value) {
         "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
-        "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
+        "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
-        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);
-}
-
-fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
-    let service = defs["ServiceDefinition"]["oneOf"]
-        .as_array_mut()
-        .expect("tagged service variants")
-        .iter_mut()
-        .find(|variant| variant["properties"]["kind"]["const"] == "vllm")
-        .expect("vLLM service variant");
-    service["allOf"] = json!([
-        {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
-        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
-        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
-    ]);
-    service["dependentRequired"] =
-        json!({"placement": ["publication"], "publication": ["placement"]});
-    service["if"] = json!({"required": ["recipe"]});
-    service["then"] = at("memory/gpuMemoryGiB", json!({"const": 0}), false);
-    service["else"] = at("serving/speculativeTokens", json!({"const": 0}), false);
-    property(
-        &mut defs["Model"],
-        "repository",
-        json!({"pattern": c::REPOSITORY, "maxLength": 200}),
-    );
-    property(
-        &mut defs["Model"],
-        "revision",
-        json!({"pattern": c::REVISION}),
-    );
-    property(
-        &mut defs["ServicePlacement"],
-        "networkCidr",
-        json!({"pattern": "/24$"}),
-    );
-    property(
-        &mut defs["ServicePublication"],
-        "endpoint",
-        json!({"pattern": "^http://.+:[0-9]+/v1$"}),
-    );
-    let serving = &mut defs["Serving"];
-    for (field, rule) in [
-        ("port", &c::PORT),
-        ("contextTokens", &c::CONTEXT_TOKENS),
-        ("maxSequences", &c::MAX_SEQUENCES),
-        ("batchTokens", &c::BATCH_TOKENS),
-        ("startupTimeoutSeconds", &c::STARTUP_TIMEOUT),
-    ] {
-        integer(serving, field, rule);
-    }
-    property(
-        serving,
-        "speculativeTokens",
-        json!({"minimum": 0, "maximum": c::SPECULATIVE_TOKENS_MAX, "default": 0}),
-    );
-    property(
-        serving,
-        "toolParser",
-        json!({"enum": c::TOOL_PARSERS, "default": ""}),
-    );
-    property(
-        serving,
-        "reasoningParser",
-        json!({"enum": c::REASONING_PARSERS, "default": ""}),
-    );
-    let memory = &mut defs["Memory"];
-    for (field, rule) in [
-        ("hostReserveGiB", &c::HOST_RESERVE),
-        ("kvCacheGiB", &c::KV_CACHE),
-        ("minAvailableGiB", &c::MIN_AVAILABLE),
-        ("minFreeGiB", &c::MIN_FREE),
-        ("freeGateGiB", &c::FREE_GATE),
-        ("consecutiveSamples", &c::CONSECUTIVE_SAMPLES),
-    ] {
-        integer(memory, field, rule);
-    }
-    property(
-        memory,
-        "gpuMemoryGiB",
-        json!({"minimum": 0, "maximum": c::GPU_MEMORY_MAX,
-        "x-nemoclaw-default-rule": format!("Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses {} GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here.", c::GPU_MEMORY_DEFAULT)}),
-    );
-    property(
-        &mut defs["Serving"],
-        "modelName",
-        json!({"anyOf":[{"const":""},{"pattern":c::MODEL}],"default":""}),
-    );
-    property(
-        &mut defs["Serving"],
-        "mambaBackend",
-        json!({"enum":["","flashinfer"],"default":""}),
-    );
-    property(
-        &mut defs["ServiceHardware"],
-        "architecture",
-        json!({"const":"amd64"}),
-    );
-    property(
-        &mut defs["ServiceHardware"],
-        "minComputeCapability",
-        json!({"minimum":10,"maximum":999}),
-    );
-    property(
-        &mut defs["ServiceHardware"],
-        "minGpuMemoryBytes",
-        json!({"minimum":4_u64*(1<<30),"maximum":4_u64*(1<<40)}),
-    );
-    property(
-        &mut defs["ServiceHardware"],
-        "minDriverMajor",
-        json!({"minimum":1,"maximum":9999}),
-    );
-    property(
-        &mut defs["ServiceContainer"],
-        "sharedMemoryGiB",
-        json!({"minimum":1,"maximum":64}),
-    );
-    property(
-        &mut defs["Memory"],
-        "gpuMemoryUtilization",
-        json!({"minimum":0.05,"maximum":0.95}),
-    );
-    // A fractional GPU budget delegates KV allocation to vLLM. The fixed-budget
-    // path keeps its existing authored zero/default behavior and 4..12 GiB bound.
-    defs["Memory"]["properties"]["kvCacheGiB"]
-        .as_object_mut()
-        .unwrap()
-        .remove("minimum");
-    defs["Memory"]["properties"]["kvCacheGiB"]
-        .as_object_mut()
-        .unwrap()
-        .remove("anyOf");
-    defs["Memory"]["properties"]["kvCacheGiB"]["minimum"] = json!(0);
-    defs["Memory"]["properties"]["kvCacheGiB"]["x-nemoclaw-default-rule"] = json!(
-        "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
-    );
-    defs["Memory"]["allOf"] = json!([
-        {"if":{"required":["gpuMemoryUtilization"]},"then":{"properties":{"kvCacheGiB":{"const":0},"gpuMemoryGiB":{"const":0}}},"else":{"properties":{"kvCacheGiB":{"anyOf":[{"const":0},{"minimum":c::KV_CACHE.min,"maximum":c::KV_CACHE.max}]}}}}
-    ]);
-    recipe_constraints(defs);
-}
-
-fn recipe_constraints(defs: &mut serde_json::Map<String, Value>) {
-    use crate::recipes::inline::limits as r;
-    property(
-        &mut defs["InlineRecipe"],
-        "apiVersion",
-        json!({"const": r::API_VERSION}),
-    );
-    for field in ["licenses", "sourceNotices"] {
-        property(
-            &mut defs["InlineRecipe"],
-            field,
-            json!({"minItems": 1, "items": {"type": "string", "pattern": "^/"}}),
-        );
-    }
-    let compatibility = &mut defs["Compatibility"];
-    property(
-        compatibility,
-        "architecture",
-        json!({"enum": r::ARCHITECTURES}),
-    );
-    property(compatibility, "gpu", json!({"minLength": 1}));
-    property(
-        compatibility,
-        "minDriverMajor",
-        json!({"minimum": 1, "maximum": r::DRIVER_MAX}),
-    );
-    property(
-        compatibility,
-        "minHostMemoryGiB",
-        json!({"minimum": 1, "maximum": r::MEMORY_MAX}),
-    );
-    property(
-        compatibility,
-        "imageLabels",
-        json!({"required": [r::PROTOCOL_LABEL],
-        "properties": {r::PROTOCOL_LABEL: {"const": "v1"}}, "propertyNames": {"pattern": "^org\\.nemoclaw\\."},
-        "additionalProperties": {"type": "string", "minLength": 1, "maxLength": r::TOKEN_MAX}}),
-    );
-    property(
-        &mut defs["Tool"],
-        "executable",
-        json!({"pattern": "^/", "maxLength": r::PATH_MAX}),
-    );
-    for (name, field) in [
-        ("Tool", "sha256"),
-        ("Reuse", "preparationKey"),
-        ("File", "sha256"),
-    ] {
-        property(
-            defs.get_mut(name).unwrap(),
-            field,
-            json!({"pattern": r::SHA256}),
-        );
-    }
-    property(
-        &mut defs["Reuse"],
-        "snapshotDirectory",
-        json!({"minLength": 1}),
-    );
-    let resources = &mut defs["Resources"];
-    for (field, min, max) in [
-        ("preparedBytes", 1, r::PREPARED_MAX),
-        ("preparationMemoryGiB", 1, r::MEMORY_MAX),
-        ("gpuMemoryBytes", r::GPU_MIN, r::GPU_MAX),
-        ("startupHeadroomGiB", 0, r::MEMORY_MAX),
-    ] {
-        property(resources, field, json!({"minimum": min, "maximum": max}));
-    }
-    let settings = &mut defs["Settings"];
-    property(
-        settings,
-        "modelName",
-        json!({"pattern": r::TOKEN, "maxLength": r::TOKEN_MAX}),
-    );
-    for field in [
-        "toolParser",
-        "reasoningParser",
-        "kvCacheDtype",
-        "mambaCacheDtype",
-    ] {
-        property(
-            settings,
-            field,
-            json!({"anyOf": [{"const": ""}, {"pattern": r::TOKEN}], "maxLength": r::TOKEN_MAX, "default": ""}),
-        );
-    }
-    for field in ["lazyLoading", "chunkedPrefill"] {
-        property(settings, field, json!({"default": false}));
-    }
-    for field in ["environment", "preparedEnvironment"] {
-        property(
-            settings,
-            field,
-            json!({"propertyNames": {"pattern": "^VLLM_[A-Z0-9_]*$", "not":{"const":"VLLM_API_KEY"}}, "default": {}}),
-        );
-    }
-    property(
-        settings,
-        "environment",
-        json!({"additionalProperties": {"type": "string", "maxLength": r::PATH_MAX, "pattern": "^[^\\u0000]*$"}}),
-    );
-    let compilation = &mut defs["Compilation"];
-    property(
-        compilation,
-        "mode",
-        json!({"maximum": r::COMPILATION_MODE_MAX}),
-    );
-    property(
-        compilation,
-        "cudagraphMode",
-        json!({"enum": r::CUDAGRAPH_MODES}),
-    );
-    property(
-        compilation,
-        "captureSizes",
-        json!({"minItems": 1, "maxItems": r::CAPTURE_COUNT_MAX,
-        "items": {"type": "integer", "minimum": 1, "maximum": r::CAPTURE_SIZE_MAX}}),
-    );
-    property(
-        &mut defs["Manifest"],
-        "repository",
-        json!({"pattern": c::REPOSITORY, "maxLength": 200}),
-    );
-    property(
-        &mut defs["Manifest"],
-        "revision",
-        json!({"pattern": c::REVISION}),
-    );
-    property(&mut defs["Manifest"], "files", json!({"minItems": 1}));
-    property(&mut defs["File"], "name", json!({"minLength": 1}));
-    property(&mut defs["File"], "size", json!({"minimum": 1}));
 }

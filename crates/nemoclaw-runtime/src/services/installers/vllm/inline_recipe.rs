@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     CancellationToken, Error,
-    recipes::{
+    services::installers::vllm::recipes::{
         inline::InlineRecipe,
         preparation::{Action, Request, Runner},
     },
@@ -117,10 +117,10 @@ mod tests {
     #[tokio::test]
     async fn pinned_executable_receives_structured_input_and_tampering_stops_execution() {
         let d = nemoclaw_sdk::config::Document::parse(
-            include_bytes!("../../../examples/spark/spark-inline.yaml").as_slice(),
+            include_bytes!("../../../../../../examples/spark/spark-inline.yaml").as_slice(),
         )
         .unwrap();
-        let nemoclaw_sdk::config::ServiceDefinition::Vllm(service) = &d.spec.services["qwen"]
+        let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = &d.spec.services["qwen"]
         else {
             panic!("expected vLLM service");
         };
