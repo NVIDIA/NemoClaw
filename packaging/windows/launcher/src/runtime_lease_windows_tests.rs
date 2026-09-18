@@ -45,12 +45,7 @@ fn wide(path: &Path) -> Vec<u16> {
         .chain(std::iter::once(0))
         .collect()
 }
-fn security(writable: bool) -> LocalMemory {
-    let value = if writable {
-        "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;FA;;;BU)"
-    } else {
-        "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;GRGX;;;BU)(A;OICI;GRGX;;;AC)"
-    };
+fn security_sddl(value: &str) -> LocalMemory {
     let value = value
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -68,6 +63,13 @@ fn security(writable: bool) -> LocalMemory {
         0
     );
     LocalMemory(output)
+}
+fn security(writable: bool) -> LocalMemory {
+    security_sddl(if writable {
+        "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;FA;;;BU)"
+    } else {
+        "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;GRGX;;;BU)(A;OICI;GRGX;;;AC)"
+    })
 }
 fn directory(path: &Path, writable: bool) {
     let security = security(writable);
@@ -125,7 +127,9 @@ struct Fixture {
 impl Fixture {
     fn new(writable: bool) -> Self {
         let installed = installed_path().unwrap();
-        let program_files = installed.strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview").unwrap();
+        let program_files = installed
+            .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
+            .unwrap();
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -409,7 +413,7 @@ fn installer_created_directory_and_control_keep_installer_security() {
     verify_security(&directory).unwrap();
     let file = open_mode(Some(&directory), "new-control", false, 0x0012_0082, 0, 2).unwrap();
     verify_security(&file).unwrap();
-    // The owner-only creation descriptor retains inherited restrictive ACLs.
+    // Creation assigns the installer owner and a protected restrictive DACL.
     let mut owner = null_mut();
     let mut acl = null_mut();
     let mut descriptor = null_mut();
@@ -432,6 +436,96 @@ fn installer_created_directory_and_control_keep_installer_security() {
     assert_eq!(sid_string(owner).unwrap(), "S-1-5-32-544");
     assert!(!acl.is_null());
     assert!(unsafe { (*acl).count } >= 2);
+}
+
+#[test]
+fn installer_created_directory_blocks_creator_owner_materialization() {
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    let installed = installed_path().unwrap();
+    let program_files = installed
+        .strip_suffix("\\NVIDIA\\NemoClaw RTX Spark Preview")
+        .unwrap();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = PathBuf::from(program_files).join(format!(
+        "NemoClawCreatorOwnerFixture-{}-{nonce:x}",
+        std::process::id()
+    ));
+    let inherited_creator_owner = security_sddl(concat!(
+        "O:BAD:P",
+        "(A;OICI;FA;;;BA)",
+        "(A;OICI;FA;;;SY)",
+        "(A;OICI;GRGX;;;BU)",
+        "(A;OICI;GRGX;;;AC)",
+        "(A;OICIIO;FA;;;CO)"
+    ));
+    let attributes = SecurityAttributes {
+        length: std::mem::size_of::<SecurityAttributes>() as u32,
+        descriptor: inherited_creator_owner.0,
+        inherit: 0,
+    };
+    assert_ne!(
+        unsafe { CreateDirectoryW(wide(&root).as_ptr(), &attributes) },
+        0
+    );
+    let _cleanup = Cleanup(root.clone());
+    let parents = open_installation(root.to_str().unwrap()).unwrap();
+    let protected = open_mode(parents.last(), "protected", true, DIR_ACCESS, 3, 2).unwrap();
+
+    let payload_path = root.join("protected").join("msi-created-payload");
+    std::fs::write(&payload_path, b"fixture").unwrap();
+    let payload = open(
+        Some(&protected),
+        "msi-created-payload",
+        false,
+        READ_ACCESS,
+        1,
+    )
+    .unwrap();
+    let mut owner = null_mut();
+    let mut acl = null_mut();
+    let mut descriptor = null_mut();
+    assert_eq!(
+        unsafe {
+            GetSecurityInfo(
+                payload.0,
+                1,
+                5,
+                &mut owner,
+                null_mut(),
+                &mut acl,
+                null_mut(),
+                &mut descriptor,
+            )
+        },
+        0
+    );
+    let _descriptor = LocalMemory(descriptor);
+    assert!(!acl.is_null());
+    for index in 0..u32::from(unsafe { (*acl).count }) {
+        let mut ace = null_mut();
+        assert_ne!(unsafe { GetAce(acl, index, &mut ace) }, 0);
+        let header = unsafe { &*ace.cast::<AceHeader>() };
+        if header.kind == 1 {
+            continue;
+        }
+        let bytes = ace.cast::<u8>();
+        let mask = unsafe { bytes.add(4).cast::<u32>().read_unaligned() };
+        let principal = sid_string(unsafe { bytes.add(8).cast() }).unwrap();
+        assert!(!grants_untrusted_write(
+            &principal,
+            mask,
+            header.flags & 8 != 0
+        ));
+    }
 }
 
 #[test]

@@ -403,10 +403,22 @@ pub(crate) mod native {
             buffer: wide.as_mut_ptr(),
         };
         // New installer-owned controls must not acquire the caller's individual
-        // default owner. Supply only the owner; keep the held parent's inherited
-        // DACL. FILE_CREATE never changes an existing object's owner or ACL.
-        let creation_owner = if disposition == 2 {
-            let sddl = "O:BA\0".encode_utf16().collect::<Vec<_>>();
+        // owner or a materialized CREATOR OWNER grant from an existing parent.
+        // A protected DACL keeps descendants readable/executable by normal and
+        // packaged users while limiting mutation to installer principals.
+        // FILE_CREATE never changes an existing object's owner or ACL.
+        let creation_security = if disposition == 2 {
+            let sddl = concat!(
+                "O:BAD:P",
+                "(A;OICI;FA;;;BA)",
+                "(A;OICI;FA;;;SY)",
+                "(A;OICI;GRGX;;;BU)",
+                "(A;OICI;GRGX;;;AC)",
+                "(A;OICI;GRGX;;;S-1-15-2-2)",
+                "\0"
+            )
+            .encode_utf16()
+            .collect::<Vec<_>>();
             let mut descriptor = null_mut();
             if unsafe {
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -433,7 +445,9 @@ pub(crate) mod native {
                 } else {
                     0
                 },
-            security: creation_owner.as_ref().map_or(null_mut(), |value| value.0),
+            security: creation_security
+                .as_ref()
+                .map_or(null_mut(), |value| value.0),
             quality: null_mut(),
         };
         let mut handle = null_mut();
