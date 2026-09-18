@@ -404,24 +404,47 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
-  it.each(["hermes", "openclaw"])(
-    "passes an unavailable %s observation to gateway verification",
-    async (agent) => {
-      const probeGatewayProcess = vi.fn(async () => null);
-      const delayGatewayProcessProbe = vi.fn(async () => {});
-      const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
-      h.getSandbox.mockReturnValue(sandbox({ agent, stopped: true }));
-      h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
+  it("settles a transient unavailable Hermes observation before gateway verification", async () => {
+    const probeGatewayProcess = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(true);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
 
-      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
-        "native gateway route unavailable",
-      );
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
 
-      expect(probeGatewayProcess).toHaveBeenCalledOnce();
-      expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
-      expect(h.verifyGateway).toHaveBeenCalledOnce();
-    },
-  );
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+    expect(delayGatewayProcessProbe).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed after persistently unavailable Hermes observations", async () => {
+    const probeGatewayProcess = vi.fn(async () => null);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "hermes", stopped: true }));
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+
+    expect(probeGatewayProcess).toHaveBeenCalledTimes(3);
+    expect(delayGatewayProcessProbe.mock.calls).toEqual([[2_000], [2_000]]);
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("passes an unavailable OpenClaw observation to gateway verification", async () => {
+    const probeGatewayProcess = vi.fn(async () => null);
+    const delayGatewayProcessProbe = vi.fn(async () => {});
+    const h = harness({ probeGatewayProcess, delayGatewayProcessProbe });
+    h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped: true }));
+    h.verifyGateway.mockRejectedValue(new Error("native gateway route unavailable"));
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "native gateway route unavailable",
+    );
+
+    expect(probeGatewayProcess).toHaveBeenCalledOnce();
+    expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+  });
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(
@@ -441,5 +464,70 @@ describe("startSandbox native lifecycle", () => {
       exitCode: 1,
     });
     expect(h.log.mock.calls.map(([line]) => line).join("\n")).toContain("HTTP 401");
+  });
+
+  it("settles a transient inference HTTP 503 after native startup", async () => {
+    const probeInferenceInvocation = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        detail: "sandbox inference invocation probe returned HTTP 503",
+        httpStatus: 503,
+      })
+      .mockResolvedValueOnce({ ok: true as const });
+    const delayInferenceInvocationProbe = vi.fn(async () => {});
+    const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        provider: "nvidia",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(probeInferenceInvocation).toHaveBeenCalledTimes(2);
+    expect(delayInferenceInvocationProbe).toHaveBeenCalledWith(2_000);
+  });
+
+  it("fails closed after the bounded transient inference settlement window", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const delayInferenceInvocationProbe = vi.fn(async () => {});
+    const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        provider: "nvidia",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+
+    expect(probeInferenceInvocation).toHaveBeenCalledTimes(3);
+    expect(delayInferenceInvocationProbe.mock.calls).toEqual([[2_000], [2_000]]);
+  });
+
+  it("does not add Hermes startup settlement to OpenClaw inference", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const delayInferenceInvocationProbe = vi.fn(async () => {});
+    const h = harness({ probeInferenceInvocation, delayInferenceInvocationProbe });
+    h.getSandbox.mockReturnValue(
+      sandbox({ agent: "openclaw", provider: "nvidia", model: "nvidia/nemotron" }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
   });
 });
