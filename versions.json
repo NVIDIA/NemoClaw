@@ -60,7 +60,7 @@
   "openshellRevision": "1fe79f53991debf32776853a60f0cbd4e127dcfb",
   "images": {
     "agent": "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
-    "hermes": "nc-fabric@sha256:e90f7684df2238dfa58b75f42a43b7e09df22d1aa5ab6382bbdb370671cc044d",
+    "hermes": "nc-fabric@sha256:cab1f5cfe035d39b2893d665a98fda8af0057b0bde2ed884feac5bed3514bedf",
     "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
     "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d039ba7f9a0c3e6788cb04c17fc7738f06db42002fcaaef01e0d2dda375938d1",
     "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:5b2131ff985a0ab7b3bb2fd21cba5a18819431134fce9f17ceffde20970ec736"

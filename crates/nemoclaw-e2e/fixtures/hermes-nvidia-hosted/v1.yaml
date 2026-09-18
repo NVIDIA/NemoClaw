@@ -30,7 +30,7 @@ spec:
           api:
             port: 8643
       image:
-        ref: nc-fabric@sha256:e90f7684df2238dfa58b75f42a43b7e09df22d1aa5ab6382bbdb370671cc044d
+        ref: nc-fabric@sha256:cab1f5cfe035d39b2893d665a98fda8af0057b0bde2ed884feac5bed3514bedf
       runtime:
         provider: docker
       network:
