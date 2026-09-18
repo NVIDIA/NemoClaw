@@ -48,6 +48,7 @@ describe("createSandboxRecreateProtection", () => {
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
       sourceConfirmedAbsent: true,
+      reservationSessionId: "session-recreate",
       targetGeneration: "3c9a1b7e-target",
     };
     const observation = { state: "missing" as const, liveIdentityFingerprint: null };
@@ -99,6 +100,7 @@ describe("createSandboxRecreateProtection", () => {
       sourceRegistryFingerprint: "fingerprint",
       sourceLiveIdentityFingerprint: null,
       sourceConfirmedAbsent: true,
+      reservationSessionId: "session-recreate",
       targetGeneration: "3c9a1b7e-target",
     };
 
