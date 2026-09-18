@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as agentRuntime from "../../../agent/runtime";
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
@@ -65,15 +66,21 @@ export function executePrivilegedSandboxCommand(
 }
 
 export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Promise<boolean> {
-  return (
-    (await processRecovery.waitForStartedHermesGatewayProcess(sandboxName, undefined, {
-      // Hermes uses its in-sandbox supervisor, so an inconclusive
-      // observation remains transitional while the supervisor consumes the
-      // root-owned recovery request.
-      probe: async (name, gatewayName) =>
-        (await processRecovery.isSandboxGatewayRunningForStatus(name, gatewayName)) ?? false,
-    })) === true
-  );
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const timeoutSeconds = agent?.name === "hermes" ? agent.healthProbe?.timeout_seconds : undefined;
+  if (
+    typeof timeoutSeconds !== "number" ||
+    !Number.isFinite(timeoutSeconds) ||
+    timeoutSeconds < 0
+  ) {
+    return false;
+  }
+  return processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+    quiet: true,
+    requireManagedProbe: true,
+    timeoutSeconds,
+    managedProbeImpl: (name) => processRecovery.isSandboxGatewayRunningForStatus(name, undefined),
+  });
 }
 
 export type SandboxCommandResult = processRecovery.SandboxCommandResult;
