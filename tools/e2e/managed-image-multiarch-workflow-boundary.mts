@@ -389,6 +389,21 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${DIRECT_TEST_PATH}`,
   ]);
+  const receiptDaemonCleanup = requireStep(
+    errors,
+    steps,
+    "Remove owned Docker Engine 27 receipt daemon",
+  );
+  if (receiptDaemonCleanup?.if !== "always()") {
+    errors.push(`${JOB_ID} Docker Engine 27 receipt daemon cleanup must always run`);
+  }
+  requireFragments(errors, receiptDaemonCleanup, [
+    'platform="${NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM//\\//-}"',
+    'daemon_name="nemoclaw-receipt-engine27-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${platform}"',
+    "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
+    "--cleanup-only",
+    '--daemon-name "$daemon_name"',
+  ]);
   const cacheUpload = requireStep(
     errors,
     steps,
@@ -449,6 +464,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Run every exact managed-image contract directly",
     "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
+    "Remove owned Docker Engine 27 receipt daemon",
     "Validate OpenClaw managed-image security boundary",
     "Validate managed-image glibc probe lifecycle",
     "Remove protected managed-image cohort resources",

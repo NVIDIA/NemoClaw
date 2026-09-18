@@ -335,6 +335,20 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).not.toContain("Docker context does not select the local default target");
   });
 
+  it("keeps a deferred persisted Colima socket authoritative during recovery", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerContextEndpoint: "unix:///Users/test/.colima/default/docker.sock",
+      includeNodeOnPath: false,
+      persistedDockerContext: "colima",
+      recordRuntimeTarget: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toContain(
+      "cli-target=host:unix:///Users/test/.colima/default/docker.sock,context:unset argv=upgrade-sandboxes --auto",
+    );
+  });
+
   it("rejects a deferred remote Docker context before recovery", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       includeNodeOnPath: false,

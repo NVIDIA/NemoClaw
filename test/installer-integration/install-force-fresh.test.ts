@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-import { createInstallerCheckout } from "../helpers/installer-run-fixture";
+import { createInstallerCheckout, runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
@@ -91,6 +91,49 @@ exit 1
   expect(result.stdout).toBe("present");
 });
 
+it("detects Docker-only state only through an authoritative managed-image label", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-detect-docker-");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") printf '0123456789ab\n' ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction("force_fresh_install_has_existing_state && printf 'present'", {
+    HOME: tmp,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+  });
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe("present");
+});
+
+it("does not treat an unlabeled prefix-matching Docker container as owned state", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-ignore-docker-");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction("force_fresh_install_has_existing_state", {
+    HOME: tmp,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+  });
+
+  expect(result.status).not.toBe(0);
+});
+
 it("runs destructive cleanup through the staged candidate CLI", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-cli-");
   const logPath = path.join(tmp, "node.log");
@@ -129,42 +172,6 @@ it("stops when the staged candidate uninstaller fails", () => {
   });
 
   expect(result.status).not.toBe(0);
-});
-
-it("removes only NemoClaw and OpenShell Docker resources", () => {
-  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-docker-");
-  const logPath = path.join(tmp, "docker.log");
-  writeExecutable(
-    path.join(fakeBin, "docker"),
-    `#!/usr/bin/env bash
-case "$*" in
-  info) exit 0 ;;
-  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
-    printf '%s\n' 'aaaaaaaaaaaa unrelated openshell-default--demo' '999999999999 82913f8e3281 random-name' 'bbbbbbbbbbbb unrelated keep-me'
-    ;;
-  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") printf '%s\n' '999999999999' ;;
-  "volume ls --format {{.Name}}") printf '%s\n' 'openshell-cluster-nemoclaw' 'keep-volume' ;;
-  "network ls --format {{.ID}} {{.Name}}") printf '%s\n' 'cccccccccccc nemoclaw-net' 'dddddddddddd keep-net' ;;
-  "images --format {{.ID}} {{.Repository}}") printf '%s\n' 'eeeeeeeeeeee ghcr.io/nvidia/nemoclaw/hermes-sandbox' 'ffffffffffff unrelated' ;;
-  *) printf '%s\n' "$*" >> "$FORCE_FRESH_LOG" ;;
-esac
-`,
-  );
-
-  const result = callPayloadFunction("remove_force_fresh_docker_resources", {
-    FORCE_FRESH_LOG: logPath,
-    HOME: tmp,
-    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-  });
-
-  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  expect(fs.readFileSync(logPath, "utf-8").trim().split("\n")).toEqual([
-    "rm -f aaaaaaaaaaaa",
-    "rm -f 999999999999",
-    "volume rm -f -- openshell-cluster-nemoclaw",
-    "network rm cccccccccccc",
-    "rmi -f eeeeeeeeeeee",
-  ]);
 });
 
 it("removes Homebrew and standalone OpenShell installations", () => {
@@ -230,7 +237,6 @@ it("runs cleanup before selecting fresh onboarding", () => {
     force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
     prepare_force_fresh_uninstaller() { printf 'prepare:%s\\n' "$1"; }
     run_force_fresh_uninstaller() { printf 'uninstall:%s\\n' "$1"; }
-    remove_force_fresh_install_state() { printf 'force-state-reset\\n'; }
     remove_macos_openshell_for_force_fresh_install() { printf 'openshell-reset\\n'; }
     run_force_fresh_install_reset
     printf 'fresh=%s env=%s reinstall=%s count=%s\\n' "$FRESH" "$NEMOCLAW_FRESH" "$NEMOCLAW_REINSTALL_CLI" "$_PREEXISTING_SANDBOX_COUNT"
@@ -240,13 +246,12 @@ it("runs cleanup before selecting fresh onboarding", () => {
   expect(result.stdout.trim().split("\n")).toEqual([
     "prepare:/tmp/staged-candidate",
     "uninstall:/tmp/staged-candidate",
-    "force-state-reset",
     "openshell-reset",
     "fresh=1 env=1 reinstall=1 count=0",
   ]);
 });
 
-it("continues force cleanup when managed uninstall rejects partial state", () => {
+it("stops before package removal when managed uninstall rejects partial state", () => {
   const result = callPayloadFunction(`
     warn() { :; }
     info() { :; }
@@ -254,13 +259,56 @@ it("continues force cleanup when managed uninstall rejects partial state", () =>
     force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
     prepare_force_fresh_uninstaller() { :; }
     run_force_fresh_uninstaller() { return 9; }
-    remove_force_fresh_install_state() { printf 'force-state-reset\\n'; }
     remove_macos_openshell_for_force_fresh_install() { printf 'openshell-reset\\n'; }
     run_force_fresh_install_reset
   `);
 
-  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  expect(result.stdout.trim().split("\n")).toEqual(["force-state-reset", "openshell-reset"]);
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("openshell-reset");
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "authoritative whole-host uninstall did not complete",
+  );
+});
+
+it("routes the public force-fresh flag through reset before CLI installation", () => {
+  const run = runInstallerSourcedBody(`
+    set -e
+    order=""
+    record() { order="\${order}$1 "; }
+    apply_persisted_automatic_gateway_port() { :; }
+    validate_deferred_hermes_onboarding_request() { :; }
+    load_station_vllm_conflict_helpers() { :; }
+    consume_station_local_vllm_resume() { return 1; }
+    resolve_nemoclaw_gateway_port() { printf '8080'; }
+    preflight_explicit_express_flags() { :; }
+    validate_installer_docker_target_before_host_changes() { :; }
+    print_banner() { :; }
+    preflight_usage_notice_prompt() { :; }
+    prepare_installer_host() { :; }
+    bash() { :; }
+    prepare_installer_node_runtime() { :; }
+    run_force_fresh_install_reset() { record reset; }
+    ensure_station_express_pair() { :; }
+    step() { :; }
+    fix_npm_permissions() { :; }
+    preflight_nemoclaw_acp_shim() { :; }
+    preinstall_backup_and_retire_legacy_gateway() { record legacy-backup; }
+    install_nemoclaw() { record install; }
+    verify_nemoclaw() { _CLI_PATH=""; }
+    require_reportable_openshell_version() { :; }
+    command_exists() { return 1; }
+    warn() { :; }
+    finalize_install() { :; }
+    clear_station_resume_after_completed_onboarding() { :; }
+    uname() { printf 'Darwin'; }
+    main --force-fresh-install --non-interactive --yes-i-accept-third-party-software
+    printf '%s' "$order"
+  `);
+  onTestFinished(run.remove);
+
+  expect(run.result.status, run.output).toBe(0);
+  expect(run.result.stdout.trim()).toBe("reset install");
+  expect(run.result.stdout).not.toContain("legacy-backup");
 });
 
 it("continues force-fresh installation when Homebrew fails after the pinned runtime lands", () => {
@@ -288,17 +336,6 @@ it("continues force-fresh installation when Homebrew fails after the pinned runt
     "prefer:verified-install",
     "service",
   ]);
-});
-
-it("rejects force cleanup outside supported state roots", () => {
-  const result = callPayloadFunction('remove_force_fresh_state_path "$HOME/Documents"', {
-    HOME: os.tmpdir(),
-  });
-
-  expect(result.status).not.toBe(0);
-  expect(`${result.stdout}${result.stderr}`).toContain(
-    "Refusing force-fresh cleanup outside the supported user state roots",
-  );
 });
 
 it("rejects force-fresh installation outside macOS", () => {

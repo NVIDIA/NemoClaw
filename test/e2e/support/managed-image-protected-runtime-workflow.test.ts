@@ -98,6 +98,16 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
+    const value = workflow();
+    const cleanup = namedMultiarchStep(value, "Remove owned Docker Engine 27 receipt daemon");
+    cleanup.if = "${{ !cancelled() }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup Docker Engine 27 receipt daemon cleanup must always run",
+    );
+  });
+
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
   it.each([
     [
