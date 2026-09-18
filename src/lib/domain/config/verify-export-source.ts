@@ -52,7 +52,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
 
-type SupportedExportAgent = "hermes" | "openclaw";
+type SupportedExportAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
 interface ExportAgentProfileProjection {
   readonly compatibility: Readonly<Record<string, unknown>> | null;
@@ -89,7 +89,18 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
       tuiEnabled: false,
     },
   }),
+  "langchain-deepagents-code": (_route) => ({
+    primaryModelRef: null,
+    compatibility: null,
+    dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
+  }),
 };
+
+function isSupportedExportAgent(value: unknown): value is SupportedExportAgent {
+  return (
+    typeof value === "string" && ["hermes", "langchain-deepagents-code", "openclaw"].includes(value)
+  );
+}
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
@@ -191,6 +202,91 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
   return findings;
 }
 
+function staleDeepAgentsRegistryFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.dcodeAutoApprovalMode === undefined) return [];
+  return [
+    finding(
+      "source.registry",
+      "unsupported",
+      "V1alpha1 export does not support stale agent-specific registry state.",
+    ),
+  ];
+}
+
+function deepAgentsApprovalFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.dcodeAutoApprovalMode === "disabled") return [];
+  return [
+    finding(
+      "source.registry.dcodeAutoApprovalMode",
+      entry.dcodeAutoApprovalMode === undefined ? "missing-provenance" : "unsupported",
+      "Deep Agents export requires automatic approval to be explicitly disabled.",
+    ),
+  ];
+}
+
+function deepAgentsObservabilityFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.observabilityEnabled === false) return [];
+  return [
+    finding(
+      "source.registry.observabilityEnabled",
+      entry.observabilityEnabled === undefined ? "missing-provenance" : "unsupported",
+      "Deep Agents export requires observability to be explicitly disabled.",
+    ),
+  ];
+}
+
+function deepAgentsInferenceFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  const findings: ExportFinding[] = [];
+  if (entry.preferredInferenceApi !== "openai-completions")
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].api",
+        entry.preferredInferenceApi === undefined || entry.preferredInferenceApi === null
+          ? "missing-provenance"
+          : "unsupported",
+        "Deep Agents export requires hosted OpenAI-completions inference.",
+      ),
+    );
+  if (!entry.credentialEnv)
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].credential.env",
+        "missing-provenance",
+        "Deep Agents export requires a retained credential environment reference.",
+      ),
+    );
+  return findings;
+}
+
+function classifyDeepAgentsBaseline(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.agent !== "langchain-deepagents-code") return staleDeepAgentsRegistryFinding(entry);
+  return [
+    ...deepAgentsApprovalFinding(entry),
+    ...deepAgentsObservabilityFinding(entry),
+    ...deepAgentsInferenceFinding(entry),
+    ...(entry.toolDisclosure !== undefined && entry.toolDisclosure !== "progressive"
+      ? [
+          finding(
+            "spec.sandboxes[].agents[0].tools",
+            "unsupported",
+            "Deep Agents export does not support retained tool disclosure settings.",
+          ),
+        ]
+      : []),
+    ...(entry.webSearchEnabled !== false || entry.webSearchProvider !== null
+      ? [
+          finding(
+            "spec.sandboxes[].integrations.webSearch",
+            entry.webSearchEnabled === undefined || entry.webSearchProvider === undefined
+              ? "missing-provenance"
+              : "unsupported",
+            "Deep Agents export requires web search to be explicitly disabled.",
+          ),
+        ]
+      : []),
+  ];
+}
+
 function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry, inference } = snapshot;
   if (registry.agent !== "hermes") return [];
@@ -268,7 +364,11 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     .map(([field, , capability]) =>
       finding(field, "unsupported", "V1 export does not support " + capability + "."),
     );
-  return [...findings, ...classifyHermesExcludedCapabilities(entry)];
+  return [
+    ...findings,
+    ...classifyHermesExcludedCapabilities(entry),
+    ...classifyDeepAgentsBaseline(entry),
+  ];
 }
 
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
@@ -369,12 +469,12 @@ function classifyWorkload(entry: ObservedExportRegistry): ExportFinding[] {
 /** Report every v1-excluded capability represented by the registry row. */
 export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
   const findings = classifyExcludedCapabilities(entry);
-  if (entry.agent !== "openclaw" && entry.agent !== "hermes")
+  if (!isSupportedExportAgent(entry.agent))
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].type",
+        "spec.sandboxes[].harness.kind",
         "unsupported",
-        "V1 export requires OpenClaw or Hermes.",
+        "V1alpha1 export requires OpenClaw, Hermes, or Deep Agents.",
       ),
     );
   if (entry.pendingRouteReservation === true)
@@ -403,8 +503,27 @@ function registeredToolDisclosure(
   return entry.agent === "openclaw" ? (entry.toolDisclosure ?? "progressive") : "progressive";
 }
 
+function deepAgentsUpstreamEndpoint(
+  agent: SupportedExportAgent,
+  selected: ReturnType<typeof normalizeInferenceSelection>,
+): string | null {
+  return agent === "langchain-deepagents-code" ? selected.endpointUrl : null;
+}
+
+function deepAgentsApprovalMode(
+  agent: SupportedExportAgent,
+): ManagedStartupProfileBuilderInput["dcodeAutoApprovalMode"] {
+  return agent === "langchain-deepagents-code" ? "disabled" : null;
+}
+
+function deepAgentsObservability(
+  agent: SupportedExportAgent,
+): ManagedStartupProfileBuilderInput["observabilityEnabled"] {
+  return agent === "langchain-deepagents-code" ? false : null;
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
-  if (entry.agent !== "openclaw" && entry.agent !== "hermes") {
+  if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
   }
   const agent = entry.agent;
@@ -431,7 +550,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       upstreamProvider: selected.provider,
       model: selected.model,
       routedBaseUrl: inference.inferenceBaseUrl,
-      upstreamEndpointUrl: null,
+      upstreamEndpointUrl: deepAgentsUpstreamEndpoint(agent, selected),
       api: selected.preferredInferenceApi,
       primaryModelRef: projection.primaryModelRef,
       compatibility: projection.compatibility,
@@ -441,8 +560,8 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
-    dcodeAutoApprovalMode: null,
-    observabilityEnabled: null,
+    dcodeAutoApprovalMode: deepAgentsApprovalMode(agent),
+    observabilityEnabled: deepAgentsObservability(agent),
     environment:
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
         ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
@@ -532,7 +651,11 @@ function supportedAgentSettingsProfile(
   expected: ManagedStartupProfile,
   additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ManagedStartupProfile | null {
-  if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
+  const agent = profile.agentConfig.agent;
+  if (
+    agent === expected.agentConfig.agent &&
+    (agent === "hermes" || agent === "langchain-deepagents-code")
+  ) {
     return expected;
   }
   const settings = projectAgentSettings(profile, expected);
