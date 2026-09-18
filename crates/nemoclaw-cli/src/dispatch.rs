@@ -3,14 +3,13 @@
 
 use crate::{
     args::{Cli, Command},
-    authoring::{
-        Answers, AuthoredDocument, Capabilities, CompletionBoundary, DirectInputs, Draft,
-        IdentityEdits, InferenceEdits, InteractiveInputs, Session,
-    },
-    io::{document, write_output},
+    credentials,
+    deployment::create as deployment,
+    io::document,
+    onboarding,
 };
-use nemoclaw_sdk::{CancellationToken, Deployment, Error, OperationResult, config::Document};
-use std::{future::Future, path::Path};
+use nemoclaw_sdk::{CancellationToken, OperationResult, config::Document};
+use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
@@ -18,6 +17,7 @@ pub(crate) enum CommandResult {
     Export(Box<Document>),
     Operation(OperationResult),
 }
+
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
@@ -42,10 +42,14 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             model,
             credential_env,
         } => {
-            let mut lines = tokio::io::BufReader::new(stdin).lines();
-            let authored = match author(
-                non_interactive,
-                OnboardValues {
+            let result = onboarding::run(
+                onboarding::Options {
+                    state_dir,
+                    bundle_dir,
+                    verbose,
+                    generate_only,
+                    output,
+                    non_interactive,
                     edit,
                     name,
                     sandbox,
@@ -54,51 +58,11 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                     model,
                     credential_env,
                 },
-                &mut lines,
-                cancel,
-            )
-            .await?
-            {
-                Some(authored) => authored,
-                None => return Ok(CommandResult::OnboardExit),
-            };
-            let CompletionBoundary::GeneratedDesiredState = authored.completion_boundary();
-            let document = Document::parse(authored.yaml().as_bytes())?;
-            write_output(Some(&output), authored.yaml().as_bytes(), std::io::sink())?;
-            eprintln!(
-                "Credential references: {}",
-                document.credential_names().join(", ")
-            );
-            if generate_only {
-                return Ok(CommandResult::OnboardExit);
-            }
-
-            let deployment = deployment(&state_dir, bundle_dir.as_deref(), verbose)?;
-            let deployment = with_document_secrets(
-                deployment,
-                &document,
-                non_interactive,
-                true,
-                &mut lines,
+                stdin,
                 cancel,
             )
             .await?;
-            let result = complete_onboarding(
-                || deployment.plan(&document, cancel),
-                || deployment.apply(&document, cancel),
-                non_interactive,
-                &mut lines,
-                cancel,
-            )
-            .await?;
-            let Some(result) = result else {
-                eprintln!(
-                    "Apply declined; generated YAML remains at {}.",
-                    output.display()
-                );
-                return Ok(CommandResult::OnboardExit);
-            };
-            return Ok(CommandResult::Operation(result));
+            return Ok(result.map_or(CommandResult::OnboardExit, CommandResult::Operation));
         }
         command => command,
     };
@@ -112,7 +76,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
             let mut lines = tokio::io::BufReader::new(stdin).lines();
-            deployment = with_document_secrets(
+            deployment = credentials::attach(
                 deployment,
                 &document,
                 non_interactive,
@@ -129,7 +93,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
             let mut lines = tokio::io::BufReader::new(stdin).lines();
-            deployment = with_document_secrets(
+            deployment = credentials::attach(
                 deployment,
                 &document,
                 non_interactive,
@@ -156,284 +120,6 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     Ok(CommandResult::Operation(result))
 }
 
-fn deployment(
-    state_dir: &Path,
-    bundle_dir: Option<&Path>,
-    verbose: bool,
-) -> Result<Deployment, Box<dyn std::error::Error>> {
-    let bundle = match bundle_dir {
-        Some(path) => path.to_owned(),
-        None => std::env::current_exe()?
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or(Error::Bundle("cannot locate runtime bundle"))?
-            .into(),
-    };
-    let mut deployment = Deployment::new(state_dir, &bundle);
-    use std::io::IsTerminal;
-    if verbose || std::io::stderr().is_terminal() {
-        deployment = deployment.with_progress(std::sync::Arc::new(move |event| {
-            use std::io::Write;
-            if let Some(message) = crate::progress::render(event, verbose) {
-                let _ = writeln!(std::io::stderr().lock(), "{message}");
-            }
-        }));
-    }
-    Ok(deployment)
-}
-
-async fn with_document_secrets<R: tokio::io::AsyncBufRead + Unpin>(
-    deployment: Deployment,
-    document: &Document,
-    non_interactive: bool,
-    input_available: bool,
-    lines: &mut tokio::io::Lines<R>,
-    cancel: &CancellationToken,
-) -> Result<Deployment, Box<dyn std::error::Error>> {
-    Ok(deployment.with_secrets(
-        crate::credentials::fulfill(document, non_interactive, input_available, lines, cancel)
-            .await?,
-    ))
-}
-
-async fn confirm_apply<R: tokio::io::AsyncBufRead + Unpin>(
-    non_interactive: bool,
-    lines: &mut tokio::io::Lines<R>,
-    cancel: &CancellationToken,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    if non_interactive {
-        return Ok(true);
-    }
-    let answer = value_or_prompt(None, "Apply this plan?", "N", lines, cancel).await?;
-    Ok(matches!(answer.as_str(), "y" | "yes"))
-}
-
-async fn complete_onboarding<R, P, PF, A, AF>(
-    plan: P,
-    apply: A,
-    non_interactive: bool,
-    lines: &mut tokio::io::Lines<R>,
-    cancel: &CancellationToken,
-) -> Result<Option<OperationResult>, Box<dyn std::error::Error>>
-where
-    R: tokio::io::AsyncBufRead + Unpin,
-    P: FnOnce() -> PF,
-    PF: Future<Output = Result<OperationResult, Error>>,
-    A: FnOnce() -> AF,
-    AF: Future<Output = Result<OperationResult, Error>>,
-{
-    let preview = plan().await?;
-    eprint!(
-        "Plan preview:\n{}",
-        crate::formatting::render(
-            CommandResult::Operation(preview),
-            crate::args::OutputFormat::Json
-        )?
-    );
-    if !confirm_apply(non_interactive, lines, cancel).await? {
-        return Ok(None);
-    }
-    Ok(Some(apply().await?))
-}
-
-struct OnboardValues {
-    edit: Option<std::path::PathBuf>,
-    name: Option<String>,
-    sandbox: Option<String>,
-    agent: Option<String>,
-    provider: Option<String>,
-    model: Option<String>,
-    credential_env: Option<String>,
-}
-
-async fn author<R: tokio::io::AsyncBufRead + Unpin>(
-    non_interactive: bool,
-    values: OnboardValues,
-    lines: &mut tokio::io::Lines<R>,
-    cancel: &CancellationToken,
-) -> Result<Option<AuthoredDocument>, Box<dyn std::error::Error>> {
-    let OnboardValues {
-        edit,
-        name,
-        sandbox,
-        agent,
-        provider,
-        model,
-        credential_env,
-    } = values;
-    let capabilities = Capabilities::available();
-    let defaults = Answers::onboarding_defaults();
-    if non_interactive {
-        let answers = Answers::from_direct(
-            defaults,
-            DirectInputs {
-                deployment_name: name,
-                sandbox_name: sandbox,
-                agent_name: agent,
-                provider_name: provider,
-                model,
-                credential_env,
-                ..DirectInputs::default()
-            },
-        );
-        let authored = Session::new()?.project(&capabilities, &answers)?;
-        return Ok(Some(authored));
-    }
-
-    let mut draft = if let Some(path) = edit {
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)?
-            .take(nemoclaw_sdk::config::MAX_DOCUMENT_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > nemoclaw_sdk::config::MAX_DOCUMENT_BYTES {
-            return Err("configuration exceeds 1 MiB".into());
-        }
-        Draft::from_yaml(&capabilities, &bytes)?
-    } else {
-        let deployment_name = value_or_prompt(
-            name,
-            "Deployment name",
-            &defaults.deployment_name,
-            lines,
-            cancel,
-        )
-        .await?;
-        let sandbox_name = value_or_prompt(
-            sandbox,
-            "Sandbox name",
-            &defaults.sandbox_name,
-            lines,
-            cancel,
-        )
-        .await?;
-        let agent_name =
-            value_or_prompt(agent, "Agent name", &defaults.agent_name, lines, cancel).await?;
-        let provider_name = value_or_prompt(
-            provider,
-            "Provider name",
-            &defaults.provider_name,
-            lines,
-            cancel,
-        )
-        .await?;
-        let model = value_or_prompt(model, "Model", &defaults.model, lines, cancel).await?;
-        let credential_env = value_or_prompt(
-            credential_env,
-            "Credential environment variable",
-            &defaults.credential_env,
-            lines,
-            cancel,
-        )
-        .await?;
-        let answers = Answers::from_interactive(InteractiveInputs {
-            deployment_name,
-            sandbox_name,
-            agent_name,
-            harness: defaults.harness,
-            runtime: defaults.runtime,
-            inference: defaults.inference,
-            api: defaults.api,
-            provider_name,
-            model,
-            credential_env,
-        });
-        Draft::new(Session::new()?, answers)
-    };
-
-    loop {
-        let review = draft.review(&capabilities)?;
-        eprintln!("Review authored configuration:\n{}", review.render());
-        let action = value_or_prompt(
-            None,
-            "Accept [a], edit inference [i], edit identity [d], inspect YAML [y], or exit [x]",
-            "a",
-            lines,
-            cancel,
-        )
-        .await?;
-        match action.as_str() {
-            "a" | "accept" => {
-                return Ok(Some(review.into_authored()));
-            }
-            "x" | "exit" => return Ok(None),
-            "y" | "yaml" => eprintln!("Authored YAML:\n{}", review.yaml()),
-            "d" | "identity" => {
-                let deployment_name = review.deployment_name().to_owned();
-                let sandbox_name = review.sandbox_name().to_owned();
-                let agent_name = review.agent_name().to_owned();
-                let edits = IdentityEdits {
-                    deployment_name: Some(
-                        value_or_prompt(None, "Deployment name", &deployment_name, lines, cancel)
-                            .await?,
-                    ),
-                    sandbox_name: Some(
-                        value_or_prompt(None, "Sandbox name", &sandbox_name, lines, cancel).await?,
-                    ),
-                    agent_name: Some(
-                        value_or_prompt(None, "Agent name", &agent_name, lines, cancel).await?,
-                    ),
-                };
-                if let Err(diagnostics) = draft.edit_identity(&capabilities, edits) {
-                    eprintln!("Edit rejected: {diagnostics}");
-                }
-            }
-            "i" | "inference" => {
-                let provider_name = review.provider_name().to_owned();
-                let model = review.model().to_owned();
-                let credential_env = review.credential_env().to_owned();
-                let edits = InferenceEdits {
-                    provider_name: Some(
-                        value_or_prompt(None, "Provider name", &provider_name, lines, cancel)
-                            .await?,
-                    ),
-                    model: Some(value_or_prompt(None, "Model", &model, lines, cancel).await?),
-                    credential_env: Some(
-                        value_or_prompt(
-                            None,
-                            "Credential environment variable",
-                            &credential_env,
-                            lines,
-                            cancel,
-                        )
-                        .await?,
-                    ),
-                };
-                if let Err(diagnostics) = draft.edit_inference(&capabilities, edits) {
-                    eprintln!("Edit rejected: {diagnostics}");
-                }
-            }
-            _ => eprintln!("Choose a, i, d, y, or x."),
-        }
-    }
-}
-
-async fn value_or_prompt<R: tokio::io::AsyncBufRead + Unpin>(
-    supplied: Option<String>,
-    label: &str,
-    default: &str,
-    lines: &mut tokio::io::Lines<R>,
-    cancel: &CancellationToken,
-) -> Result<String, Box<dyn std::error::Error>> {
-    if let Some(value) = supplied {
-        return Ok(value);
-    }
-    use std::io::Write;
-    eprint!("{label} [{default}]: ");
-    std::io::stderr().flush()?;
-    let line = tokio::select! {
-        biased;
-        () = cancel.cancelled() => return Err(Error::Cancelled.into()),
-        line = lines.next_line() => line?,
-    }
-    .ok_or("interactive input ended before authoring completed")?;
-    Ok(if line.is_empty() {
-        default.into()
-    } else {
-        line
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,64 +129,6 @@ mod tests {
         task::{Context, Poll},
     };
     use tokio::io::ReadBuf;
-
-    #[tokio::test]
-    async fn apply_confirmation_is_distinct_and_defaults_to_decline() {
-        for (input, expected) in [
-            ("\n", false),
-            ("n\n", false),
-            ("y\n", true),
-            ("yes\n", true),
-        ] {
-            let mut lines = tokio::io::BufReader::new(input.as_bytes()).lines();
-            assert_eq!(
-                confirm_apply(false, &mut lines, &CancellationToken::new())
-                    .await
-                    .unwrap(),
-                expected
-            );
-        }
-        let mut forbidden = tokio::io::BufReader::new(ForbiddenInput).lines();
-        assert!(
-            confirm_apply(true, &mut forbidden, &CancellationToken::new())
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn onboarding_declines_only_after_plan_and_never_calls_apply() {
-        use std::{cell::RefCell, rc::Rc};
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let planned = events.clone();
-        let applied = events.clone();
-        let mut lines = tokio::io::BufReader::new(&b"\n"[..]).lines();
-        let result = complete_onboarding(
-            || async move {
-                planned.borrow_mut().push("plan");
-                Ok(serde_json::from_value(serde_json::json!({
-                    "outcome": "planned", "changes": []
-                }))
-                .unwrap())
-            },
-            || async move {
-                applied.borrow_mut().push("apply");
-                Ok(serde_json::from_value(serde_json::json!({
-                    "outcome": "succeeded", "changes": []
-                }))
-                .unwrap())
-            },
-            false,
-            &mut lines,
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.is_none());
-        assert_eq!(*events.borrow(), ["plan"]);
-    }
 
     struct ForbiddenInput;
     impl AsyncRead for ForbiddenInput {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{
-    CancellationToken, Error, ObservationError, config::Document, openshell::Secrets,
+    CancellationToken, Deployment, Error, ObservationError, config::Document, openshell::Secrets,
 };
 use std::{collections::BTreeMap, fmt, io::Write, sync::Arc};
 use tokio::io::{AsyncBufRead, Lines};
@@ -135,6 +135,18 @@ pub(crate) async fn fulfill<R: AsyncBufRead + Unpin>(
         )
         .await?,
     ))
+}
+
+pub(crate) async fn attach<R: AsyncBufRead + Unpin>(
+    deployment: Deployment,
+    document: &Document,
+    non_interactive: bool,
+    can_prompt: bool,
+    lines: &mut Lines<R>,
+    cancel: &CancellationToken,
+) -> Result<Deployment, Box<dyn std::error::Error>> {
+    Ok(deployment
+        .with_secrets(fulfill(document, non_interactive, can_prompt, lines, cancel).await?))
 }
 
 async fn fulfill_references<'a, R, I, E>(
