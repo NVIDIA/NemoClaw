@@ -1257,8 +1257,7 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
 }
 
 async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise<void> {
-  const sb = registry.getSandbox(sandboxName);
-  const lifecycle = await getNamedGatewayLifecycleState(getPersistedSandboxTargetGatewayName(sb));
+  const lifecycle = await getNamedGatewayLifecycleState(getSandboxTargetGatewayName(sandboxName));
   if (lifecycle.error) failConnectReadinessObservation(sandboxName, lifecycle.error);
   if (isBlockingGatewayLifecycle(lifecycle)) {
     failConnectReadinessGatewayUnavailable(sandboxName, lifecycle.diagnostic, lifecycle);
