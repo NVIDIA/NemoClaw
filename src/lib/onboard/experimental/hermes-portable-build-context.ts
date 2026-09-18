@@ -49,6 +49,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-cron-execution-runtime.py",
   "agents/hermes/patch-cron-restore-drain.py",
   "agents/hermes/patch-discord-recovery-permissions.py",
+  "agents/hermes/patch-external-supervisor-recovery.py",
   "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-gateway-process-identity.py",
   "agents/hermes/patch-gateway-runtime-metadata.py",

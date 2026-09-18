@@ -199,6 +199,8 @@ def verify_gateway_process_identity() -> None:
 
 def verify_external_supervisor_restart() -> None:
     from gateway import status as gateway_status
+    from gateway import run_shutdown
+    from gateway.restart import EXTERNAL_GATEWAY_SUPERVISOR_ENV
     from hermes_cli import gateway as gateway_cli
 
     original_get_running_pid = gateway_status.get_running_pid
@@ -235,6 +237,35 @@ def verify_external_supervisor_restart() -> None:
         gateway_cli._capture_gateway_argv = original_capture
         gateway_cli._get_restart_exit_wait_budget = original_budget
         gateway_cli._graceful_restart_via_sigusr1 = original_restart
+
+    class Runner:
+        should_exit_with_failure = False
+        exit_reason = None
+        exit_code = None
+        _restart_requested = False
+        _restart_via_service = False
+
+    original_supervisor = os.environ.get(EXTERNAL_GATEWAY_SUPERVISOR_ENV)
+    try:
+        os.environ[EXTERNAL_GATEWAY_SUPERVISOR_ENV] = "1"
+        try:
+            run_shutdown._resolve_gateway_exit_verdict(Runner(), True)
+        except SystemExit as error:
+            assert error.code == 79, error.code
+        else:
+            raise AssertionError("externally supervised SIGTERM did not emit recovery status")
+
+        os.environ.pop(EXTERNAL_GATEWAY_SUPERVISOR_ENV, None)
+        assert not run_shutdown._resolve_gateway_exit_verdict(Runner(), True)
+    finally:
+        if original_supervisor is None:
+            os.environ.pop(EXTERNAL_GATEWAY_SUPERVISOR_ENV, None)
+        else:
+            os.environ[EXTERNAL_GATEWAY_SUPERVISOR_ENV] = original_supervisor
+
+    assert run_shutdown.NEMOCLAW_GATEWAY_RECOVERY_EXIT_CODE == 79
+    start_script = Path("/usr/local/bin/nemoclaw-start").read_text(encoding="utf-8")
+    assert "readonly HERMES_GATEWAY_RECOVERY_STATUS=79" in start_script
 
 
 def verify_auxiliary_token_limit() -> None:

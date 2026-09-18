@@ -30,6 +30,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/patch-cron-execution-runtime.py", mode: "100755" },
   { path: "agents/hermes/patch-cron-restore-drain.py", mode: "100755" },
   { path: "agents/hermes/patch-discord-recovery-permissions.py", mode: "100755" },
+  { path: "agents/hermes/patch-external-supervisor-recovery.py", mode: "100755" },
   { path: "agents/hermes/patch-external-supervisor-restart.py", mode: "100755" },
   { path: "agents/hermes/patch-gateway-process-identity.py", mode: "100755" },
   { path: "agents/hermes/patch-gateway-runtime-metadata.py", mode: "100755" },

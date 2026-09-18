@@ -99,6 +99,7 @@ COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh 
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-external-supervisor-restart.py /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py
+COPY agents/hermes/patch-external-supervisor-recovery.py /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
@@ -404,7 +405,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=149f312a2551affd995b3f4528b76da14b5fcccfeb62570ca68aa5d494ea04a0
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=31421b27f973f77c713f8288fa236d28cdc5fbd428a7cfd6eea60890ffe54159
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -430,7 +431,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=149f312a2551affd995b3f4528b76da14b5fcccfeb62570ca68aa5d494ea04a0
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=31421b27f973f77c713f8288fa236d28cdc5fbd428a7cfd6eea60890ffe54159
 
 # hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
@@ -616,19 +617,32 @@ RUN /usr/bin/python3 -I \
 
 # Hermes v0.21.3 does not route `gateway restart` through a live gateway's
 # declared external supervisor. Its manual fallback stops the managed gateway
-# with status 0 and tries to replace it from a transient exec session, so the
-# sandbox supervisor correctly treats the stop as final. Use Hermes's existing
-# drain-aware SIGUSR1/status-75 contract only when the verified live argv
-# contains `--external-supervisor`; every other restart path remains upstream.
+# with status 0 and tries to replace it from a transient exec session. Hermes
+# also converts an unplanned SIGTERM into status 1, which is indistinguishable
+# from an ordinary gateway failure. Use status 75 for a requested service
+# restart. Map only an externally supervised unplanned SIGTERM to private status
+# 79 so NemoClaw can wait for its root-owned recovery transaction. Every other
+# restart and failure path remains upstream.
 ARG NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256=ae31d7a1113b1144ef0977fb736439bac35820499a6134a66e3c6b6179d08e37
+ARG NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RECOVERY_PATCHER_SHA256=8428d7f0ebe5545bf87f0800dba88d05c26c458447a8558960d0738cc5a0bdad
+ARG NEMOCLAW_HERMES_GATEWAY_SHUTDOWN_RECOVERY_PATCHED_SHA256=fcabcd3483565c7709aca1b8d38d4c4cb4fedc0997e0c881c2e643721f57f538
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
+        "$NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RECOVERY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
+        "$NEMOCLAW_HERMES_GATEWAY_SHUTDOWN_DRAIN_PATCHED_SHA256" /opt/hermes/gateway/run_shutdown.py \
     | sha256sum -c - \
-    || { echo "ERROR: patch-external-supervisor-restart.py hash mismatch (update NEMOCLAW_HERMES_EXTERNAL_SUPERVISOR_RESTART_PATCHER_SHA256)" >&2; exit 1; }
+    || { echo "ERROR: Hermes external-supervisor source identity mismatch" >&2; exit 1; }
+# hadolint ignore=DL4006
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
         /opt/hermes/hermes_cli/gateway.py \
+    && /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
+        /opt/hermes/gateway/run_shutdown.py \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_GATEWAY_SHUTDOWN_RECOVERY_PATCHED_SHA256" /opt/hermes/gateway/run_shutdown.py \
+    | sha256sum -c - \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py external-supervisor-restart
 
@@ -668,6 +682,7 @@ RUN set -eu; \
     && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
         /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
         /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
+        /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
@@ -1405,6 +1420,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
