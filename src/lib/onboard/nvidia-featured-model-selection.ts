@@ -56,9 +56,12 @@ export function createNvidiaFeaturedModelSession(
         if (!isRetiredNvidiaFeaturedModelId(requestedModel, options.retiredModelIds)) {
           return requestedModel;
         }
+        const replacementModel =
+          configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
         warn(
-          `  Warning: configured NVIDIA model "${requestedModel}" is retired; ignoring it and using "${defaultModel}" instead.`,
+          `  Warning: configured NVIDIA model "${requestedModel}" is retired; ignoring it and using "${replacementModel}" instead.`,
         );
+        if (nonInteractive) return replacementModel;
       }
       if (recoveredModel) {
         if (!isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)) {

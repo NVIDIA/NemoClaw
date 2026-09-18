@@ -152,10 +152,32 @@ describe("NVIDIA featured model selection", () => {
     expect(warn).toHaveBeenCalledWith(
       `  Warning: configured NVIDIA model "${retiredModel}" is retired; ignoring it and using "${replacement}" instead.`,
     );
-    expect(warn).toHaveBeenCalledWith(
-      `  Warning: recovered NVIDIA model "${retiredModel}" is retired; using "${replacement}" instead.`,
-    );
+    expect(warn).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    [undefined, "nvidia/nemotron-3-ultra-550b-a55b"],
+    ["minimaxai/minimax-m3", "nvidia/nemotron-3-ultra-550b-a55b"],
+    [" configured/model ", "configured/model"],
+  ])(
+    "does not recover a saved model after a retired explicit request (%s)",
+    async (env, expected) => {
+      const retiredModel = "minimaxai/minimax-m3";
+      const warn = vi.fn();
+      const session = createNvidiaFeaturedModelSession({
+        defaultModel: "nvidia/nemotron-3-ultra-550b-a55b",
+        warn,
+      });
+
+      await expect(session.select(retiredModel, "recovered/model", true, env)).resolves.toBe(
+        expected,
+      );
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        `  Warning: configured NVIDIA model "${retiredModel}" is retired; ignoring it and using "${expected}" instead.`,
+      );
+      expect(promptCloudModel).not.toHaveBeenCalled();
+    },
+  );
 
   it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {
     const select = vi.fn().mockResolvedValue("nvidia/selected-model");
