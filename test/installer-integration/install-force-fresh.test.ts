@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -185,6 +186,28 @@ printf 'destroy=%s args=%s\n' "\${NEMOCLAW_UNINSTALL_DESTROY_USER_DATA:-}" "$*" 
   expect(fs.readFileSync(logPath, "utf-8")).toBe(
     `destroy=1 args=${path.join(sourceRoot, "bin", "nemoclaw.js")} internal uninstall run-plan --yes --destroy-user-data --force-fresh-reset --all-gateway-ports\n`,
   );
+});
+
+it("records digest ownership after a verified managed user-local OpenShell install", () => {
+  const { root: tmp } = installerCheckout("nemoclaw-force-fresh-openshell-manifest-");
+  const localBin = path.join(tmp, ".local", "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  const openshellSource = "#!/usr/bin/env bash\nprintf 'openshell 0.0.116\\n'\n";
+  const gatewaySource = "#!/usr/bin/env bash\nexit 0\n";
+  writeExecutable(path.join(localBin, "openshell"), openshellSource);
+  writeExecutable(path.join(localBin, "openshell-gateway"), gatewaySource);
+
+  const result = callPayloadFunction("record_managed_user_local_openshell_install", {
+    HOME: tmp,
+    XDG_BIN_HOME: localBin,
+  });
+  const manifest = fs.readFileSync(path.join(localBin, ".nemoclaw-openshell-managed-v1"), "utf8");
+
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(manifest.trim().split("\n")).toEqual([
+    `${createHash("sha256").update(openshellSource).digest("hex")}  openshell`,
+    `${createHash("sha256").update(gatewaySource).digest("hex")}  openshell-gateway`,
+  ]);
 });
 
 it("stops when the staged candidate uninstaller fails", () => {

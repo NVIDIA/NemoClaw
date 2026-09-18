@@ -876,7 +876,7 @@ function managedOpenShellManifest(userBin: string): ReadonlyMap<string, string> 
     const stat = opened.stat();
     if (owner === undefined || stat.uid !== owner || (stat.mode & 0o022) !== 0) return null;
     const entries = new Map<string, string>();
-    for (const line of opened.readUtf8(2_048).trim().split(/\r?\n/u)) {
+    for (const line of opened.readBytes(2_048).toString("utf8").trim().split(/\r?\n/u)) {
       const match = /^([a-f0-9]{64})  (openshell(?:-gateway|-sandbox|-driver-vm)?)$/u.exec(line);
       const digest = match?.[1];
       const binary = match?.[2];

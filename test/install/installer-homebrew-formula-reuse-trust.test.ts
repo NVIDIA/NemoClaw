@@ -14,7 +14,7 @@ const INSTALLER_SOURCE = fs.readFileSync(
   "utf8",
 );
 const TRUSTED_V00116_TEMPLATE_DIGEST =
-  "9e5f1b67cb1d3bad223607967c639725badafb1ffd4dbc4cef33f2a1d9c04c1f";
+  "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3";
 const tempDirs: string[] = [];
 
 afterEach(() => {

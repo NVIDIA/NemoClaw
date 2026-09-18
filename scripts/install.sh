@@ -2343,6 +2343,37 @@ NODE
 #                    over their own openshell version)
 # Both modes defer when NEMOCLAW_DEFER_OPENSHELL_INSTALL=1 so the pre-upgrade
 # backup flow can run before any version bump.
+record_managed_user_local_openshell_install() {
+  local user_bin manifest temp_manifest binary binary_path digest
+  local -a sha256_command
+  user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  manifest="${user_bin}/.nemoclaw-openshell-managed-v1"
+  if command_exists sha256sum; then
+    sha256_command=(sha256sum)
+  elif command_exists shasum; then
+    sha256_command=(shasum -a 256)
+  else
+    error "Could not record managed OpenShell ownership because no SHA-256 command is available."
+  fi
+  temp_manifest="$(mktemp "${manifest}.tmp.XXXXXX")" \
+    || error "Could not create the managed OpenShell install manifest."
+  _cleanup_files+=("$temp_manifest")
+  chmod 600 "$temp_manifest" \
+    || error "Could not secure the managed OpenShell install manifest."
+  for binary in openshell openshell-gateway; do
+    binary_path="${user_bin}/${binary}"
+    [[ -f "$binary_path" && ! -L "$binary_path" && -x "$binary_path" ]] \
+      || error "The verified standalone OpenShell install did not provide ${binary_path}."
+    digest="$("${sha256_command[@]}" "$binary_path" | awk '{print $1}')" \
+      || error "Could not hash the installed ${binary} binary."
+    [[ "$digest" =~ ^[a-f0-9]{64}$ ]] \
+      || error "The installed ${binary} binary returned an invalid SHA-256 digest."
+    printf '%s  %s\n' "$digest" "$binary" >>"$temp_manifest"
+  done
+  mv -f -- "$temp_manifest" "$manifest" \
+    || error "Could not publish the managed OpenShell install manifest."
+}
+
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
@@ -2398,6 +2429,7 @@ maybe_install_openshell_during_install() {
       standalone)
         prefer_user_local_openshell verified-install \
           || error "The verified standalone OpenShell installation did not provide trusted executable user-local CLI and gateway binaries. The installer stopped before gateway recovery."
+        record_managed_user_local_openshell_install
         warn "Homebrew is not installed; using the verified standalone OpenShell gateway without reboot persistence."
         ;;
       *)
