@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -24,7 +25,6 @@ import {
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
-  "post-reboot-recovery",
   "dcode-rebuild-invalid-credential",
 ]);
 
@@ -58,12 +58,16 @@ const REGISTRY_TARGET_PHASES = [
   "onboard the registry-selected sandbox",
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
+  "validate the exported sandbox configuration",
   "run target-specific cloud checks",
   "record target completion evidence",
 ] as const;
 
 for (const [targetIndex, target] of listTargets().entries()) {
-  const timeoutContract = liveTargetTimeoutContract(target.environment.lifecycle);
+  const timeoutContract = liveTargetTimeoutContract(
+    target.environment.lifecycle,
+    target.configExport.expectation,
+  );
 
   test(
     liveTargetTestTitle(target),
@@ -74,10 +78,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
-        : { timeout: timeoutContract.testTimeoutMs }),
+        : { timeout: testTimeout(timeoutContract.testTimeoutMs) }),
     },
     async ({
       artifacts,
+      cleanup,
+      configExportValidation,
       environment,
       host,
       lifecycle,
@@ -120,9 +126,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         );
       }
       progress.phase("prepare the target lifecycle prerequisites");
-      await (lifecycleProfile === "post-reboot-recovery"
-        ? lifecycle.preparePostReboot()
-        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
@@ -157,11 +160,15 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("verify the expected sandbox state");
       const validation = await stateValidation.from(target.expectedStateId, instance);
 
+      progress.phase("validate the exported sandbox configuration");
+      const configExport = await configExportValidation.from(target, instance);
+
       progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        cleanup,
         dcodeBaseImageReference,
         host,
         secrets,
@@ -175,6 +182,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
+        configExport: {
+          expectation: configExport.expectation,
+          classification: configExport.classification,
+          contract: configExport.contract,
+          elapsedMs: configExport.elapsedMs,
+        },
         pendingRuntimeSuites: target.suiteIds,
         dcodeBaseImage,
         lifecycle: lifecycleResult

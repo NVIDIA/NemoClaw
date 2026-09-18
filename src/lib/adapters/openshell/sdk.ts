@@ -62,8 +62,7 @@ export function gatewayPort(target: OpenShellGatewayTarget): number {
 }
 
 async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
-  // Keep the optional reviewed package load lazy so source-only development can
-  // still compile before CI stages the private SDK artifact.
+  // Load the SDK lazily through native ESM so the CommonJS CLI uses its import exports.
   return (await importOpenShellSdk()) as OpenShellSdkModule;
 }
 

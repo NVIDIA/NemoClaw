@@ -68,7 +68,7 @@ export type RecorderOverrides = {
     provider: string,
     nimContainer: string | null,
     agent: Agent | null,
-  ) => void;
+  ) => Promise<void>;
   reportDeploymentReadiness?: (healthy: boolean) => void;
   getActiveSandbox?: PoliciesStateOptions<
     Agent | null,
@@ -215,7 +215,7 @@ export function createPhases(
       }),
       persistDashboardPort: vi.fn(),
       recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
-      isOpenclawReady: () => false,
+      isOpenclawReady: async () => false,
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
@@ -323,7 +323,7 @@ export function createPhases(
         }),
       formatVerificationDiagnostics: () => [],
       verifyWebSearchInsideSandbox: vi.fn(),
-      printDashboard: recorders.printDashboard ?? vi.fn(),
+      printDashboard: recorders.printDashboard ?? vi.fn(async () => undefined),
       error: vi.fn(),
       log: vi.fn(),
       ...recorders.finalizationDeps,

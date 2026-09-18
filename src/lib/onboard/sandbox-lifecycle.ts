@@ -62,7 +62,7 @@ export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   getGatewayName(): string;
-  fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchGatewayAuthTokenFromSandbox(sandboxName: string): Promise<string | null>;
   agentProductName(): string;
   prompt(question: string): Promise<string>;
   isAffirmativeAnswer(value: string | null | undefined): boolean;
@@ -80,7 +80,7 @@ export interface SandboxLifecycleHelpers {
     requestedProvider: string | null,
     requestedModel: string | null,
   ): Promise<boolean>;
-  isOpenclawReady(sandboxName: string): boolean;
+  isOpenclawReady(sandboxName: string): Promise<boolean>;
 }
 
 export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): SandboxLifecycleHelpers {
@@ -124,8 +124,8 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     return deps.isAffirmativeAnswer(answer);
   }
 
-  function isOpenclawReady(sandboxName: string): boolean {
-    return Boolean(deps.fetchGatewayAuthTokenFromSandbox(sandboxName));
+  async function isOpenclawReady(sandboxName: string): Promise<boolean> {
+    return Boolean(await deps.fetchGatewayAuthTokenFromSandbox(sandboxName));
   }
 
   return {

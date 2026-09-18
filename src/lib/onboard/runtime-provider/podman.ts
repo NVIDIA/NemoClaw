@@ -301,6 +301,7 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-only",
       ownsHostReadiness: true,
       observeOwnedGateway: observeNativePodmanGatewayReadiness,
       observeHostRuntime: (input) => projectGatewayHostRuntime(input),

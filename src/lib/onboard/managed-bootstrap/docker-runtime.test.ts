@@ -779,7 +779,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     )) as Error & { managedBootstrapRollbackError?: Error };
 
     expect(failure).toBeInstanceOf(Error);
-    expect(failure.message).toBe("commit acknowledgement lost");
+    expect(failure.message).toBe(
+      "commit acknowledgement lost\nManaged bootstrap rollback requires attention: Managed bootstrap rollback is no longer legal after commit finalization began.",
+    );
     expect(failure.managedBootstrapRollbackError?.message).toBe(
       "Managed bootstrap rollback is no longer legal after commit finalization began.",
     );

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { OpenShellDockerSandboxRuntimeSnapshotQuery } from "../openshell-docker-sandbox-containers";
 import type {
@@ -15,6 +16,7 @@ import {
   createRuntimeProviderSnapshotSurface,
   observeDockerRuntimeSnapshot,
   observeOpenShellRuntimeSnapshot,
+  resolveDockerSnapshotRecreateGpuDevice,
   type RuntimeProviderSnapshotObservation,
 } from "./snapshot";
 
@@ -618,6 +620,22 @@ function dockerGpuSnapshot(deviceIds: readonly string[] | null, driver = "") {
   });
 }
 
+function capturedDockerGpuRuntime(devices: readonly string[]): SandboxRuntimeSnapshot {
+  return {
+    schemaVersion: 1,
+    providerId: "docker",
+    providerHandle: "provider-handle",
+    lifecycleState: "running",
+    lifecycleGeneration: "generation-1",
+    runtime: {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "gpu", vendor: "nvidia", devices: [...devices] },
+    },
+  };
+}
+
 function dockerSnapshotSurface(
   snapshot: ReturnType<typeof dockerSnapshot>,
   captureHostCommand = dockerRestoreCapture(),
@@ -631,6 +649,34 @@ function dockerSnapshotSurface(
 }
 
 describe("Docker provider snapshot evidence", () => {
+  it.each([
+    ["exact CDI", ["nvidia.com/gpu=0"], "nvidia.com/gpu=0"],
+    ["all-GPU", ["nvidia.com/gpu=all"], "nvidia.com/gpu=all"],
+    [
+      "exact CDI with device paths",
+      [
+        "docker-device-path:/dev/dri/renderD128=>/dev/dri/renderD128:rwm",
+        "nvidia.com/gpu=GPU-live-0",
+      ],
+      "nvidia.com/gpu=GPU-live-0",
+    ],
+  ] as const)(
+    "resolves %s snapshot authority for rebuild recreation",
+    (_label, devices, expected) => {
+      expect(resolveDockerSnapshotRecreateGpuDevice(capturedDockerGpuRuntime(devices))).toBe(
+        expected,
+      );
+    },
+  );
+
+  it("refuses a captured multi-selector GPU authority that one create selector cannot replay", () => {
+    expect(() =>
+      resolveDockerSnapshotRecreateGpuDevice(
+        capturedDockerGpuRuntime(["nvidia.com/gpu=0", "nvidia.com/gpu=1"]),
+      ),
+    ).toThrow(/cannot be replayed by one sandbox GPU selector/u);
+  });
+
   it("normalizes Docker's explicit paused status", () => {
     const observed = observeDockerRuntimeSnapshot(
       sandbox({ openshellDriver: "docker" }),

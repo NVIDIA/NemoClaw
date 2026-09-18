@@ -125,11 +125,8 @@ function harness(options: {
     retireLegacyForward,
     verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
   };
-  const runOpenshell = vi.fn(() => ({ status: 0 }));
   const helpers = createOnboardDashboardHelpers({
-    runOpenshell,
     runCaptureOpenshell: vi.fn(() => ""),
-    openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider) => provider,
@@ -145,7 +142,7 @@ function harness(options: {
     resolveForwardGatewayName: (sandbox) => sandbox?.gatewayName ?? "nemoclaw",
     forwardAdapterForAuthority: vi.fn(() => adapter),
   });
-  return { helpers, observeForwards, retireLegacyForward, runOpenshell, startForward, states };
+  return { helpers, observeForwards, retireLegacyForward, startForward, states };
 }
 
 afterEach(() => {

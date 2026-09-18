@@ -394,6 +394,7 @@ function mapOpenClawProfile(
     NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
     NEMOCLAW_REASONING: String(profile.tuning.reasoning),
     NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
+    NEMOCLAW_SERVING_PRESET: profile.inference?.servingPreset ?? "",
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE: booleanFlag(profile.dashboard.wslExposure),
@@ -452,7 +453,6 @@ function mapHermesProfile(
 
   const runtimeEnvironment: MutableEnvironment = {
     ...configurationEnvironment,
-    HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
     HERMES_HOME: "/sandbox/.hermes",
     HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
   };
