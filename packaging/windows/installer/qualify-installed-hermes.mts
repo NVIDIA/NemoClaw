@@ -164,6 +164,12 @@ export function hermesTranscriptRoute(id: string, profile: string, poll: number)
   );
 }
 
+export function hermesPromptLines(prompt: string) {
+  assert(prompt.length > 0 && prompt.length <= 64 * 1024, "Hermes prompt length is invalid");
+  assert(!prompt.includes("\r"), "Hermes prompt must use canonical newlines");
+  return prompt.split("\n");
+}
+
 export function applyHermesSocketObservations(pty: any, origin: string, batch: any) {
   assert.equal(batch?.overflow, false, "The in-page Hermes socket observation exceeded its bound");
   assert(Array.isArray(batch?.records) && batch.records.length <= 512);
@@ -931,6 +937,15 @@ async function main() {
       return hermesMessagesAfter(detail.messages, 0);
     };
     let lastTurnMark = 0;
+    const submitPrompt = async (prompt: string) => {
+      const lines = hermesPromptLines(prompt);
+      await terminal.focus();
+      for (const [index, line] of lines.entries()) {
+        if (line) await page.keyboard.insertText(line);
+        if (index + 1 < lines.length) await page.keyboard.press("Shift+Enter");
+      }
+      await page.keyboard.press("Enter");
+    };
     const turn = async (prompt: string, accept: (messages: any[]) => unknown) => {
       const previous = await sessionMessages();
       const transcriptMark = previous.at(-1)?.id ?? 0;
@@ -938,9 +953,7 @@ async function main() {
       lastTurnMark = mark;
       const start = performance.now();
       let lastMessages: any[] = [];
-      await terminal.focus();
-      await page.keyboard.insertText(prompt);
-      await page.keyboard.press("Enter");
+      await submitPrompt(prompt);
       while (performance.now() - start < 120_000) {
         if (observerFailure) throw observerFailure;
         await pumpHermesSockets();

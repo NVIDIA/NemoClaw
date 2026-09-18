@@ -22,6 +22,7 @@ import {
   hermesMessagesAfter,
   hermesTranscriptRoute,
   applyHermesSocketObservations,
+  hermesPromptLines,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -291,6 +292,15 @@ test("live Hermes transcript polls cannot reuse a completed-turn URL", () => {
     hermesTranscriptRoute("saved-real", "profile real", 2),
   );
   assert.throws(() => hermesTranscriptRoute("saved-real", "profile-real", 0), /poll identity/u);
+});
+
+test("multiline Hermes prompts preserve exact bytes without an asynchronous paste chunk", () => {
+  const prompt = "First line\n```sh\nprintf fixture\n```\n\nLast line";
+  const lines = hermesPromptLines(prompt);
+  assert.deepEqual(lines, ["First line", "```sh", "printf fixture", "```", "", "Last line"]);
+  assert.equal(lines.join("\n"), prompt);
+  assert(lines.every((line) => !line.includes("\n")));
+  assert.throws(() => hermesPromptLines("windows\r\nlines"), /canonical newlines/u);
 });
 
 test("in-page Hermes socket observations preserve real PTY lifecycle evidence", () => {
