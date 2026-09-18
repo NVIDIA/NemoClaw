@@ -1315,6 +1315,12 @@ jobs:
           exit 97
           DOCKER_GUARD
           chmod 0700 "$guard_dir/bin/docker"
+          guard_bin="$guard_dir/bin/docker"
+          guarded_path="$guard_dir/bin:$PATH"
+          export DOCKER_API_VERSION= DOCKER_CERT_PATH= DOCKER_CONFIG= DOCKER_CONTEXT=
+          export DOCKER_HOST= DOCKER_TLS_VERIFY=
+          export E2E_DOCKER_GUARD_BIN="$guard_bin" E2E_DOCKER_GUARD_LOG="$guard_log"
+          export PATH="$guarded_path"
           sudo systemctl stop docker.service docker.socket || true
           sudo systemctl mask --runtime docker.service docker.socket || true
           sudo pkill -TERM -x dockerd 2>/dev/null || true
@@ -1336,9 +1342,9 @@ jobs:
             printf 'DOCKER_CONTEXT=\n'
             printf 'DOCKER_HOST=\n'
             printf 'DOCKER_TLS_VERIFY=\n'
-            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_dir/bin/docker"
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_bin"
             printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
-            printf 'PATH=%s:%s\n' "$guard_dir/bin" "$PATH"
+            printf 'PATH=%s\n' "$guarded_path"
           } >>"$GITHUB_ENV"
           if systemctl is-active --quiet docker.service; then
             echo "::error::docker.service remained active after Docker shutdown" >&2
@@ -1353,7 +1359,7 @@ jobs:
             exit 1
           fi
           docker_candidate="$(command -v docker || true)"
-          if [ "$docker_candidate" != "$guard_dir/bin/docker" ]; then
+          if [ "$docker_candidate" != "$guard_bin" ]; then
             echo "::error::Docker command resolution escaped the invocation guard" >&2
             exit 1
           fi

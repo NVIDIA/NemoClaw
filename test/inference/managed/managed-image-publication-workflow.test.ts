@@ -824,7 +824,7 @@ describe("complete managed-image publication workflow", () => {
     );
     const disableDocker = step(activation, "Disable and guard Docker").run ?? "";
     expect(disableDocker).toMatch(
-      /Docker CLI use is forbidden in managed Podman activation[\s\S]*pgrep -x dockerd[\s\S]*DOCKER_HOST=\\n[\s\S]*E2E_DOCKER_GUARD_BIN[\s\S]*docker-absence-before-candidate\.json/u,
+      /Docker CLI use is forbidden in managed Podman activation[\s\S]*export PATH="\$guarded_path"[\s\S]*pgrep -x dockerd[\s\S]*DOCKER_HOST=\\n[\s\S]*E2E_DOCKER_GUARD_BIN[\s\S]*docker-absence-before-candidate\.json/u,
     );
     const run =
       step(activation, "Run real all-agent managed runtime activation on Podman").run ?? "";
