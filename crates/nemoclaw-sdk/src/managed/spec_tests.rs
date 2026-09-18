@@ -2,6 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[test]
+fn image_pull_policy_does_not_change_container_configuration() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("reference.json")).unwrap();
+    for fixture in fixtures {
+        let mut spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
+        let before = serde_json::to_value(spec.container("/owned").unwrap()).unwrap();
+        for policy in [
+            crate::config::ImagePullPolicy::Always,
+            crate::config::ImagePullPolicy::Never,
+        ] {
+            spec.gateway.image_pull_policy = Some(policy);
+            if let Some(service) = &mut spec.service {
+                service.image_pull_policy = Some(policy);
+            }
+            assert_eq!(
+                serde_json::to_value(spec.container("/owned").unwrap()).unwrap(),
+                before
+            );
+        }
+    }
+}
+#[test]
 fn gateway_launch_uses_version_two_configuration_and_supported_process_flags() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("reference.json")).unwrap();

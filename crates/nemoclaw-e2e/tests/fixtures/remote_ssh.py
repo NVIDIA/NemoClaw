@@ -48,7 +48,15 @@ with (root / "lock").open("w") as lock:
     if method == "GET" and path == "/info":
         value = {"ID": control.get("daemon", "remote-engine"), "DockerRootDir": "/srv/nemoclaw-fixture/docker"}
     elif method == "GET" and path.startswith("/images/"):
-        value = fixture["image"]
+        value = None if state.get("image_missing") else fixture["image"]
+    elif method == "POST" and path == "/images/create":
+        state["pulls"] = state.get("pulls", 0) + 1
+        state["effects"] += 1
+        if control.get("pull_failure"):
+            value = {"errorDetail": {"message": "registry unavailable"}}
+        else:
+            state["image_missing"] = False
+            value = {"status": "complete"}
     elif method == "GET" and path.startswith("/volumes/"):
         value = state.get("volume")
     elif method == "GET" and path == "/networks":

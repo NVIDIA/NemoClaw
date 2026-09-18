@@ -39,6 +39,8 @@ pub struct ManagedResource {
 impl super::Gateway {
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
+        // Acquisition policy is a mutable provider attribute, not container identity.
+        settings.image_pull_policy = None;
         settings.storage = None;
         settings.network = None;
         settings
@@ -49,6 +51,7 @@ impl super::Service {
         // Ownership declarations select the already-implemented lifecycle. Keep
         // the established process specification and its ownership labels stable.
         let mut settings = self.clone();
+        settings.image_pull_policy = None;
         settings.management = None;
         settings.storage = None;
         settings.model.management = None;

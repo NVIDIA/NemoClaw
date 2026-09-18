@@ -14,6 +14,10 @@ pub struct OllamaProxy {
     pub engine: String,
     /// Immutable NemoClaw Ollama proxy image built locally.
     pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "ImagePullPolicy")]
+    /// Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container.
+    pub image_pull_policy: Option<ImagePullPolicy>,
     /// Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.
     pub endpoint: String,
     /// Digest of the already-installed route model. NemoClaw never installs or deletes it.

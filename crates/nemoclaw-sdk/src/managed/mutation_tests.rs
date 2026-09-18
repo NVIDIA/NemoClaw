@@ -33,6 +33,79 @@ struct State {
 }
 
 #[tokio::test]
+async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image() {
+    for service in [false, true] {
+        for policy in ["default", "Always", "IfNotPresent", "Never"] {
+            for present in [false, true] {
+                for pull_fails in [false, true] {
+                    let fixtures: Vec<Value> =
+                        serde_json::from_str(include_str!("reference.json")).unwrap();
+                    let mut value: Value = serde_json::from_str(
+                        fixtures[usize::from(service)]["spec"].as_str().unwrap(),
+                    )
+                    .unwrap();
+                    if policy != "default" {
+                        value[if service { "service" } else { "gateway" }]["imagePullPolicy"] =
+                            json!(policy);
+                    }
+                    let policy = if policy == "default" {
+                        if service { "Never" } else { "IfNotPresent" }
+                    } else {
+                        policy
+                    };
+                    let spec: Spec = serde_json::from_value(value).unwrap();
+                    let state = Arc::new(Mutex::new((present, 0)));
+                    let shared = state.clone();
+                    let fixture = Fixture::start(move |request| {
+                        let mut state = shared.lock().unwrap();
+                        let path = request.path.split('?').next().unwrap();
+                        let (code, body) = match (request.method.as_str(), path) {
+                            ("POST", "/images/create") => {
+                                state.1 += 1;
+                                if pull_fails {
+                                    (200, json!({"errorDetail": {"message": "registry unavailable"}}))
+                                } else {
+                                    state.0 = true;
+                                    (200, json!({"status": "complete"}))
+                                }
+                            }
+                            ("GET", "/info") => (200, json!({"ID": "engine", "Architecture": "aarch64"})),
+                            ("GET", path) if path.starts_with("/images/") => {
+                                if state.0 {
+                                    (200, json!({
+                                        "Id": "sha256:runtime", "Architecture": "arm64", "Os": "linux",
+                                        "Config": {"Labels": {
+                                            "org.nemoclaw.recipe.protocol": "v1",
+                                            "org.nemoclaw.backend": "vllm"
+                                        }}
+                                    }))
+                                } else {
+                                    (404, json!({"message": "missing"}))
+                                }
+                            }
+                            _ => panic!("unexpected request {} {}", request.method, request.path),
+                        };
+                        Some((code, serde_json::to_vec(&body).unwrap()))
+                    }).await;
+                    let result = fixture.engine_for(spec.engine()).ensure_image(&spec).await;
+                    let pulls = policy == "Always" || (policy == "IfNotPresent" && !present);
+                    assert_eq!(
+                        state.lock().unwrap().1,
+                        usize::from(pulls),
+                        "{policy}, present={present}"
+                    );
+                    assert_eq!(
+                        result.is_ok(),
+                        (present || pulls) && !(pulls && pull_fails),
+                        "{policy}, present={present}, pull_fails={pull_fails}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn network_creation_rechecks_conflicts_that_appear_after_planning() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();

@@ -30,7 +30,8 @@ impl ResourceAdapter {
             && matches!(field, "endpoint" | "authenticated"))
             || matches!(
                 field,
-                "credential_source"
+                "image_pull_policy"
+                    | "credential_source"
                     | "credential_env"
                     | "agent_runtime"
                     | "provider_type"
@@ -249,11 +250,18 @@ impl Resource for ResourceAdapter {
         &self,
         _: &mut Diagnostics,
         prior: State,
-        proposed: State,
-        _: State,
+        mut proposed: State,
+        config: State,
         private: ValueEmpty,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty, Vec<AttributePath>)> {
+        // OptionalComputed normally carries the prior value forward. Omission
+        // here means the runtime's default policy, not the previous selection.
+        if self.definition.fields.contains(&"image_pull_policy")
+            && matches!(config.get("image_pull_policy"), None | Some(Value::Null))
+        {
+            proposed.insert("image_pull_policy".into(), Value::Value(String::new()));
+        }
         let (state, replacements) = plan_update(&self.definition, &prior, proposed);
         Some((
             state,

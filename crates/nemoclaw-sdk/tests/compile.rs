@@ -6,6 +6,76 @@ use serde_json::Value;
 use std::{collections::BTreeMap, fs, path::Path};
 
 #[test]
+fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
+    use nemoclaw_sdk::{compile::compile_runtime, config::ImagePullPolicy};
+    let generations = [
+        ("workspace", "workspace-generation"),
+        ("provider", "provider-generation"),
+        ("sandbox", "sandbox-generation"),
+        ("ollama", "ollama-generation"),
+        ("managed_gateway", "gateway-generation"),
+        ("inference_service", "inference-generation"),
+    ]
+    .map(|(key, _)| (key.into(), "a".repeat(32)))
+    .into();
+    let mut document =
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    document.spec.gateway.image_pull_policy = Some(ImagePullPolicy::Always);
+    document.spec.inference_providers[0]
+        .service
+        .as_mut()
+        .unwrap()
+        .image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
+    let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    for (kind, expected) in [
+        ("nemoclaw_managed_gateway", "Always"),
+        ("nemoclaw_gateway_storage", "Always"),
+        ("nemoclaw_inference_service", "IfNotPresent"),
+    ] {
+        for resource in after["resource"][kind]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
+            assert_eq!(
+                resource
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("image_pull_policy")
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+    assert_eq!(after, before);
+
+    let mut document =
+        Document::parse(include_str!("fixtures/config/managed-ollama.yaml").as_bytes()).unwrap();
+    let before = compile(&document, &generations, "0.1.0").unwrap();
+    document.spec.inference_providers[0]
+        .ollama
+        .as_mut()
+        .unwrap()
+        .image_pull_policy = Some(ImagePullPolicy::Never);
+    let mut after = compile(&document, &generations, "0.1.0").unwrap();
+    for (kind, name) in [
+        ("nemoclaw_ollama", "service"),
+        ("nemoclaw_ollama_storage", "models"),
+    ] {
+        assert_eq!(
+            after["resource"][kind][name]
+                .as_object_mut()
+                .unwrap()
+                .remove("image_pull_policy")
+                .unwrap(),
+            "Never"
+        );
+    }
+    assert_eq!(after, before);
+}
+
+#[test]
 fn reference_graphs_preserve_addresses_dependencies_and_provider_configuration() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let generations: BTreeMap<String, String> = [

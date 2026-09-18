@@ -61,6 +61,9 @@ impl Engine {
         if spec.kind == SERVICE_KIND {
             capacity.check(self, spec, observed.as_ref()).await?;
         }
+        if observed.is_some() {
+            self.ensure_image(spec).await?;
+        }
         if observed.is_none() {
             if !id.is_empty() {
                 return Err(Error::Conflict("bound runtime missing; resources retained"));
@@ -116,17 +119,15 @@ impl Engine {
         ))
     }
     pub(crate) async fn ensure_image(&self, spec: &Spec) -> Result<(), Error> {
-        let mut image = self.image(spec.image()).await?;
-        if image.is_none() {
-            if spec.kind == SERVICE_KIND {
-                return Err(Error::Conflict(
-                    "pinned Spark artifact is not loaded; build the reproducible runtime locally",
-                ));
-            }
-            self.pull_image(spec.image()).await?;
-            image = self.image(spec.image()).await?;
-        }
-        let image = image.ok_or(ObservationError::Incomplete)?;
+        let policy = spec.service.as_ref().map_or_else(
+            || spec.gateway.image_pull_policy.unwrap_or_default(),
+            |service| {
+                service
+                    .image_pull_policy
+                    .unwrap_or(crate::config::ImagePullPolicy::Never)
+            },
+        );
+        let image = self.acquire_image(spec.image(), policy).await?;
         spec.validate_image_authentication(&image)?;
         let architecture = image.architecture.as_deref();
         let architecture_matches = if let Some(service) = &spec.service {
@@ -180,6 +181,23 @@ impl Engine {
             }
         }
         Ok(())
+    }
+    pub(crate) async fn acquire_image(
+        &self,
+        reference: &str,
+        policy: crate::config::ImagePullPolicy,
+    ) -> Result<bollard::models::ImageInspect, Error> {
+        use crate::config::ImagePullPolicy;
+        let mut image = self.image(reference).await?;
+        if policy == ImagePullPolicy::Always
+            || (policy == ImagePullPolicy::IfNotPresent && image.is_none())
+        {
+            self.pull_image(reference).await?;
+            image = self.image(reference).await?;
+        }
+        image.ok_or(Error::Conflict(
+            "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling",
+        ))
     }
     pub(crate) async fn pull_image(&self, image: &str) -> Result<(), Error> {
         let options = CreateImageOptions {

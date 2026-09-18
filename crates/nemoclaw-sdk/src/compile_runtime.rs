@@ -25,10 +25,16 @@ pub fn runtime_targets(
     };
     let mut storage = gateway.clone();
     storage.layout = 0;
-    let target = |kind: &str, spec: String| Target {
-        kind: kind.into(),
-        address: format!("nemoclaw_{kind}.runtime"),
-        values: Row::from([("spec".into(), spec)]),
+    let target = |kind: &str, spec: String| {
+        let mut values = Row::from([("spec".into(), spec)]);
+        if let Some(policy) = document.spec.gateway.image_pull_policy {
+            values.insert("image_pull_policy".into(), policy.as_str().into());
+        }
+        Target {
+            kind: kind.into(),
+            address: format!("nemoclaw_{kind}.runtime"),
+            values,
+        }
     };
     let mut result = if document.spec.gateway.management == "managed" {
         vec![
@@ -67,10 +73,16 @@ pub fn runtime_targets(
             (STORAGE_KIND, storage.json()?),
             (SERVICE_KIND, spec.json()?),
         ] {
+            let mut values = Row::from([("spec".into(), spec)]);
+            if kind == SERVICE_KIND
+                && let Some(policy) = service.image_pull_policy
+            {
+                values.insert("image_pull_policy".into(), policy.as_str().into());
+            }
             result.push(Target {
                 kind: kind.into(),
                 address: format!("nemoclaw_{kind}.inference_{key}"),
-                values: Row::from([("spec".into(), spec)]),
+                values,
             });
         }
     }
@@ -86,6 +98,9 @@ pub fn compile_runtime(
     for target in runtime_targets(document, generations)? {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
+        if let Some(policy) = target.values.get("image_pull_policy") {
+            attrs["image_pull_policy"] = json!(policy);
+        }
         match target.kind.as_str() {
             GATEWAY_STORAGE_KIND | STORAGE_KIND => {
                 attrs["lifecycle"] = json!({"prevent_destroy":true})

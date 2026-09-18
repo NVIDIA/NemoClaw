@@ -23,6 +23,8 @@ pub struct ServiceSpec {
     pub owner: String,
     pub generation: String,
     pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
     pub network: String,
     pub bind_address: String,
 }
@@ -118,7 +120,9 @@ impl ServiceSpec {
         Ok(())
     }
     fn labels(&self) -> Result<HashMap<String, String>, Error> {
-        let bytes = serde_json::to_vec(self)
+        let mut identity = self.clone();
+        identity.image_pull_policy = None;
+        let bytes = serde_json::to_vec(&identity)
             .map_err(|_| Error::State("cannot encode Ollama specification"))?;
         let digest = Sha256::digest(bytes)
             .iter()
@@ -415,6 +419,7 @@ impl Engine {
             .ok_or(ObservationError::Incomplete)?;
         let spec = ServiceSpec {
             proxy: None,
+            image_pull_policy: None,
             name: container
                 .name
                 .ok_or(ObservationError::Incomplete)?
@@ -441,15 +446,18 @@ impl Engine {
             Err(Error::PartialRuntime) if id.is_empty() => None,
             other => other?,
         };
+        if observed.as_ref().is_some_and(|service| !service.running) {
+            self.acquire_image(&spec.image, spec.image_pull_policy.unwrap_or_default())
+                .await?;
+        }
         if observed.is_none() {
             if !id.is_empty() {
                 return Err(Error::Conflict(
                     "bound Ollama unavailable; recreation forbidden",
                 ));
             }
-            if self.image(&spec.image).await?.is_none() {
-                self.pull_image(&spec.image).await?;
-            }
+            self.acquire_image(&spec.image, spec.image_pull_policy.unwrap_or_default())
+                .await?;
             if self.volume(&spec.volume()).await?.is_none() {
                 self.api
                     .create_volume(VolumeCreateRequest {

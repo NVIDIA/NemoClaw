@@ -88,6 +88,11 @@ async fn lifecycle(harness: &str, authenticated: bool) {
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
+    let check_pulls = harness == "openclaw" && !authenticated;
+    if check_pulls {
+        value["spec"]["inferenceProviders"][0]["service"]["imagePullPolicy"] =
+            json!("IfNotPresent");
+    }
     value["spec"]["sandboxes"][0]["harness"]["kind"] = harness.into();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
@@ -134,7 +139,11 @@ async fn lifecycle(harness: &str, authenticated: bool) {
         "fixture.json",
         &json!({"files":files,"stats":stats,"image":{"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.inference.authentication":"bearer-v1","org.nemoclaw.backend":service["backend"],"org.nemoclaw.model":service["model"]["revision"]}}}}),
     );
-    save(root, "engine.json", &json!({"effects":0,"creates":0}));
+    save(
+        root,
+        "engine.json",
+        &json!({"effects":0,"creates":0,"image_missing":check_pulls,"pulls":0}),
+    );
     save(root, "control.json", &json!({"capacity_failure":true}));
     run(root, &bundle, "plan", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["effects"], 0);
@@ -175,11 +184,43 @@ async fn lifecycle(harness: &str, authenticated: bool) {
             );
         }
     }
+    if check_pulls {
+        let before = read(root, "engine.json");
+        assert_eq!(before["pulls"], 1);
+        let mut changed = read(root, "config.yaml");
+        changed["spec"]["inferenceProviders"][0]["service"]["imagePullPolicy"] = json!("Always");
+        save(root, "config.yaml", &changed);
+        run(root, &bundle, "plan", "config.yaml", true).await;
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json"), before);
+        let mut stopped = before.clone();
+        stopped["container"]["State"]["Running"] = json!(false);
+        save(root, "engine.json", &stopped);
+        save(root, "control.json", &json!({"pull_failure":true}));
+        run(root, &bundle, "apply", "config.yaml", false).await;
+        assert_eq!(read(root, "engine.json")["container"], stopped["container"]);
+        assert_eq!(read(root, "engine.json")["creates"], 1);
+        save(root, "control.json", &json!({}));
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json")["pulls"], 3);
+        assert_eq!(read(root, "engine.json")["creates"], 1);
+    }
     let stable = read(root, "engine.json");
     let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
     run(root, &bundle, "apply", "config.yaml", true).await;
     let exported = run(root, &bundle, "export", "", true).await;
     assert!(!String::from_utf8_lossy(&exported).contains(&bearer));
+    if check_pulls {
+        let document = Document::parse(exported.as_slice()).unwrap();
+        assert_eq!(
+            document.spec.inference_providers[0]
+                .service
+                .as_ref()
+                .unwrap()
+                .image_pull_policy,
+            Some(nemoclaw_sdk::config::ImagePullPolicy::Always)
+        );
+    }
     fs::write(root.join("export.yaml"), exported).unwrap();
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
@@ -247,6 +288,23 @@ async fn lifecycle(harness: &str, authenticated: bool) {
                 || arg == "probe"
                 || arg == "--message")
     );
+    if check_pulls {
+        let mut changed = read(root, "config.yaml");
+        changed["spec"]["inferenceProviders"][0]["service"]
+            .as_object_mut()
+            .unwrap()
+            .remove("imagePullPolicy");
+        save(root, "config.yaml", &changed);
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json"), stable);
+        let mut stopped = stable.clone();
+        stopped["container"]["State"]["Running"] = json!(false);
+        save(root, "engine.json", &stopped);
+        save(root, "control.json", &json!({"pull_failure":true}));
+        run(root, &bundle, "apply", "config.yaml", true).await;
+        assert_eq!(read(root, "engine.json")["pulls"], stable["pulls"]);
+        assert_eq!(read(root, "engine.json")["creates"], 1);
+    }
     run(root, &bundle, "destroy", "", true).await;
     let after = read(root, "engine.json");
     assert!(after["container"].is_null());

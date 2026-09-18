@@ -181,6 +181,9 @@ fn guide(name: &str) -> &'static str {
         "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
         | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
+        "ImagePullPolicy" => {
+            "[Container image downloads](../usage.md#control-container-image-downloads)"
+        }
         _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
     }
 }
@@ -203,11 +206,14 @@ fn input_type(schema: &Value) -> String {
     }
     for key in ["anyOf", "oneOf"] {
         if let Some(variants) = schema[key].as_array() {
-            return variants
-                .iter()
-                .map(input_type)
-                .collect::<Vec<_>>()
-                .join(" or ");
+            let mut types = Vec::new();
+            for variant in variants {
+                let kind = input_type(variant);
+                if !types.contains(&kind) {
+                    types.push(kind);
+                }
+            }
+            return types.join(" or ");
         }
     }
     schema["type"]
@@ -354,6 +360,15 @@ mod tests {
             .next()
             .unwrap();
         assert!(api.contains("openai-responses") && api.contains("anthropic-messages"));
+        let policy = markdown
+            .split("## ImagePullPolicy\n")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(policy.contains("Accepted input: string."));
+        assert!(policy.contains("usage.md#control-container-image-downloads"));
     }
     #[test]
     fn reference_documents_map_values_and_matcher_alternatives() {

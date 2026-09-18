@@ -33,6 +33,9 @@ impl ManagedBackend {
         let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
         let mut result = Row::from([("spec".into(), encoded.clone())]);
+        if let Some(policy) = row.get("image_pull_policy") {
+            result.insert("image_pull_policy".into(), policy.clone());
+        }
         let identity = if kind == STORAGE_KIND {
             let spec: Storage =
                 serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
@@ -44,7 +47,13 @@ impl ManagedBackend {
                 spec.observe(engine, id).await?
             }
         } else {
-            let spec = specification(kind, encoded)?;
+            let mut spec = specification(kind, encoded)?;
+            let policy = crate::config::ImagePullPolicy::from_row(row)?;
+            if let Some(service) = &mut spec.service {
+                service.image_pull_policy = policy;
+            } else {
+                spec.gateway.image_pull_policy = policy;
+            }
             let engine = &self.engine;
             if kind == GATEWAY_STORAGE_KIND {
                 engine.gateway_storage(&spec, id, apply).await?

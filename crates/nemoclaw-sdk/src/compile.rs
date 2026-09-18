@@ -195,8 +195,9 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
     }
     let provider = document.lifecycle_provider()?;
     if let Some(proxy) = &provider.ollama_proxy {
-        let spec = crate::ollama::proxy::specification(document, generations)
+        let mut spec = crate::ollama::proxy::specification(document, generations)
             .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;
+        spec.image_pull_policy = None;
         let source = crate::inference_auth::Source::OllamaProxy {
             engine: proxy.engine.clone(),
             spec: Box::new(spec),
@@ -306,6 +307,9 @@ pub fn compile(
             "generation":generation(generations,"ollama")?,"image":ollama.image,"network":ollama.network.name(),
             "bind_address":authority,"running":"true","lifecycle":{"prevent_destroy":true}
         }});
+        if let Some(policy) = ollama.image_pull_policy {
+            resources["nemoclaw_ollama"]["service"]["image_pull_policy"] = json!(policy.as_str());
+        }
         let mut storage = resources["nemoclaw_ollama"]["service"].clone();
         storage.as_object_mut().unwrap().remove("running");
         resources["nemoclaw_ollama_storage"] = json!({"models": storage});

@@ -554,6 +554,11 @@
                     "required": [
                       "storage"
                     ]
+                  },
+                  {
+                    "required": [
+                      "imagePullPolicy"
+                    ]
                   }
                 ]
               }
@@ -602,6 +607,10 @@
           "description": "Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66."
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
         },
         "management": {
           "description": "Whether the SDK manages the gateway or connects to an existing one.",
@@ -948,6 +957,26 @@
         }
       },
       "type": "object"
+    },
+    "ImagePullPolicy": {
+      "description": "Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.",
+      "oneOf": [
+        {
+          "const": "Always",
+          "description": "Contact the registry before creation or restart, even when the pinned image is cached. A failed pull fails apply.",
+          "type": "string"
+        },
+        {
+          "const": "IfNotPresent",
+          "description": "Pull only when the pinned image is absent from the selected engine.",
+          "type": "string"
+        },
+        {
+          "const": "Never",
+          "description": "Use only a local image. Fail if it is absent from the selected engine.",
+          "type": "string"
+        }
+      ]
     },
     "Inference": {
       "additionalProperties": false,
@@ -1339,6 +1368,10 @@
           "pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$",
           "type": "string"
         },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
+        },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
           "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
@@ -1686,6 +1719,10 @@
           "description": "Immutable NemoClaw Ollama proxy image built locally.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string"
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container."
         },
         "management": {
           "$ref": "#/$defs/ManagedManagement",
@@ -2783,6 +2820,10 @@
           "description": "Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string"
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container."
         },
         "management": {
           "$ref": "#/$defs/ManagedManagement",

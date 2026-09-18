@@ -24,6 +24,7 @@ fn specification(document: &Document, generations: &Generations) -> Result<Servi
             .ok_or(Error::State("missing Ollama generation"))?
             .clone(),
         image: config.image.clone(),
+        image_pull_policy: config.image_pull_policy,
         network: config.network.name().into(),
         bind_address: provider
             .endpoint

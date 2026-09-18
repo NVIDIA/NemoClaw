@@ -14,7 +14,7 @@ Multiple selected providers can own independent managed vLLM services.
 Managed Ollama and its proxy still share a singleton lifecycle; see [managed inference dependencies](inference.md#combine-local-and-hosted-providers).
 
 Examples contain deployment identities and local image pins; replace them before provisioning your own deployment.
-Apply creates or changes runtime resources and can download model data.
+Apply creates or changes runtime resources and can download container images and model data.
 It checks configuration and readiness without sending generation requests.
 If you omit `--state-dir`, the CLI uses `.nemoclaw` in the working directory.
 
@@ -39,7 +39,7 @@ Plan prints a text preview; use `nemoclaw plan -o json deployment.yaml` for scri
 Apply and destroy emit JSON; export emits YAML.
 See [CLI output](reference/cli.md#output-and-failure) for formats and exit codes.
 
-Plan observes resources without creating containers, downloading models, preparing data, or invoking inference.
+Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
 A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
 Apply always creates its own checked plan; a previous public plan is not an approval artifact.
 
@@ -135,6 +135,41 @@ Unavailable Landlock restrictions are not enforced.
 The [recorded test results](validation/README.md) cover policy tests, not a security qualification.
 
 Use [sandbox policy and proxy configuration](sandbox-network.md) to replace the isolated preset or select an agent HTTP proxy.
+
+## Control Container Image Downloads
+
+Set `imagePullPolicy` beside `image` on a managed `gateway`, `service`, `ollama`, or `ollamaProxy` configuration.
+The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by service placement.
+Images still require immutable SHA-256 references.
+
+| Policy | Before container creation or restart |
+|---|---|
+| `Always` | Contact the registry even when the image is cached; a failed pull fails apply |
+| `IfNotPresent` | Use the cached image, or pull it when absent |
+| `Never` | Use the cached image; fail when it is absent |
+
+Omission preserves existing behavior: `IfNotPresent` for the gateway, Ollama, and Ollama proxy; `Never` for a vLLM service.
+Locally built images can use `Never` without requiring a registry copy.
+For a published vLLM runtime, add this field under `inferenceProviders[].service`, alongside its existing image, model, and backend settings:
+
+```yaml
+imagePullPolicy: IfNotPresent
+```
+
+Use the same field on inline or referenced service configurations.
+The gateway policy also applies to its credential initializer container.
+Changing the policy does not replace or restart a running container; apply records the policy for its next creation or restart.
+Export preserves the setting.
+Downloaded images stay in the selected engine's image store and survive destroy.
+
+Plan never pulls images and does not establish registry availability.
+Image compatibility checks still run during apply.
+If pulling fails, retain the state directory, restore registry access, and reapply the same configuration.
+With `Never`, load the pinned image into the selected engine before reapplying.
+
+This setting does not control model downloads or sandbox images acquired by OpenShell.
+The pinned OpenShell API has no per-sandbox pull-policy field; external gateways and sandboxes reject this YAML field.
+Registry credential configuration is unchanged: NemoClaw does not supply credentials to the image-pull request.
 
 ## Resource Ownership
 

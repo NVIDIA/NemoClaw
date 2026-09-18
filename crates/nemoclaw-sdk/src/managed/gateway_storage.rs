@@ -182,6 +182,9 @@ impl Engine {
             ));
         }
         if create && (missing || created) {
+            if !missing {
+                self.ensure_image(spec).await?;
+            }
             self.initialize_gateway(spec, data_path).await?;
             return Box::pin(self.gateway_storage(spec, id, false)).await;
         }

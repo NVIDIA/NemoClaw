@@ -170,6 +170,7 @@ impl Spec {
         let mut service = self.service.clone().ok_or(Error::Conflict(
             "runtime specification has no inference service",
         ))?;
+        service.image_pull_policy = None;
         service.placement = None;
         service.publication = None;
         Ok(service)
@@ -188,10 +189,15 @@ impl Spec {
     /// # Errors
     /// Returns validation or serialization errors from `json`.
     pub fn labels(&self) -> Result<HashMap<String, String>, Error> {
+        let mut identity = self.clone();
+        identity.gateway.image_pull_policy = None;
+        if let Some(service) = &mut identity.service {
+            service.image_pull_policy = None;
+        }
         Ok([
             (OWNER_LABEL.into(), self.owner.clone()),
             (GENERATION_LABEL.into(), self.generation.clone()),
-            (SPEC_LABEL.into(), hex(Sha256::digest(self.json()?))),
+            (SPEC_LABEL.into(), hex(Sha256::digest(identity.json()?))),
         ]
         .into())
     }

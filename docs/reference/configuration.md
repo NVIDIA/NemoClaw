@@ -139,7 +139,7 @@ Paths:
 
 - `spec.sandboxes[].agent.tools`
 
-Accepted input: object or object.
+Accepted input: object.
 
 ### Alternative 1
 
@@ -401,6 +401,7 @@ Paths:
 | `endpoint` | string | When external | — | Gateway HTTP(S) origin, without a path. Required for an external gateway; managed gateways use unprivileged loopback HTTP ports. Managed only: omitted or empty selects http://127.0.0.1:17681. |
 | `engine` | string | No | — | Managed gateway Unix engine socket; Podman requires its API service socket. Omit or leave empty for an external gateway. Managed only: omitted or empty selects unix:///var/run/docker.sock. |
 | `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container. |
 | `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
 | `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
@@ -507,6 +508,35 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `ref` | string | No | `"nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"` | Immutable image reference. Omitted or empty selects the SDK-pinned Fabric image. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the default. |
+
+## ImagePullPolicy
+
+Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.
+
+Guide: [Container image downloads](../usage.md#control-container-image-downloads).
+
+Paths:
+
+- `spec.gateway.imagePullPolicy`
+- `spec.inferenceProviders[].ollama.imagePullPolicy`
+- `spec.inferenceProviders[].ollamaProxy.imagePullPolicy`
+- `spec.inferenceProviders[].service.imagePullPolicy`
+- `spec.inferences.{key}.routes[].provider.ollama.imagePullPolicy`
+- `spec.inferences.{key}.routes[].provider.ollamaProxy.imagePullPolicy`
+- `spec.inferences.{key}.routes[].provider.service.imagePullPolicy`
+- `spec.sandboxes[].agent.inference.routes[].provider.ollama.imagePullPolicy`
+- `spec.sandboxes[].agent.inference.routes[].provider.ollamaProxy.imagePullPolicy`
+- `spec.sandboxes[].agent.inference.routes[].provider.service.imagePullPolicy`
+- `spec.sandboxes[].inferenceProviders[].ollama.imagePullPolicy`
+- `spec.sandboxes[].inferenceProviders[].ollamaProxy.imagePullPolicy`
+- `spec.sandboxes[].inferenceProviders[].service.imagePullPolicy`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollama.imagePullPolicy`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.ollamaProxy.imagePullPolicy`
+- `spec.sandboxes[].inferences.{key}.routes[].provider.service.imagePullPolicy`
+
+Accepted input: string.
+
+Constraints: `"Always"` or `"IfNotPresent"` or `"Never"`.
 
 ## Inference
 
@@ -694,6 +724,7 @@ Paths:
 |---|---|---|---|---|
 | `engine` | string | Yes | — | Local Unix Docker socket URL. Constraints: pattern `^unix:///`. |
 | `image` | string | Yes | — | Immutable ollama/ollama image reference. Constraints: pattern `^ollama/ollama@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for the Ollama daemon container. Omission means managed. |
 | `model` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for installing the route model. Omission means managed; this does not change the selected model. |
 | `network` | [NetworkReference](#networkreference) | Yes | — | Name of the existing Docker network. |
@@ -748,7 +779,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].management`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.management`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"managed"` or `"external"`.
 
@@ -885,6 +916,7 @@ Paths:
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
 | `engine` | string | Yes | — | Local Unix Docker socket. The external daemon runs on this same Linux host. Constraints: pattern `^unix:///`. |
 | `image` | string | Yes | — | Immutable NemoClaw Ollama proxy image built locally. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
 | `model` | [ExternalOllamaModel](#externalollamamodel) | Yes | — | Digest of the already-installed route model. NemoClaw never installs or deletes it. |
 
@@ -1342,6 +1374,7 @@ Paths:
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | No | — | Optional single NVIDIA GPU requirements on Linux AMD64 with dedicated GPU memory. Omission keeps the existing Spark or inline-recipe host contract. |
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
@@ -1590,6 +1623,6 @@ Paths:
 
 - `spec.sandboxes[].agent.tools.disclosure`
 
-Accepted input: string or string.
+Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.
