@@ -19,7 +19,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
-import { GatewayStateConflictError } from "./gateway-management";
+import { GatewayStateConflictError } from "./errors/gateway-state-conflict";
 import {
   ExternalComponentContractError,
   type ExternalComponentGatewayConfiguration,
@@ -376,15 +376,13 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
  * complaint, and so the suggested recovery does not just repeat the exact
  * command that failed.
  */
-class CrossDriverGatewayConflictError extends GatewayStateConflictError {}
-
 function crossDriverGatewayConflict(
   configPath: string,
   stateDir: string,
   requestedDriver: string,
   configuredDriver: string,
 ): Error {
-  return new CrossDriverGatewayConflictError(
+  return new GatewayStateConflictError(
     `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
       `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
       `share one gateway state directory between driver types. To switch drivers for NemoClaw-managed state, ` +

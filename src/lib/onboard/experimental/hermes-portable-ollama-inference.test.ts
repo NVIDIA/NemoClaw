@@ -13,7 +13,7 @@ import {
 import { createSession } from "../../state/onboard-session";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
 import { runOnboardCommand } from "../command";
-import { GatewayStateConflictError } from "../gateway-management";
+import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "../resume-hint";
 import { handleProviderInferenceState } from "../machine/handlers/provider-inference";
 import { baseOptions, createDeps } from "../machine/handlers/provider-inference.test-support";

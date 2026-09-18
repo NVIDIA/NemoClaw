@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
-import { GatewayStateConflictError } from "../gateway-management";
+import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
 import {
   parseHostLocalInferenceReceipt,
