@@ -32,7 +32,7 @@ export function isTruthyEnv(value: string | undefined): boolean {
 function parsePortEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
-  if (!/^\d+$/.test(raw.trim())) {
+  if (!/^(0|[1-9]\d*)$/.test(raw.trim())) {
     throw new Error(`Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`);
   }
   const parsed = Number(raw.trim());
