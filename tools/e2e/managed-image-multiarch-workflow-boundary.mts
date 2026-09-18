@@ -398,11 +398,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     errors.push(`${JOB_ID} Docker Engine 27 receipt daemon cleanup must always run`);
   }
   requireFragments(errors, receiptDaemonCleanup, [
-    'platform="${NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM//\\//-}"',
-    'daemon_name="nemoclaw-receipt-engine27-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${platform}"',
     "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
     "--cleanup-only",
-    '--daemon-name "$daemon_name"',
+    '--run-id "$GITHUB_RUN_ID"',
+    '--run-attempt "$GITHUB_RUN_ATTEMPT"',
+    '--platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"',
   ]);
   const cacheUpload = requireStep(
     errors,

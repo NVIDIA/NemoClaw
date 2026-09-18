@@ -22,18 +22,6 @@ function installerCheckout(prefix: string) {
   return checkout;
 }
 
-function callBootstrapFunction(command: string, env: Record<string, string | undefined> = {}) {
-  return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; ${command}`], {
-    cwd: path.join(import.meta.dirname, "../.."),
-    encoding: "utf-8",
-    env: {
-      HOME: os.tmpdir(),
-      PATH: TEST_SYSTEM_PATH,
-      ...env,
-    },
-  });
-}
-
 function callPayloadFunction(command: string, env: Record<string, string | undefined> = {}) {
   return spawnSync("bash", ["-c", `source "${INSTALLER_PAYLOAD}" 2>/dev/null; ${command}`], {
     cwd: path.join(import.meta.dirname, "../.."),
@@ -56,20 +44,6 @@ it("documents the destructive force-fresh install option", () => {
   const output = `${result.stdout}${result.stderr}`;
   expect(output).toContain("--force-fresh-install");
   expect(output).toContain("NEMOCLAW_FORCE_FRESH_INSTALL=1");
-});
-
-it("recognizes force-fresh intent from the flag or environment", () => {
-  const result = callBootstrapFunction(`
-    bootstrap_force_fresh_install_requested --force-fresh-install && printf 'flag\\n'
-    NEMOCLAW_FORCE_FRESH_INSTALL=1
-    bootstrap_force_fresh_install_requested && printf 'environment\\n'
-    unset NEMOCLAW_FORCE_FRESH_INSTALL
-    if bootstrap_force_fresh_install_requested; then exit 9; fi
-    printf 'absent\\n'
-  `);
-
-  expect(result.status).toBe(0);
-  expect(result.stdout.trim().split("\n")).toEqual(["flag", "environment", "absent"]);
 });
 
 it("detects a Homebrew-only OpenShell installation", () => {

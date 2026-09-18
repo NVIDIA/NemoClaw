@@ -40,6 +40,33 @@ export const DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS =
   DOCKER_ENGINE_27_CLEANUP_OPERATION_COUNT * DOCKER_ENGINE_27_CLEANUP_TIMEOUT_MS +
   DOCKER_ENGINE_27_PROCESS_ALLOWANCE_MS / 2;
 
+export type DockerEngine27Platform = "linux/amd64" | "linux/arm64";
+
+export function dockerEngine27ReceiptDaemonName(
+  runId: number | string,
+  runAttempt: number | string,
+  platform: DockerEngine27Platform,
+): string {
+  const run = String(runId);
+  const attempt = String(runAttempt);
+  requireCondition(/^[1-9][0-9]{0,15}$/u.test(run), "Docker Engine 27 run ID is invalid");
+  requireCondition(/^[1-9][0-9]{0,5}$/u.test(attempt), "Docker Engine 27 run attempt is invalid");
+  requireCondition(
+    platform === "linux/amd64" || platform === "linux/arm64",
+    "Docker Engine 27 platform is invalid",
+  );
+  return `nemoclaw-receipt-engine27-${run}-${attempt}-${platform.replace("/", "-")}`;
+}
+
+export function dockerEngine27ReceiptIdentityArguments(
+  runId: number | string,
+  runAttempt: number | string,
+  platform: DockerEngine27Platform,
+): string[] {
+  dockerEngine27ReceiptDaemonName(runId, runAttempt, platform);
+  return ["--run-id", String(runId), "--run-attempt", String(runAttempt), "--platform", platform];
+}
+
 export type CommandResult = {
   readonly error?: Error;
   readonly status: number | null;
@@ -429,19 +456,29 @@ async function verifyDockerEngine27ReceiptTransfer(daemonName: string): Promise<
   );
 }
 
-function parseDaemonName(args: readonly string[]): string {
-  const index = args.indexOf("--daemon-name");
-  const daemonName = index < 0 ? "" : String(args[index + 1] ?? "");
+function requiredArgument(args: readonly string[], name: string): string {
+  const index = args.indexOf(name);
+  const value = index < 0 ? "" : String(args[index + 1] ?? "");
+  requireCondition(value.length > 0, `Docker Engine 27 probe requires ${name}`);
+  return value;
+}
+
+function daemonNameFromArguments(args: readonly string[]): string {
+  const platform = requiredArgument(args, "--platform");
   requireCondition(
-    /^nemoclaw-receipt-engine27-[a-z0-9-]{1,80}$/u.test(daemonName),
-    "Docker Engine 27 probe requires a safe owned daemon name",
+    platform === "linux/amd64" || platform === "linux/arm64",
+    "Docker Engine 27 platform is invalid",
   );
-  return daemonName;
+  return dockerEngine27ReceiptDaemonName(
+    requiredArgument(args, "--run-id"),
+    requiredArgument(args, "--run-attempt"),
+    platform,
+  );
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  const daemonName = parseDaemonName(args);
+  const daemonName = daemonNameFromArguments(args);
   const operation = args.includes("--cleanup-only")
     ? Promise.resolve().then(() => cleanupDockerEngine27ReceiptDaemon(daemonName))
     : verifyDockerEngine27ReceiptTransfer(daemonName);

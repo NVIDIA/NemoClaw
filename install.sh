@@ -284,17 +284,6 @@ exec_installer_from_ref() {
   NEMOCLAW_INSTALL_TAG="$ref" bash "$legacy_script" "$@"
 }
 
-bootstrap_force_fresh_install_requested() {
-  local arg
-  case "${NEMOCLAW_FORCE_FRESH_INSTALL:-}" in
-    1 | true | TRUE | yes | YES | y | Y) return 0 ;;
-  esac
-  for arg in "$@"; do
-    [[ "$arg" == "--force-fresh-install" ]] && return 0
-  done
-  return 1
-}
-
 require_supported_platform() {
   # macOS ships only an Apple Silicon (aarch64) OpenShell gateway build, so an
   # Intel Mac (x86_64 Darwin) install always fails once that binary is fetched.

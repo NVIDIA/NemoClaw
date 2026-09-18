@@ -4607,11 +4607,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          platform="${NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM//\//-}"
-          daemon_name="nemoclaw-receipt-engine27-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${platform}"
           node --import tsx scripts/checks/docker-engine-27-receipt-transfer-e2e.ts \
             --cleanup-only \
-            --daemon-name "$daemon_name"
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"
 
       - name: Validate OpenClaw managed-image security boundary
         shell: bash

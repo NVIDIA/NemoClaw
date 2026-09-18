@@ -25,14 +25,6 @@ export interface ProtectedManagedImageDispatchEnvironment {
   workspace: string;
 }
 
-export function dockerEngine27ReceiptDaemonName(
-  runId: number,
-  runAttempt: number,
-  platform: ProtectedManagedImagePlatform,
-): string {
-  return `nemoclaw-receipt-engine27-${String(runId)}-${String(runAttempt)}-${platform.replace("/", "-")}`;
-}
-
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);

@@ -11,9 +11,12 @@ import {
   parseProtectedManagedImageContracts,
   parseProtectedManagedImageEvidence,
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   dockerEngine27ReceiptDaemonName,
+  dockerEngine27ReceiptIdentityArguments,
+} from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import {
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
 } from "./managed-image-multiarch-startup-helpers.ts";
@@ -66,6 +69,11 @@ test(
       dispatch.runAttempt,
       dispatch.platform,
     );
+    const docker27IdentityArgs = dockerEngine27ReceiptIdentityArguments(
+      dispatch.runId,
+      dispatch.runAttempt,
+      dispatch.platform,
+    );
     cleanup.trackDisposable(`remove owned Docker Engine 27 daemon ${docker27DaemonName}`, () => {
       execFileSync(
         process.execPath,
@@ -74,8 +82,7 @@ test(
           "tsx",
           "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
           "--cleanup-only",
-          "--daemon-name",
-          docker27DaemonName,
+          ...docker27IdentityArgs,
         ],
         {
           cwd: dispatch.workspace,
@@ -92,8 +99,7 @@ test(
           "--import",
           "tsx",
           "scripts/checks/docker-engine-27-receipt-transfer-e2e.ts",
-          "--daemon-name",
-          docker27DaemonName,
+          ...docker27IdentityArgs,
         ],
         reason: "verify the Docker Engine 27 receipt archive-copy boundary",
       }),

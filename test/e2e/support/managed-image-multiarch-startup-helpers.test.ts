@@ -10,12 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS,
   DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+  dockerEngine27ReceiptDaemonName,
+  dockerEngine27ReceiptIdentityArguments,
   finalizeDockerEngine27ReceiptProbe,
   requireDockerResourceAbsent,
   validateDockerEngine27SeedIsolation,
 } from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
 import {
-  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
 } from "../live/managed-image-multiarch-startup-helpers.ts";
@@ -61,13 +62,29 @@ describe("protected managed-image startup helpers", () => {
     expect(cleanupFixture).toHaveBeenCalledOnce();
   });
 
-  it("isolates Docker 27 daemon ownership across matrix platforms", () => {
+  it("derives one Docker 27 identity for probe and cleanup on each matrix platform", () => {
     const amd64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/amd64");
     const arm64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/arm64");
+    const sharedIdentity = dockerEngine27ReceiptIdentityArguments(123, 4, "linux/amd64");
+    const probeArgs = ["docker-engine-27-receipt-transfer-e2e.ts", ...sharedIdentity];
+    const cleanupArgs = [
+      "docker-engine-27-receipt-transfer-e2e.ts",
+      "--cleanup-only",
+      ...sharedIdentity,
+    ];
 
     expect(amd64).toBe("nemoclaw-receipt-engine27-123-4-linux-amd64");
     expect(arm64).toBe("nemoclaw-receipt-engine27-123-4-linux-arm64");
     expect(amd64).not.toBe(arm64);
+    expect(cleanupArgs.filter((arg) => arg !== "--cleanup-only")).toEqual(probeArgs);
+    expect(sharedIdentity).toEqual([
+      "--run-id",
+      "123",
+      "--run-attempt",
+      "4",
+      "--platform",
+      "linux/amd64",
+    ]);
   });
 
   it("bounds the complete Docker 27 probe and external cleanup", () => {
