@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as dockerContainer from "../adapters/docker/container";
+import * as dockerRun from "../adapters/docker/run";
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -421,17 +423,26 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(context.backupContainerName).toBe(result.backupContainerName);
   });
 
-  it("reconciles one stale OpenShell Error row after the exact replacement supervisor installs (#11905)", async () => {
-    const deps = makeDeps();
+  it("uses production Docker evidence to reconcile one stale OpenShell Error row (#11905)", async () => {
+    const injected = makeDeps();
+    const deps = {
+      runOpenshell: injected.runOpenshell,
+      runCaptureOpenshell: injected.runCaptureOpenshell,
+      sleep: injected.sleep,
+    };
     const result = deferredCreateResult();
     const inspectResponses = new Map([
       ["{{json .State}}", JSON.stringify({ Running: true, Status: "running" })],
       ["{{.Name}}", `/${result.originalName}\n`],
     ]);
-    deps.dockerCapture.mockImplementation(
-      (args: readonly string[]) => inspectResponses.get(String(args[2] ?? "")) ?? "",
-    );
-    const dockerLogs = vi.fn(() => "OpenShell Sandbox Supervisor success\n");
+    const capture = vi
+      .spyOn(dockerRun, "dockerCapture")
+      .mockImplementation(
+        (args: readonly string[]) => inspectResponses.get(String(args[2] ?? "")) ?? "",
+      );
+    const logs = vi
+      .spyOn(dockerContainer, "dockerLogs")
+      .mockReturnValue("OpenShell Sandbox Supervisor success\n");
     const waitForSupervisor = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const finalizeBackup = vi.fn();
     const onPatchFailureExit = vi.fn();
@@ -439,7 +450,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
-      deps: { ...deps, dockerLogs },
+      deps,
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
@@ -453,6 +464,11 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     await patch.waitForSupervisorReconnectIfNeeded();
 
     expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(logs).toHaveBeenCalledWith(result.newContainerId, {
+      tail: 256,
+      timeout: 60_000,
+    });
     expect(deps.runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["sandbox", "stop", "alpha"],

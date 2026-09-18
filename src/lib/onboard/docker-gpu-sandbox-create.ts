@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerLogs } from "../adapters/docker/container";
+import { dockerCapture } from "../adapters/docker/run";
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -100,24 +102,23 @@ function recoverInstalledReplacementSupervisor(
   result: DockerGpuPatchResult,
   deps: DockerGpuSandboxCreateDeps,
 ): boolean {
-  if (!deps.dockerCapture || !deps.dockerLogs || !deps.runOpenshell) return false;
+  if (!deps.runOpenshell) return false;
+  const capture = deps.dockerCapture ?? dockerCapture;
+  const readLogs = deps.dockerLogs ?? dockerLogs;
   try {
     const state = JSON.parse(
-      deps.dockerCapture(["inspect", "--format", "{{json .State}}", result.newContainerId], {
+      capture(["inspect", "--format", "{{json .State}}", result.newContainerId], {
         ignoreError: true,
-        suppressOutput: true,
         timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
       }),
     ) as { Running?: unknown; Status?: unknown };
-    const name = deps
-      .dockerCapture(["inspect", "--format", "{{.Name}}", result.newContainerId], {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
-      })
+    const name = capture(["inspect", "--format", "{{.Name}}", result.newContainerId], {
+      ignoreError: true,
+      timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
+    })
       .trim()
       .replace(/^\//u, "");
-    const logs = deps.dockerLogs(result.newContainerId, {
+    const logs = readLogs(result.newContainerId, {
       tail: 256,
       timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
     });
