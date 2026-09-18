@@ -244,8 +244,12 @@ it("records digest ownership after a verified managed user-local OpenShell insta
   fs.mkdirSync(localBin, { recursive: true });
   const openshellSource = "#!/usr/bin/env bash\nprintf 'openshell 0.0.116\\n'\n";
   const gatewaySource = "#!/usr/bin/env bash\nexit 0\n";
+  const sandboxSource = "#!/usr/bin/env bash\nprintf 'sandbox\\n'\n";
+  const driverSource = "#!/usr/bin/env bash\nprintf 'driver\\n'\n";
   writeExecutable(path.join(localBin, "openshell"), openshellSource);
   writeExecutable(path.join(localBin, "openshell-gateway"), gatewaySource);
+  writeExecutable(path.join(localBin, "openshell-sandbox"), sandboxSource);
+  writeExecutable(path.join(localBin, "openshell-driver-vm"), driverSource);
 
   const result = callPayloadFunction("record_managed_user_local_openshell_install", {
     HOME: tmp,
@@ -257,6 +261,8 @@ it("records digest ownership after a verified managed user-local OpenShell insta
   expect(manifest.trim().split("\n")).toEqual([
     `${createHash("sha256").update(openshellSource).digest("hex")}  openshell`,
     `${createHash("sha256").update(gatewaySource).digest("hex")}  openshell-gateway`,
+    `${createHash("sha256").update(sandboxSource).digest("hex")}  openshell-sandbox`,
+    `${createHash("sha256").update(driverSource).digest("hex")}  openshell-driver-vm`,
   ]);
 });
 
@@ -350,6 +356,37 @@ it.each(["openshell", "openshell-gateway", "openshell-sandbox", "openshell-drive
   },
 );
 
+it("rejects a foreign OpenShell executable before staged cleanup begins", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout(
+    "nemoclaw-force-fresh-foreign-preflight-",
+  );
+  const foreignBin = path.join(tmp, "foreign", "bin");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  fs.mkdirSync(foreignBin, { recursive: true });
+  writeExecutable(path.join(foreignBin, "openshell-sandbox"), "#!/usr/bin/env bash\nexit 0\n");
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${foreignBin}:${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    `unverified OpenShell executable at ${path.join(foreignBin, "openshell-sandbox")}`,
+  );
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
 it("runs cleanup before selecting fresh onboarding", () => {
   const result = callPayloadFunction(`
     warn() { :; }
@@ -389,6 +426,37 @@ it.each(["openshell-gateway", "openshell-sandbox", "openshell-driver-vm"])(
     expect(result.stdout).toBe("present");
   },
 );
+
+it("routes a managed helper from XDG_BIN_HOME through the staged uninstaller", () => {
+  const { root: tmp } = installerCheckout("nemoclaw-force-fresh-xdg-helper-detect-");
+  const userBin = path.join(tmp, "xdg-bin");
+  const helperSource = "#!/usr/bin/env bash\nprintf 'sandbox\\n'\n";
+  fs.mkdirSync(userBin, { recursive: true });
+  writeExecutable(path.join(userBin, "openshell-sandbox"), helperSource);
+  fs.writeFileSync(
+    path.join(userBin, ".nemoclaw-openshell-managed-v1"),
+    `${createHash("sha256").update(helperSource).digest("hex")}  openshell-sandbox\n`,
+    { mode: 0o600 },
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      force_fresh_install_source_root() { printf '/tmp/staged-candidate'; }
+      prepare_force_fresh_uninstaller() { printf 'prepare:%s\\n' "$1"; }
+      run_force_fresh_uninstaller() { printf 'uninstall:%s\\n' "$1"; }
+      remove_macos_openshell_for_force_fresh_install() { :; }
+      run_force_fresh_install_reset
+    `,
+    { HOME: tmp, XDG_BIN_HOME: userBin },
+  );
+
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(result.stdout.trim().split("\n")).toEqual([
+    "prepare:/tmp/staged-candidate",
+    "uninstall:/tmp/staged-candidate",
+  ]);
+});
 
 it("stops before package removal when managed uninstall rejects partial state", () => {
   const result = callPayloadFunction(`
