@@ -83,7 +83,10 @@ import {
   restartSandboxGatewayWithDeps,
   sandboxAgentName,
 } from "./gateway-restart";
-import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
+import {
+  collectRedactedOpenShellSandboxLogs,
+  printGatewayWedgeDiagnostics,
+} from "./gateway-wedge-diagnostics";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -307,6 +310,7 @@ function openClawMaintenanceMarkerContent(window: OpenClawPostRestoreDoctorWindo
 
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
+  collectFailureLogs?: typeof collectRedactedOpenShellSandboxLogs;
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
@@ -1035,10 +1039,20 @@ export async function finishOpenClawPostRestoreDoctor(
     },
   );
   if (completed) return { ok: true };
+  const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
+    sandboxName,
+    runtimeSelection
+      ? namedOpenShellGateway(runtimeSelection.gatewayName)
+      : selectedOpenShellGateway(),
+  );
+  const logDetail =
+    failureLogs.length > 0
+      ? `\nRecent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`
+      : "";
   return {
     ok: false,
     stage: "restart",
-    detail: "the released sandbox did not return a healthy gateway",
+    detail: `the released sandbox did not return a healthy gateway${logDetail}`,
   };
 }
 

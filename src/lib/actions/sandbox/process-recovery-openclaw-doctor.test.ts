@@ -665,6 +665,45 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[1]?.[2]).toBe(1_000);
   });
 
+  it("returns redacted OpenShell startup logs when the released gateway never serves", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValue({ status: 42, stdout: "", stderr: "" });
+    let now = 0;
+    const collectFailureLogs = vi.fn(async () => [
+      "[setup] OpenClaw post-upgrade offline restore released gateway launch",
+      "[gateway] startup failed after restored-state validation",
+    ]);
+
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        {
+          sandboxName: "alpha",
+          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+        },
+        {
+          captureOpenshell: vi.fn() as never,
+          collectFailureLogs,
+          executeSandboxExecCommand: execute,
+          now: () => now,
+          sleep: vi.fn(async () => {
+            now = 180_000;
+          }),
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      stage: "restart",
+      detail: expect.stringContaining("[gateway] startup failed after restored-state validation"),
+    });
+    expect(collectFailureLogs).toHaveBeenCalledExactlyOnceWith("alpha", {
+      kind: "named",
+      gatewayName: "recorded-gateway",
+    });
+  });
+
   it("keeps the gateway gated when the verified release cannot be published", async () => {
     const execute = vi.fn(async () => ({ status: 35, stdout: "", stderr: "" }));
 

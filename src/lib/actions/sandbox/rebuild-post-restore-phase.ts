@@ -355,6 +355,7 @@ export async function runRebuildPostRestorePhase(
       log(`Post-upgrade doctor final start: ${doctorResult.ok ? "verified" : doctorResult.stage}`);
       if (!doctorResult.ok) {
         console.log(`  ${D}Post-upgrade structure repair failed during final sandbox start${R}`);
+        console.error(`  ${doctorResult.detail.replaceAll("\n", "\n  ")}`);
         bail("OpenClaw post-upgrade structure repair failed during rebuild.");
         return;
       }

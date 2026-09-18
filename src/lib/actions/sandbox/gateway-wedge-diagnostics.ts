@@ -17,6 +17,9 @@
 // this detection can be narrowed and the recovery settle window shortened or
 // defaulted off.
 
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import type { OpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs";
 import { shellQuote } from "../../runner";
 import { redactFull } from "../../security/redact";
 import type { SandboxCommandResult } from "./process-recovery";
@@ -44,6 +47,34 @@ export function sanitizeWedgeLogLine(line: string): string {
   sanitized = sanitized.replace(AUTHORIZATION_PATTERN, "$1 [REDACTED]");
   sanitized = sanitized.replace(NVAPI_PATTERN, "[REDACTED]");
   return sanitized.replace(/\r/g, "").trim();
+}
+
+/** Read a bounded, sanitized tail from OpenShell's retained sandbox log buffer. */
+export async function collectRedactedOpenShellSandboxLogs(
+  sandboxName: string,
+  target: OpenShellGatewayTarget,
+  logs: OpenShellSandboxLogs = cliOpenShellSandboxLogs,
+): Promise<string[]> {
+  try {
+    const result = await logs.read({
+      target,
+      sandboxName,
+      source: "openshell",
+      lines: "120",
+      since: null,
+      timeoutMs: 15_000,
+    });
+    if (
+      result.outcome.kind !== "completed" ||
+      result.outcome.exitCode !== 0 ||
+      !result.content.trim()
+    ) {
+      return [];
+    }
+    return result.content.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
+  } catch {
+    return [];
+  }
 }
 
 /**
