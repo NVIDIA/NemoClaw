@@ -10,6 +10,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ dockerSpawn: vi.fn() }));
 
+/** Use a nondefault authority to detect hard-coded probe and publication addresses. */
+vi.mock("./experimental/portable-profile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./experimental/portable-profile")>()),
+  PORTABLE_LOCAL_REGISTRY: "127.0.0.1:54321",
+}));
+
 vi.mock("../adapters/docker/exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/docker/exec")>()),
   dockerSpawn: mocks.dockerSpawn,
@@ -33,6 +39,7 @@ const BUILD_ID = "1234567890";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
+/** Stage a generated context and register it for cleanup even when a test rejects. */
 function createBuildContext(
   parent = os.tmpdir(),
   prefix = SANDBOX_BUILD_CONTEXT_PREFIX,
@@ -92,6 +99,7 @@ describe("sandbox BuildKit prebuild", () => {
     expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_HOST");
   });
 
+  /** Prevent a registry probe or temporary credential context from leaking between cases. */
   afterEach(() => {
     mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();
@@ -666,10 +674,15 @@ describe("sandbox BuildKit prebuild", () => {
     expect(fs.existsSync(dockerConfig)).toBe(true);
   });
 
+  /** Keep publication credentials isolated after a successful registry readiness probe. */
   it("publishes portable-profile builds to the managed loopback registry", async () => {
+    const fetchRegistry = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     const { buildCtx, createArgs } = createBuildContext();
-    const buildImage = vi.fn(async () => 0);
+    const buildImage = vi.fn().mockResolvedValue(0);
     let credentialConfig = "";
+    /** Inspect the temporary credential boundary before publication removes it. */
     const publishImage = vi.fn(async (_args, options) => {
       credentialConfig = String(options.env.DOCKER_CONFIG);
       expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
@@ -697,15 +710,59 @@ describe("sandbox BuildKit prebuild", () => {
     });
 
     expect(publishImage).toHaveBeenCalledWith(
-      ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
+      ["push", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"],
       expect.objectContaining({ stdio: "inherit" }),
     );
+    expect(fetchRegistry.mock.invocationCallOrder[0]).toBeLessThan(
+      buildImage.mock.invocationCallOrder[0],
+    );
+    expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
     expect(buildImage).toHaveBeenCalledWith(
-      expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.arrayContaining(["build", "127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890"]),
       expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
     );
-    expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(result.imageRef).toBe("127.0.0.1:54321/nemoclaw-sandbox-local:alpha-1234567890");
     expect(fs.existsSync(credentialConfig)).toBe(false);
+  });
+
+  /** Failed probes must leave both image construction and publication untouched. */
+  it.each([
+    ["connection refusal", new Error("connection refused")],
+    ["timeout", new DOMException("timed out", "TimeoutError")],
+    ["HTTP failure", new Response(null, { status: 503 })],
+    ["authentication required", new Response(null, { status: 401 })],
+    ["redirect", new Response(null, { status: 302 })],
+  ] as const)("refuses a Portable build after registry %s (#11724)", async (_condition, probe) => {
+    const fetchRegistry = vi
+      .spyOn(globalThis, "fetch")
+      .mockReturnValue(probe instanceof Response ? Promise.resolve(probe) : Promise.reject(probe));
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn().mockResolvedValue(0);
+    const publishImage = vi.fn().mockResolvedValue(125);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: "registry-reachability",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        origin: "generated",
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable", NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        publishImage,
+        log: vi.fn(),
+      }),
+    ).rejects.toThrow(/registry/i);
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(publishImage).not.toHaveBeenCalled();
+    expect(fetchRegistry).toHaveBeenCalledWith(new URL("http://127.0.0.1:54321/v2/"), {
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {

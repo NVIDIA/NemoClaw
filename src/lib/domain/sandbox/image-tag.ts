@@ -8,7 +8,11 @@ export const SANDBOX_FROM_IMAGE_REPO = "openshell/sandbox-from";
  * (Linux, or macOS on Apple Silicon — see isLinuxDockerDriverGatewayEnabled).
  */
 export const LOCAL_SANDBOX_IMAGE_REPO = "nemoclaw-sandbox-local";
-export const PORTABLE_LOCAL_SANDBOX_IMAGE_REPO = "localhost:5000/nemoclaw-sandbox-local";
+// Registry clients and image references must use the same IPv4 loopback authority.
+export const PORTABLE_REGISTRY_HOST = "127.0.0.1";
+export const PORTABLE_REGISTRY_PORT = 5000;
+export const PORTABLE_LOCAL_REGISTRY = `${PORTABLE_REGISTRY_HOST}:${PORTABLE_REGISTRY_PORT}`;
+export const PORTABLE_LOCAL_SANDBOX_IMAGE_REPO = `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`;
 
 /**
  * Every Docker repository that can hold a sandbox image. Any orphan sweep
@@ -21,6 +25,8 @@ export const SANDBOX_IMAGE_REPOS = [
   SANDBOX_FROM_IMAGE_REPO,
   LOCAL_SANDBOX_IMAGE_REPO,
   PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
+  // Keep images from earlier Portable versions visible to orphan cleanup.
+  `localhost:5000/${LOCAL_SANDBOX_IMAGE_REPO}`,
 ] as const;
 
 const BUILT_SANDBOX_IMAGE_RE = /Built image (openshell\/sandbox-from:\d+)/;

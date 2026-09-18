@@ -16,15 +16,12 @@ import {
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
-import {
-  LOCAL_SANDBOX_IMAGE_REPO,
-  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
-} from "../domain/sandbox/image-tag";
+import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
+import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -140,6 +137,7 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
+/** Bind Portable build and push tags to the same registry authority used by readiness checks. */
 export function sandboxLocalImageRef(
   sandboxName: string,
   buildId: string,
@@ -153,7 +151,7 @@ export function sandboxLocalImageRef(
   const buildPart = sanitize(buildId).slice(-32) || "build";
   const namePart = sanitize(sandboxName).slice(0, 127 - buildPart.length) || "sandbox";
   const repository = isPortableExperimentalProfile(env)
-    ? PORTABLE_LOCAL_SANDBOX_IMAGE_REPO
+    ? `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`
     : LOCAL_SANDBOX_IMAGE_REPO;
   return `${repository}:${namePart}-${buildPart}`;
 }
@@ -168,6 +166,10 @@ export function sandboxLocalImageRef(
  * mount contracts.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
+ * Portable builds require HTTP 200 from the managed IPv4 registry before any
+ * build or publication operation. Unavailable registries reject without fallback.
+ * @throws When the portable registry is unavailable or a required build fails.
+ * @returns The prebuilt image identity, or unchanged arguments for an eligible fallback.
  */
 export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,
@@ -231,6 +233,21 @@ export async function prebuildSandboxImageIfEligible(
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
+  if (portable) {
+    const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_REGISTRY}`);
+    try {
+      const response = await fetch(registryUrl, {
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 200) throw new Error("Registry is not ready");
+    } catch {
+      throw new Error(
+        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Restore the managed registry, then verify that ${registryUrl.href} returns HTTP 200 before retrying.`,
+      );
+    }
+  }
   const builderName = portable ? "rootless Podman" : "BuildKit";
   const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
   log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);

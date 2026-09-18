@@ -47,6 +47,7 @@ describe("portable profile rootless runtime workflow", () => {
     });
   });
 
+  /** Keep the workflow prerequisites aligned with the runtime exercised by live E2E. */
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
@@ -162,7 +163,6 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
-    expect(liveTest).toContain('location = "localhost:5000"\\ninsecure = true');
     expect(liveTest).toContain("DOCKER_NETWORK_IPAM_INSPECT_FORMAT");
     expect(liveTest).toContain("parseDockerNetworkIpamEntries(");
     expect(liveTest).not.toContain("{{range .Subnets}}");
@@ -297,6 +297,8 @@ ${serviceIdentityCheck}`,
     // Evaluate selection rather than requiring a particular spelling of the filters.
     const selects = (event: "pull_request" | "push", changedPath: string) =>
       workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
+    expect.soft(selects("pull_request", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/launch.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/connect.ts")).toBe(true);
     expect

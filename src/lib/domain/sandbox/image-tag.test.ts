@@ -3,9 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveSandboxImageTagFromCreateOutput } from "./image-tag";
+import { resolveSandboxImageTagFromCreateOutput, SANDBOX_IMAGE_REPOS } from "./image-tag";
 
 describe("resolveSandboxImageTagFromCreateOutput", () => {
+  /** Changing the publication authority must not hide older images from orphan cleanup. */
+  it("keeps current and legacy Portable repositories eligible for orphan cleanup", () => {
+    expect(SANDBOX_IMAGE_REPOS).toContain("127.0.0.1:5000/nemoclaw-sandbox-local");
+    expect(SANDBOX_IMAGE_REPOS).toContain("localhost:5000/nemoclaw-sandbox-local");
+  });
   it("uses the sandbox image tag reported by OpenShell create output", () => {
     const warn = vi.fn();
 

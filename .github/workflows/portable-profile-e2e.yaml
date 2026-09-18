@@ -67,6 +67,7 @@ on:
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "src/lib/actions/sandbox/destroy*.ts"
       - "src/lib/domain/sandbox/destroy.ts"
+      - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts"
       - "src/lib/onboard/experimental/hermes-portable-ollama-*.ts"
       - "src/lib/onboard/runtime-provider/host-local-inference*.ts"
