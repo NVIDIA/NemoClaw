@@ -24,6 +24,7 @@ import {
   parsePiInferenceEvidence,
   PiInferenceFailure,
   qualifyPiReadTask,
+  selectPiQualificationCatalog,
 } from "../live/pi-agent-qualification-events.ts";
 
 const PATH = "/sandbox/pi-qualification.txt";
@@ -159,6 +160,23 @@ function failedProbe(): ShellProbeResult {
   };
 }
 describe("Pi qualification event oracle", () => {
+  it("selects the Pi catalog path when the workflow provides an inline catalog (#11083)", () => {
+    const environment = selectPiQualificationCatalog(
+      {
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/inherited-catalog.json",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: '{"openclaw":{}}',
+        NEMOCLAW_SANDBOX_NAME: "pi-qualification",
+      },
+      "/tmp/pi-candidate-catalog.json",
+    );
+
+    expect(environment).toEqual({
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/pi-candidate-catalog.json",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
+      NEMOCLAW_SANDBOX_NAME: "pi-qualification",
+    });
+  });
+
   it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
     const imageSources = new Set([
       ".dockerignore",
