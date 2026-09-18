@@ -13,6 +13,7 @@ import {
   validateDockerEngine27SeedIsolation,
 } from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
 import {
+  dockerEngine27ReceiptDaemonName,
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
 } from "../live/managed-image-multiarch-startup-helpers.ts";
@@ -43,6 +44,15 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("isolates Docker 27 daemon ownership across matrix platforms", () => {
+    const amd64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/amd64");
+    const arm64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/arm64");
+
+    expect(amd64).toBe("nemoclaw-receipt-engine27-123-4-linux-amd64");
+    expect(arm64).toBe("nemoclaw-receipt-engine27-123-4-linux-arm64");
+    expect(amd64).not.toBe(arm64);
+  });
+
   it("bounds the complete Docker 27 probe and external cleanup", () => {
     expect(30 * 60_000).toBeGreaterThanOrEqual(DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS);
     expect(90_000).toBeGreaterThanOrEqual(DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS);
