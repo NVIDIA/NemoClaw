@@ -979,7 +979,15 @@ async function main() {
               return false;
             }
           });
-          if (matches.length === 1) for (const frame of frames) matches[0].socket.send(frame);
+          if (matches.length === 1)
+            return (async () => {
+              for (const [index, frame] of frames.entries()) {
+                matches[0].socket.send(frame);
+                if (index + 1 < frames.length)
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              return { matches: 1 };
+            })();
           return { matches: matches.length };
         },
         { channel, frames, origin: origin.origin },
