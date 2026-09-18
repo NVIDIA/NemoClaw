@@ -337,6 +337,7 @@ describe("uninstall Docker resource scope", () => {
     );
 
     expect(result.exitCode).toBe(1);
+    expect(calls).toContainEqual(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]);
     expect(calls).not.toContainEqual(["rm", "-f", "foreign-id"]);
     expect(calls.some((args) => args[0] === "rmi")).toBe(false);
   });
