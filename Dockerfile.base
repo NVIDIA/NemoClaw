@@ -622,6 +622,14 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
+# Baseline health check. The base image runs no service, so this only
+# verifies the Node.js runtime is functional. Child images that expose
+# a service (e.g. the production Dockerfile's gateway) MUST override
+# this with a service-specific probe; otherwise an unresponsive service
+# will still report healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD node -e "process.exit(0)"
+
 # Keep /usr/local/bin/openclaw as the symlink into this .bin directory so its
 # real path remains a valid package-resolution anchor. The wrapper satisfies
 # OpenClaw 2026.9.1's update-owner preflight without changing the sandbox user's
@@ -630,14 +638,6 @@ RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && install -o root -g root -m 0755 \
         /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
         /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
-
-# Baseline health check. The base image runs no service, so this only
-# verifies the Node.js runtime is functional. Child images that expose
-# a service (e.g. the production Dockerfile's gateway) MUST override
-# this with a service-specific probe; otherwise an unresponsive service
-# will still report healthy.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-    CMD node -e "process.exit(0)"
 
 # npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
 # expects the earlier array/direct-object shapes when installing local npm archives.

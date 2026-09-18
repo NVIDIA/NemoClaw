@@ -156,6 +156,27 @@ async function resolveOpenClawPostRestoreWindow(
   return null;
 }
 
+async function abortOpenClawPostRestoreWindowAfterFailure(
+  doctorWindow: OpenClawPostRestoreDoctorWindow,
+  log: RebuildLog,
+): Promise<void> {
+  log("Aborting OpenClaw post-upgrade maintenance window after rebuild failure");
+  try {
+    const abortResult = await abortOpenClawPostRestoreDoctor(doctorWindow);
+    log(`Post-upgrade doctor maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
+    if (!abortResult.ok) {
+      console.error(
+        `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
+      );
+    }
+  } catch {
+    log("Post-upgrade doctor maintenance abort: unverified");
+    console.error(
+      `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
+    );
+  }
+}
+
 /**
  * Repair agent state, restore MCP/forwarding, reconcile non-MCP registry state, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
@@ -368,21 +389,7 @@ export async function runRebuildPostRestorePhase(
     }
   } finally {
     if (openClawDoctorWindow) {
-      log("Aborting OpenClaw post-upgrade maintenance window after rebuild failure");
-      try {
-        const abortResult = await abortOpenClawPostRestoreDoctor(openClawDoctorWindow);
-        log(`Post-upgrade doctor maintenance abort: ${abortResult.ok ? "verified" : "unverified"}`);
-        if (!abortResult.ok) {
-          console.error(
-            `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
-          );
-        }
-      } catch {
-        log("Post-upgrade doctor maintenance abort: unverified");
-        console.error(
-          `  ${YW}\u26a0${R} OpenClaw maintenance abort could not prove the sandbox stopped.`,
-        );
-      }
+      await abortOpenClawPostRestoreWindowAfterFailure(openClawDoctorWindow, log);
     }
   }
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
