@@ -496,6 +496,7 @@ export async function describeSandboxPortForwardListener(
   expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
   forwardAdapterForAuthority?: OpenShellForwardObservationAdapterFactory,
+  expectedListenerPid?: number,
 ): Promise<SandboxForwardListener> {
   return await inspectSandboxPortForwardListener(
     sandboxName,
@@ -503,6 +504,7 @@ export async function describeSandboxPortForwardListener(
     expectedBind,
     runtimeSelection,
     forwardAdapterForAuthority,
+    expectedListenerPid,
   );
 }
 
@@ -512,6 +514,7 @@ async function inspectSandboxPortForwardListener(
   expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
   forwardAdapterForAuthority: OpenShellForwardObservationAdapterFactory = createOpenShellForwardAdapterForAuthority,
+  expectedListenerPid?: number,
 ): Promise<SandboxForwardListener> {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return "absent";
@@ -520,6 +523,9 @@ async function inspectSandboxPortForwardListener(
     const { authority, runtime } = forwardRuntimeAuthority(gatewayName, runtimeSelection);
     const [observation] = await forwardAdapterForAuthority(runtime).observeForwards({
       forwards: [sandboxForwardIdentity(runtime, sandboxName, port, expectedBind)],
+      ...(expectedListenerPid === undefined
+        ? {}
+        : { expectedListenerPidsByPort: new Map([[port, expectedListenerPid]]) }),
       assertCurrent: async () =>
         assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority),
     });

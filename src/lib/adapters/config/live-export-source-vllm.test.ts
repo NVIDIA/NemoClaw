@@ -23,13 +23,13 @@ import { servingProfileProvenance } from "../../inference/serving/profile-proven
 import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
-import { getLiveGatewayInference } from "../../inference/live";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { createLiveExportSnapshotReader } from "./live-export-source";
 import {
   braveProvider,
@@ -118,11 +118,9 @@ function mockManagedVllmSource(
     provider: "vllm-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "vllm-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: vllm-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });

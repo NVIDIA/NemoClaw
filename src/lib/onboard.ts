@@ -871,7 +871,7 @@ const {
   readInferenceRouteState,
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
-} = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
+} = inferenceRouteHelpers.createCliInferenceRouteHelpers(captureOpenshell);
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
@@ -1575,7 +1575,7 @@ const {
   readRecordedEndpointUrl,
   readRecordedInferenceRoute,
   readRecordedProviderEndpoints,
-} = providerRecovery.createProviderRecoveryHelpers({
+} = providerRecovery.createCliProviderRecoveryHelpers({
   captureOpenshell,
   selectedGatewayName: () => GATEWAY_NAME,
   warn: (message) => console.warn(message),
