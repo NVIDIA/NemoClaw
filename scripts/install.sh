@@ -3601,7 +3601,9 @@ run_preupgrade_backup() {
 }
 
 force_fresh_install_has_existing_state() {
-  local container_inventory receipt_volume_inventory volume_name
+  local container_inventory receipt_volume_inventory volume_name volume_label volume_suffix
+  local existing_state=0 managed_docker_state=0
+  _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
   if [[ -e "$(nemoclaw_state_root)" ]] \
     || [[ -e "${HOME}/.config/nemoclaw" ]] \
     || [[ -e "${HOME}/.config/openshell" ]] \
@@ -3613,27 +3615,42 @@ force_fresh_install_has_existing_state() {
     || [[ -e "${HOME}/.local/bin/openshell-driver-vm" ]] \
     || command_exists nemoclaw \
     || command_exists openshell; then
-    return 0
+    existing_state=1
   fi
   if command_exists brew \
     && brew list --formula nvidia/openshell/openshell >/dev/null 2>&1; then
-    return 0
+    existing_state=1
   fi
   if command_exists docker; then
     docker info >/dev/null 2>&1 || return 2
     container_inventory="$(
       docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract 2>/dev/null
     )" || return 2
-    [[ -z "$container_inventory" ]] || return 0
+    [[ -z "$container_inventory" ]] || managed_docker_state=1
     receipt_volume_inventory="$(
-      docker volume ls \
-        --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 \
-        --format '{{.Name}}' 2>/dev/null
+      docker volume ls --format '{{.Name}}' 2>/dev/null
     )" || return 2
     while IFS= read -r volume_name; do
-      [[ "$volume_name" =~ ^nemoclaw-managed-startup-receipt-volume-[0-9a-f]{32}$ ]] && return 0
+      case "$volume_name" in
+        nemoclaw-managed-startup-receipt-volume-*) ;;
+        *) continue ;;
+      esac
+      volume_suffix="${volume_name#nemoclaw-managed-startup-receipt-volume-}"
+      [[ "${#volume_suffix}" -eq 32 && "$volume_suffix" =~ ^[0-9a-f]+$ ]] || continue
+      volume_label="$(
+        docker volume inspect \
+          --format '{{ index .Labels "io.nvidia.nemoclaw.managed-startup.receipt" }}' \
+          "$volume_name" 2>/dev/null
+      )" || return 2
+      if [[ "$volume_label" == "1" ]]; then
+        managed_docker_state=1
+      else
+        _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME="$volume_name"
+        return 3
+      fi
     done <<<"$receipt_volume_inventory"
   fi
+  ((existing_state == 0 && managed_docker_state == 0)) || return 0
   return 1
 }
 
@@ -3715,6 +3732,7 @@ run_force_fresh_install_reset() {
       ;;
     1) info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install." ;;
     2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
+    3) error "Force-fresh cleanup found pre-label receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. NemoClaw cannot prove ownership of this legacy volume. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
     *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
   esac
   remove_macos_openshell_for_force_fresh_install

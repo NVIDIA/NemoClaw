@@ -77,6 +77,7 @@ it("detects Docker-only state only through an authoritative managed-image label"
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") printf '0123456789ab\n' ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
 `,
@@ -99,7 +100,7 @@ it("does not treat an unlabeled prefix-matching Docker container as owned state"
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
-  "volume ls --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 --format {{.Name}}") exit 0 ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
 esac
 `,
@@ -121,10 +122,16 @@ it("detects labelled Docker receipt-volume-only state", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
-  "volume ls --filter label=io.nvidia.nemoclaw.managed-startup.receipt=1 --format {{.Name}}")
+  "volume ls --format {{.Name}}")
     printf 'nemoclaw-managed-startup-receipt-volume-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
     ;;
-  *) exit 1 ;;
+  *)
+    if [[ "$1" == "volume" && "$2" == "inspect" ]]; then
+      printf '1\n'
+      exit 0
+    fi
+    exit 1
+    ;;
 esac
 `,
   );
@@ -135,6 +142,48 @@ esac
   });
 
   expect(result.status).toBe(0);
+});
+
+it("stops before cleanup for a pre-label receipt-volume-only state", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-legacy-receipt-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  const legacyVolume = "nemoclaw-managed-startup-receipt-volume-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract") exit 0 ;;
+  "volume ls --format {{.Name}}") printf '%s\n' "$LEGACY_VOLUME" ;;
+  *)
+    if [[ "$1" == "volume" && "$2" == "inspect" ]]; then
+      printf '<no value>\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      LEGACY_VOLUME: legacyVolume,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(`pre-label receipt volume ${legacyVolume}`);
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
 it("stops before cleanup when Docker is installed but unavailable", () => {
