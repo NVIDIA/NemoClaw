@@ -4,6 +4,12 @@
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
+export const agentSetupRuntime = {
+  now: () => Date.now(),
+  sleepMs: (milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
+};
+
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
 
 export interface AgentSetupStateOptions<Agent> {
@@ -16,6 +22,7 @@ export interface AgentSetupStateOptions<Agent> {
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
+  managedOpenclawStartup?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
@@ -32,6 +39,7 @@ export interface AgentSetupStateOptions<Agent> {
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
+    isOpenclawGatewayReady(sandboxName: string, timeoutMs?: number): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -41,6 +49,7 @@ export interface AgentSetupStateOptions<Agent> {
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },
     ): Promise<void>;
+    announceOpenclawSetup?(): void;
     setupOpenclaw(
       sandboxName: string,
       model: string,
@@ -54,6 +63,7 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
+      managedProfileApplied?: boolean,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -75,6 +85,7 @@ export async function handleAgentSetupState<Agent>({
   session,
   hermesAuthMethod,
   hermesToolGateways,
+  managedOpenclawStartup = false,
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
@@ -111,9 +122,43 @@ export async function handleAgentSetupState<Agent>({
       provider,
       webSearchConfig,
       revalidateSandboxIdentity,
+      managedOpenclawStartup === true,
     );
     revalidateSandboxIdentity?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
+    await deps.recordStepComplete(
+      "openclaw",
+      deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
+    );
+  } else if (managedOpenclawStartup) {
+    deps.announceOpenclawSetup?.();
+    await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
+    let ready = false;
+    const deadline = agentSetupRuntime.now() + 60_000;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const remainingBeforeProbe = deadline - agentSetupRuntime.now();
+      if (remainingBeforeProbe <= 0) break;
+      ready = await deps.isOpenclawGatewayReady(sandboxName, Math.min(3_000, remainingBeforeProbe));
+      if (ready) break;
+      const remainingBeforeDelay = deadline - agentSetupRuntime.now();
+      if (remainingBeforeDelay <= 0) break;
+      await agentSetupRuntime.sleepMs(Math.min(1_000, remainingBeforeDelay));
+    }
+    if (!ready) {
+      throw new Error(
+        `Managed OpenClaw startup did not publish gateway readiness for sandbox '${sandboxName}' within 60 seconds.`,
+      );
+    }
+    revalidateSandboxIdentity?.(`synchronize managed OpenClaw in sandbox '${sandboxName}'`);
+    await deps.configureOpenclawSandbox(
+      sandboxName,
+      model,
+      provider,
+      webSearchConfig,
+      revalidateSandboxIdentity,
+      true,
+    );
+    revalidateSandboxIdentity?.(`complete managed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),

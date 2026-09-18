@@ -39,7 +39,6 @@ const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 
-import { dockerStart } from "../../adapters/docker/container";
 import {
   createCliOpenShellSandboxLookup,
   stripOpenShellCliAnsi,
@@ -70,7 +69,6 @@ import {
   getStatusProbeTimeoutMs,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/runtime";
-import { D, G, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
@@ -100,8 +98,11 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
-import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import {
+  mutateRegisteredStandardSandboxLifecycle,
+  type RegisteredStandardLifecycleDeps,
+} from "./runtime/lifecycle-runtime";
 
 export type SandboxGatewayState = {
   state: string;
@@ -1007,100 +1008,45 @@ export async function getReconciledSandboxGatewayState(
 
 const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
 
-function startSandboxThroughOpenShell(sandboxName: string, gatewayName: string) {
-  return captureOpenshell(["sandbox", "start", "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
-  });
+export interface ProbeRecoveryLifecycleDeps extends RegisteredStandardLifecycleDeps {
+  readonly capture?: typeof captureOpenshell;
+  readonly getSandbox: (sandboxName: string) => SandboxEntry | null;
 }
 
-/**
- * Start a sandbox whose container already runs while OpenShell still reports it
- * `Stopped`. Only that phase is started: any other phase means the sandbox is
- * running or settling, and the readiness wait owns the outcome (#11790).
- */
-function startStoppedSandboxPhaseForProbeRecovery(
+/** Start only a registered, identity-bound standard sandbox that OpenShell reports Stopped. */
+export async function startStoppedSandboxContainerForProbeRecovery(
   sandboxName: string,
-  gatewayName: string,
-): boolean {
-  const probe = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
-  });
-  const phase = probe.status === 0 ? parseSandboxPhase(probe.output ?? "") : null;
-  if (!sandboxPhaseNeedsLifecycleStart(phase)) return false;
-  console.error(
-    `  Sandbox '${sandboxName}' is still stopped while its container runs — starting it...`,
-  );
-  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
-  if (lifecycle.status === 0) {
-    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
-    return true;
-  }
-  console.error(
-    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); continuing with readiness checks.`,
-  );
-  return false;
-}
-
-/**
- * Start a stopped sandbox before the probe-only readiness wait begins polling.
- * `recover` and `connect --probe-only` both advertise that they restart a
- * stopped sandbox, but the wait loop only observes the sandbox phase.
- *
- * OpenShell — not Docker — owns that phase. A bare `docker start` puts the
- * container back in `Up` without advancing the sandbox out of `Stopped`, so the
- * readiness wait can never succeed, and the resulting running-container /
- * stopped-phase pair is exactly the state that makes a later `start` report
- * "already running" and skip the lifecycle start too (#11790). Issuing
- * `openshell sandbox start` restarts the same container — workspace state and
- * managed configuration preserved, as #8967 requires — and advances the phase.
- *
- * A container that already runs is not proof that the sandbox is running: the
- * same stopped-phase / running-container pair reaches this function whenever
- * something started the container outside OpenShell, and returning early there
- * left the readiness wait to expire on a sandbox that one lifecycle start would
- * have recovered. So a running container is started through OpenShell too when
- * OpenShell still reports the sandbox `Stopped`, and left alone for any other
- * phase.
- *
- * `docker start` remains the fallback for the case #8967 was filed for: an
- * exited container whose OpenShell start did not succeed still gets running
- * again, and the Docker-driver start path repairs the phase on the next
- * `start`. It is not a fallback for an already-running container, which needs
- * no Docker start at all. A nonzero or missing status continues to the
- * readiness wait, which surfaces the existing stopped-container guidance. The
- * function returns true only when it started the sandbox. It leaves an
- * unresolved or paused container unchanged, and a paused container keeps its
- * `docker unpause` guidance.
- */
-export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
-  const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.paused) return false;
-  const gatewayName = getSandboxTargetGatewayName(sandboxName);
-  if (runtime.running) return startStoppedSandboxPhaseForProbeRecovery(sandboxName, gatewayName);
-  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
-  const lifecycle = startSandboxThroughOpenShell(sandboxName, gatewayName);
-  if (lifecycle.status === 0) {
-    console.error(`  ${G}✓${R} Started sandbox '${sandboxName}' through OpenShell.`);
-    return true;
-  }
-  console.error(
-    `  OpenShell could not start sandbox '${sandboxName}' (exit ${lifecycle.status ?? "unknown"}); starting its container directly.`,
-  );
-  const result = dockerStart(runtime.containerName, {
-    ignoreError: true,
-    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
-  });
-  if (result.status === 0) {
-    console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
-    return true;
-  } else {
-    console.error(
-      `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
+  deps: ProbeRecoveryLifecycleDeps,
+): Promise<boolean> {
+  const sandbox = deps.getSandbox(sandboxName);
+  if (!sandbox) {
+    const missing = await mutateRegisteredStandardSandboxLifecycle(
+      "start",
+      sandboxName,
+      null,
+      deps,
     );
+    console.error(missing.message);
     return false;
   }
+  const gatewayName = sandbox.gatewayName ?? "nemoclaw";
+  const probe = (deps.capture ?? captureOpenshell)(
+    ["sandbox", "get", "-g", gatewayName, sandboxName],
+    { ignoreError: true, timeout: RECOVER_CONTAINER_START_TIMEOUT_MS },
+  );
+  const phase = probe.status === 0 ? parseSandboxPhase(probe.output ?? "") : null;
+  if (!sandboxPhaseNeedsLifecycleStart(phase)) return false;
+  console.error(`  Sandbox '${sandboxName}' is stopped — starting it through OpenShell...`);
+  const result = await mutateRegisteredStandardSandboxLifecycle("start", sandboxName, sandbox, {
+    ...deps,
+    readRegistry: deps.getSandbox,
+  });
+  if (result.exitCode === 0) return true;
+  console.error(
+    result.message ??
+      `  OpenShell could not start sandbox '${sandboxName}'; continuing with readiness checks.`,
+  );
+  return false;
 }
 
 export async function ensureLiveSandboxOrExit(
@@ -1141,24 +1087,10 @@ export async function ensureLiveSandboxOrExit(
       exit(1);
     }
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
-      const dockerRuntime = getSandboxDockerRuntime(sandboxName);
-      if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+      if (phase === "Stopped") {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
         console.error("  Workspace state is preserved.");
         console.error(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
-        exit(1);
-      }
-      if (phase === "Error" && dockerRuntime.paused && dockerRuntime.containerName) {
-        console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
-        console.error("");
-        console.error(
-          `  The Docker-driver container for '${sandboxName}' is paused: ${dockerRuntime.containerName}`,
-        );
-        console.error(
-          "  A paused container can report 'Phase: Error' even though the sandbox is intact.",
-        );
-        console.error("  Resume it to restore the running phase:");
-        console.error(`    ${D}docker unpause ${dockerRuntime.containerName}${R}`);
         exit(1);
       }
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
@@ -1166,7 +1098,7 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      if (phase === "Error" && dockerRuntime?.containerName) {
+      if (phase === "Error") {
         console.error(
           `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
         );

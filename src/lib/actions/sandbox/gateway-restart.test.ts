@@ -102,6 +102,27 @@ describe("restartSandboxGateway native lifecycle", () => {
     );
   });
 
+  it("settles Hermes health when restart closes its own exec relay", async () => {
+    silenceConsole();
+    const waitForRecoveredSandboxGateway = vi.fn(async () => true);
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      executeSandboxExecCommand: vi.fn(async () => ({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error:   × code: 'The service is currently unavailable', message: \"exec relay closed\n  │ before the command reported an exit status\"",
+      })),
+      waitForRecoveredSandboxGateway,
+    });
+
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toMatchObject(
+      { ok: true },
+    );
+    expect(waitForRecoveredSandboxGateway).toHaveBeenCalledOnce();
+  });
+
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {
     silenceConsole();
     const execute = vi.fn(async () => ({

@@ -59,7 +59,6 @@ import {
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
 } from "../managed-startup/state-roots";
-import type { ManagedBootstrapRuntimePatch } from "../managed-bootstrap/runtime-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -101,6 +100,10 @@ function cancelRecoveryIdentity(
 }
 
 /** Finalize provider arguments from the exact policy that creation consumes. */
+type ManagedBootstrapRuntimePatch = Readonly<{
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+}>;
+
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
@@ -1531,7 +1534,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readDcodeSelectionDrift,
       sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
-      getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
       getRequestedSandboxAgentName,
       getSandboxAgentDrift,
@@ -2476,6 +2478,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 : hermesDashboardState,
               hermesApiPort: hermesApiPortReservationScope.effectivePort,
               manageDashboard,
+              managedBootstrapIdentity:
+                acceptedTargetPendingIdentity?.managedBootstrapIdentity ?? null,
               openshellShellCommand,
               openshellArgv,
             },
@@ -2578,15 +2582,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runForNewSandboxCreate(agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate, () =>
       recreateRuntime.advance("creating"),
     );
-    const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
-      runtime: managedWorkloadRuntime,
-      workload: preparedSandboxWorkload,
-      sandboxName,
-      stateRoot: getDockerDriverGatewayStateDir(),
-      bootstrapIdentity: managedBootstrapIdentity,
-      request: managedStartupRootApplyRequest,
-      intendedWorkloadArgv: intendedSandboxStartupCommand,
-    });
     const recoveredHermesLifecycleGeneration = readHermesPortableLifecycleGeneration({
       enabled: agentCreateInput.hermesPortableLifecycle,
       sandboxName,
@@ -2903,6 +2898,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             createAttemptNonce: identity.createAttemptNonce,
+            ...(managedBootstrapIdentity ? { managedBootstrapIdentity } : {}),
             route: identity.route,
           };
         },
@@ -2936,16 +2932,95 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ),
         retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        runVerifiedCreateEffects: runDeferredProviderEffects
-          ? async (_identity, _exactIdentity, boundary) => {
-              const context: VerifiedSandboxCreateEffectsContext = {
-                ...boundary,
-                revalidateSandboxIdentity: (operation) =>
-                  revalidateVerifiedCreateIdentity(boundary, operation),
-              };
-              await runDeferredProviderEffects(context);
-            }
-          : undefined,
+        runVerifiedCreateEffects:
+          managedStartupRootApplyRequest || runDeferredProviderEffects
+            ? async (identity, _exactIdentity, boundary) => {
+                const context: VerifiedSandboxCreateEffectsContext = {
+                  ...boundary,
+                  revalidateSandboxIdentity: (operation) =>
+                    revalidateVerifiedCreateIdentity(boundary, operation),
+                };
+                if (managedStartupRootApplyRequest) {
+                  context.revalidateSandboxIdentity(
+                    `applying managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                  if (!managedBootstrapIdentity) {
+                    throw new Error("Managed startup launch has no exact bootstrap identity.");
+                  }
+                  if (!managedWorkloadRuntime.runtimeProvider) {
+                    throw new Error("Managed startup launch has no selected runtime provider.");
+                  }
+                  console.log("  Applying managed startup profile to the verified sandbox...");
+                  let managedStartupTransaction: ReturnType<
+                    typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
+                  >;
+                  try {
+                    managedStartupTransaction =
+                      managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
+                        bootstrapIdentity: managedBootstrapIdentity,
+                        request: managedStartupRootApplyRequest,
+                      });
+                  } catch (error) {
+                    console.error(
+                      `  Managed startup root apply failed: ${
+                        error instanceof Error ? error.message : "unknown root apply failure"
+                      }`,
+                    );
+                    throw error;
+                  }
+                  console.log("  ✓ Applied the managed startup profile");
+                  if (managedStartupTransaction) {
+                    console.log("  Committing managed startup shared state...");
+                    const sharedState =
+                      managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
+                        transaction: managedStartupTransaction,
+                        supervisorReady: true,
+                      });
+                    if (!sharedState.supervisorReady || sharedState.failure) {
+                      console.error(
+                        `  Managed startup shared-state commit failed: ${
+                          sharedState.failure?.message ?? "startup supervisor was not ready"
+                        }`,
+                      );
+                      throw (
+                        sharedState.failure ??
+                        new Error("Managed startup shared-state commit failed.")
+                      );
+                    }
+                    console.log("  ✓ Committed managed startup shared state");
+                    try {
+                      managedWorkloadOnboard.releaseProviderManagedStartupHold({
+                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        sandboxName,
+                        sandboxId: identity.sandboxId,
+                        transaction: managedStartupTransaction,
+                        profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+                      });
+                    } catch (error) {
+                      console.error(
+                        `  Managed startup hold release failed after commit: ${
+                          error instanceof Error ? error.message : "unknown release failure"
+                        }`,
+                      );
+                      throw error;
+                    }
+                    console.log("  ✓ Released the managed startup hold");
+                  }
+                  managedBootstrapCreateFinished = true;
+                  context.revalidateSandboxIdentity(
+                    `confirming managed startup profile for sandbox '${sandboxName}'`,
+                  );
+                  console.log("  ✓ Revalidated the managed startup sandbox identity");
+                }
+                if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
+              }
+            : undefined,
         create: async (verifyCreatedSandbox) => {
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
@@ -2985,9 +3060,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               prebuild,
               restoreBackupPath,
               terminalAgent: agentDefs.isTerminalAgent(agent),
-              managedBootstrap,
+              managedImage: preparedSandboxWorkload.source.kind === "managed-image",
               verifyCreatedSandboxBeforeEffects: async (identity) => {
-                managedBootstrapCreateFinished = managedBootstrap !== null;
+                managedBootstrapCreateFinished = false;
                 managedBootstrapCreateRoute = identity.route;
                 await verifyCreatedSandbox(identity);
               },
@@ -3117,7 +3192,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         allowManagedBootstrapNotReady: () =>
           allowsManagedBootstrapNotReady(
-            managedBootstrap !== null,
+            managedStartupRootApplyRequest !== null,
             requireVerifiedCreateBoundary().route,
             pendingCreateIdentity,
           ),
@@ -3173,9 +3248,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
       }
-      if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
+      if (managedStartupRootApplyRequest || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
-          "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
+          "Hermes portable onboarding cannot use managed startup root application or Docker GPU compatibility.",
         );
       }
       if (!inferenceRouteReservationAuthority?.sessionId) {

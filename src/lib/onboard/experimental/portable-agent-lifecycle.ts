@@ -303,6 +303,15 @@ export function qualifyPortableAgentLifecycleAuthority(
   return { ...disposition, entry };
 }
 
+/** Admit only an exact retained Hermes receipt for legacy profile compatibility. */
+export function qualifyLegacyHermesPortableLifecycleProfile(
+  sandboxName: string,
+  deps: PortableAgentLifecycleAuthorityDeps,
+): boolean {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  return authority.kind === "hermes" && authority.phase === "active" && authority.entry !== null;
+}
+
 /** Require active Hermes receipt and exact registry authority. */
 export function requireHermesPortableActiveLifecycleAuthority(
   sandboxName: string,

@@ -215,7 +215,11 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "b01bc9d1a6857ab2ad5d23bdee2af70d18b3cbc2963cebb7493e7e6d44957010",
+      relativePath: "managed-startup-direct-image-runtime.bundle",
+    },
+    {
+      expectedHash: "f00a03aa854a37e94ac3d592ad75470e89530a20956c5e59473fedf6affdb775",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
@@ -242,6 +246,21 @@ describe("MCP tool discovery image contract", () => {
     expect(actualHash, relativePath).toBe(
       reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
     );
+  });
+
+  it("executes the direct managed-startup runtime entrypoint", () => {
+    const bundle = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+    );
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-startup-runtime-"));
+    const executable = path.join(fixture, "managed-startup-image-runtime.cjs");
+    fs.copyFileSync(bundle, executable);
+    const result = spawnSync(process.execPath, [executable], { encoding: "utf8" });
+    fs.rmSync(fixture, { recursive: true, force: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("usage: managed-startup-image-runtime");
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
@@ -425,7 +444,7 @@ describe("MCP tool discovery image contract", () => {
         "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
       );
       expect(dockerfile).toContain(
-        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
       );
       expect(dockerfile).toContain(
         `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,

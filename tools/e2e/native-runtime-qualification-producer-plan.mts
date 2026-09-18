@@ -24,7 +24,6 @@ export const NATIVE_RUNTIME_QUALIFICATION_FOCUSED_OPERATIONS = [
   "snapshot-restore",
   "clone",
   "backup",
-  "crash-recovery",
   "rollback",
   "name-reuse",
   "installer",

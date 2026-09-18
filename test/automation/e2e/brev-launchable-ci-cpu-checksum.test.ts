@@ -307,6 +307,11 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     const { fake, result } = runLaunchable({ checksum: "match", reviewedNpmFailure: true });
     try {
       expect(result.status, combinedLaunchableOutput(result, fake.launchLog)).toBe(42);
+      const reviewedNpmAttempts = fs
+        .readFileSync(fake.sudoLog, "utf8")
+        .split(/\r?\n/u)
+        .filter((line) => line.includes("setup-reviewed-npm/verify-and-install-npm.sh"));
+      expect(reviewedNpmAttempts).toHaveLength(3);
       const temporaryDirectory = fs.readFileSync(fake.npmTmpLog, "utf8").trim();
       expect(temporaryDirectory).not.toBe("");
       expect(fs.existsSync(temporaryDirectory)).toBe(false);

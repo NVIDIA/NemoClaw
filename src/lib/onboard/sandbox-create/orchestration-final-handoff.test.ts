@@ -55,7 +55,6 @@ import type {
 import {
   createGpuFlowDeps,
   createGpuFlowInput,
-  createGpuPatchFixture,
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "../__test-helpers__/sandbox-gpu-create-flow";
@@ -377,34 +376,6 @@ describe("durable final-handoff publication", () => {
       flowInput.persistRetainedSandboxRecovery = vi.fn(() => true);
       flowInput.persistResumedFinalHandoffAcknowledgement =
         checkpointPersistence.persistResumedFinalHandoffAcknowledgement;
-      const runtimePatch = createGpuPatchFixture();
-      flowInput.managedBootstrap = {
-        bootstrapIdentity: "managed-bootstrap-identity",
-        stateRoot: path.join(tempHome, "managed-bootstrap"),
-        runtimeProvider: {
-          identity: { id: "docker" },
-          bootstrap: {
-            createOnboardRouting: () => null,
-            createLifecycle: (options: { readonly launchArgv: readonly string[] }) => ({
-              launchArgv: options.launchArgv,
-              patch: runtimePatch,
-              recoverUnfinished: async () => null,
-              prepareNetwork: async () => undefined,
-              runCreate: async () => {
-                throw new Error("resumed handoff must not create another sandbox");
-              },
-            }),
-          },
-        },
-        authorityStore: {},
-        request: {},
-        image: {},
-        agentIdentity: {},
-        workspaceRoot: {},
-        managedStateRoots: [],
-        intendedWorkloadArgv: flowInput.sandboxStartupCommand,
-        expectedSupervisorArgv: [],
-      } as never;
       const deps = createGpuFlowDeps(sandboxId);
       const created = await runSandboxGpuCreateFlow(flowInput, deps);
 

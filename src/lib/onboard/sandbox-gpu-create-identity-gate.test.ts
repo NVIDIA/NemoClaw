@@ -203,11 +203,6 @@ describe("created sandbox identity gate", () => {
         ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      events.push("portable-lifecycle");
-      return "generation-1";
-    });
-
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       origin: "resumed",
       route: "none",
@@ -220,7 +215,6 @@ describe("created sandbox identity gate", () => {
     );
     expect(events).toEqual([
       "verify-created",
-      "revalidate:activate managed sandbox network for 'alpha'",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
       "revalidate:apply runtime patch for sandbox 'alpha'",
@@ -230,8 +224,6 @@ describe("created sandbox identity gate", () => {
       "readiness",
       "revalidate:commit runtime readiness for sandbox 'alpha'",
       "commit",
-      "revalidate:record portable lifecycle for sandbox 'alpha'",
-      "portable-lifecycle",
     ]);
   });
 
@@ -502,10 +494,6 @@ describe("created sandbox identity gate", () => {
       expect(patch.exitOnPatchError).not.toHaveBeenCalled();
       expect(patch.ensureApplied).not.toHaveBeenCalled();
     });
-    deps.installPortableDemoLifecycle = vi.fn(() => {
-      events.push("portable-lifecycle");
-      return "generation-1";
-    });
     vi.mocked(deps.runCaptureOpenshell)
       .mockImplementationOnce((args) => {
         expect(args).not.toContain("--selector");
@@ -555,8 +543,6 @@ describe("created sandbox identity gate", () => {
       "readiness",
       "revalidate:commit runtime readiness for sandbox 'alpha'",
       "commit",
-      "revalidate:record portable lifecycle for sandbox 'alpha'",
-      "portable-lifecycle",
     ]);
     expect(deps.runCaptureOpenshell).toHaveBeenNthCalledWith(
       2,
