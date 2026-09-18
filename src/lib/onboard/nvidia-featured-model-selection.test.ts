@@ -104,6 +104,7 @@ describe("NVIDIA featured model selection", () => {
       "requested/model",
     );
     await expect(session.select(null, "recovered/model", true)).resolves.toBe("recovered/model");
+    await expect(session.select(null, "recovered/model", false)).resolves.toBe("recovered/model");
     await expect(session.select(null, null, true, " environment/model ")).resolves.toBe(
       "environment/model",
     );
@@ -178,6 +179,21 @@ describe("NVIDIA featured model selection", () => {
       expect(promptCloudModel).not.toHaveBeenCalled();
     },
   );
+
+  it("prompts instead of recovering a different model after an interactive retired request", async () => {
+    const retiredModel = "minimaxai/minimax-m3";
+    const warn = vi.fn();
+    vi.mocked(promptCloudModel).mockResolvedValueOnce("chosen/model");
+    const session = createNvidiaFeaturedModelSession({ warn, writeLine: vi.fn() });
+
+    await expect(session.select(retiredModel, "recovered/model", false)).resolves.toBe(
+      "chosen/model",
+    );
+    expect(promptCloudModel).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      `  Warning: configured NVIDIA model "${retiredModel}" is retired; choose a replacement model.`,
+    );
+  });
 
   it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {
     const select = vi.fn().mockResolvedValue("nvidia/selected-model");
