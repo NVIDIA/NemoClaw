@@ -134,10 +134,11 @@ describe("protected managed-image runtime workflow", () => {
       ...steps.slice(steps.indexOf(boundary) + 1).filter((step) => step !== auth),
     ];
 
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup Docker Hub auth must run immediately after the shared boundary build",
-    );
-  });
+    const expected =
+      "managed-image-multiarch-startup Docker Hub auth must run immediately after the shared boundary build";
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(expected);
+    expect(validateE2eWorkflow(value)).toContain(expected);
+  }, 15_000);
 
   it.each([
     ["nemoclaw/dist/shared/openshell-policy-boundary.cjs", "nemoclaw/dist/shared/missing.cjs"],
