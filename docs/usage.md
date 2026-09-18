@@ -71,7 +71,8 @@ Destroy retains that network and gateway storage.
 
 ## Fabric Health During Apply
 
-Apply requests health from the existing hosted Fabric runtime after configuration and infrastructure readiness checks, including on unchanged applies.
+Apply requests health from the existing hosted Fabric runtime after its applicable configuration and infrastructure checks, including on unchanged applies.
+A completely unchanged apply still runs preflight and provider-refresh configuration checks, but skips the redundant post-apply sandbox readiness wait.
 It does not start a second runtime, invoke the agent, send generation requests, repair health failures, or replay work.
 Plan, export, and destroy do not request Fabric health.
 
@@ -83,7 +84,7 @@ A dependency marked unsupported is not a successful check; Fabric owns its effec
 
 The pinned Fabric does not yet provide `runtime.check_health()`.
 New agent images include the bridge but report `supported: false`, `report: null`, and `reason_code: fabric_health_unsupported`.
-Apply retains its existing configuration and readiness checks in this case; success does not establish fresh Fabric health or working inference.
+Apply retains the other checks applicable to its plan in this case; success does not establish fresh Fabric health or working inference.
 The proposed upstream contract is [Fabric #305](https://github.com/NVIDIA/NeMo-Fabric/pull/305); real adapter health qualification remains **TBD** until an accepted implementation is pinned and tested.
 
 Use an [agent image built from this revision](build.md#build-agent-images).
@@ -261,7 +262,8 @@ nemoclaw apply --state-dir .local/deployment exported-new.yaml
 
 For a fully observed unchanged deployment, expect an empty `changes` list.
 A nonempty `deferred` list means the plan is incomplete, even if the current changes list is empty.
-Unchanged apply still performs configuration and readiness checks; it can fail if a required service is unavailable.
+Unchanged apply still performs preflight and provider-refresh configuration checks and requests Fabric health, but skips the post-apply sandbox readiness wait.
+It can still fail if a required service is unavailable or Fabric health does not allow completion.
 It does not send generation requests.
 Keep the original YAML until verification succeeds.
 
