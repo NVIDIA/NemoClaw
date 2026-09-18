@@ -273,6 +273,32 @@ describe("Hermes MCP reload finality", () => {
     expect(String(failure)).not.toContain("host-only-secret");
   });
 
+  it("retains relay-loss finality when a credential overlaps the diagnostic text", async () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: hermesReloadRelayLoss,
+    });
+
+    let failure: unknown;
+    try {
+      await registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        { GITHUB_TOKEN: "exec relay" },
+        { credentialRevision: "v12" },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(HermesMcpReloadRelayLossError);
+    expect(failure).toMatchObject({ credentialRevision: "v12" });
+    expect(String(failure)).not.toContain("exec relay");
+  });
+
   it.each([
     ["another exit status", { status: 2, stdout: "", stderr: hermesReloadRelayLoss }],
     [

@@ -36,7 +36,7 @@ export class HermesMcpReloadRelayLossError extends McpBridgeError {
 
   constructor(credentialRevision: McpAttachedCredentialRevision) {
     super(
-      "The Hermes MCP reload closed its OpenShell exec relay before the add outcome was confirmed.",
+      "The Hermes MCP reload lost its OpenShell transport before the add outcome was confirmed.",
     );
     this.name = "HermesMcpReloadRelayLossError";
     this.credentialRevision = credentialRevision;
@@ -65,6 +65,14 @@ function isHermesReloadRelayLossResult(
     !result.error &&
     normalizeHermesReloadDiagnostic(output) === HERMES_RELOAD_RELAY_LOSS
   );
+}
+
+function rawHermesCommandOutput(result: ReturnType<typeof runOpenshellProviderCommand>): string {
+  const stdout =
+    typeof result.stdout === "string" ? result.stdout : (result.stdout?.toString() ?? "");
+  const stderr =
+    typeof result.stderr === "string" ? result.stderr : (result.stderr?.toString() ?? "");
+  return `${stderr}${stdout}`.replace(/\r/gu, "").trim();
 }
 
 export function buildHermesMcpRegisterCommand(
@@ -328,17 +336,14 @@ function runHermesAdapterCommand(
       redactBridgeSecretsForDisplay(detail, entry, options.envValues ?? {}) || failureMessage,
     );
   }
-  const output = redactBridgeSecretsForDisplay(
-    commandOutput(result, options.envValues ?? {}),
-    entry,
-    options.envValues ?? {},
-  );
+  const rawOutput = rawHermesCommandOutput(result);
+  const output = redactBridgeSecretsForDisplay(rawOutput, entry, options.envValues ?? {});
   if (result.status !== 0 || result.error) {
     if (options.bestEffort) return;
     if (
       options.requireReload &&
       options.credentialRevision &&
-      isHermesReloadRelayLossResult(result, output)
+      isHermesReloadRelayLossResult(result, rawOutput)
     ) {
       throw new HermesMcpReloadRelayLossError(options.credentialRevision);
     }
