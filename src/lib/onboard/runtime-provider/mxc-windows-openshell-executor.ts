@@ -692,6 +692,13 @@ const DEFAULT_RUNTIME: MxcWindowsOpenShellExecutorRuntime = {
   runCommand: runStructuredCommand,
 };
 
+/** Build the trusted default runtime with an explicit child-process environment. */
+export function createMxcWindowsOpenShellExecutorRuntime(
+  environment: NodeJS.ProcessEnv = process.env,
+): MxcWindowsOpenShellExecutorRuntime {
+  return Object.freeze({ ...DEFAULT_RUNTIME, environment });
+}
+
 /** Create the dormant physical-Windows OpenShell executor for one provider-owned distribution. */
 export function createMxcWindowsOpenShellExecutor(
   input: MxcWindowsOpenShellExecutorInput,
@@ -704,7 +711,7 @@ export function createMxcWindowsOpenShellExecutor(
   const runtime = input.runtime
     ? input.runtime
     : input.environment
-      ? { ...DEFAULT_RUNTIME, environment: input.environment }
+      ? createMxcWindowsOpenShellExecutorRuntime(input.environment)
       : DEFAULT_RUNTIME;
   if (runtime.platform !== "win32") {
     throw new MxcWindowsOpenShellExecutorError("the trusted executor requires Windows");

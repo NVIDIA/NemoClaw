@@ -58,9 +58,10 @@ export async function createWindowsMxcInactiveOnboardingComposition(
   const boundary = createMxcWindowsOpenShellExecutor({
     distributionAuthority: input.distributionAuthority,
     observationRequest: input.attachmentObservation,
-    environment: input.executorEnvironment,
+    ...(input.executorRuntime
+      ? { runtime: input.executorRuntime }
+      : { environment: input.executorEnvironment }),
     environmentReferences: input.executorEnvironmentReferences,
-    runtime: input.executorRuntime,
     recordFailure: input.recordFailure,
   });
   const operations = createMxcOpenShellLiveOperations({

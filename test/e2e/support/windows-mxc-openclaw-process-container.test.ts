@@ -16,6 +16,7 @@ import {
   buildWindowsMxcSetupFailureReceipt,
   classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
+  copyWindowsMxcOpenClawArchiveWithSha256,
   createWindowsMxcOpenShellAttachmentObservationRequest,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
@@ -39,6 +40,7 @@ import {
   sha256File,
   withWindowsMxcLocalSetupOwnership,
   windowsMxcAppContainerAclArguments,
+  windowsMxcAppContainerReadOnlyAclArguments,
   windowsMxcOpenClawStartupPreconditionsPass,
   withoutOpenShellGatewaySelection,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
@@ -68,6 +70,7 @@ function fixture(): {
     entry: path.join(openClawRoot, "runtime", "openclaw.mjs"),
     gateway: path.join(openShellRoot, "openshell-gateway.exe"),
     node: path.join(openClawRoot, "node", "node.exe"),
+    openClawArchive: path.join(distributionDirectory, "openclaw-2026.7.1-windows.zip"),
     relay: path.join(openShellRoot, "openshell-supervisor-relay.exe"),
     wxc: path.join(mxcRoot, "wxc-exec.exe"),
   };
@@ -80,10 +83,10 @@ function fixture(): {
       NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION: "wxc-host-prep-prepare-system-drive",
       NEMOCLAW_WINDOWS_MXC_NODE: paths.node,
       NEMOCLAW_WINDOWS_MXC_NODE_SHA256: sha256File(paths.node),
+      NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARCHIVE: paths.openClawArchive,
+      NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARCHIVE_SHA256: sha256File(paths.openClawArchive),
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY: paths.entry,
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256: sha256File(paths.entry),
-      NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARTIFACT_TREE_SHA256:
-        sha256WindowsOpenClawArtifactTree(openClawRoot),
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT: openClawRoot,
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION: "2026.7.1",
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ARTIFACT: paths.artifact,
@@ -127,7 +130,7 @@ afterEach(() => {
 
 describe("inactive Windows MXC OpenClaw process_container qualification", () => {
   it.each([undefined, "1"])(
-    "records authoritative schema 9 receipts with retired diagnostic option=%s (#8178)",
+    "records authoritative schema 10 receipts with retired diagnostic option=%s (#8178)",
     (diagnosticOption) => {
       const { environment } = fixture();
       environment.NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC = diagnosticOption;
@@ -140,7 +143,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       };
       const receipt = buildWindowsMxcSetupFailureReceipt(inputs, context, true);
 
-      expect(receipt.schemaVersion).toBe(9);
+      expect(receipt.schemaVersion).toBe(10);
+      expect(receipt.configuration.artifactStaging).toBe("pinned-archive-read-only-reused");
       expect(receipt.identities.host).toMatchObject(context);
       expect(receipt.qualificationMode).toBe("authoritative");
       expect(inputs).not.toHaveProperty("allowDiagnosticNameDeletion");
@@ -427,8 +431,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(parsed.expected.openShellDistributionSha256).toBe(
       environment.NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256,
     );
-    expect(parsed.expected.openClawArtifactTreeSha256).toBe(
-      environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARTIFACT_TREE_SHA256,
+    expect(parsed.expected.openClawArchiveSha256).toBe(
+      environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARCHIVE_SHA256,
     );
     expect(parsed.expected.wxcExecSha256).toBe(environment.NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256);
     expect(parsed.declaredHostPreparation).toBe("wxc-host-prep-prepare-system-drive");
@@ -675,8 +679,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       shareDirectory: "C:\\probe\\share",
     });
 
-    expect(policy).toContain("read_only: []");
-    expect(policy).toContain('read_write:\n    - "C:/artifact"\n    - "C:/probe/share"');
+    expect(policy).toContain('read_only:\n    - "C:/artifact"');
+    expect(policy).toContain('read_write:\n    - "C:/probe/share"');
     expect(policy).toContain("include_workdir: false");
     expect(policy).toContain("ui:\n  allow_graphical_ui: true");
     expect(policy).toContain("clipboard: none");
@@ -733,6 +737,48 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       "/C",
       "/Q",
     ]);
+  });
+
+  it("grants AppContainer package groups read and execute access to the immutable artifact (#8178)", () => {
+    expect(windowsMxcAppContainerReadOnlyAclArguments("C:\\artifact", "YUKON\\lab")).toEqual([
+      "C:\\artifact",
+      "/inheritance:r",
+      "/grant:r",
+      "YUKON\\lab:(OI)(CI)(F)",
+      "*S-1-5-18:(OI)(CI)(F)",
+      "*S-1-5-32-544:(OI)(CI)(F)",
+      "*S-1-15-2-1:(OI)(CI)(RX)",
+      "*S-1-15-2-2:(OI)(CI)(RX)",
+      "/T",
+      "/C",
+      "/Q",
+    ]);
+    expect(() =>
+      windowsMxcAppContainerReadOnlyAclArguments("C:\\artifact", "YUKON\\lab:injected"),
+    ).toThrow(/owner identity is invalid/u);
+  });
+
+  it("copies and pins one OpenClaw archive in a single source pass (#8178)", async () => {
+    const { root } = fixture();
+    const source = path.join(root, "packages", "openclaw-2026.7.1-windows.zip");
+    const destination = path.join(root, "copied-openclaw.zip");
+    const expected = sha256File(source);
+
+    await expect(
+      copyWindowsMxcOpenClawArchiveWithSha256(source, destination, expected),
+    ).resolves.toBe(expected);
+    expect(fs.readFileSync(destination)).toEqual(fs.readFileSync(source));
+  });
+
+  it("removes a copied OpenClaw archive when its pinned digest is wrong (#8178)", async () => {
+    const { root } = fixture();
+    const source = path.join(root, "packages", "openclaw-2026.7.1-windows.zip");
+    const destination = path.join(root, "rejected-openclaw.zip");
+
+    await expect(
+      copyWindowsMxcOpenClawArchiveWithSha256(source, destination, "0".repeat(64)),
+    ).rejects.toThrow(/expected exact identity/u);
+    expect(fs.existsSync(destination)).toBe(false);
   });
 
   it("prepares an empty staging root before copying the artifact (#10585)", async () => {

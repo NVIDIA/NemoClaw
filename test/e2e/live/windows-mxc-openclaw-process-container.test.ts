@@ -4,6 +4,7 @@
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   parseWindowsMxcOpenClawQualificationEnvironment,
+  prepareWindowsMxcOpenClawArchiveArtifact,
   runWindowsMxcOpenClawProcessContainerQualification,
   WINDOWS_MXC_OPENCLAW_QUALIFICATION_RECEIPT_SCHEMA_VERSION,
   type WindowsMxcOpenClawQualificationReceipt,
@@ -66,7 +67,9 @@ qualificationTest(
   async ({ progress }) => {
     progress.phase("qualify the Windows host and validate exact artifact identities");
     const inputs = parseWindowsMxcOpenClawQualificationEnvironment(process.env);
+    const preparedOpenClaw = await prepareWindowsMxcOpenClawArchiveArtifact(inputs, progress);
     const expectedConfiguration = {
+      artifactStaging: "pinned-archive-read-only-reused",
       declaredHostPreparation: inputs.declaredHostPreparation,
       egressProxy: true,
       networkDefaultPolicy: "block",
@@ -94,15 +97,24 @@ qualificationTest(
       sensitiveRuntimeArtifactsRemoved: true,
     } as const;
 
-    progress.phase("start OpenClaw and verify in-sandbox readiness plus filesystem enforcement");
-    const firstReceipt = await runWindowsMxcOpenClawProcessContainerQualification(inputs, progress);
-    expectQualificationReceipt(firstReceipt, expectedConfiguration, expectedCleanup);
+    try {
+      progress.phase("start OpenClaw and verify in-sandbox readiness plus filesystem enforcement");
+      const firstReceipt = await runWindowsMxcOpenClawProcessContainerQualification(
+        inputs,
+        progress,
+        preparedOpenClaw,
+      );
+      expectQualificationReceipt(firstReceipt, expectedConfiguration, expectedCleanup);
 
-    progress.phase("repeat sandbox creation, chat, and cleanup without stale state");
-    const secondReceipt = await runWindowsMxcOpenClawProcessContainerQualification(
-      inputs,
-      progress,
-    );
-    expectQualificationReceipt(secondReceipt, expectedConfiguration, expectedCleanup);
+      progress.phase("repeat sandbox creation, chat, and cleanup without stale state");
+      const secondReceipt = await runWindowsMxcOpenClawProcessContainerQualification(
+        inputs,
+        progress,
+        preparedOpenClaw,
+      );
+      expectQualificationReceipt(secondReceipt, expectedConfiguration, expectedCleanup);
+    } finally {
+      preparedOpenClaw.release();
+    }
   },
 );
