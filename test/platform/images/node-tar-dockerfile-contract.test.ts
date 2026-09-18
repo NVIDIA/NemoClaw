@@ -595,7 +595,6 @@ describe("reviewed npm image remediation contract", () => {
       "agents/hermes/Dockerfile.base:<final>",
       "agents/langchain-deepagents-code/Dockerfile.base:native-security-builder",
       "agents/langchain-deepagents-code/Dockerfile.base:<final>",
-      "agents/pi/Dockerfile:managed-bootstrap-entrypoint-builder",
       "agents/pi/Dockerfile.base:native-security-builder",
       "agents/pi/Dockerfile.base:<final>",
     ]);
