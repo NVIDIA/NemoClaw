@@ -54,7 +54,18 @@ describe("codebase growth guardrails workflow trust boundary", () => {
 
   it.each([
     ["trigger", (workflow: Value) => (workflow.on.pull_request = {})],
+    [
+      "base retarget trigger",
+      (workflow: Value) =>
+        (workflow.on.pull_request_target.types = workflow.on.pull_request_target.types.filter(
+          (type: string) => type !== "edited",
+        )),
+    ],
     ["permissions", (workflow: Value) => (workflow.permissions.contents = "write")],
+    [
+      "default branch scope",
+      (workflow: Value) => delete workflow.jobs["codebase-growth-guardrails"].if,
+    ],
     [
       "base checkout",
       (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[0].with.ref = "main"),

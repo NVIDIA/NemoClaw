@@ -102,6 +102,7 @@ const OPENCLAW_PROFILE = {
   inference: {
     routeProvider: "inference",
     upstreamProvider: "nvidia-prod",
+    servingPreset: null,
     model: "nvidia/nemotron-3-ultra-550b-a55b",
     routedBaseUrl: "https://inference.local/v1",
     upstreamEndpointUrl: null,

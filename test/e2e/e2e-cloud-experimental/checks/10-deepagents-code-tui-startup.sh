@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Case: Deep Agents Code interactive TUI startup (#5620).
+# Case: Deep Agents Code interactive TUI model turn (#5620, #11847).
 #
 # This live check runs two interactive sessions against a real Deep Agents Code
-# sandbox. It proves completed sessions do not leak
-# DCode/LangGraph processes and leaves only sanitized, secret-free capture
-# artifacts.
+# sandbox. It proves the sandbox still blocks memfd creation, the real QuickJS
+# runtime initializes without that optimization, and each TUI completes a model
+# turn. Completed sessions must not leak DCode/LangGraph processes. The check
+# retains only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
 # expect(1) Tcl: $env(...) and {...} are Tcl/sh expansion, not bash expansion.
@@ -16,8 +17,13 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
-TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
+CHECK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+DCODE_TUI_SESSION_GUARD="${CHECK_DIR}/../dcode-tui-session-guard.sh"
+TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-120}"
+TUI_SESSION_ID="${NEMOCLAW_TUI_SESSION_ID:-}"
 PROCESS_CLEANUP_TIMEOUT=20
+SANDBOX_EXEC_TIMEOUT_SECONDS=45
+SANDBOX_EXEC_KILL_AFTER_SECONDS=5
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/agents/deepagents/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
@@ -33,7 +39,15 @@ TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.55)'
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
 TUI_NAME_PROMPT_PATTERN='(your name \(optional\)|what should deep agents call you)'
+TUI_MODEL_PROMPT='What is 731 + 206? Reply only with the number.'
+TUI_MODEL_RESPONSE_PATTERN='(^|[^0-9])937([^0-9]|$)'
+TUI_RUNTIME_ERROR_PATTERN='(cannot create a memfd|wasmtimeerror)'
 SENSITIVE_CAPTURE_FILES=()
+
+if [ -n "$TUI_SESSION_ID" ] && [[ ! "$TUI_SESSION_ID" =~ ^[0-9a-f-]{36}$ ]]; then
+  printf '%s\n' "${PREFIX}: invalid caller TUI session id" >&2
+  exit 2
+fi
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -46,8 +60,30 @@ pass() {
   PASSED=$((PASSED + 1))
 }
 
+run_bounded_host_command() {
+  local timeout_command
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_command="$(command -v timeout)"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_command="$(command -v gtimeout)"
+  else
+    printf '%s\n' "${PREFIX}: timeout or gtimeout is required for bounded host execution" >&2
+    return 127
+  fi
+  "$timeout_command" \
+    --signal=TERM \
+    --kill-after="${SANDBOX_EXEC_KILL_AFTER_SECONDS}s" \
+    "${SANDBOX_EXEC_TIMEOUT_SECONDS}s" \
+    "$@"
+}
+
 sandbox_exec() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+  run_bounded_host_command \
+    openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+sandbox_quickjs_memfd_probe() {
+  sandbox_exec '/opt/venv/bin/python3 -I -c '\''import ctypes, errno; from quickjs_rs import Runtime; libc = ctypes.CDLL(None, use_errno=True); libc.memfd_create.argtypes = (ctypes.c_char_p, ctypes.c_uint); libc.memfd_create.restype = ctypes.c_int; descriptor = libc.memfd_create(b"nemoclaw-denial-probe", 3); assert descriptor == -1 and ctypes.get_errno() == errno.EPERM; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42; context.close(); runtime.close(); print("NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK")'\'''
 }
 
 sandbox_is_ready() {
@@ -69,25 +105,14 @@ is_positive_integer() {
 }
 
 dcode_process_count() {
-  sandbox_exec 'self=$$; parent=$PPID; count=0; for proc_dir in /proc/[0-9]*; do pid=${proc_dir##*/}; case " $self $parent " in *" $pid "*) continue ;; esac; [ -r "$proc_dir/cmdline" ] || continue; cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue; case "${cmdline,,}" in *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;; esac; done; printf "NEMOCLAW_DCODE_PROCESS_COUNT:%s\n" "$count"'
+  run_bounded_host_command "$DCODE_TUI_SESSION_GUARD" baseline "$SANDBOX_NAME" 2>&1
 }
 
 wait_for_dcode_process_baseline() {
   local baseline="$1"
-  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  local count output
-  while :; do
-    output="$(dcode_process_count)" || return 1
-    count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$output" | tail -n1)"
-    [[ "$count" =~ ^[0-9]+$ ]] || return 1
-    if [ "$count" -le "$baseline" ]; then
-      return 0
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      return 1
-    fi
-    sleep 1
-  done
+  run_bounded_host_command \
+    "$DCODE_TUI_SESSION_GUARD" wait "$SANDBOX_NAME" "$baseline" "$PROCESS_CLEANUP_TIMEOUT" \
+    >/dev/null 2>&1
 }
 
 ensure_expect_available() {
@@ -187,20 +212,28 @@ run_tui_expect() {
     NEMOCLAW_TUI_COMPOSER_PATTERN="$TUI_COMPOSER_PATTERN" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
+    NEMOCLAW_TUI_MODEL_PROMPT="$TUI_MODEL_PROMPT" \
+    NEMOCLAW_TUI_MODEL_RESPONSE_PATTERN="$TUI_MODEL_RESPONSE_PATTERN" \
     NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
+    NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN="$TUI_RUNTIME_ERROR_PATTERN" \
     NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
+    NEMOCLAW_TUI_SESSION_ID="$TUI_SESSION_ID" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
 set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
+set session_id $env(NEMOCLAW_TUI_SESSION_ID)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 set composer_pattern $env(NEMOCLAW_TUI_COMPOSER_PATTERN)
 set markers $env(NEMOCLAW_TUI_MARKERS)
 set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
+set model_prompt $env(NEMOCLAW_TUI_MODEL_PROMPT)
+set model_response_pattern $env(NEMOCLAW_TUI_MODEL_RESPONSE_PATTERN)
 set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
+set runtime_error_pattern $env(NEMOCLAW_TUI_RUNTIME_ERROR_PATTERN)
 set expect_name_prompt $env(NEMOCLAW_TUI_EXPECT_NAME_PROMPT)
 log_file -a $capture
 
@@ -222,7 +255,45 @@ proc submit_agents {markers} {
   append_marker $markers "NEMOCLAW_TUI_AGENTS_SUBMITTED"
 }
 
-set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
+proc submit_model_prompt {markers prompt} {
+  foreach char [split $prompt ""] {
+    send -- $char
+    after 25
+  }
+  after 250
+  send -- "\r"
+  append_marker $markers "NEMOCLAW_TUI_MODEL_PROMPT_SUBMITTED"
+}
+
+proc terminate_failed_tui {markers sandbox exit_code} {
+  # DCode arms quit on the first Ctrl-C and exits on the second. Always run the
+  # complete sequence before returning a failed session to the shell harness.
+  catch {send -- "\003"}
+  after 250
+  catch {send -- "\003"}
+
+  set timeout 20
+  expect {
+    -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:$expect_out(1,string)"
+      puts "\nNEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:$expect_out(1,string)"
+      exit $exit_code
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:$sandbox"
+      puts "\nNEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:$sandbox"
+      catch {send -- "\003"}
+      exit 29
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_FAILURE_CLEANUP_EOF:$sandbox"
+      puts "\nNEMOCLAW_TUI_FAILURE_CLEANUP_EOF:$sandbox"
+      exit 30
+    }
+  }
+}
+
+set cmd [list openshell sandbox exec --name $sandbox --tty -- env "NEMOCLAW_TUI_SESSION_ID=$session_id" sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 
 # DCode's own onboarding predicate is sampled immediately before launch. This
@@ -246,14 +317,12 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-      send -- "\003"
-      exit 24
+      terminate_failed_tui $markers $sandbox 24
     }
     timeout {
       append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
       puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
+      terminate_failed_tui $markers $sandbox 20
     }
     eof {
       append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -274,21 +343,18 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
-      send -- "\003"
-      exit 25
+      terminate_failed_tui $markers $sandbox 25
     }
     -nocase -re $first_run_pattern {
       append_marker $markers "$expect_out(0,string)"
       append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
       puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-      send -- "\003"
-      exit 24
+      terminate_failed_tui $markers $sandbox 24
     }
     timeout {
       append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
       puts "\nNEMOCLAW_TUI_TIMEOUT"
-      send -- "\003"
-      exit 20
+      terminate_failed_tui $markers $sandbox 20
     }
     eof {
       append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -308,14 +374,12 @@ expect {
     append_marker $markers "$expect_out(0,string)"
     append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
     puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
-    send -- "\003"
-    exit 24
+    terminate_failed_tui $markers $sandbox 24
   }
   timeout {
     append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
     puts "\nNEMOCLAW_TUI_TIMEOUT"
-    send -- "\003"
-    exit 20
+    terminate_failed_tui $markers $sandbox 20
   }
   eof {
     append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
@@ -327,9 +391,35 @@ expect {
 append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
-# Close the Select Agent modal before exercising the idle-app quit path.
+# Close the Select Agent modal before submitting the first model prompt.
 send -- "\033"
 after 500
+submit_model_prompt $markers $model_prompt
+
+set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+expect {
+  -re $model_response_pattern {
+    append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"
+    puts "\nNEMOCLAW_TUI_MODEL_TURN_COMPLETE"
+  }
+  -nocase -re $runtime_error_pattern {
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_RUNTIME_FAILURE"
+    puts "\nNEMOCLAW_TUI_RUNTIME_FAILURE"
+    terminate_failed_tui $markers $sandbox 26
+  }
+  timeout {
+    append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
+    puts "\nNEMOCLAW_TUI_MODEL_TURN_TIMEOUT"
+    terminate_failed_tui $markers $sandbox 27
+  }
+  eof {
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_MODEL_RESPONSE"
+    puts "\nNEMOCLAW_TUI_EOF_BEFORE_MODEL_RESPONSE"
+    exit 28
+  }
+}
+
 # Idle dcode arms quit on the first Ctrl-C and exits on the second.
 send -- "\003"
 after 250
@@ -435,11 +525,21 @@ main() {
     exit 1
   fi
 
+  local quickjs_probe_output
+  if quickjs_probe_output="$(sandbox_quickjs_memfd_probe)" \
+    && grep -Fxq "NEMOCLAW_MEMFD_BLOCKED_QUICKJS_OK" <<<"$quickjs_probe_output"; then
+    pass "OpenShell blocks memfd creation and the real QuickJS runtime initializes"
+  else
+    fail_test "QuickJS runtime did not initialize while OpenShell blocked memfd creation"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
+
   local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
   # The typed target may inherit agent processes from earlier checks, so the
   # acceptance contract is no increase from one recorded baseline. The small
-  # local polling helper is reused for both sessions; separate capture names
+  # shared session guard is reused for both sessions; separate capture names
   # retain per-session evidence instead of overwriting the first failure.
   local baseline_output baseline_process_count
   if ! baseline_output="$(dcode_process_count)"; then
@@ -502,10 +602,25 @@ main() {
       print_sanitized_capture_excerpt "$plain_capture_file"
     fi
 
+    if grep -Eq "NEMOCLAW_TUI_FAILURE_CLEANUP_(TIMEOUT|EOF):${SANDBOX_NAME}" "$plain_capture_file"; then
+      fail_test "session ${session_index}: failed TUI cleanup did not confirm exit for sandbox '${SANDBOX_NAME}'"
+      if ! wait_for_dcode_process_baseline "$baseline_process_count"; then
+        fail_test "session ${session_index}: DCode/LangGraph process count remained above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
+      fi
+      info "sanitized capture: ${plain_capture_file}"
+      break
+    fi
+
     if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
       pass "session ${session_index}: dcode TUI reached the main composer and opened Select Agent"
     else
       fail_test "session ${session_index}: dcode TUI Select Agent readiness marker missing from capture"
+    fi
+
+    if grep -q "NEMOCLAW_TUI_MODEL_TURN_COMPLETE" "$plain_capture_file"; then
+      pass "session ${session_index}: dcode TUI completed the first model turn"
+    else
+      fail_test "session ${session_index}: dcode TUI did not complete the first model turn"
     fi
 
     assert_clean_exit_code "$plain_capture_file"
