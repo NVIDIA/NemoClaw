@@ -23,7 +23,6 @@ mod tests {
     const ISSUE_12038: &str = "https://github.com/NVIDIA/NemoClaw/issues/12038";
     const ISSUE_12040: &str = "https://github.com/NVIDIA/NemoClaw/issues/12040";
     const ISSUE_12042: &str = "https://github.com/NVIDIA/NemoClaw/issues/12042";
-    const ISSUE_12044: &str = "https://github.com/NVIDIA/NemoClaw/issues/12044";
     const ISSUE_12045: &str = "https://github.com/NVIDIA/NemoClaw/issues/12045";
 
     // Independent source catalogs keep the coverage assertion from merely
@@ -249,6 +248,7 @@ mod tests {
     enum Qualification {
         DashboardLifecycle,
         GatewayEndpointLifecycle,
+        HermesInterfacesLifecycle,
         PodmanRuntime,
         ToolsObservabilityLifecycle,
         WebSearchLifecycle,
@@ -858,14 +858,12 @@ mod tests {
                 v0_source: "docs/reference/commands.mdx Hermes interface ports",
                 v0_inputs: &["NEMOCLAW_HERMES_API_PORT", "NEMOCLAW_HERMES_DASHBOARD_TUI"],
                 v0_behavior: "publish the Hermes OpenAI-compatible API on an explicit reserved port",
-                disposition: DispositionKind::ParsedDownstream,
-                gap: gap(
-                    "GAP-V0-INTERFACES-HERMES-API",
-                    Boundary::PlanRuntimeQualification,
-                    ISSUE_12044,
-                    "the Hermes API interface parses but generated host publication qualification is pending",
+                disposition: DispositionKind::Representable,
+                gap: None,
+                evidence: Evidence::QualifiedFixture(
+                    FixtureCase::HermesInterfaces,
+                    Qualification::HermesInterfacesLifecycle,
                 ),
-                evidence: Evidence::Fixture(FixtureCase::HermesInterfaces),
             },
             Scenario {
                 id: "V0-NETWORK-PROXY-TRUST",
@@ -1571,6 +1569,18 @@ mod tests {
                     8643
                 );
                 assert_eq!(
+                    value["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["enabled"],
+                    true
+                );
+                assert_eq!(
+                    value["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["port"],
+                    18800
+                );
+                assert_eq!(
+                    value["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["internalPort"],
+                    19120
+                );
+                assert_eq!(
                     value["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["tui"]["enabled"],
                     true
                 );
@@ -1593,6 +1603,16 @@ mod tests {
                         .contains("document.spec.gateway.endpoint = fixture.endpoint.clone()")
                 );
                 assert!(deployment.contains("assert_eq!(exported, document)"));
+            }
+            Qualification::HermesInterfacesLifecycle => {
+                assert!(
+                    deployment.contains("async fn hermes_interfaces_sdk_export_reapply_and_drift")
+                );
+                assert!(
+                    include_str!("../../nemoclaw-sdk/tests/interfaces.rs").contains(
+                        "fn hermes_native_interfaces_preserve_explicit_enablement_and_reject_collisions"
+                    )
+                );
             }
             Qualification::PodmanRuntime => {
                 assert!(
@@ -1789,8 +1809,8 @@ mod tests {
                 .iter()
                 .filter(|scenario| scenario.disposition == DispositionKind::Representable)
                 .count(),
-            8
+            9
         );
-        assert_eq!(gaps.len(), 39);
+        assert_eq!(gaps.len(), 38);
     }
 }
