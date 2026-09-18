@@ -54,6 +54,26 @@ class BuildControls(unittest.TestCase):
         )
         return source, project
 
+    def test_shared_browser_observer_matches_official_playwright_pin(self):
+        official = json.loads(
+            Path(__file__).with_name("official-runtime.lock.json").read_text()
+        )
+        shared = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "distribution/native-build-tools.lock.json"
+            ).read_text()
+        )
+        official_pin = next(
+            row for row in official["nodeBuildTools"] if row["id"] == "playwright-core"
+        )
+        shared_pin = next(
+            row for row in shared["packages"] if row["package"] == "playwright-core"
+        )
+        self.assertEqual(shared_pin["version"], official_pin["file"][16:-4])
+        self.assertEqual(shared_pin["url"], official_pin["url"])
+        self.assertEqual(shared_pin["integrity"], official_pin["upstreamIntegrity"])
+
     def test_entrypoint_reinstall_preserves_package_scoped_conpty_and_lock(self):
         source, project = self.entrypoint_fixture()
         original = project.read_bytes()
