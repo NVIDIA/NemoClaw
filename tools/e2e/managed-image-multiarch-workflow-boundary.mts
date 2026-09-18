@@ -256,6 +256,22 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
+  const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
+  requireFragments(errors, policyBoundary, [
+    "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
+    "npm run build:policy-boundary",
+    "nemoclaw/dist/shared/openshell-policy-boundary.cjs",
+    "nemoclaw/dist/shared/sandbox-name.cjs",
+    '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
+  ]);
+  if (
+    ["npm run build:cli", "npm --prefix nemoclaw run build"].some((command) =>
+      text(policyBoundary?.run).includes(command),
+    )
+  ) {
+    errors.push(`${JOB_ID} shared policy boundary step must not build the full CLI or plugin`);
+  }
+
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
   requireFragments(errors, activation, [
     `activation="${ACTIVATION_PATH}"`,
@@ -440,6 +456,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Checkout protected managed-image candidate source",
     "Validate trusted Hermes resolver checkout path",
     "Checkout trusted Hermes resolver",
+    "Prepare E2E workspace",
+    "Build shared policy boundary",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",
     "Remove trusted Hermes resolver checkout",

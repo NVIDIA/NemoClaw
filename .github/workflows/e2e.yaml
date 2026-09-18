@@ -4350,6 +4350,24 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Build shared policy boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
+            echo "::error::Shared policy boundary output exists before the candidate build" >&2
+            exit 1
+          }
+          npm run build:policy-boundary
+          for artifact in \
+            nemoclaw/dist/shared/openshell-policy-boundary.cjs \
+            nemoclaw/dist/shared/sandbox-name.cjs; do
+            [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {
+              echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2
+              exit 1
+            }
+          done
+
       - name: Validate candidate activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}

@@ -98,6 +98,63 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  // source-shape-contract: security -- The direct runner imports candidate shared modules and must not use stale build output
+  it("builds the candidate shared boundary before direct managed-image contracts", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const prepare = namedMultiarchStep(value, "Prepare E2E workspace");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
+
+    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
+    expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));
+
+    job.steps = [...steps.filter((step) => step !== boundary), boundary];
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+  });
+
+  it.each([
+    ["npm run build:policy-boundary", "npm run build:cli"],
+    ["nemoclaw/dist/shared/openshell-policy-boundary.cjs", "nemoclaw/dist/shared/missing.cjs"],
+    ["nemoclaw/dist/shared/sandbox-name.cjs", "nemoclaw/dist/shared/missing.cjs"],
+  ])("rejects a shared boundary step without %s", (required, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(required, replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      `managed-image-multiarch-startup step 'Build shared policy boundary' must include ${required}`,
+    );
+  });
+
+  it.each(["npm run build:cli", "npm --prefix nemoclaw run build"])(
+    "rejects additive full build command %s",
+    (command) => {
+      const value = workflow();
+      const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+      boundary.run = `${String(boundary.run)}\n${command}`;
+
+      expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+        "managed-image-multiarch-startup shared policy boundary step must not build the full CLI or plugin",
+      );
+    },
+  );
+
+  it("rejects duplicate shared policy boundary steps", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    (job.steps as Array<Record<string, unknown>>).push(structuredClone(boundary));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must define exactly one 'Build shared policy boundary' step",
+    );
+  });
+
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
   it.each([
     [
