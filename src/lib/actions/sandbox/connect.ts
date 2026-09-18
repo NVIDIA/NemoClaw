@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { createCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
@@ -638,7 +638,7 @@ function failHermesPortableReadinessAuthority(sandboxName: string): never {
 function captureHermesPortableOpenShell(
   sandboxName: string,
   args: string[],
-  options: { readonly includeStreams?: boolean; readonly timeout: number },
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]>,
 ) {
   const commandAuthority = buildHermesPortableCommandAuthority(sandboxName);
   return captureResolvedOpenshell(args, {
@@ -931,12 +931,14 @@ async function verifyHermesPortableInferenceRoute(
   } as const;
   const capture = (
     args: string[],
-    options: { readonly includeStreams?: boolean; readonly timeout: number },
+    options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]>,
   ) =>
     commandAuthority
       ? captureHermesPortableReadinessObservation(commandAuthority, args, options)
       : captureHermesPortableOpenShell(sandboxName, args, options);
-  const liveResult = await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute({
+  const liveResult = await createSynchronousCliOpenShellInferenceRouteObserver(
+    capture,
+  ).observeInferenceRoute({
     target: namedOpenShellGateway(authority.gatewayName),
     timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -1640,7 +1642,7 @@ async function ensureSandboxInferenceRouteUnlocked(
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
-    const liveResult = await createCliOpenShellInferenceRouteObserver(
+    const liveResult = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
       target: namedOpenShellGateway(gatewayName),

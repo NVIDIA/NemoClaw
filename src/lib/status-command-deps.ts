@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand } from "./adapters/openshell/client";
-import { createCliOpenShellInferenceRouteObserver } from "./adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "./adapters/openshell/inference-route-cli";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { isObjectRecord } from "./core/json-types";
 import { GATEWAY_PORT } from "./core/ports";
@@ -38,7 +38,7 @@ const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
 function captureOpenshell(
   rootDir: string,
   args: string[],
-  opts: { timeout?: number } = {},
+  opts: { maxBuffer?: number; timeout?: number } = {},
 ): CaptureOpenshellResult {
   const openshell = resolveOpenshell();
   if (!openshell) {
@@ -47,6 +47,7 @@ function captureOpenshell(
   return captureOpenshellCommand(openshell, args, {
     cwd: rootDir,
     ignoreError: true,
+    maxBuffer: opts.maxBuffer,
     timeout: opts.timeout,
   });
 }
@@ -255,8 +256,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
-  const inferenceRouteObserver = createCliOpenShellInferenceRouteObserver((args, opts) =>
-    captureOpenshell(rootDir, args, { timeout: opts.timeout }),
+  const inferenceRouteObserver = createSynchronousCliOpenShellInferenceRouteObserver((args, opts) =>
+    captureOpenshell(rootDir, args, { maxBuffer: opts.maxBuffer, timeout: opts.timeout }),
   );
 
   // Resolving a sandbox ID costs one OpenShell call, so only pay it when the

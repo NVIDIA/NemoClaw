@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders, type Provider } from "../openshell/providers";
-import { createCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
 import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
@@ -41,7 +41,6 @@ import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
 
-const CAPTURE_MAX_BYTES = 1024 * 1024;
 const CAPTURE_TIMEOUT_MS = 30_000;
 
 function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry {
@@ -100,16 +99,16 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
 
 async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
   const selected = getSandboxEntryInference(entry);
-  const observer = createCliOpenShellInferenceRouteObserver((args, options) =>
+  const observer = createSynchronousCliOpenShellInferenceRouteObserver((args, options) =>
     captureSanitizedResolvedOpenshell(args, {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      maxBuffer: CAPTURE_MAX_BYTES,
+      maxBuffer: options.maxBuffer,
       timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
     }),
   );
-  const result = await observer.observeInferenceRoute({
+  const result = observer.observeInferenceRoute({
     target: namedOpenShellGateway(gatewayName),
     timeoutMs: CAPTURE_TIMEOUT_MS,
   });
