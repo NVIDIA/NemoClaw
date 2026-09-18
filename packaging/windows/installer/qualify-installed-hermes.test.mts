@@ -23,6 +23,9 @@ import {
   hermesMessagesAfter,
   hermesTranscriptRoute,
   applyHermesSocketObservations,
+  hermesPromptLines,
+  hermesPromptFrames,
+  sanitizeHermesBrowserDiagnostic,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -297,6 +300,53 @@ test("live Hermes transcript polls cannot reuse a completed-turn URL", () => {
   assert.throws(() => hermesTranscriptRoute("saved-real", "profile-real", 0), /poll identity/u);
 });
 
+test("multiline Hermes prompts preserve exact bytes without an asynchronous paste chunk", () => {
+  const prompt = "First line\n```sh\nprintf fixture\n```\n\nLast line";
+  const lines = hermesPromptLines(prompt);
+  assert.deepEqual(lines, ["First line", "```sh", "printf fixture", "```", "", "Last line"]);
+  assert.equal(lines.join("\n"), prompt);
+  assert(lines.every((line) => !line.includes("\n")));
+  assert.deepEqual(hermesPromptFrames(prompt), [
+    "First line",
+    "\u001b[13;2u",
+    "```sh",
+    "\u001b[13;2u",
+    "printf fixture",
+    "\u001b[13;2u",
+    "```",
+    "\u001b[13;2u",
+    "\u001b[13;2u",
+    "Last line",
+    "\r",
+  ]);
+  assert.throws(() => hermesPromptLines("windows\r\nlines"), /canonical newlines/u);
+});
+
+test("Hermes browser diagnostics redact WebSocket credentials", () => {
+  assert.equal(
+    sanitizeHermesBrowserDiagnostic(
+      "WebSocket ws://127.0.0.1/api/pty?channel=visible&token=secret-token failed",
+      ["separate-secret"],
+    ),
+    "WebSocket ws://127.0.0.1/api/pty?channel=visible&token=<redacted> failed",
+  );
+  assert.equal(
+    sanitizeHermesBrowserDiagnostic(
+      "ticket URL ?ticket=one-use-value and X-Hermes-Session-Token: separate-secret",
+      ["separate-secret"],
+    ),
+    "ticket URL ?ticket=<redacted> and X-Hermes-Session-Token: <redacted>",
+  );
+});
+
+test("Hermes browser diagnostic bounds cannot expose a truncated credential", () => {
+  const prefix = "x".repeat(4090);
+  const secret = "private-credential-value";
+  const diagnostic = sanitizeHermesBrowserDiagnostic(prefix + secret, [secret]);
+  assert.equal(diagnostic, (prefix + "<redacted>").slice(0, 4096));
+  assert(!diagnostic.includes("privat"));
+});
+
 test("in-page Hermes socket observations preserve real PTY lifecycle evidence", () => {
   const state = createHermesPtyState();
   const channel = "actual-pty";
@@ -400,6 +450,14 @@ test("pre-session PTY reconnect still requires replacement live feeds", () => {
   state.bindPty("actual-pty");
   state.eventsClosed("actual-pty");
   state.ptyClosed("actual-pty");
+  assert.deepEqual(state.snapshot().connections, [
+    { endpoint: "events", action: "open", channel: "actual-pty" },
+    { endpoint: "pty", action: "open", channel: "actual-pty" },
+    { endpoint: "events", action: "close", channel: "actual-pty" },
+    { endpoint: "pty", action: "close", channel: "actual-pty" },
+  ]);
+  assert.equal(state.snapshot().eventFeedOpen, false);
+  assert.equal(state.snapshot().ptyFeedOpen, false);
   assert.throws(() => state.assertHealthy(), /not live/u);
   state.bindEvents("actual-pty");
   state.bindPty("actual-pty");

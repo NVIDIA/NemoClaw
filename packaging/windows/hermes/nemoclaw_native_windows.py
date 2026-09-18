@@ -25,6 +25,8 @@ from types import ModuleType
 REVISION = "2237be355906fbe6065ce1815711eee52b2d646e"
 MARKER = "nemoclaw-windows-runtime.json"
 _MODULES = {
+    "hermes_cli.config_home": "hermes_cli/config_home.py",
+    "hermes_cli.main_tui_launch": "hermes_cli/main_tui_launch.py",
     "tools.environments.local": "tools/environments/local.py",
     "tools.lazy_deps": "tools/lazy_deps.py",
     "tools.browser_tool_install": "tools/browser_tool_install.py",
@@ -87,6 +89,34 @@ def _same_path(left: Path, right: Path) -> bool:
     return str(left).replace("/", "\\").rstrip("\\").casefold() == str(
         right
     ).replace("/", "\\").rstrip("\\").casefold()
+
+
+def _owned_state_walk(path: Path, authority: str | None) -> tuple[Path, ...] | None:
+    """Return only the host-attested state-root portion of an absolute path walk."""
+    if not authority:
+        return None
+    candidate = _absolute_path(path)
+    state = _absolute_path(type(path)(authority))
+    if re.fullmatch(
+        r"[A-Za-z]:\\NemoClawState-S-1-(?:[0-9]+-)*[0-9]+-hermes",
+        str(state).replace("/", "\\"),
+    ) is None:
+        _refuse("the host-supplied native state identity is invalid.")
+    try:
+        candidate.relative_to(state)
+    except ValueError:
+        return None
+    walk = (*reversed(candidate.parents), candidate)
+    try:
+        start = next(
+            index for index, current in enumerate(walk) if _same_path(current, state)
+        )
+    except StopIteration:
+        _refuse("the native state path is outside its host authority.")
+    # The native state owner already created and holds this ordinary directory
+    # directly below the validated SystemDrive root. MXC grants the exact state
+    # subtree, while querying the volume anchor itself is deliberately denied.
+    return walk[start:]
 
 
 def _runtime_volume_mount(root: Path) -> Path | None:
@@ -355,7 +385,50 @@ class _BrowserSessionOs:
 
 
 def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
-    if module.__name__ == "tools.environments.local":
+    if module.__name__ == "hermes_cli.config_home":
+        original = module._directory_links
+
+        def owned_directory_links(path):
+            walk = _owned_state_walk(path, os.environ.get("NEMOCLAW_AGENT_HOME"))
+            if walk is None:
+                return original(path)
+            return [part for part in walk if part.is_symlink()]
+
+        module._directory_links = owned_directory_links
+    elif module.__name__ == "hermes_cli.main_tui_launch":
+        files = _prebuilt_node(root)
+        node_value = os.environ.get("HERMES_NODE")
+        node_authority = os.environ.get("NEMOCLAW_AGENT_NODE")
+        if files is None or not node_value or not node_authority:
+            _refuse("the installed prebuilt TUI launch contract is missing.")
+        node = _absolute_path(Path(node_value))
+        if not _same_path(node, _absolute_path(Path(node_authority))):
+            _refuse("the prebuilt TUI Node differs from its host authority.")
+        try:
+            if _path_kind(node) != "file":
+                _refuse("the prebuilt TUI Node has an invalid filesystem identity.")
+        except OSError:
+            _refuse("the prebuilt TUI Node is unavailable.")
+        entry = files["tui"]
+        tui_root = entry.parent.parent
+        original = module._make_tui_argv
+
+        def owned_tui_argv(tui_dir, tui_dev):
+            argv, cwd = original(tui_dir, tui_dev)
+            if (
+                tui_dev
+                or argv != [str(node), "--expose-gc", str(entry)]
+                or not _same_path(Path(cwd), tui_root)
+            ):
+                _refuse("the official prebuilt TUI launch command changed.")
+            # Node's default main-module realpath walk queries the otherwise
+            # ungranted volume anchor. The immutable entry path was validated
+            # above, so preserve only the main spelling; dependency resolution
+            # and every runtime/file grant remain unchanged.
+            return [str(node), "--preserve-symlinks-main", *argv[1:]], cwd
+
+        module._make_tui_argv = owned_tui_argv
+    elif module.__name__ == "tools.environments.local":
         original = module._find_bash
 
         def only_owned_candidates(_custom):
