@@ -1048,9 +1048,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const nativeMcpSources = Object.fromEntries(
     mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
   );
+  const legacyMcpSources = Object.fromEntries(
+    (overrides.mcpLegacySources ?? []).map((entry) => [
+      String(entry.server),
+      structuredClone(entry),
+    ]),
+  );
   vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue({
     native: nativeMcpSources,
-    legacy: {},
+    legacy: legacyMcpSources,
   });
   vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockReturnValue(nativeMcpSources);
   const defaultMcpPreparation = (

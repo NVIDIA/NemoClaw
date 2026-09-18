@@ -129,6 +129,7 @@ export type RebuildFlowOverrides = {
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
   };
+  mcpLegacySources?: Array<Record<string, unknown>>;
   runOpenshell?: (args: string[]) =>
     | {
         status: number;
