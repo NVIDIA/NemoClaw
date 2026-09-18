@@ -34,6 +34,7 @@ export type DestroyHarness = {
   events: string[];
   executeSandboxDestroySpy: MockInstance;
   enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
+  finalGatewaySleepSpy: MockInstance;
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
@@ -67,10 +68,10 @@ export type DestroyHarness = {
     stdout?: string;
     stderr?: string;
   }) => void;
+  setRegisteredSandboxCount: (count: number) => void;
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
-  shouldCleanupGatewaySpy: MockInstance;
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
@@ -241,9 +242,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const destroyGateway = requireSource(
     "./destroy-gateway.js",
   ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway");
-  const destroyGatewayCleanup = requireSource(
-    "./destroy-gateway-cleanup.js",
-  ) as typeof import("../../src/lib/actions/sandbox/destroy-gateway-cleanup");
   const destroyPresence = requireSource("./destroy-presence.js");
   const credentialStore = requireSource("../../credentials/store.js");
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
@@ -626,10 +624,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
     .mockImplementation(async () => undefined);
-  const shouldCleanupGatewaySpy = vi.spyOn(
-    destroyGatewayCleanup,
-    "shouldCleanupGatewayAfterConfirmedFinalDestroy",
-  );
+  const finalGatewaySleepSpy = vi.fn(async (_ms: number) => undefined);
   const assertDestroyIdentitySpy = vi.spyOn(
     destroyPresence,
     "assertUnambiguousDestroyContainerIdentity",
@@ -731,13 +726,19 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,
-    destroySandbox: requireSource(destroyModulePath).destroySandbox,
+    destroySandbox: (sandboxName, destroyOptions) =>
+      requireSource(destroyModulePath).destroySandbox(sandboxName, destroyOptions, {
+        finalGatewayCleanup: {
+          sleep: finalGatewaySleepSpy,
+        },
+      }),
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
     events,
     executeSandboxDestroySpy,
     runSandboxProviderPreDeleteCleanupSpy,
     enforceRemovedImmutabilityMigrationBoundarySpy,
+    finalGatewaySleepSpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
@@ -768,6 +769,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     setDockerIdentityResult: (result) => {
       dockerIdentityResult = result;
     },
+    setRegisteredSandboxCount: (count: number) => {
+      registeredSandboxCount = count;
+    },
     setRegistryEntryPresent: (present: boolean) => {
       registryEntryPresent = present;
     },
@@ -777,7 +781,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },
-    shouldCleanupGatewaySpy,
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,
