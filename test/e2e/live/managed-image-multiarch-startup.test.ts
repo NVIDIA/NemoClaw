@@ -104,11 +104,14 @@ test(
               timeoutMs: 30 * 60_000,
             },
           )
-        : { exitCode: 0, timedOut: false };
+        : null;
 
     expect(
-      docker27Result.exitCode === 0 &&
-        !docker27Result.timedOut &&
+      (docker27Result === null
+        ? dispatch.platform === "linux/arm64"
+        : docker27Result.exitCode === 0 &&
+          !docker27Result.timedOut &&
+          dispatch.platform === "linux/amd64") &&
         evidence.contractSha256 ===
           `sha256:${createHash("sha256").update(contractBytes).digest("hex")}` &&
         JSON.stringify(evidence.contracts) === JSON.stringify(contracts),
