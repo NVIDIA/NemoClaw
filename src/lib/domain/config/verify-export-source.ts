@@ -273,12 +273,14 @@ function classifyDeepAgentsBaseline(entry: ObservedExportRegistry): ExportFindin
           ),
         ]
       : []),
-    ...(entry.webSearchEnabled === true || hasEntries(entry.webSearchProvider)
+    ...(entry.webSearchEnabled !== false || entry.webSearchProvider !== null
       ? [
           finding(
             "spec.sandboxes[].integrations.webSearch",
-            "unsupported",
-            "Deep Agents export does not support retained web-search settings.",
+            entry.webSearchEnabled === undefined || entry.webSearchProvider === undefined
+              ? "missing-provenance"
+              : "unsupported",
+            "Deep Agents export requires web search to be explicitly disabled.",
           ),
         ]
       : []),

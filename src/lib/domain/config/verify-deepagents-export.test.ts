@@ -121,6 +121,12 @@ describe("Deep Agents config export (#11860)", () => {
       category: "unsupported",
     },
     {
+      label: "missing web search provenance",
+      observed: () => dcodeSnapshot({ webSearchEnabled: undefined, webSearchProvider: undefined }),
+      field: "spec.sandboxes[].integrations.webSearch",
+      category: "missing-provenance",
+    },
+    {
       label: "unsupported inference API",
       observed: () => dcodeSnapshot({ preferredInferenceApi: "openai-responses" }),
       field: "spec.inferenceProviders[].api",
