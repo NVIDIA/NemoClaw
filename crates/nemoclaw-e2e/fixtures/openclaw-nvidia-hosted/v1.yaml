@@ -55,11 +55,11 @@ spec:
                 - /app
               read_write:
                 - /sandbox
-      agents:
-        - name: primary
-          inference:
-            routes:
-              - name: primary
-                providerRef: hosted-nvidia-prod
-                overrides:
-                  model: nvidia/nemotron-3-super-120b-a12b
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b

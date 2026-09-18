@@ -11,7 +11,7 @@ fn input() -> Value {
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     value["spec"]["sandboxes"][0]["integrations"] =
         json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}});
-    value["spec"]["sandboxes"][0]["agents"][0]["integrationRefs"] = json!(["search"]);
+    value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search"]);
     value
 }
 #[test]
@@ -55,11 +55,11 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
 fn search_rejects_unknown_or_restricted_agents() {
     for refs in [json!(["missing"]), json!(["search", "search"])] {
         let mut value = input();
-        value["spec"]["sandboxes"][0]["agents"][0]["integrationRefs"] = refs;
+        value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = refs;
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
     let mut value = input();
-    value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"allow":["read"]});
+    value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
 
@@ -73,17 +73,22 @@ fn shared_integration_references_grant_only_the_selected_agents() {
     value["spec"]["integrations"] = json!({"search": {
         "kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}
     }});
-    let mut writer = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut writer = value["spec"]["sandboxes"][0].clone();
     writer["name"] = json!("writer");
+    writer["agent"]["name"] = json!("writer");
     let mut reader = writer.clone();
     reader["name"] = json!("reader");
-    reader.as_object_mut().unwrap().remove("integrationRefs");
-    value["spec"]["sandboxes"][0]["agents"]
+    reader["agent"]["name"] = json!("reader");
+    reader["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("integrationRefs");
+    value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .extend([writer, reader]);
     for index in [0, 1] {
-        value["spec"]["sandboxes"][0]["agents"][index]["integrationRefs"] = json!(["search"]);
+        value["spec"]["sandboxes"][index]["agent"]["integrationRefs"] = json!(["search"]);
     }
     let doc = Document::parse(value.to_string().as_bytes()).expect("shared definitions must parse");
     assert!(
@@ -101,12 +106,19 @@ fn shared_integration_references_grant_only_the_selected_agents() {
             .count(),
         1
     );
-    let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
-    let inference: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-    assert_eq!(
-        inference["webSearch"]["agentRefs"],
-        json!(["main", "writer"])
-    );
+    for row in rows.iter().filter(|row| row.kind == "sandbox") {
+        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
+        match row.values["name"].as_str() {
+            "assistant" => assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"])),
+            "writer" => assert_eq!(settings["webSearch"]["agentRefs"], json!(["writer"])),
+            "reader" => {
+                assert!(settings["webSearch"].is_null());
+                let policy: Value = serde_json::from_str(&row.values["policy_json"]).unwrap();
+                assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
+            }
+            name => panic!("unexpected sandbox {name}"),
+        }
+    }
     assert_eq!(
         doc.credential_names()
             .iter()
@@ -141,11 +153,11 @@ fn agent_inline_and_enclosing_definitions_compile_to_the_same_search_grants() {
         if scope == "deployment" {
             value["spec"]["integrations"] = definitions;
         } else {
-            value["spec"]["sandboxes"][0]["agents"][0]
+            value["spec"]["sandboxes"][0]["agent"]
                 .as_object_mut()
                 .unwrap()
                 .remove("integrationRefs");
-            value["spec"]["sandboxes"][0]["agents"][0]["integrations"] = definitions;
+            value["spec"]["sandboxes"][0]["agent"]["integrations"] = definitions;
         }
         let doc = Document::parse(value.to_string().as_bytes())
             .expect("inline and shared definitions must parse");
@@ -165,7 +177,7 @@ fn agent_inline_and_enclosing_definitions_compile_to_the_same_search_grants() {
 #[test]
 fn unused_definitions_create_no_search_resources_policy_or_secret_requirements() {
     let mut value = input();
-    value["spec"]["sandboxes"][0]["agents"][0]["integrationRefs"] = json!([]);
+    value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!([]);
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
@@ -178,30 +190,33 @@ fn unused_definitions_create_no_search_resources_policy_or_secret_requirements()
 }
 
 #[test]
-fn integration_scopes_reject_shadowing_and_sibling_agent_references() {
+fn integration_scopes_reject_shadowing_and_sibling_sandbox_references() {
     let original = input();
     let definitions = original["spec"]["sandboxes"][0]["integrations"].clone();
     let mut shared_collision = original.clone();
     shared_collision["spec"]["integrations"] = definitions.clone();
     let mut local_collision = original.clone();
-    local_collision["spec"]["sandboxes"][0]["agents"][0]["integrations"] = definitions.clone();
+    local_collision["spec"]["sandboxes"][0]["agent"]["integrations"] = definitions.clone();
     let mut global_collision = original.clone();
     global_collision["spec"]["sandboxes"][0]
         .as_object_mut()
         .unwrap()
         .remove("integrations");
     global_collision["spec"]["integrations"] = definitions.clone();
-    global_collision["spec"]["sandboxes"][0]["agents"][0]["integrations"] = definitions.clone();
+    global_collision["spec"]["sandboxes"][0]["agent"]["integrations"] = definitions.clone();
     let mut sibling = original;
     sibling["spec"]["sandboxes"][0]
         .as_object_mut()
         .unwrap()
         .remove("integrations");
-    let mut other = sibling["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = sibling["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
-    other.as_object_mut().unwrap().remove("integrationRefs");
-    other["integrations"] = definitions;
-    sibling["spec"]["sandboxes"][0]["agents"]
+    other["agent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("integrationRefs");
+    other["agent"]["integrations"] = definitions;
+    sibling["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .push(other);
@@ -215,7 +230,7 @@ fn distinct_search_definitions_are_not_silently_merged_by_value() {
     let mut value = input();
     let second = value["spec"]["sandboxes"][0]["integrations"]["search"].clone();
     value["spec"]["sandboxes"][0]["integrations"]["other"] = second;
-    value["spec"]["sandboxes"][0]["agents"][0]["integrationRefs"] = json!(["search", "other"]);
+    value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["search", "other"]);
     let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
     assert_eq!(
         error.0,
@@ -315,6 +330,6 @@ fn deep_agents_search_preserves_explicit_grants_and_rejects_read_only_agents() {
     )
     .unwrap();
     assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"]));
-    value["spec"]["sandboxes"][0]["agents"][0]["tools"] = json!({"allow":["read"]});
+    value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }

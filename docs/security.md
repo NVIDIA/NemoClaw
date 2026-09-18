@@ -13,8 +13,8 @@ Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and pr
 An explicit policy replaces the preset, and ordinary apply rejects policy changes that require sandbox replacement.
 
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
-OpenClaw tool grants and separate agent workspaces do not create separate process or filesystem security boundaries.
-See [agent tool restrictions](agents.md#multiple-openclaw-agents-and-tool-restrictions).
+Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
+See [agent tool restrictions](agents.md#agent-tool-restrictions).
 
 Host-specific security qualification, enterprise hardening profiles, and a complete threat model: **TBD**.
 
@@ -25,7 +25,7 @@ Host-specific security qualification, enterprise hardening profiles, and a compl
 | Client running the CLI/SDK | Reads declared credential references and TLS files, operates the deployment state, and starts the matched provider/OpenTofu processes |
 | Docker/Podman host administrator | Controls containers, images, mounted storage, and process environments; container-local file permissions do not exclude this administrator |
 | OpenShell gateway and supervisor proxy | Enforce the configured routing/policy and install or substitute provider credentials |
-| Fabric and native agent inside a sandbox | Share the sandbox's permitted files, processes, and native credentials; separate agent names are not independent isolation boundaries |
+| Fabric and native agent inside a sandbox | Share the sandbox's permitted files, processes, and native credentials; the sandbox is the isolation boundary |
 | Inference endpoint operator | Receives the requests routed to that endpoint |
 | Recipe tools and runtime images | Execute within their declared runtime; select reviewed immutable artifacts and retain their source notices |
 
@@ -57,6 +57,10 @@ A complete credential-rotation runbook for every credential type: **TBD**.
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
 Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
+Onboarding publishes only environment-variable references before requesting any values.
+Generation-only onboarding never resolves credentials.
+In composed interactive onboarding, accepting the authored YAML does not authorize apply: inspect the secret-free plan preview and answer the separate apply prompt.
+`--non-interactive` is an explicit automation choice that requires environment-provided credentials and proceeds from a successful plan to apply without prompting.
 Use environment references for provider secrets and protected files for gateway TLS keys.
 Configuration export preserves references; it cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway/model/proxy storage, and caller-owned files.

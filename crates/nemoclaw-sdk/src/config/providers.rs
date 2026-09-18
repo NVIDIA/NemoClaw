@@ -12,12 +12,7 @@ impl Document {
                 sandbox
                     .inferences
                     .values()
-                    .chain(
-                        sandbox
-                            .agents
-                            .iter()
-                            .filter_map(|agent| agent.inference.as_ref()),
-                    )
+                    .chain(sandbox.agent.inference.iter())
                     .flat_map(|inference| {
                         inference
                             .routes
@@ -103,17 +98,16 @@ impl Document {
                     ));
                 }
             }
-            for agent in &sandbox.agents {
-                let (inference, sandbox_visible) = self.scoped_inference(agent)?;
-                for route in &inference.routes {
-                    let provider = self.route_provider(route, sandbox_visible)?;
-                    if let Some(previous) = selected.insert(self.provider_key(provider), provider)
-                        && !std::ptr::eq(previous, provider)
-                    {
-                        return Err(ConfigError::new(
-                            "selected provider definitions must have distinct names",
-                        ));
-                    }
+            let agent = &sandbox.agent;
+            let (inference, sandbox_visible) = self.scoped_inference(agent)?;
+            for route in &inference.routes {
+                let provider = self.route_provider(route, sandbox_visible)?;
+                if let Some(previous) = selected.insert(self.provider_key(provider), provider)
+                    && !std::ptr::eq(previous, provider)
+                {
+                    return Err(ConfigError::new(
+                        "selected provider definitions must have distinct names",
+                    ));
                 }
             }
         }
@@ -130,13 +124,13 @@ impl Document {
         sandbox: &'a Sandbox,
     ) -> Result<Vec<&'a InferenceProvider>, ConfigError> {
         let mut selected = std::collections::BTreeMap::new();
-        for agent in &sandbox.agents {
-            let (inference, scope) = self.scoped_inference(agent)?;
-            for route in &inference.routes {
-                let provider = self.route_provider(route, scope)?;
-                selected.insert(self.provider_key(provider), provider);
-            }
+        let agent = &sandbox.agent;
+        let (inference, scope) = self.scoped_inference(agent)?;
+        for route in &inference.routes {
+            let provider = self.route_provider(route, scope)?;
+            selected.insert(self.provider_key(provider), provider);
         }
+
         Ok(selected.into_values().collect())
     }
 
@@ -168,12 +162,7 @@ impl Document {
         &'a self,
         provider: &InferenceProvider,
     ) -> Result<&'a str, ConfigError> {
-        for agent in self
-            .spec
-            .sandboxes
-            .iter()
-            .flat_map(|sandbox| &sandbox.agents)
-        {
+        for agent in self.spec.sandboxes.iter().map(|sandbox| &sandbox.agent) {
             let (inference, scope) = self.scoped_inference(agent)?;
             for route in &inference.routes {
                 if std::ptr::eq(self.route_provider(route, scope)?, provider) {
@@ -225,12 +214,7 @@ impl Document {
                     sandbox
                         .inferences
                         .values()
-                        .chain(
-                            sandbox
-                                .agents
-                                .iter()
-                                .filter_map(|agent| agent.inference.as_ref()),
-                        )
+                        .chain(sandbox.agent.inference.iter())
                         .flat_map(|inference| {
                             inference
                                 .routes
@@ -258,12 +242,7 @@ impl Document {
                     sandbox
                         .inferences
                         .values_mut()
-                        .chain(
-                            sandbox
-                                .agents
-                                .iter_mut()
-                                .filter_map(|agent| agent.inference.as_mut()),
-                        )
+                        .chain(sandbox.agent.inference.iter_mut())
                         .flat_map(|inference| {
                             inference
                                 .routes

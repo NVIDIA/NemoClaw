@@ -25,26 +25,33 @@ spec:
       credential:
         env: BRAVE_API_KEY
   sandboxes:
-    - name: assistant
+    - name: researcher
       image:
         # Replace with the digest from a current OpenClaw image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: openclaw
-      agents:
-        - name: researcher
-          integrationRefs: [search]
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:4b
-        - name: writer
-          integrationRefs: [search]
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:4b
+      agent:
+        name: researcher
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+    - name: writer
+      image:
+        # Replace with the digest from a current OpenClaw image build.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: openclaw
+      agent:
+        name: writer
+        integrationRefs: [search]
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b

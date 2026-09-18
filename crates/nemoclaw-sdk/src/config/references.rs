@@ -25,7 +25,7 @@ impl Document {
             .spec
             .sandboxes
             .iter()
-            .find(|sandbox| sandbox.agents.iter().any(|item| std::ptr::eq(item, agent)))
+            .find(|sandbox| std::ptr::eq(&sandbox.agent, agent))
             .ok_or(ConfigError::new("agent does not belong to this document"))?;
         match (&agent.inference, &agent.inference_ref) {
             (Some(inference), None) => Ok((inference, Some(sandbox))),
@@ -40,9 +40,8 @@ impl Document {
                     .ok_or_else(|| {
                         missing_reference(
                             &format!(
-                                "spec.sandboxes[{}].agents[{}].inferenceRef",
-                                diagnostic_name(&sandbox.name),
-                                diagnostic_name(&agent.name)
+                                "spec.sandboxes[{}].agent.inferenceRef",
+                                diagnostic_name(&sandbox.name)
                             ),
                             "inference",
                             name,
@@ -71,12 +70,7 @@ impl Document {
                 sandbox
                     .inferences
                     .values()
-                    .chain(
-                        sandbox
-                            .agents
-                            .iter()
-                            .filter_map(|agent| agent.inference.as_ref()),
-                    )
+                    .chain(sandbox.agent.inference.iter())
                     .map(move |inference| (inference, Some(sandbox)))
             }))
     }
@@ -99,9 +93,8 @@ impl Document {
                     "inference names must not shadow enclosing definitions",
                 ));
             }
-            for agent in &sandbox.agents {
-                self.agent_inference(agent)?;
-            }
+            let agent = &sandbox.agent;
+            self.agent_inference(agent)?;
         }
         for (inference, sandbox_visible) in self.inference_definitions() {
             inference.validate_choices()?;
@@ -249,15 +242,6 @@ impl Inference {
     }
 }
 
-impl Sandbox {
-    pub(crate) fn sole_agent(&self) -> Result<&Agent, ConfigError> {
-        match self.agents.as_slice() {
-            [agent] => Ok(agent),
-            _ => Err(ConfigError::new("harness requires exactly one agent")),
-        }
-    }
-}
-
 // Only bounded schema identifiers may appear in diagnostics; never echo arbitrary YAML.
 pub(super) fn diagnostic_name(name: &str) -> &str {
     if name.len() <= 64 && super::validation::SLUG.is_match(name) {
@@ -305,18 +289,16 @@ impl Document {
                     );
                 }
             }
-            for agent in &sandbox.agents {
-                if agent
-                    .inference
-                    .as_ref()
-                    .is_some_and(|i| i.routes.iter().any(|r| std::ptr::eq(r, route)))
-                {
-                    return format!(
-                        "{base}.agents[{}].inference.routes[{}]",
-                        diagnostic_name(&agent.name),
-                        diagnostic_name(&route.name)
-                    );
-                }
+            let agent = &sandbox.agent;
+            if agent
+                .inference
+                .as_ref()
+                .is_some_and(|i| i.routes.iter().any(|r| std::ptr::eq(r, route)))
+            {
+                return format!(
+                    "{base}.agent.inference.routes[{}]",
+                    diagnostic_name(&route.name)
+                );
             }
         }
         "inference.routes".into()

@@ -16,6 +16,9 @@ tokio = { workspace = true, features = ["signal", "io-std", "io-util"] }
 
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
 [[bin]]
 name = "nemoclaw"
 path = "src/main.rs"

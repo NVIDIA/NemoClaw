@@ -10,12 +10,20 @@ Separate deployments need separate state directories and deployment UUIDs.
 ## Named Sandbox Resources
 
 Intent version 3 identifies sandboxes and providers by name rather than their position in the document.
-Reordering sandboxes, agents, providers, or model choices does not change their resource addresses or the intent digest.
+Reordering sandboxes, providers, or model choices does not change their resource addresses or the intent digest.
 Sandbox-local providers receive identities derived from their sandbox and provider names; moving a definition between scopes can change its identity.
 Intent versions 1 and 2 are rejected without rewriting state.
 Keep the original bundle for recovery or teardown, then use a fresh UUID and state directory with the new bundle.
 Do not edit the intent version to bypass this check.
 Existing agent files and conversations are not migrated.
+
+## One Agent per Sandbox
+
+Current configuration requires `spec.sandboxes[].agent`; the former `agents` list is rejected.
+Use one sandbox per agent and reuse inference or harness definitions across sandboxes as needed.
+This schema change does not split an existing sandbox or migrate its native gateway, conversations, or files.
+Keep the previous bundle and original state for export, recovery, or teardown of earlier deployments.
+Create the replacement with a fresh deployment UUID and state directory, and preserve the old deployment until the new one is verified.
 
 ## Native Inference Migration
 
@@ -53,7 +61,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 | Native data | Location and lifetime |
 |---|---|
 | OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
-| Declared OpenClaw agents' working files | `/sandbox/workspaces/<agent-name>` |
+| Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
 | Default local Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
 | Default local Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Experimental Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
@@ -62,7 +70,7 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 
 The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) and [interface guide](interfaces.md) define these locations.
 Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.
-Separate agent workspaces within one sandbox are not separate security boundaries.
+Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File/history locations and restoration procedures for the other harnesses: **TBD**.
 
 ## Configuration Export and Native Data

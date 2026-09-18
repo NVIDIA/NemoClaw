@@ -172,7 +172,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let directory = explicit("NEMOCLAW_LIVE_FABRIC_STATE");
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let provider = document.inference_provider().unwrap();
-    let agent = &document.spec.sandboxes[0].agents[0];
+    let agent = &document.spec.sandboxes[0].agent;
     assert_eq!(document.spec.gateway.management, "external");
     // Ollama recovery/destroy is fixture-qualified separately; this live target
     // has not qualified its complete agent lifecycle.
@@ -309,7 +309,6 @@ fn upgrade_gate_configuration(document: &Document) -> bool {
     document
         .sandbox_harness(&document.spec.sandboxes[0])
         .is_ok_and(|harness| harness.kind == "openclaw")
-        && document.spec.sandboxes[0].agents.len() == 1
         && document
             .selected_inference_providers()
             .is_ok_and(|providers| {
@@ -388,7 +387,7 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     let reply = openclaw_reply(
         &client,
         &binding,
-        &document.spec.sandboxes[0].agents[0].name,
+        &document.spec.sandboxes[0].agent.name,
         &format!("{}-upgrade", document.metadata.uid),
     )
     .await;

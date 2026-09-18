@@ -3,6 +3,7 @@
 """Check the public build interface without a daemon or downloaded source tree."""
 
 import json
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -20,16 +21,20 @@ HARNESSES = {
     "remote-agent",
     "pi",
 }
+AMD64_HARNESSES = {"deepagents", "openclaw"}
 
 
 class ImageBuilds(unittest.TestCase):
-    def plan(self, *targets):
+    def plan(self, *targets, platform=None):
+        environment = os.environ.copy()
+        environment["AGENT_PLATFORM"] = platform or "linux/arm64"
         result = subprocess.run(
             ["docker", "buildx", "bake", "--print", *targets],
             cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
+            env=environment,
         )
         return json.loads(result.stdout)
 
@@ -44,6 +49,18 @@ class ImageBuilds(unittest.TestCase):
 
     def test_individual_selection_does_not_build_other_harnesses(self):
         self.assertEqual(set(self.plan("pi")["target"]), {"pi"})
+
+    def test_linux_amd64_selects_every_qualified_harness(self):
+        targets = self.plan("agents", platform="linux/amd64")["target"]
+        self.assertEqual(set(targets), AMD64_HARNESSES)
+        for target in targets.values():
+            self.assertEqual(target["platforms"], ["linux/amd64"])
+            self.assertTrue(target["args"]["LOCKFILE"].endswith("-linux-amd64.lock"))
+
+    def test_individual_harness_uses_selected_platform(self):
+        target = self.plan("deepagents", platform="linux/amd64")["target"]["deepagents"]
+        self.assertEqual(target["platforms"], ["linux/amd64"])
+        self.assertEqual(target["args"]["LOCKFILE"], "dependencies-linux-amd64.lock")
 
     def test_proxy_has_an_independent_build(self):
         targets = self.plan("ollama-proxy")["target"]

@@ -21,7 +21,7 @@ fn missing_references_identify_the_consumer_and_visible_names() {
         let path = if field == "harness" {
             "/spec/sandboxes/0"
         } else {
-            "/spec/sandboxes/0/agents/0"
+            "/spec/sandboxes/0/agent"
         };
         let definition = v
             .pointer_mut(path)
@@ -35,7 +35,7 @@ fn missing_references_identify_the_consumer_and_visible_names() {
         let consumer = if field == "harness" {
             "spec.sandboxes[assistant].harnessRef"
         } else {
-            "spec.sandboxes[assistant].agents[main].inferenceRef"
+            "spec.sandboxes[assistant].agent.inferenceRef"
         };
         assert_eq!(
             error(v),
@@ -43,31 +43,30 @@ fn missing_references_identify_the_consumer_and_visible_names() {
         );
     }
     let mut v = input();
-    v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["providerRef"] =
-        json!("missing");
+    v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] = json!("missing");
     assert_eq!(
         error(v),
-        "spec.sandboxes[assistant].agents[main].inference.routes[primary].providerRef: unknown provider \"missing\"; visible definitions: local"
+        "spec.sandboxes[assistant].agent.inference.routes[primary].providerRef: unknown provider \"missing\"; visible definitions: local"
     );
     let mut v = input();
     v["spec"]["integrations"] =
         json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}});
-    v["spec"]["sandboxes"][0]["agents"][0]["integrationRefs"] = json!(["serach"]);
+    v["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["serach"]);
     assert_eq!(
         error(v),
-        "spec.sandboxes[assistant].agents[main].integrationRefs[0]: unknown integration \"serach\"; visible definitions: search"
+        "spec.sandboxes[assistant].agent.integrationRefs[0]: unknown integration \"serach\"; visible definitions: search"
     );
 }
 #[test]
 fn shared_inference_does_not_suggest_sandbox_local_providers() {
     let mut v = input();
-    let inference = v["spec"]["sandboxes"][0]["agents"][0]
+    let inference = v["spec"]["sandboxes"][0]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("inference")
         .unwrap();
     v["spec"]["inferences"] = json!({"smart": inference});
-    v["spec"]["sandboxes"][0]["agents"][0]["inferenceRef"] = json!("smart");
+    v["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("smart");
     let providers = v["spec"]
         .as_object_mut()
         .unwrap()
@@ -104,7 +103,7 @@ fn visible_names_are_sorted_and_exclude_other_sandboxes() {
 #[test]
 fn malformed_reference_values_are_not_echoed() {
     let mut v = input();
-    v["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["providerRef"] =
+    v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["providerRef"] =
         json!("https://user:secret@example.com\nforged diagnostic");
     let message = error(v);
     assert!(message.contains("unknown provider \"<invalid name>\""));

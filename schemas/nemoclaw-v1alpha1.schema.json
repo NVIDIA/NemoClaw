@@ -180,11 +180,11 @@
         },
         {
           "additionalProperties": false,
-          "description": "Select the shared gateway's tool discovery mode without granting additional tools.",
+          "description": "Select the gateway's tool discovery mode without granting additional tools.",
           "properties": {
             "disclosure": {
               "$ref": "#/$defs/ToolDisclosure",
-              "description": "Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive."
+              "description": "Progressive uses structured tool search; direct exposes tools directly. Omission means progressive."
             }
           },
           "required": [
@@ -759,7 +759,7 @@
           }
         }
       ],
-      "description": "One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.",
+      "description": "One harness runtime configuration. Every sandbox runs its own instance for its configured agent.",
       "properties": {
         "execution": {
           "$ref": "#/$defs/AgentExecution",
@@ -770,7 +770,7 @@
           "description": "Native dashboard access for this sandbox runtime."
         },
         "kind": {
-          "description": "Fabric harness implementation. Multiple agents require OpenClaw or Deep Agents.",
+          "description": "Fabric harness implementation for the sandbox agent.",
           "enum": [
             "deepagents",
             "hermes",
@@ -2389,52 +2389,24 @@
         {
           "if": {
             "properties": {
-              "agents": {
-                "minItems": 2
-              }
-            },
-            "required": [
-              "agents"
-            ]
-          },
-          "then": {
-            "properties": {
-              "harness": {
+              "agent": {
                 "properties": {
-                  "kind": {
-                    "enum": [
-                      "openclaw",
-                      "deepagents"
+                  "tools": {
+                    "properties": {
+                      "allow": {}
+                    },
+                    "required": [
+                      "allow"
                     ]
                   }
-                }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "agents": {
-                "contains": {
-                  "properties": {
-                    "tools": {
-                      "properties": {
-                        "allow": {}
-                      },
-                      "required": [
-                        "allow"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "tools"
-                  ]
-                }
+                },
+                "required": [
+                  "tools"
+                ]
               }
             },
             "required": [
-              "agents"
+              "agent"
             ]
           },
           "then": {
@@ -2456,26 +2428,24 @@
         {
           "if": {
             "properties": {
-              "agents": {
-                "contains": {
-                  "properties": {
-                    "tools": {
-                      "properties": {
-                        "disclosure": {}
-                      },
-                      "required": [
-                        "disclosure"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "tools"
-                  ]
-                }
+              "agent": {
+                "properties": {
+                  "tools": {
+                    "properties": {
+                      "disclosure": {}
+                    },
+                    "required": [
+                      "disclosure"
+                    ]
+                  }
+                },
+                "required": [
+                  "tools"
+                ]
               }
             },
             "required": [
-              "agents"
+              "agent"
             ]
           },
           "then": {
@@ -2493,28 +2463,26 @@
         {
           "if": {
             "properties": {
-              "agents": {
-                "contains": {
-                  "properties": {
-                    "inference": {
-                      "properties": {
-                        "routes": {
-                          "minItems": 2
-                        }
-                      },
-                      "required": [
-                        "routes"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "inference"
-                  ]
-                }
+              "agent": {
+                "properties": {
+                  "inference": {
+                    "properties": {
+                      "routes": {
+                        "minItems": 2
+                      }
+                    },
+                    "required": [
+                      "routes"
+                    ]
+                  }
+                },
+                "required": [
+                  "inference"
+                ]
               }
             },
             "required": [
-              "agents"
+              "agent"
             ]
           },
           "then": {
@@ -2559,17 +2527,13 @@
       ],
       "description": "The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.",
       "properties": {
-        "agents": {
-          "description": "Instances of the sandbox-selected harness. OpenClaw supports multiple named agents in one runtime; Deep Agents supports separate Fabric runtimes in one sandbox. Other harnesses require one agent.",
-          "items": {
-            "$ref": "#/$defs/Agent"
-          },
-          "minItems": 1,
-          "type": "array"
+        "agent": {
+          "$ref": "#/$defs/Agent",
+          "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
         },
         "harness": {
           "$ref": "#/$defs/Harness",
-          "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. Every agent in the sandbox is an instance of this harness implementation."
+          "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."
         },
         "harnessRef": {
           "description": "Name of a visible harness configuration. Excludes inline harness.",
@@ -2611,7 +2575,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Integration"
           },
-          "description": "Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions.",
+          "description": "Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions.",
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },
@@ -2633,7 +2597,7 @@
       },
       "required": [
         "name",
-        "agents"
+        "agent"
       ],
       "type": "object"
     },
@@ -3385,32 +3349,30 @@
               "sandboxes": {
                 "items": {
                   "properties": {
-                    "agents": {
-                      "items": {
-                        "properties": {
-                          "inference": {
-                            "properties": {
-                              "routes": {
-                                "items": {
-                                  "required": [
-                                    "providerRef"
-                                  ]
-                                }
+                    "agent": {
+                      "properties": {
+                        "inference": {
+                          "properties": {
+                            "routes": {
+                              "items": {
+                                "required": [
+                                  "providerRef"
+                                ]
                               }
-                            },
-                            "required": [
-                              "routes"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "inference"
-                        ]
-                      }
+                            }
+                          },
+                          "required": [
+                            "routes"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "inference"
+                      ]
                     }
                   },
                   "required": [
-                    "agents"
+                    "agent"
                   ]
                 }
               }
@@ -3519,32 +3481,30 @@
                       "sandboxes": {
                         "items": {
                           "properties": {
-                            "agents": {
-                              "items": {
-                                "properties": {
-                                  "inference": {
-                                    "properties": {
-                                      "routes": {
-                                        "items": {
-                                          "required": [
-                                            "providerRef"
-                                          ]
-                                        }
+                            "agent": {
+                              "properties": {
+                                "inference": {
+                                  "properties": {
+                                    "routes": {
+                                      "items": {
+                                        "required": [
+                                          "providerRef"
+                                        ]
                                       }
-                                    },
-                                    "required": [
-                                      "routes"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "inference"
-                                ]
-                              }
+                                    }
+                                  },
+                                  "required": [
+                                    "routes"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "inference"
+                              ]
                             }
                           },
                           "required": [
-                            "agents"
+                            "agent"
                           ]
                         }
                       }
@@ -4106,34 +4066,32 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "contextWindow"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoning"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoningEffort"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "contextWindow"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoning"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoningEffort"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -4199,24 +4157,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "maxTokens"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -4242,19 +4198,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "auth": {}
-                              },
-                              "required": [
-                                "auth"
-                              ]
-                            }
+                          "agent": {
+                            "properties": {
+                              "auth": {}
+                            },
+                            "required": [
+                              "auth"
+                            ]
                           }
                         },
                         "required": [
-                          "agents"
+                          "agent"
                         ]
                       }
                     }
@@ -4379,24 +4333,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "piModel"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "piModel"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -4446,19 +4398,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "properties": {
-                                              "model": {
-                                                "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "properties": {
+                                            "model": {
+                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
                                             }
                                           }
                                         }
@@ -4530,32 +4480,30 @@
                       "sandboxes": {
                         "items": {
                           "properties": {
-                            "agents": {
-                              "items": {
-                                "properties": {
-                                  "inference": {
-                                    "properties": {
-                                      "routes": {
-                                        "items": {
-                                          "required": [
-                                            "providerRef"
-                                          ]
-                                        }
+                            "agent": {
+                              "properties": {
+                                "inference": {
+                                  "properties": {
+                                    "routes": {
+                                      "items": {
+                                        "required": [
+                                          "providerRef"
+                                        ]
                                       }
-                                    },
-                                    "required": [
-                                      "routes"
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "inference"
-                                ]
-                              }
+                                    }
+                                  },
+                                  "required": [
+                                    "routes"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "inference"
+                              ]
                             }
                           },
                           "required": [
-                            "agents"
+                            "agent"
                           ]
                         }
                       }
@@ -5189,34 +5137,32 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "contextWindow"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoning"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoningEffort"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "contextWindow"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoning"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoningEffort"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -5282,24 +5228,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "maxTokens"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -5325,19 +5269,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "auth": {}
-                              },
-                              "required": [
-                                "auth"
-                              ]
-                            }
+                          "agent": {
+                            "properties": {
+                              "auth": {}
+                            },
+                            "required": [
+                              "auth"
+                            ]
                           }
                         },
                         "required": [
-                          "agents"
+                          "agent"
                         ]
                       }
                     }
@@ -5471,24 +5413,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "piModel"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "piModel"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -5547,19 +5487,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "properties": {
-                                              "model": {
-                                                "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "properties": {
+                                            "model": {
+                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
                                             }
                                           }
                                         }
@@ -5591,32 +5529,30 @@
                   "sandboxes": {
                     "items": {
                       "properties": {
-                        "agents": {
-                          "items": {
-                            "properties": {
-                              "inference": {
-                                "properties": {
-                                  "routes": {
-                                    "items": {
-                                      "required": [
-                                        "provider"
-                                      ]
-                                    }
+                        "agent": {
+                          "properties": {
+                            "inference": {
+                              "properties": {
+                                "routes": {
+                                  "items": {
+                                    "required": [
+                                      "provider"
+                                    ]
                                   }
-                                },
-                                "required": [
-                                  "routes"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "inference"
-                            ]
-                          }
+                                }
+                              },
+                              "required": [
+                                "routes"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "inference"
+                          ]
                         }
                       },
                       "required": [
-                        "agents"
+                        "agent"
                       ]
                     }
                   }
@@ -5706,24 +5642,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "api"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "api"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -5751,42 +5685,40 @@
                         "sandboxes": {
                           "items": {
                             "properties": {
-                              "agents": {
-                                "items": {
-                                  "properties": {
-                                    "inference": {
-                                      "properties": {
-                                        "routes": {
-                                          "items": {
-                                            "properties": {
-                                              "provider": {
-                                                "properties": {
-                                                  "service": {}
-                                                },
-                                                "required": [
-                                                  "service"
-                                                ]
-                                              }
-                                            },
-                                            "required": [
-                                              "provider"
-                                            ]
-                                          }
+                              "agent": {
+                                "properties": {
+                                  "inference": {
+                                    "properties": {
+                                      "routes": {
+                                        "items": {
+                                          "properties": {
+                                            "provider": {
+                                              "properties": {
+                                                "service": {}
+                                              },
+                                              "required": [
+                                                "service"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "provider"
+                                          ]
                                         }
-                                      },
-                                      "required": [
-                                        "routes"
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "inference"
-                                  ]
-                                }
+                                      }
+                                    },
+                                    "required": [
+                                      "routes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "inference"
+                                ]
                               }
                             },
                             "required": [
-                              "agents"
+                              "agent"
                             ]
                           }
                         }
@@ -5870,46 +5802,44 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "service": {
-                                                "required": [
-                                                  "placement"
-                                                ]
-                                              }
-                                            },
-                                            "required": [
-                                              "service"
-                                            ]
-                                          }
-                                        },
-                                        "required": [
-                                          "provider"
-                                        ]
-                                      }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "service": {
+                                              "required": [
+                                                "placement"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "service"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "provider"
+                                      ]
                                     }
-                                  },
-                                  "required": [
-                                    "routes"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "inference"
-                              ]
-                            }
+                                  }
+                                },
+                                "required": [
+                                  "routes"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "inference"
+                            ]
                           }
                         },
                         "required": [
-                          "agents"
+                          "agent"
                         ]
                       }
                     }
@@ -5932,19 +5862,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "provider": {
-                                                "const": "openai"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "provider": {
+                                              "const": "openai"
                                             }
                                           }
                                         }
@@ -5971,44 +5899,42 @@
                         "sandboxes": {
                           "items": {
                             "properties": {
-                              "agents": {
-                                "items": {
-                                  "properties": {
-                                    "inference": {
-                                      "properties": {
-                                        "routes": {
-                                          "items": {
-                                            "properties": {
-                                              "provider": {
-                                                "properties": {
-                                                  "api": {
-                                                    "const": "anthropic-messages"
-                                                  }
-                                                },
-                                                "required": [
-                                                  "api"
-                                                ]
-                                              }
-                                            },
-                                            "required": [
-                                              "provider"
-                                            ]
-                                          }
+                              "agent": {
+                                "properties": {
+                                  "inference": {
+                                    "properties": {
+                                      "routes": {
+                                        "items": {
+                                          "properties": {
+                                            "provider": {
+                                              "properties": {
+                                                "api": {
+                                                  "const": "anthropic-messages"
+                                                }
+                                              },
+                                              "required": [
+                                                "api"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "provider"
+                                          ]
                                         }
-                                      },
-                                      "required": [
-                                        "routes"
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "inference"
-                                  ]
-                                }
+                                      }
+                                    },
+                                    "required": [
+                                      "routes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "inference"
+                                ]
                               }
                             },
                             "required": [
-                              "agents"
+                              "agent"
                             ]
                           }
                         }
@@ -6064,45 +5990,43 @@
                             "sandboxes": {
                               "items": {
                                 "properties": {
-                                  "agents": {
-                                    "items": {
-                                      "properties": {
-                                        "inference": {
-                                          "properties": {
-                                            "routes": {
-                                              "items": {
-                                                "properties": {
-                                                  "provider": {
-                                                    "not": {
-                                                      "anyOf": [
-                                                        {
-                                                          "required": [
-                                                            "api"
-                                                          ]
-                                                        }
-                                                      ]
-                                                    }
+                                  "agent": {
+                                    "properties": {
+                                      "inference": {
+                                        "properties": {
+                                          "routes": {
+                                            "items": {
+                                              "properties": {
+                                                "provider": {
+                                                  "not": {
+                                                    "anyOf": [
+                                                      {
+                                                        "required": [
+                                                          "api"
+                                                        ]
+                                                      }
+                                                    ]
                                                   }
-                                                },
-                                                "required": [
-                                                  "provider"
-                                                ]
-                                              }
+                                                }
+                                              },
+                                              "required": [
+                                                "provider"
+                                              ]
                                             }
-                                          },
-                                          "required": [
-                                            "routes"
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "inference"
-                                      ]
-                                    }
+                                          }
+                                        },
+                                        "required": [
+                                          "routes"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "inference"
+                                    ]
                                   }
                                 },
                                 "required": [
-                                  "agents"
+                                  "agent"
                                 ]
                               }
                             }
@@ -6127,19 +6051,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "provider": {
-                                                "const": "anthropic"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "provider": {
+                                              "const": "anthropic"
                                             }
                                           }
                                         }
@@ -6199,19 +6121,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "api": {
-                                                "const": "anthropic-messages"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "api": {
+                                              "const": "anthropic-messages"
                                             }
                                           }
                                         }
@@ -6271,19 +6191,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "api": {
-                                                "const": "openai-responses"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "api": {
+                                              "const": "openai-responses"
                                             }
                                           }
                                         }
@@ -6350,19 +6268,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "api": {
-                                                "const": "openai-completions"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "api": {
+                                              "const": "openai-completions"
                                             }
                                           }
                                         }
@@ -6424,34 +6340,32 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "contextWindow"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoning"
-                                                  ]
-                                                },
-                                                {
-                                                  "required": [
-                                                    "reasoningEffort"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "contextWindow"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoning"
+                                                ]
+                                              },
+                                              {
+                                                "required": [
+                                                  "reasoningEffort"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -6517,24 +6431,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "maxTokens"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "maxTokens"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -6560,19 +6472,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "auth": {}
-                              },
-                              "required": [
-                                "auth"
-                              ]
-                            }
+                          "agent": {
+                            "properties": {
+                              "auth": {}
+                            },
+                            "required": [
+                              "auth"
+                            ]
                           }
                         },
                         "required": [
-                          "agents"
+                          "agent"
                         ]
                       }
                     }
@@ -6616,60 +6526,58 @@
                         "sandboxes": {
                           "items": {
                             "properties": {
-                              "agents": {
-                                "items": {
-                                  "properties": {
-                                    "inference": {
-                                      "properties": {
-                                        "routes": {
-                                          "items": {
-                                            "properties": {
-                                              "provider": {
-                                                "anyOf": [
-                                                  {
-                                                    "required": [
-                                                      "credential"
-                                                    ]
+                              "agent": {
+                                "properties": {
+                                  "inference": {
+                                    "properties": {
+                                      "routes": {
+                                        "items": {
+                                          "properties": {
+                                            "provider": {
+                                              "anyOf": [
+                                                {
+                                                  "required": [
+                                                    "credential"
+                                                  ]
+                                                },
+                                                {
+                                                  "required": [
+                                                    "ollamaProxy"
+                                                  ]
+                                                },
+                                                {
+                                                  "properties": {
+                                                    "service": {
+                                                      "required": [
+                                                        "authentication"
+                                                      ]
+                                                    }
                                                   },
-                                                  {
-                                                    "required": [
-                                                      "ollamaProxy"
-                                                    ]
-                                                  },
-                                                  {
-                                                    "properties": {
-                                                      "service": {
-                                                        "required": [
-                                                          "authentication"
-                                                        ]
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "service"
-                                                    ]
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            "required": [
-                                              "provider"
-                                            ]
-                                          }
+                                                  "required": [
+                                                    "service"
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "provider"
+                                          ]
                                         }
-                                      },
-                                      "required": [
-                                        "routes"
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "inference"
-                                  ]
-                                }
+                                      }
+                                    },
+                                    "required": [
+                                      "routes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "inference"
+                                ]
                               }
                             },
                             "required": [
-                              "agents"
+                              "agent"
                             ]
                           }
                         }
@@ -6729,24 +6637,22 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "not": {
-                                              "anyOf": [
-                                                {
-                                                  "required": [
-                                                    "piModel"
-                                                  ]
-                                                }
-                                              ]
-                                            }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "piModel"
+                                                ]
+                                              }
+                                            ]
                                           }
                                         }
                                       }
@@ -6772,42 +6678,40 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "provider": {
-                                            "properties": {
-                                              "ollama": {}
-                                            },
-                                            "required": [
-                                              "ollama"
-                                            ]
-                                          }
-                                        },
-                                        "required": [
-                                          "provider"
-                                        ]
-                                      }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "provider": {
+                                          "properties": {
+                                            "ollama": {}
+                                          },
+                                          "required": [
+                                            "ollama"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "provider"
+                                      ]
                                     }
-                                  },
-                                  "required": [
-                                    "routes"
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "inference"
-                              ]
-                            }
+                                  }
+                                },
+                                "required": [
+                                  "routes"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "inference"
+                            ]
                           }
                         },
                         "required": [
-                          "agents"
+                          "agent"
                         ]
                       }
                     }
@@ -6828,19 +6732,17 @@
                     "sandboxes": {
                       "items": {
                         "properties": {
-                          "agents": {
-                            "items": {
-                              "properties": {
-                                "inference": {
-                                  "properties": {
-                                    "routes": {
-                                      "items": {
-                                        "properties": {
-                                          "overrides": {
-                                            "properties": {
-                                              "model": {
-                                                "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
-                                              }
+                          "agent": {
+                            "properties": {
+                              "inference": {
+                                "properties": {
+                                  "routes": {
+                                    "items": {
+                                      "properties": {
+                                        "overrides": {
+                                          "properties": {
+                                            "model": {
+                                              "pattern": "^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
                                             }
                                           }
                                         }
@@ -6897,9 +6799,9 @@
     "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-    "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+    "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
     "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-    "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; OpenClaw and Deep Agents support multiple agents. Shared definitions reuse configuration across sandboxes.",
+    "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
     "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",

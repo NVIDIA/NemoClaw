@@ -6,30 +6,29 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { createOpenClawCodingTools } from "/app/dist/agent-tools-CNTtT1Sj.mjs";
-const options = {
-  api: "openai-completions",
-  tuning: {},
-  agents: [
-    { name: "primary" },
-    { name: "reader", tools: { allow: ["read"] } },
-    { name: "reviewer", tools: { allow: ["read"] } },
-  ],
-};
-const config = JSON.parse(
-  execFileSync(
-    "/opt/fabric/bin/python",
-    [
-      "-c",
-      'import json; from openclaw_adapter import native_configuration; print(json.dumps(native_configuration("primary", json.loads(__import__("sys").argv[1]))))',
-      JSON.stringify(options),
-    ],
-    { encoding: "utf8" },
-  ),
-);
 await fs.mkdir("/sandbox/workspace", { recursive: true });
 const sentinel = "/sandbox/workspace/sentinel.txt";
 await fs.writeFile(sentinel, "owned-read-fixture");
-for (const agentId of ["reader", "primary", "reviewer"]) {
+for (const agentId of ["reader", "primary"]) {
+  const options = {
+    api: "openai-completions",
+    tuning: {},
+    agents: [
+      agentId === "primary" ? { name: agentId } : { name: agentId, tools: { allow: ["read"] } },
+    ],
+  };
+  const config = JSON.parse(
+    execFileSync(
+      "/opt/fabric/bin/python",
+      [
+        "-c",
+        'import json; from openclaw_adapter import native_configuration; print(json.dumps(native_configuration("primary", json.loads(__import__("sys").argv[1]))))',
+        JSON.stringify(options),
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+
   const tools = createOpenClawCodingTools({
     config,
     agentId,
@@ -64,5 +63,5 @@ for (const agentId of ["reader", "primary", "reviewer"]) {
 }
 assert.equal(await fs.readFile(sentinel, "utf8"), "owned-read-fixture");
 console.log(
-  "Native OpenClaw: three agents, isolated tool catalogs, read execution, no write/exec/delegation tools.",
+  "Native OpenClaw: separate single-agent configurations, isolated tool catalogs, read execution, no write/exec/delegation tools.",
 );

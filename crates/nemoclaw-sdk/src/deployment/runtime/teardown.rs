@@ -12,10 +12,8 @@ fn destroy_environment(document: &Document) -> Document {
     }
     for sandbox in &mut environment.spec.sandboxes {
         sandbox.integrations.clear();
-        for agent in &mut sandbox.agents {
-            agent.integrations.clear();
-            agent.integration_refs.clear();
-        }
+        sandbox.agent.integrations.clear();
+        sandbox.agent.integration_refs.clear();
     }
     environment.spec.integrations.clear();
     environment
@@ -337,7 +335,7 @@ mod tests {
         record.document.spec.inference_providers.push(provider);
         let mut sandbox = record.document.spec.sandboxes[0].clone();
         sandbox.name = "other".into();
-        sandbox.agents[0].inference.as_mut().unwrap().routes[0].provider_ref = Some("other".into());
+        sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("other".into());
         record.document.spec.sandboxes.push(sandbox);
         let bindings: BTreeMap<_, _> =
             compile::runtime_targets(&record.document, &record.generations)

@@ -113,25 +113,14 @@ pub(super) fn constrain(root: &mut Value) {
         "sandboxes",
         json!({"minItems":1,"maxItems":32}),
     );
-    property(
-        &mut defs["Sandbox"],
-        "agents",
-        json!({
-            "minItems": 1,
-            "items": {"$ref": "#/$defs/Agent"}
-        }),
-    );
     defs["Sandbox"]["allOf"] = json!([{
-        "if": at("agents", json!({"minItems":2}), true),
-        "then": at("harness/kind",json!({"enum":["openclaw","deepagents"]}),false)
-    }, {
-        "if": at("agents", json!({"contains":at("tools/allow", json!({}), true)}), true),
+        "if": at("agent/tools/allow", json!({}), true),
         "then": at("harness/kind",json!({"enum":["openclaw","deepagents","pi"]}),false)
     }, {
-        "if": at("agents", json!({"contains":at("tools/disclosure", json!({}), true)}), true),
+        "if": at("agent/tools/disclosure", json!({}), true),
         "then": at("harness/kind",json!({"const":"openclaw"}),false)
     }, {
-        "if": at("agents", json!({"contains":at("inference/routes",json!({"minItems":2}),true)}), true),
+        "if": at("agent/inference/routes",json!({"minItems":2}),true),
         "then": at("harness/kind", json!({"enum":["openclaw","pi"]}), false)
     }]);
     property(
@@ -358,7 +347,7 @@ pub(super) fn constrain(root: &mut Value) {
     service_constraints(defs);
 
     root["allOf"] = json!([]);
-    let route_path = "spec/sandboxes/[]/agents/[]/inference/routes/[]";
+    let route_path = "spec/sandboxes/[]/agent/inference/routes/[]";
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at(route_path, json!({"required":["providerRef"]}), true),
         "then": {"anyOf":[
@@ -384,11 +373,11 @@ pub(super) fn constrain(root: &mut Value) {
             ]}),
         ),
         (
-            "spec/sandboxes/[]/agents/[]/inference/routes/[]/provider",
+            "spec/sandboxes/[]/agent/inference/routes/[]/provider",
             at(route_path, json!({"required":["provider"]}), true),
         ),
     ] {
-        let agent = "spec/sandboxes/[]/agents/[]";
+        let agent = "spec/sandboxes/[]/agent";
         let runtime = "spec/sandboxes/[]/runtime/provider";
         let route = format!("{agent}/inference/routes/[]/overrides");
         let service = format!("{provider}/service");
@@ -425,9 +414,9 @@ pub(super) fn constrain(root: &mut Value) {
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, one compute driver per managed gateway, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-        "The parser checks unique agent names, uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and a shared disclosure mode among unrestricted agents; omitted disclosure means progressive.",
+        "The parser checks uniquely named model choices with an explicit default for multiple choices, multiple choices for OpenClaw and Pi, and the OpenClaw disclosure mode; omitted disclosure means progressive.",
         "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached Brave search definition per sandbox. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
-        "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. All agents use the sandbox-selected implementation; OpenClaw and Deep Agents support multiple agents. Shared definitions reuse configuration across sandboxes.",
+        "The parser requires exactly one sandbox harness or harnessRef, resolves visible harnesses without shadowing, and rejects agent-level harness selection. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "The parser permits non-default reasoningEffort values only on the initial default choice. Managed Ollama and its proxy currently manage one selected model; vLLM choices must match its served model.",
         "The parser resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names, shadowing, and inline/reference ambiguity.",
         "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, and more than one selected provider with managed Ollama or proxy dependencies, and compares route models and authentication with the selected provider. With multiple named definitions, provider/agent compatibility is a parser check. Unselected definitions create no resources. Snapshot identity must match the service model.",

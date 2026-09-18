@@ -219,7 +219,7 @@ pub struct ManagedOllama {
 pub struct Sandbox {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Harness")]
-    /// Inline harness configuration. Exactly one of harness or harnessRef is required. Every agent in the sandbox is an instance of this harness implementation.
+    /// Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation.
     pub harness: Option<Harness>,
     #[serde(
         rename = "harnessRef",
@@ -247,7 +247,7 @@ pub struct Sandbox {
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
-    /// Named integration definitions selected by this sandbox's agents through integrationRefs. Names must not collide with deployment definitions.
+    /// Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions.
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "name")]
     /// Lowercase sandbox name.
@@ -264,9 +264,9 @@ pub struct Sandbox {
     #[schemars(default)]
     /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
     pub network: Network,
-    #[serde(rename = "agents")]
-    /// Instances of the sandbox-selected harness. OpenClaw supports multiple named agents in one runtime; Deep Agents supports separate Fabric runtimes in one sandbox. Other harnesses require one agent.
-    pub agents: Vec<Agent>,
+    #[serde(rename = "agent")]
+    /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
+    pub agent: Agent,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -614,9 +614,9 @@ pub struct ServicePublication {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// One harness runtime configuration. Every sandbox runs its own instance; agents within a sandbox share its settings.
+/// One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 pub struct Harness {
-    /// Fabric harness implementation. Multiple agents require OpenClaw or Deep Agents.
+    /// Fabric harness implementation for the sandbox agent.
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentObservability")]

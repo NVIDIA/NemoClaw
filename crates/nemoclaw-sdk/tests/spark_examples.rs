@@ -18,7 +18,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
     .into();
     for (name, services, sandboxes, agents) in [
         ("pi-small.yaml", 1, 1, 1),
-        ("deepagents-team.yaml", 1, 1, 2),
+        ("deepagents-team.yaml", 1, 2, 2),
         ("shared-model.yaml", 1, 3, 3),
         ("two-models.yaml", 2, 1, 1),
         ("local-and-oracle.yaml", 1, 1, 1),
@@ -47,11 +47,7 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
             "{name}"
         );
         assert_eq!(
-            doc.spec
-                .sandboxes
-                .iter()
-                .map(|s| s.agents.len())
-                .sum::<usize>(),
+            doc.spec.sandboxes.iter().map(|_| 1_usize).sum::<usize>(),
             agents,
             "{name}"
         );

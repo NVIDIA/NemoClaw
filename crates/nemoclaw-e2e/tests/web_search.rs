@@ -26,7 +26,7 @@ async fn search_owns_profile_and_provider_preserves_secret_custody_and_rejects_p
         "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
     }))
     .unwrap();
-    doc.spec.sandboxes[0].agents[0].integration_refs = vec!["search".into()];
+    doc.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
     let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Key)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))
@@ -137,7 +137,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     doc.spec.sandboxes.push(other);
     for (sandbox, reference) in doc.spec.sandboxes.iter_mut().zip(["SEARCH_A", "SEARCH_B"]) {
         sandbox.integrations = serde_json::from_value(serde_json::json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":reference}}})).unwrap();
-        sandbox.agents[0].integration_refs = vec!["search".into()];
+        sandbox.agent.integration_refs = vec!["search".into()];
     }
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))

@@ -10,7 +10,7 @@ fn input() -> Value {
 }
 fn choices() -> Value {
     let mut value = input();
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     let mut fast = inference["routes"][0].clone();
     fast["name"] = json!("fast");
     fast["overrides"]["model"] = json!("fast-model");
@@ -21,10 +21,10 @@ fn choices() -> Value {
 #[test]
 fn multiple_models_preserve_named_choices_and_each_agents_default() {
     let mut value = choices();
-    let mut other = value["spec"]["sandboxes"][0]["agents"][0].clone();
+    let mut other = value["spec"]["sandboxes"][0].clone();
     other["name"] = json!("other");
-    other["inference"]["default"] = json!("primary");
-    value["spec"]["sandboxes"][0]["agents"]
+    other["agent"]["inference"]["default"] = json!("primary");
+    value["spec"]["sandboxes"]
         .as_array_mut()
         .unwrap()
         .push(other);
@@ -57,7 +57,20 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
         .validate(&json!({"agent_name": "main", "inference": runtime}))
         .expect("compiled settings must satisfy the Fabric adapter contract");
     assert_eq!(runtime["agents"][0]["inference"]["default"], "fast");
-    assert_eq!(runtime["agents"][1]["inference"]["default"], "primary");
+    let other_runtime: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "sandbox" && row.values["name"] == "other")
+            .unwrap()
+            .values["inference_json"],
+    )
+    .unwrap();
+    assert_eq!(runtime["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(other_runtime["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        other_runtime["agents"][0]["inference"]["default"],
+        "primary"
+    );
     assert_eq!(
         runtime["agents"][0]["inference"]["models"]
             .as_object()
@@ -73,15 +86,14 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
 #[test]
 fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected() {
     let mut missing = choices();
-    missing["spec"]["sandboxes"][0]["agents"][0]["inference"]
+    missing["spec"]["sandboxes"][0]["agent"]["inference"]
         .as_object_mut()
         .unwrap()
         .remove("default");
     let mut unknown = choices();
-    unknown["spec"]["sandboxes"][0]["agents"][0]["inference"]["default"] = json!("missing");
+    unknown["spec"]["sandboxes"][0]["agent"]["inference"]["default"] = json!("missing");
     let mut duplicate = choices();
-    duplicate["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][1]["name"] =
-        json!("primary");
+    duplicate["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1]["name"] = json!("primary");
     let mut hermes = choices();
     hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
     for value in [missing, unknown, duplicate, hermes] {
@@ -101,7 +113,7 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
         .as_array_mut()
         .unwrap()
         .push(provider);
-    let inference = &mut value["spec"]["sandboxes"][0]["agents"][0]["inference"];
+    let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
     let mut oracle = inference["routes"][0].clone();
     oracle["name"] = json!("smart");
     oracle["providerRef"] = json!("oracle");

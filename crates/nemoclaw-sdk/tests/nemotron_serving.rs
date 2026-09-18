@@ -19,7 +19,7 @@ fn input() -> Value {
         "serving":{"modelName":"nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4","contextTokens":65536,"maxSequences":1,"batchTokens":4096,"mambaBackend":"flashinfer","toolParser":"qwen3_coder","reasoningParser":"nemotron_v3","enforceEager":false,"startupTimeoutSeconds":1800},
         "memory":{"gpuMemoryUtilization":0.75}
     });
-    value["spec"]["sandboxes"][0]["agents"][0]["inference"]["routes"][0]["overrides"]["model"] =
+    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
         json!("nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4");
     value
 }

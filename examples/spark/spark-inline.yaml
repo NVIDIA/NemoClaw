@@ -256,8 +256,8 @@ spec:
       tier: isolated
     harness:
       kind: openclaw
-    agents:
-    - name: assistant
+    agent:
+      name: assistant
       inference:
         routes:
         - name: primary

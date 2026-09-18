@@ -98,9 +98,9 @@ pub enum AgentTools {
         /// Exactly the read tool. Empty lists, wildcards, and other tool names are rejected.
         allow: [AllowedTool; 1],
     },
-    /// Select the shared gateway's tool discovery mode without granting additional tools.
+    /// Select the gateway's tool discovery mode without granting additional tools.
     Disclosure {
-        /// Progressive uses structured tool search; direct exposes tools directly. Unrestricted agents must agree; omission means progressive.
+        /// Progressive uses structured tool search; direct exposes tools directly. Omission means progressive.
         disclosure: ToolDisclosure,
     },
 }
@@ -125,27 +125,6 @@ pub enum ToolDisclosure {
     Progressive,
     /// Disable tool search and expose permitted tools directly.
     Direct,
-}
-impl ToolDisclosure {
-    pub(crate) fn shared<'a>(
-        tools: impl Iterator<Item = Option<&'a AgentTools>>,
-    ) -> Result<Self, ConfigError> {
-        let mut selected = None;
-        for tool in tools {
-            let mode = match tool {
-                Some(AgentTools::ReadOnly { .. }) => continue,
-                Some(AgentTools::Disclosure { disclosure }) => *disclosure,
-                None => Self::Progressive,
-            };
-            if selected.is_some_and(|prior| prior != mode) {
-                return Err(ConfigError::new(
-                    "OpenClaw agents must share a tool disclosure mode; omission means progressive",
-                ));
-            }
-            selected = Some(mode);
-        }
-        Ok(selected.unwrap_or(Self::Progressive))
-    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -278,56 +257,43 @@ impl SandboxRuntimeSettings {
                 tools.validate(harness)?;
             }
         }
-        ToolDisclosure::shared(self.agents.iter().map(|a| a.tools.as_ref()))?;
-        let mut names = std::collections::BTreeSet::new();
         if !self.agents.is_empty()
             && (!matches!(harness, "openclaw" | "pi" | "deepagents")
-                || (!matches!(harness, "openclaw" | "deepagents") && self.agents.len() != 1)
+                || self.agents.len() != 1
                 || self
                     .agents
                     .iter()
-                    .any(|a| !super::validation::SLUG.is_match(&a.name) || !names.insert(&a.name)))
+                    .any(|a| !super::validation::SLUG.is_match(&a.name)))
         {
             return Err(ConfigError::new("invalid harness agent roster"));
         }
-        let explicit_choices = self.agents.iter().any(|agent| agent.inference.is_some());
-        if explicit_choices {
-            for agent in &self.agents {
-                let selection = agent
-                    .inference
-                    .as_ref()
-                    .ok_or(ConfigError::new("every agent requires model choices"))?;
-                if (harness == "deepagents" && selection.models.len() != 1)
-                    || selection.models.is_empty()
-                    || selection.models.len() > 32
-                    || !selection.models.contains_key(&selection.default)
-                {
-                    return Err(ConfigError::new("invalid default model choice"));
+        if let Some(selection) = self
+            .agents
+            .first()
+            .and_then(|agent| agent.inference.as_ref())
+        {
+            if (harness == "deepagents" && selection.models.len() != 1)
+                || selection.models.is_empty()
+                || selection.models.len() > 32
+                || !selection.models.contains_key(&selection.default)
+            {
+                return Err(ConfigError::new("invalid default model choice"));
+            }
+            for (name, model) in &selection.models {
+                if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
+                    return Err(ConfigError::new("invalid native model choice"));
                 }
-                for (name, model) in &selection.models {
-                    if !super::validation::SLUG.is_match(name) || !model.api.supported(harness) {
-                        return Err(ConfigError::new("invalid native model choice"));
-                    }
-                    model.connection.validate(&model.provider, harness)?;
-                    model.tuning.validate(harness)?;
-                    if (harness == "pi") != model.pi.is_some()
-                        || model
-                            .pi
-                            .as_ref()
-                            .is_some_and(|pi| !super::validation::valid_model(&pi.model))
-                    {
-                        return Err(ConfigError::new("invalid Pi model choice"));
-                    }
+                model.connection.validate(&model.provider, harness)?;
+                model.tuning.validate(harness)?;
+                if (harness == "pi") != model.pi.is_some()
+                    || model
+                        .pi
+                        .as_ref()
+                        .is_some_and(|pi| !super::validation::valid_model(&pi.model))
+                {
+                    return Err(ConfigError::new("invalid Pi model choice"));
                 }
             }
-            let selection = self
-                .agents
-                .iter()
-                .min_by_key(|agent| &agent.name)
-                .unwrap()
-                .inference
-                .as_ref()
-                .unwrap();
             let primary = &selection.models[&selection.default];
             if primary.provider != self.provider
                 || primary.connection != self.connection
@@ -388,67 +354,41 @@ impl Document {
         sandbox: &Sandbox,
     ) -> Result<SandboxRuntimeSettings, ConfigError> {
         let harness = self.sandbox_harness(sandbox)?;
-        let mut resolved = sandbox
-            .agents
+        let agent = &sandbox.agent;
+        let (inference, scope) = self.scoped_inference(agent)?;
+        let models: std::collections::BTreeMap<_, _> = inference
+            .routes
             .iter()
-            .map(|agent| {
-                let (inference, scope) = self.scoped_inference(agent)?;
-                let models = inference
-                    .routes
-                    .iter()
-                    .map(|route| {
-                        let provider = self.route_provider(route, scope)?;
-                        Ok((
-                            route.name.clone(),
-                            self.runtime_model(&harness.kind, provider, route)?,
-                        ))
-                    })
-                    .collect::<Result<_, ConfigError>>()?;
-                Ok(ResolvedAgent {
-                    agent,
-                    inference,
-                    models,
-                })
+            .map(|route| {
+                let provider = self.route_provider(route, scope)?;
+                Ok((
+                    route.name.clone(),
+                    self.runtime_model(&harness.kind, provider, route)?,
+                ))
             })
-            .collect::<Result<Vec<_>, ConfigError>>()?;
-        resolved.sort_by_key(|resolved| &resolved.agent.name);
-        let first = resolved
-            .first()
-            .ok_or(ConfigError::new("at least one agent is required"))?;
-        let primary = first.models[first.inference.default_route()?.name.as_str()].clone();
+            .collect::<Result<_, ConfigError>>()?;
+        let primary = models[inference.default_route()?.name.as_str()].clone();
         let choices = harness.kind == "openclaw"
-            || resolved.len() > 1
-            || (harness.kind == "pi" && resolved.iter().any(|agent| agent.agent.tools.is_some()))
-            || resolved
-                .iter()
-                .any(|agent| agent.models.len() > 1 || agent.inference != first.inference);
+            || (harness.kind == "pi" && agent.tools.is_some())
+            || models.len() > 1;
         let web_search = self.web_search(sandbox)?;
-        let roster = choices
-            || web_search.is_some()
-            || resolved.len() > 1
-            || resolved.iter().any(|agent| agent.agent.tools.is_some());
-        let auth = first.agent.auth.as_ref().map(|auth| RuntimeAuth {
+        let auth = agent.auth.as_ref().map(|auth| RuntimeAuth {
             method: auth.method.clone(),
             provider_ref: primary.provider.clone(),
         });
-        let agents = if roster {
-            resolved
-                .into_iter()
-                .map(|resolved| {
-                    Ok(RuntimeAgent {
-                        name: resolved.agent.name.clone(),
-                        tools: resolved.agent.tools.clone(),
-                        inference: if choices {
-                            Some(RuntimeAgentInference {
-                                default: resolved.inference.default_route()?.name.clone(),
-                                models: resolved.models,
-                            })
-                        } else {
-                            None
-                        },
+        let agents = if choices || web_search.is_some() || agent.tools.is_some() {
+            vec![RuntimeAgent {
+                name: agent.name.clone(),
+                tools: agent.tools.clone(),
+                inference: if choices {
+                    Some(RuntimeAgentInference {
+                        default: inference.default_route()?.name.clone(),
+                        models,
                     })
-                })
-                .collect::<Result<_, ConfigError>>()?
+                } else {
+                    None
+                },
+            }]
         } else {
             Vec::new()
         };
@@ -465,12 +405,4 @@ impl Document {
             auth,
         })
     }
-}
-
-// Borrow authored definitions and resolve routes once while lowering settings.
-// The exported document keeps the original inline/reference forms.
-struct ResolvedAgent<'a> {
-    agent: &'a Agent,
-    inference: &'a Inference,
-    models: std::collections::BTreeMap<String, RuntimeModel>,
 }

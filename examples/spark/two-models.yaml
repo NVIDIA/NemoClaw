@@ -76,8 +76,8 @@ spec:
       kind: pi
       execution:
         timeoutSeconds: 300
-    agents:
-    - name: assistant
+    agent:
+      name: assistant
       inference:
         routes:
         - name: fast

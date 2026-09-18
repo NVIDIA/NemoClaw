@@ -12,15 +12,11 @@ from openclaw_adapter import native_configuration
 
 
 class WebSearch(unittest.TestCase):
-    def test_search_is_granted_only_to_selected_unrestricted_agents(self):
+    def test_search_is_granted_only_to_the_unrestricted_agent(self):
         options = {
             "api": "openai-completions",
             "tuning": {},
-            "agents": [
-                {"name": "main"},
-                {"name": "reader", "tools": {"allow": ["read"]}},
-                {"name": "writer"},
-            ],
+            "agents": [{"name": "main"}],
             "webSearch": {
                 "provider": "brave",
                 "agentRefs": ["main"],
@@ -36,9 +32,7 @@ class WebSearch(unittest.TestCase):
         self.assertEqual(
             native["agents"]["entries"]["main"]["tools"], {"alsoAllow": ["web_search"]}
         )
-        self.assertEqual(native["agents"]["entries"]["reader"]["tools"], {"allow": ["read"]})
-        self.assertEqual(native["agents"]["entries"]["writer"]["tools"], {"deny": ["web_search"]})
-        options["webSearch"]["agentRefs"] = ["reader"]
+        options["agents"][0]["tools"] = {"allow": ["read"]}
         with self.assertRaises(ValueError):
             native_configuration("main", options)
 
@@ -52,11 +46,7 @@ class NativeSearchStartup(unittest.IsolatedAsyncioTestCase):
         options = {
             "api": "openai-completions",
             "tuning": {},
-            "agents": [
-                {"name": "main"},
-                {"name": "reader", "tools": {"allow": ["read"]}},
-                {"name": "writer"},
-            ],
+            "agents": [{"name": "main"}],
             "execution": {"heartbeatEvery": "0m"},
             "webSearch": {
                 "provider": "brave",

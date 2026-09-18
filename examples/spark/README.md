@@ -12,7 +12,7 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | File | Agents and models | What it demonstrates |
 |---|---|---|
 | [pi-small.yaml](pi-small.yaml) | Pi with Qwen3-4B | A small local assistant with explicit Pi model metadata |
-| [deepagents-team.yaml](deepagents-team.yaml) | Two Deep Agents with Nemotron 3.5 Lightning 30B-A3B NVFP4 | One sandbox, one shared model service, separate agent workspaces and tool settings |
+| [deepagents-team.yaml](deepagents-team.yaml) | Two Deep Agents with Nemotron 3.5 Lightning 30B-A3B NVFP4 | Two sandboxes, one shared model service, separate agent workspaces and tool settings |
 | [shared-model.yaml](shared-model.yaml) | Pi, OpenClaw, and Deep Agents with Qwen3.6-35B-A3B NVFP4 | Three sandboxes reuse one managed model service |
 | [two-models.yaml](two-models.yaml) | Pi with Qwen3-4B and Qwen3.6-27B NVFP4 | Fast/smart route selection with two independently managed services |
 | [local-and-oracle.yaml](local-and-oracle.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus an external oracle; the local route is the default |
@@ -21,7 +21,7 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; the current OpenShell Podman pin has the [TLS initialization blocker](https://github.com/NVIDIA/OpenShell/issues/3427) |
 
 The Deep Agents researcher has `tools.allow: [read]`; the writer retains the harness's default tools.
-Each agent receives its own workspace and artifact directory, but both share the sandbox's security boundary.
+Each agent receives its own sandbox, workspace, and artifact directory.
 Declaring several agents does not arrange communication or delegate work between them.
 
 The shared-model example allows two concurrent sequences; requests from three harnesses can queue.

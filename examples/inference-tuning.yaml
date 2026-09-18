@@ -27,15 +27,15 @@ spec:
         tier: isolated
       harness:
         kind: openclaw
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: example-reasoning-model
-                  contextWindow: 65536
-                  maxTokens: 8192
-                  reasoning: true
-                  reasoningEffort: high
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: example-reasoning-model
+                contextWindow: 65536
+                maxTokens: 8192
+                reasoning: true
+                reasoningEffort: high

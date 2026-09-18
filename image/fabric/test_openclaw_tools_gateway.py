@@ -14,15 +14,13 @@ from openclaw_adapter import ROOT, OpenClawRuntime, healthy
     os.environ.get("NEMOCLAW_TEST_NATIVE_TOOLS") == "1",
     "requires an explicitly selected disposable OpenClaw container",
 )
-class NativeRosterStartup(unittest.IsolatedAsyncioTestCase):
-    async def test_gateway_restart_retains_roster_and_detects_broadened_tools(self):
+class NativeAgentStartup(unittest.IsolatedAsyncioTestCase):
+    async def test_gateway_restart_retains_agent_and_detects_broadened_tools(self):
         options = {
             "api": "openai-completions",
             "tuning": {},
             "agents": [
-                {"name": "primary"},
                 {"name": "reader", "tools": {"allow": ["read"]}},
-                {"name": "reviewer", "tools": {"allow": ["read"]}},
             ],
         }
         for runtime_id in ("tools-first", "tools-restarted"):

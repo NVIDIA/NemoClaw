@@ -26,17 +26,17 @@ spec:
         tier: isolated
       harness:
         kind: pi
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:4b
-                  piModel:
-                    api: openai-completions
-                    contextWindow: 8192
-                    maxTokens: 2048
-                    reasoning: false
-                    input: [text]
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b
+                piModel:
+                  api: openai-completions
+                  contextWindow: 8192
+                  maxTokens: 2048
+                  reasoning: false
+                  input: [text]

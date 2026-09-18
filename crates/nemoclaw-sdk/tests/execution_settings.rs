@@ -13,7 +13,7 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(value.to_string().as_bytes())
 }
 #[test]
-fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
+fn execution_settings_reach_the_runtime_and_round_trip_across_separate_sandboxes() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for execution in [
         json!({"timeoutSeconds":900}),
@@ -22,11 +22,12 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
     ] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["harness"]["execution"] = execution.clone();
-        let mut reader = value["spec"]["sandboxes"][0]["agents"][0].clone();
-        reader["tools"] = json!({"allow":["read"]});
+        let mut reader = value["spec"]["sandboxes"][0].clone();
+        reader["agent"]["tools"] = json!({"allow":["read"]});
         for name in ["reader", "reviewer", "auditor"] {
             reader["name"] = json!(name);
-            value["spec"]["sandboxes"][0]["agents"]
+            reader["agent"]["name"] = json!(name);
+            value["spec"]["sandboxes"]
                 .as_array_mut()
                 .unwrap()
                 .push(reader.clone());
@@ -43,8 +44,8 @@ fn execution_settings_reach_the_runtime_and_round_trip_with_many_agents() {
         let rows = targets(&document, &generations).unwrap();
         let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
         assert_eq!(runtime["execution"], execution);
-        assert_eq!(runtime["agents"].as_array().unwrap().len(), 4);
-        value["spec"]["sandboxes"][0]["agents"][1]["harness"]["execution"] =
+        assert_eq!(runtime["agents"].as_array().unwrap().len(), 1);
+        value["spec"]["sandboxes"][0]["agent"]["harness"]["execution"] =
             json!({"timeoutSeconds":1200});
         assert!(
             parse(&value).is_err(),

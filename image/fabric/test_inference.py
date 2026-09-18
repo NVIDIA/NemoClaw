@@ -177,16 +177,14 @@ class ToolDisclosure(unittest.TestCase):
                 "tuning": {},
                 "agents": [
                     {"name": "primary", "tools": {"disclosure": mode}},
-                    {"name": "reader", "tools": {"allow": ["read"]}},
                 ],
             }
             native = native_configuration("primary", options)
             self.assertEqual(native["tools"]["toolSearch"] is False, mode == "direct")
-            self.assertEqual(native["agents"]["entries"]["reader"]["tools"], {"allow": ["read"]})
             self.assertNotIn("tools", native["agents"]["entries"]["primary"])
-        options["agents"].append({"name": "conflicting", "tools": {"disclosure": "direct"}})
-        with self.assertRaises(ValueError):
-            native_configuration("primary", options)
+        options["agents"] = [{"name": "reader", "tools": {"allow": ["read"]}}]
+        native = native_configuration("primary", options)
+        self.assertEqual(native["agents"]["entries"]["reader"]["tools"], {"allow": ["read"]})
 
     def test_disclosure_drift_is_rejected_without_overwriting_native_state(self):
         import json
@@ -221,7 +219,7 @@ class ToolDisclosure(unittest.TestCase):
 
 
 class MultipleModels(unittest.TestCase):
-    def test_agents_select_native_models_with_separate_provider_credentials(self):
+    def test_agent_selects_native_models_with_separate_provider_credentials(self):
         from openclaw_adapter import native_configuration
 
         fast = {
@@ -253,12 +251,11 @@ class MultipleModels(unittest.TestCase):
                     "name": "researcher",
                     "inference": {"default": "smart", "models": {"smart": smart, "fast": fast}},
                 },
-                {"name": "writer", "inference": {"default": "fast", "models": {"fast": fast}}},
             ],
         }
         native = native_configuration("researcher", options)
         providers = native["models"]["providers"]
-        self.assertEqual(len(providers), 3)
+        self.assertEqual(len(providers), 2)
         oracle = providers["nemoclaw_researcher_smart"]
         self.assertEqual(oracle["api"], "anthropic-messages")
         self.assertEqual(oracle["apiKey"], "${NEMOCLAW_INFERENCE_ORACLE_KEY}")
@@ -268,9 +265,9 @@ class MultipleModels(unittest.TestCase):
             entries["researcher"]["model"]["primary"], "nemoclaw_researcher_smart/smart-model"
         )
         self.assertEqual(entries["researcher"]["thinkingDefault"], "high")
-        self.assertEqual(entries["writer"]["model"]["primary"], "nemoclaw_writer_fast/fast-model")
         self.assertEqual(
-            entries["writer"]["modelPolicy"]["allow"], ["nemoclaw_writer_fast/fast-model"]
+            entries["researcher"]["modelPolicy"]["allow"],
+            ["nemoclaw_researcher_smart/smart-model", "nemoclaw_researcher_fast/fast-model"],
         )
         self.assertEqual(
             entries["researcher"]["models"]["nemoclaw_researcher_fast/fast-model"]["alias"], "fast"

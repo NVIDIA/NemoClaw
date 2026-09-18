@@ -59,11 +59,11 @@ spec:
         tier: isolated
       harness:
         kind: openclaw
-      agents:
-        - name: assistant
-          inference:
-            routes:
-              - name: primary
-                providerRef: nemotron
-                overrides:
-                  model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: nemotron
+              overrides:
+                model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4

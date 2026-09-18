@@ -1,5 +1,5 @@
 {
-  "digest": "9852c392a77cb9eb2f571768a84a697befb11949f4e63635dc085b9e1423523d",
+  "digest": "ebaf9bc62447d837b8fb92fca8093d2507b64af08ec9f2ede72788859787c333",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -21,22 +21,20 @@
       ],
       "sandboxes": [
         {
-          "agents": [
-            {
-              "inference": {
-                "routes": [
-                  {
-                    "name": "primary",
-                    "overrides": {
-                      "model": "qwen3:4b"
-                    },
-                    "providerRef": "local"
-                  }
-                ]
-              },
-              "name": "main"
-            }
-          ],
+          "agent": {
+            "inference": {
+              "routes": [
+                {
+                  "name": "primary",
+                  "overrides": {
+                    "model": "qwen3:4b"
+                  },
+                  "providerRef": "local"
+                }
+              ]
+            },
+            "name": "main"
+          },
           "harness": {
             "kind": "openclaw"
           },

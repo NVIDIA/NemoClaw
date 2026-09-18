@@ -5,20 +5,43 @@ variable "IMAGE_PREFIX" {
   default = "nc-fabric"
 }
 
-# These locks contain native CPython ARM64 wheels. Other platforms need
-# their own locks and qualification before they can be added here.
+variable "AGENT_PLATFORM" {
+  default = "linux/arm64"
+}
+
+variable "PLATFORM_LOCKS" {
+  default = {
+    "linux/arm64" = {
+      deepagents     = "dependencies.lock"
+      claude         = "claude-dependencies.lock"
+      codex          = "codex-dependencies.lock"
+      mini-swe-agent = "mini-swe-agent-dependencies.lock"
+      nooa           = "nooa-dependencies.lock"
+      nooa-bench     = "nooa-dependencies.lock"
+      remote-agent   = "remote-agent-dependencies.lock"
+      openclaw       = "sdk-dependencies.lock"
+      hermes         = "hermes-dependencies.lock"
+      pi             = "sdk-dependencies.lock"
+    }
+    "linux/amd64" = {
+      deepagents = "dependencies-linux-amd64.lock"
+      openclaw   = "sdk-dependencies-linux-amd64.lock"
+    }
+  }
+}
+
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", lock = "dependencies.lock" }
-    claude         = { stage = "generic", adapter = "claude", lock = "claude-dependencies.lock" }
-    codex          = { stage = "generic", adapter = "codex", lock = "codex-dependencies.lock" }
-    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent", lock = "mini-swe-agent-dependencies.lock" }
-    nooa           = { stage = "generic", adapter = "nooa", lock = "nooa-dependencies.lock" }
-    nooa-bench     = { stage = "generic", adapter = "nooa", lock = "nooa-dependencies.lock" }
-    remote-agent   = { stage = "generic", adapter = "remote-agent", lock = "remote-agent-dependencies.lock" }
-    openclaw       = { stage = "openclaw", adapter = "", lock = "sdk-dependencies.lock" }
-    hermes         = { stage = "hermes", adapter = "hermes", lock = "hermes-dependencies.lock" }
-    pi             = { stage = "pi", adapter = "", lock = "sdk-dependencies.lock" }
+    deepagents     = { stage = "generic", adapter = "deepagents" }
+    claude         = { stage = "generic", adapter = "claude" }
+    codex          = { stage = "generic", adapter = "codex" }
+    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent" }
+    nooa           = { stage = "generic", adapter = "nooa" }
+    nooa-bench     = { stage = "generic", adapter = "nooa" }
+    remote-agent   = { stage = "generic", adapter = "remote-agent" }
+    openclaw       = { stage = "openclaw", adapter = "" }
+    hermes         = { stage = "hermes", adapter = "hermes" }
+    pi             = { stage = "pi", adapter = "" }
   }
 }
 
@@ -29,18 +52,18 @@ group "default" {
 target "_fabric" {
   context = "."
   dockerfile = "image/fabric/Dockerfile"
-  platforms = ["linux/arm64"]
+  platforms = [AGENT_PLATFORM]
 }
 
 target "agents" {
   inherits = ["_fabric"]
   name = harness
-  matrix = { harness = keys(HARNESSES) }
+  matrix = { harness = keys(PLATFORM_LOCKS[AGENT_PLATFORM]) }
   target = HARNESSES[harness].stage
   args = merge({
     HARNESS = harness
     ADAPTER = HARNESSES[harness].adapter
-    LOCKFILE = HARNESSES[harness].lock
+    LOCKFILE = PLATFORM_LOCKS[AGENT_PLATFORM][harness]
   }, contains(["nooa", "nooa-bench", "hermes"], harness) ? {
     # The pinned Nooa and Hermes releases require Python <3.14.
     PYTHON_IMAGE = "python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"

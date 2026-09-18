@@ -48,7 +48,8 @@ The diagram separates deployment operations from the agent's requests: the CLI c
 
 Each document contains one to 32 named sandboxes, each selecting exactly one harness configuration.
 Sandboxes can use different harnesses and share inference definitions.
-OpenClaw can declare multiple agents with different model and provider choices; other harnesses require one agent.
+Every sandbox declares one `agent` and hosts one Fabric runtime; OpenClaw also has one native gateway per sandbox.
+Deploy additional agents in separate sandboxes and share inference definitions as needed.
 Use the [agent guide](agents.md) for accepted harnesses and the [inference guide](inference.md) for their API restrictions.
 
 Managed resources follow NemoClaw's lifecycle and retention rules.

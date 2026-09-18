@@ -32,11 +32,11 @@ spec:
         interfaces:
           dashboard:
             enabled: false
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: qwen3:0.6b
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:0.6b

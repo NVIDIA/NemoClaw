@@ -26,11 +26,11 @@ spec:
         tier: isolated
       harness:
         kind: claude
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: fixture-model
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: fixture-model

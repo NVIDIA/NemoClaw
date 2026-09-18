@@ -27,11 +27,11 @@ spec:
         tier: isolated
       harness:
         kind: codex
-      agents:
-        - name: main
-          inference:
-            routes:
-              - name: primary
-                providerRef: local
-                overrides:
-                  model: fixture-model
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: fixture-model

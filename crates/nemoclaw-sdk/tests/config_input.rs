@@ -171,7 +171,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
 #[test]
 fn only_pi_metadata_permits_nested_null_values() {
     let mut value = input("fabric-pi.yaml");
-    let pointer = "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/piModel";
+    let pointer = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
     *value.pointer_mut(pointer).unwrap() = json!({"future": [null, {"nested": null}]});
     parse(&value).unwrap();
     *value.pointer_mut(pointer).unwrap() = Value::Null;

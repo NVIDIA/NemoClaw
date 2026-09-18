@@ -36,15 +36,15 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         guard.start()
         self.addCleanup(guard.stop)
 
-    def test_agent_workspaces_follow_names_not_roster_order_or_runtime_name(self):
+    def test_agent_workspace_follows_the_declared_identity(self):
         from openclaw_adapter import agent_entries
 
-        agents = [{"name": "alice"}, {"name": "bob"}]
-        before = agent_entries("sandbox-runtime", {"agents": agents})
-        after = agent_entries("sandbox-runtime", {"agents": list(reversed(agents))})
-        self.assertEqual(before, after)
-        self.assertEqual(before["alice"]["workspace"], "/sandbox/workspaces/alice")
-        self.assertEqual(before["bob"]["workspace"], "/sandbox/workspaces/bob")
+        self.assertEqual(
+            agent_entries("sandbox-runtime", {"agents": [{"name": "alice"}]}),
+            {"alice": {"workspace": "/sandbox/workspaces/alice"}},
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one agent"):
+            agent_entries("alice", {"agents": [{"name": "alice"}, {"name": "bob"}]})
 
     async def test_uncertain_failure_is_not_replayed(self):
         runtime = FakeRuntime(TimeoutError("lost response"))
@@ -187,7 +187,7 @@ class NativeConfigurationTests(unittest.TestCase):
 
 
 class AgentPolicyTests(unittest.TestCase):
-    def test_three_agents_retain_independent_policies_and_reject_broadening(self):
+    def test_agent_retains_policy_and_rejects_broadening(self):
         import copy
         import json
         import tempfile
@@ -200,9 +200,7 @@ class AgentPolicyTests(unittest.TestCase):
             "api": "openai-completions",
             "tuning": {},
             "agents": [
-                {"name": "primary"},
                 {"name": "reader", "tools": {"allow": ["read"]}},
-                {"name": "reviewer", "tools": {"allow": ["read"]}},
             ],
         }
         with (
@@ -210,17 +208,15 @@ class AgentPolicyTests(unittest.TestCase):
             patch.object(adapter, "ROOT", Path(directory)),
         ):
             runtime = OpenClawRuntime()
-            runtime.name, runtime.home, runtime.inference = "primary", Path(directory), options
+            runtime.name, runtime.home, runtime.inference = "reader", Path(directory), options
             runtime.initialize_configuration()
             path = Path(directory) / "openclaw.json"
             original = json.loads(path.read_text())
             self.assertEqual(original["agents"].get("ownership"), "explicit")
             entries = original["agents"]["entries"]
-            self.assertEqual(set(entries), {"primary", "reader", "reviewer"})
-            self.assertNotIn("tools", entries["primary"])
+            self.assertEqual(set(entries), {"reader"})
             self.assertEqual(entries["reader"]["tools"], {"allow": ["read"]})
-            self.assertNotEqual(entries["reader"]["workspace"], entries["reviewer"]["workspace"])
-            self.assertTrue(adapter.configuration_matches("primary", options))
+            self.assertTrue(adapter.configuration_matches("reader", options))
             for change in ("allow", "alsoAllow", "removed", "extra-agent", "global"):
                 changed = copy.deepcopy(original)
                 tools = changed["agents"]["entries"]["reader"]["tools"]
@@ -236,33 +232,27 @@ class AgentPolicyTests(unittest.TestCase):
                     changed["tools"]["alsoAllow"] = ["exec"]
                 path.write_text(json.dumps(changed))
                 before = path.read_bytes()
-                self.assertFalse(adapter.configuration_matches("primary", options), change)
+                self.assertFalse(adapter.configuration_matches("reader", options), change)
                 with self.assertRaises(RuntimeError):
                     runtime.initialize_configuration()
                 self.assertEqual(path.read_bytes(), before)
 
 
 class AgentRoutingTests(AdapterTests):
-    async def test_named_agents_use_distinct_sessions_and_unknown_agents_do_not_run(self):
+    async def test_only_the_declared_agent_can_run(self):
         runtime = FakeRuntime({"status": "ok", "result": {}})
         runtime.inference = {
             "api": "openai-completions",
             "tuning": {},
-            "agents": [
-                {"name": "main"},
-                {"name": "reader", "tools": {"allow": ["read"]}},
-                {"name": "reviewer", "tools": {"allow": ["read"]}},
-            ],
+            "agents": [{"name": "main"}],
         }
         context = SimpleNamespace(runtime_id="runtime-test", invocation_id="turn-one")
-        for name in ("reader", "reviewer"):
-            result = await runtime.invoke(
-                SimpleNamespace(input={"agent": name, "message": "hello"}), context
-            )
+        for message in ("hello", {"agent": "main", "message": "hello"}):
+            result = await runtime.invoke(SimpleNamespace(input=message), context)
             self.assertEqual(result.status, AgentRunStatus.SUCCEEDED)
         calls = [params for method, params in runtime.calls if method == "agent"]
-        self.assertEqual([c["agentId"] for c in calls], ["reader", "reviewer"])
-        self.assertNotEqual(calls[0]["sessionKey"], calls[1]["sessionKey"])
+        self.assertEqual([c["agentId"] for c in calls], ["main", "main"])
+        self.assertEqual(calls[0]["sessionKey"], calls[1]["sessionKey"])
         before = len(runtime.calls)
         with self.assertRaises(ValueError):
             await runtime.invoke(

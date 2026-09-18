@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Start sandbox-owned Fabric runtimes and expose private readiness and health probes."""
+"""Start sandbox-owned Fabric runtime and expose private readiness and health probes."""
 
 import asyncio
 import copy
@@ -9,7 +9,7 @@ import os
 import re
 import signal
 import sys
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 SOCKET = "/sandbox/fabric.sock"
@@ -137,13 +137,23 @@ def model_credential(inference=None):
     return value
 
 
+def configured_agent(name, inference, *, match_name=True):
+    agents = (inference or {}).get("agents")
+    if agents is None or agents == []:
+        return {"name": name}
+    if not isinstance(agents, list) or len(agents) != 1:
+        raise ValueError("each sandbox requires exactly one agent")
+    agent = agents[0]
+    if not isinstance(agent, dict) or (match_name and agent.get("name") != name):
+        raise ValueError("runtime name must match the declared agent")
+    return agent
+
+
 def configuration(name, harness="deepagents", model=None, inference=None):
     if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
         inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
-    if harness == "deepagents" and (inference or {}).get("agents"):
-        agent = next((a for a in inference["agents"] if a["name"] == name), None)
-        if agent is None:
-            raise ValueError("agent is not declared")
+    agent = configured_agent(name, inference, match_name=harness != "openclaw")
+    if harness == "deepagents":
         if choices := agent.get("inference"):
             inference = {**inference, **choices["models"][choices["default"]]}
     if harness == "pi":
@@ -252,10 +262,6 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         **(relay_configuration(name) if relay else {}),
     }
 
-    if harness == "deepagents" and len((inference or {}).get("agents", [])) > 1:
-        config["environment"]["workspace"] = f"/sandbox/workspaces/{name}"
-        config["runtime"]["artifacts"] = f"/sandbox/artifacts/{name}"
-
     if inference is not None:
         api = inference["api"]
         if harness in ("deepagents", "mini-swe-agent", "remote-agent"):
@@ -286,9 +292,6 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         if harness == "remote-agent":
             config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
     if harness in ("deepagents", "pi") and (inference or {}).get("agents"):
-        agent = next((a for a in inference["agents"] if a["name"] == name), None)
-        if agent is None:
-            raise ValueError("agent is not declared")
         if agent.get("tools") is not None:
             if agent["tools"] != {"allow": ["read"]}:
                 raise ValueError("unsupported native tool policy")
@@ -350,22 +353,13 @@ def configuration_matches(observed, expected):
     return isinstance(observed, dict) and intent(observed) == intent(expected)
 
 
-def configurations(name, harness, inference):
-    names = [name]
-    if harness == "deepagents" and (inference or {}).get("agents"):
-        names = sorted(agent["name"] for agent in inference["agents"])
-    return {agent: configuration(agent, harness, inference=inference) for agent in names}
-
-
 @asynccontextmanager
-async def hosted_runtimes(configs, start):
-    async with AsyncExitStack() as stack:
-        runtimes = {}
-        for name, config in configs.items():
-            runtime = await start(config)
-            stack.push_async_callback(runtime.stop)
-            runtimes[name] = runtime
-        yield runtimes
+async def hosted_runtime(config, start):
+    runtime = await start(config)
+    try:
+        yield runtime
+    finally:
+        await runtime.stop()
 
 
 async def serve():
@@ -384,8 +378,8 @@ async def serve():
         else None
     )
     name = os.environ["NEMOCLAW_AGENT_NAME"]
-    configs = configurations(
-        name, os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"), inference
+    config = configuration(
+        name, os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"), inference=inference
     )
 
     async def start(config):
@@ -394,8 +388,7 @@ async def serve():
             FabricConfig.model_validate(config), base_dir="/sandbox"
         )
 
-    async with hosted_runtimes(configs, start) as runtimes:
-        config, runtime = configs[name], runtimes[name]
+    async with hosted_runtime(config, start) as runtime:
 
         async def handle(reader, writer):
             try:
@@ -408,15 +401,14 @@ async def serve():
                 ):
                     from health import runtime_health
 
-                    response = await runtime_health(runtimes.get(request.get("agent", name)))
+                    response = await runtime_health(
+                        runtime if request.get("agent", name) == name else None
+                    )
                 elif request == {"operation": "check"}:
                     response = {
                         "config": config,
                         "runtime_id": runtime.runtime_id,
-                        "ready": all(
-                            item.status == RuntimeStatus.ACTIVE for item in runtimes.values()
-                        ),
-                        **({"agents": configs} if len(configs) > 1 else {}),
+                        "ready": runtime.status == RuntimeStatus.ACTIVE,
                         "inference": inference,
                     }
                 elif request == {"operation": "probe"} and config["harness"]["adapter_id"] in (
@@ -494,14 +486,6 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
 
                 if not await asyncio.to_thread(
                     healthy, argument, result.get("runtime_id", ""), inference
-                ):
-                    return 2
-            if harness == "deepagents" and len((inference or {}).get("agents", [])) > 1:
-                actual = result.get("agents", {})
-                declared = configurations(argument, harness, inference)
-                if actual.keys() != declared.keys() or any(
-                    not configuration_matches(actual[name], config)
-                    for name, config in declared.items()
                 ):
                     return 2
             return (

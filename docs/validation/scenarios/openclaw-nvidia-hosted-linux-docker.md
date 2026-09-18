@@ -4,11 +4,14 @@
 # Validate a v0 OpenClaw Export with v1
 
 This scenario implements the first checklist item in [NVIDIA/NemoClaw issue #11810](https://github.com/NVIDIA/NemoClaw/issues/11810).
-It treats a redacted v0 configuration export as an input artifact and validates a new v1 deployment.
+It compares a redacted v0 configuration export with separately authored current intent and validates a new v1 deployment.
 It does not run, patch, or inspect the v0 test harness.
 
 The checked-in export is raw output from the public v0 `nemoclaw config export` path aligned by [NVIDIA/NemoClaw issue #11977](https://github.com/NVIDIA/NemoClaw/issues/11977) and merged at revision `b6934c6300c4e1e175757e9281ae3a641d9a5b1f`.
-Updating the fixture is a manual review step: run the public command against a representative supported deployment, inspect the output for credential values, copy the redacted bytes into this repository without reshaping them, and update the expected parsed document in the same change.
+The historical checked-in export uses the obsolete `agents` list and is rejected by the current parser.
+The separately authored `v1.yaml` fixture preserves its intent using singular `agent`; deterministic checks verify both rejection and retained intent.
+Live verification requires both the raw export and a separately authored current configuration; it does not import the historical export directly.
+Updating the fixture is a manual review step: run the public command against a representative supported deployment, inspect the output for credential values, copy the redacted bytes into this repository without reshaping them, and update the separately authored current document in the same change.
 The v0 E2E export mechanism is a convenient producer of candidate inputs, not a pipeline dependency of the v1 test.
 Source scenario, revision, date, or executable identity may be retained with the fixture as useful audit metadata, but the v1 test does not require or resolve an exact v0 version.
 
@@ -17,21 +20,22 @@ It does not adopt a v0 deployment or migrate its workspace, conversations, crede
 
 ## Artifact and Parser Contract
 
-The caller supplies an absolute path to manually curated, redacted YAML.
-The runner computes and records the SHA-256 of the bytes it actually consumes.
+The caller supplies absolute paths to the manually curated, redacted raw v0 export and a separately authored current v1 configuration.
+The runner computes and records the SHA-256 and redacted bytes of each input.
 An optional free-form source note may identify the producing scenario or revision for later audits; it is not an execution or qualification gate.
 
-The runner passes the raw bytes to the ordinary v1 `Document::parse` path.
-The v0 exporter owns projection of portable identity, gateway endpoint, inference, agent, policy, and process-principal intent into the v1 vocabulary.
-The v1 parser owns target defaults, including the gateway engine and image, gateway network, and agent image.
-No compatibility translator or caller-supplied runtime binding participates in the scenario.
+The runner parses the authored configuration through the ordinary v1 `Document::parse` path.
+A test-only comparison replaces the raw export’s single-entry `agents` list with `agent` in memory and checks that its parsed intent equals the authored configuration.
+The v1 parser supplies target defaults, including the gateway engine and image, gateway network, and agent image.
+Only the separately supplied current document drives deployment; the SDK has no compatibility translator.
+This comparison requires one sandbox and one historical agent, and rejects changes to identity, inference, policy, or other portable intent.
 
 The checked-in contract lives under `crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/`:
 
 - `NOTICE.md` records producer revision, refresh date, and artifact handling.
 - `v0.yaml` is the unmodified reference manifest with its upstream revision and hash.
 - `v0-export.yaml` is the raw representative redacted export from the supported public path.
-- `v1.yaml` is the expected document after ordinary v1 parsing and defaulting.
+- `v1.yaml` is the explicitly reauthored current document with the same portable intent.
 
 Run the deterministic checks without Docker or a credential:
 
@@ -43,11 +47,11 @@ cargo test -p nemoclaw-e2e --test hosted_parity
 
 The live test performs this v1 lifecycle:
 
-1. Verify redaction, parse the raw export, then record the consumed artifact's computed hash and optional source note.
-2. Plan and apply the parsed desired state in an owned state directory.
+1. Verify both inputs are redacted, parse the authored v1 configuration, compare its intent with the test-only projection of the raw export, and record both hashes.
+2. Plan and apply the authored desired state in an owned state directory.
 3. Require a real OpenClaw reply through the NVIDIA hosted endpoint.
 4. Require unchanged plan and apply with stable resource identities.
-5. Export v1 desired state and compare it with the parsed raw export.
+5. Export v1 desired state and compare it with the authored input.
 6. Reapply the v1 export without changes.
 7. Preview and destroy the owned workloads.
 8. Confirm that only the owned workspace and gateway storage remain.
@@ -57,7 +61,7 @@ A feedback-only run may reapply the identical pending intent after a failure.
 A Linux qualification candidate must start from fresh state.
 
 The test writes `openclaw-nvidia-hosted-parity.json` and `exported.yaml` under the state directory.
-The evidence records the computed artifact hash, optional source note, parsed v1 input, v1 revision and bundle, redacted input, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
+The evidence records both input hashes and redacted inputs, the raw export’s optional source note, their intent comparison, parsed v1 input, v1 revision and bundle, environment, operations, resource identities, agent reply, export comparison, cleanup, and verdict.
 Review retained files for credentials before sharing them.
 
 ## Prerequisites and Ownership
@@ -66,6 +70,8 @@ Use an owned Docker daemon, deployment UID, port, subnet, state directory, and N
 The key must be available only as `NVIDIA_INFERENCE_API_KEY`; do not place its value in YAML, arguments, state, evidence, or repository files.
 The test does not revoke it.
 
+Preserve the raw export unchanged and author a separate current configuration by replacing its single-entry `agents` list with `agent`.
+Both inputs must describe the same owned deployment UID and portable intent; do not repurpose another deployment’s identity.
 Build a verified bundle and ensure that the immutable gateway and agent images pinned by the SDK revision exist in the owned Docker daemon.
 Create a private state directory with this marker before running:
 
@@ -82,6 +88,7 @@ Set absolute paths and exact identities:
 ```sh
 export NEMOCLAW_LIVE_V1_REVISION="$(git rev-parse HEAD)"
 export NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml
+export NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml
 # Optional audit note; the runner does not resolve or validate this identity.
 export NEMOCLAW_LIVE_V0_SOURCE='producer scenario or revision'
 export NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/owned-state
@@ -93,7 +100,7 @@ For a Linux qualification candidate, use a clean checkout and the candidate ackn
 ```sh
 export NEMOCLAW_RUN_LIVE_HOSTED_PARITY=issue-11810
 cargo test -p nemoclaw-e2e --test hosted_parity \
-  v0_export_artifact_drives_v1_hosted_openclaw_lifecycle \
+  authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
   -- --ignored --nocapture
 ```
 
@@ -131,7 +138,7 @@ Review its price before creation, keep credentials out of startup metadata and s
 
 ## Recovery and Cleanup
 
-After a failed apply, keep the exact artifact, bundle, and state directory.
+After a failed apply, keep both exact input artifacts, the bundle, and the state directory.
 Reapply only the identical desired state while diagnosing a pending intent.
 Do not create a second state directory for the same deployment UID.
 

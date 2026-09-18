@@ -140,24 +140,24 @@ A read-only plan cannot observe workspace resources through a stopped gateway an
 
 ## Hosted NVIDIA OpenClaw Parity
 
-The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) parses a redacted, exact-hash raw v0 export through the ordinary v1 path and compares the v1 export with that parsed document.
+The [issue #11810 Linux/Docker scenario](../validation/scenarios/openclaw-nvidia-hosted-linux-docker.md) compares a redacted, exact-hash historical export with separately authored current v1 intent, then compares the v1 export with that authored document.
 It requires a dedicated NVIDIA credential, an owned Docker daemon and deployment identity, a verified immutable v1 bundle, the SDK-pinned runtime images, and an ownership marker.
 
 The ignored test accepts the `issue-11810-local-feedback` acknowledgement for non-qualifying Docker Desktop feedback.
 Docker Desktop feedback may require an explicitly recorded operator-owned forwarding layer for the managed gateway and sandbox callback paths; native Linux qualification must not use it.
 Docker Desktop socket-source canonicalization remains unsupported and fails closed.
 The `issue-11810` gate, a clean v1 checkout, and fresh owned state produce a qualification candidate.
-The aligned v0 export contains the v1 process principal and runtime policy; no caller-supplied compatibility mapping is used.
+The historical export contains the v1 process principal and runtime policy; the sole agent-list projection is test-only and no production compatibility mapping is used.
 The runner records `qualified: false`; qualification requires external artifact-provenance and evidence review.
 It makes a paid or quota-consuming hosted inference request and destroys only the deployment bound to that state.
 Do not run it as part of an ignored-test aggregate.
 
 ## Hosted NVIDIA Hermes Parity
 
-The [issue #12019 Linux/Docker scenario](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) reuses the hosted parity lifecycle with a reviewed raw Hermes export.
-It verifies the normal v1 parser, Hermes harness and interface intent, a real Hermes reply, no-op apply, export/reapply, and owned cleanup.
+The [issue #12019 Linux/Docker scenario](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) reuses the hosted parity lifecycle with a reviewed raw Hermes export and separately authored current v1 input.
+It verifies that a test-only projection of the historical export matches the normally parsed v1 document, then verifies Hermes harness and interface intent, a real Hermes reply, no-op apply, export/reapply, and owned cleanup.
 Use `issue-12019` only for a clean native-Linux qualification candidate or `issue-12019-local-feedback` for a non-qualifying Docker Desktop run.
-It requires the same absolute paths, immutable bundle, owned state, and dedicated NVIDIA credential as the OpenClaw scenario, but produces `hermes-nvidia-hosted-parity.json` and must be run with the `v0_export_artifact_drives_v1_hosted_hermes_lifecycle` test filter.
+It requires the same absolute paths, immutable bundle, owned state, and dedicated NVIDIA credential as the OpenClaw scenario, including distinct `NEMOCLAW_LIVE_V0_EXPORT` and `NEMOCLAW_LIVE_V1_CONFIG` inputs, but produces `hermes-nvidia-hosted-parity.json` and must be run with the `v0_export_artifact_drives_v1_hosted_hermes_lifecycle` test filter.
 This scenario does not qualify Relay or Switchyard.
 
 ## SSH Engine Transport

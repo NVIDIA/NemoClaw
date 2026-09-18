@@ -7,12 +7,12 @@ These records qualify specific behaviors, revisions, and environments of NemoCla
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
-The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as ordinary v1 parsing of a manually curated, redacted raw v0 export followed by a new v1 lifecycle.
+The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as a reviewed historical export matched to separately authored current v1 intent, followed by a new v1 lifecycle.
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
 The scenario is explicitly live-gated and is not qualification evidence until a native Linux run has its aligned input and redacted lifecycle evidence reviewed and retained here.
 
-The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) applies the same direct-parser and owned-lifecycle contract to Hermes for issue #12019.
-It adds Hermes interface and runtime-policy preservation without introducing a migration translator or extending the result to Relay or Switchyard.
+The [hosted NVIDIA Hermes Linux/Docker scenario](scenarios/hermes-nvidia-hosted-linux-docker.md) compares a reviewed historical export with separately authored current v1 intent, then applies the ordinary owned lifecycle for issue #12019.
+It adds Hermes interface and runtime-policy preservation without introducing a production migration translator or extending the result to Relay or Switchyard.
 
 The [earlier native inference attempt](rust-native-inference-linux-arm64.md) records a main-process environment failure on its named OpenShell revision.
 The [Spark example qualification](spark-examples-linux-arm64.md) records the new model/scenario combinations and their live-test limits.

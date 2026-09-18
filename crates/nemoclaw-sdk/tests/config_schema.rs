@@ -46,10 +46,10 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
         "/spec/inferenceProviders/0/name",
         "/spec/sandboxes",
         "/spec/sandboxes/0/name",
-        "/spec/sandboxes/0/agents",
+        "/spec/sandboxes/0/agent",
         "/spec/sandboxes/0/harness",
-        "/spec/sandboxes/0/agents/0/inference",
-        "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/model",
+        "/spec/sandboxes/0/agent/inference",
+        "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
     ] {
         let mut value = original.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -99,7 +99,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
-    let path = "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/piModel";
+    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
     *value.pointer_mut(path).unwrap() = Value::Null;
@@ -182,7 +182,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "managed-ollama.yaml",
-            "/spec/sandboxes/0/agents/0/inference/routes/0/overrides/model",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
             json!("untagged"),
             false,
         ),
@@ -339,7 +339,7 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     for (file, path, replacement) in [
         (
             "local.yaml",
-            "/spec/sandboxes/0/agents/0/inference/routes/0/providerRef",
+            "/spec/sandboxes/0/agent/inference/routes/0/providerRef",
             json!("foreign"),
         ),
         (
@@ -411,4 +411,27 @@ fn maintained_examples_include_the_spark_directory() {
             "missing Spark example: {name}"
         );
     }
+}
+
+#[test]
+fn every_sandbox_requires_one_singular_agent_and_rejects_legacy_lists() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("local.yaml");
+    let sandbox = value["spec"]["sandboxes"][0].as_object_mut().unwrap();
+    if let Some(agents) = sandbox.remove("agents") {
+        sandbox.insert("agent".into(), agents[0].clone());
+    }
+    agrees(&validator, &value, true);
+    let mut missing = value.clone();
+    missing["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent");
+    agrees(&validator, &missing, false);
+    let mut legacy = missing.clone();
+    legacy["spec"]["sandboxes"][0]["agents"] =
+        json!([value["spec"]["sandboxes"][0]["agent"].clone()]);
+    agrees(&validator, &legacy, false);
+    value["spec"]["sandboxes"][0]["agents"] = legacy["spec"]["sandboxes"][0]["agents"].clone();
+    agrees(&validator, &value, false);
 }

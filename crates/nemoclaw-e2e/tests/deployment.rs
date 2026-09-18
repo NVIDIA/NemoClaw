@@ -24,7 +24,8 @@ async fn interrupted_create_requires_original_intent_and_destroy_allows_recreati
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(record["pending"], true);
     let mut changed = document.clone();
-    changed.spec.sandboxes[0].agents[0]
+    changed.spec.sandboxes[0]
+        .agent
         .inference
         .as_mut()
         .unwrap()
@@ -103,17 +104,18 @@ async fn inference_settings_sdk_apply_export_reapply_and_drift() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn multiple_agents_cli_export_reapply_and_policy_drift() {
+async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    let primary = document.spec.sandboxes[0].agents[0].clone();
+    let primary = document.spec.sandboxes[0].clone();
     for name in ["reader", "reviewer", "auditor"] {
-        let mut agent = primary.clone();
-        agent.name = name.into();
-        agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
+        let mut sandbox = primary.clone();
+        sandbox.name = name.into();
+        sandbox.agent.name = name.into();
+        sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
             allow: [nemoclaw_sdk::config::AllowedTool::Read],
         });
-        document.spec.sandboxes[0].agents.push(agent);
+        document.spec.sandboxes.push(sandbox);
     }
     lifecycle(&document.yaml().unwrap()).await;
 }
@@ -128,7 +130,7 @@ async fn tool_disclosure_cli_export_reapply_and_drift() {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.sandboxes[0].agents[0].tools =
+        document.spec.sandboxes[0].agent.tools =
             Some(nemoclaw_sdk::config::AgentTools::Disclosure { disclosure: mode });
         // Exercise the existing launch-setting drift assertions as well as export/reapply.
         document.spec.inference_providers[0].api =
@@ -195,13 +197,13 @@ async fn web_search_cli_export_reapply_and_destroy() {
         "search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agents[0].integration_refs = vec!["search".into()];
+    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
     lifecycle(&document.yaml().unwrap()).await;
     document.spec.sandboxes[0].integrations = std::mem::take(&mut document.spec.integrations);
     lifecycle(&document.yaml().unwrap()).await;
     let sandbox = &mut document.spec.sandboxes[0];
-    sandbox.agents[0].integration_refs.clear();
-    sandbox.agents[0].integrations = std::mem::take(&mut sandbox.integrations);
+    sandbox.agent.integration_refs.clear();
+    sandbox.agent.integrations = std::mem::take(&mut sandbox.integrations);
     lifecycle(&document.yaml().unwrap()).await;
 }
 
@@ -225,7 +227,7 @@ async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope
         lifecycle(&document.yaml().unwrap()).await;
         let sandbox = &mut document.spec.sandboxes[0];
         let provider = sandbox.inference_providers.remove(0);
-        let route = &mut sandbox.agents[0].inference.as_mut().unwrap().routes[0];
+        let route = &mut sandbox.agent.inference.as_mut().unwrap().routes[0];
         route.provider_ref = None;
         route.provider = Some(provider);
         lifecycle(&document.yaml().unwrap()).await;
@@ -316,8 +318,8 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .contains(&("sandbox", "create", "complete"))
     );
     let health = applied.unwrap().health;
-    assert_eq!(health.len(), 1);
-    assert!(!health[0].health.supported);
+    assert_eq!(health.len(), document.spec.sandboxes.len());
+    assert!(health.iter().all(|entry| !entry.health.supported));
     for operation in [
         "bundle.verify",
         "tofu.init",
@@ -335,7 +337,10 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         );
     }
     let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, if has_search { 6 } else { 4 });
+    assert_eq!(
+        effects,
+        document.spec.sandboxes.len() + if has_search { 5 } else { 3 }
+    );
     if declare_ownership {
         document.inference_provider_mut().unwrap().management =
             Some(nemoclaw_sdk::config::Management::External);
@@ -446,10 +451,10 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
             .providers = attached;
         assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     }
-    if document.spec.sandboxes[0].agents.len() > 1 {
+    if document.spec.sandboxes.len() > 1 {
         let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = document.clone();
-        broadened.spec.sandboxes[0].agents[1].tools = None;
+        broadened.spec.sandboxes[1].agent.tools = None;
         assert!(deployment.plan(&broadened, &cancel).await.is_err());
         fixture.state.lock().unwrap().exec_exit = 2;
         assert!(deployment.plan(&document, &cancel).await.is_err());
@@ -463,7 +468,7 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     }
     if document.inference_provider().unwrap().api.is_some()
-        || document.spec.sandboxes[0].agents[0].auth.is_some()
+        || document.spec.sandboxes[0].agent.auth.is_some()
         || document.spec.sandboxes[0]
             .harness
             .as_mut()
@@ -636,9 +641,6 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     )
     .unwrap();
     document.spec.gateway.endpoint = fixture.endpoint.clone();
-    let mut bob = document.spec.sandboxes[0].agents[0].clone();
-    bob.name = "bob".into();
-    document.spec.sandboxes[0].agents.push(bob);
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);

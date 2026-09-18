@@ -126,15 +126,11 @@ impl Document {
             {
                 for sandbox in sandboxes {
                     omit_shared_metadata(sandbox);
-                    if let Some(agents) = sandbox
-                        .get_mut("agents")
-                        .and_then(serde_json::Value::as_array_mut)
+                    if let Some(inference) = sandbox
+                        .get_mut("agent")
+                        .and_then(|agent| agent.get_mut("inference"))
                     {
-                        for agent in agents {
-                            if let Some(inference) = agent.get_mut("inference") {
-                                omit_model_metadata(inference);
-                            }
-                        }
+                        omit_model_metadata(inference);
                     }
                 }
             }
@@ -172,16 +168,14 @@ impl Document {
             inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
         }
         for sandbox in &mut canonical.spec.sandboxes {
-            sandbox.agents.sort_by(|a, b| a.name.cmp(&b.name));
             sandbox
                 .inference_providers
                 .sort_by(|a, b| a.name.cmp(&b.name));
-            for inference in sandbox.inferences.values_mut().chain(
-                sandbox
-                    .agents
-                    .iter_mut()
-                    .filter_map(|agent| agent.inference.as_mut()),
-            ) {
+            for inference in sandbox
+                .inferences
+                .values_mut()
+                .chain(sandbox.agent.inference.iter_mut())
+            {
                 inference.routes.sort_by(|a, b| a.name.cmp(&b.name));
             }
         }

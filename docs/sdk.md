@@ -80,7 +80,7 @@ Apply computes its own checked plan; passing a previous preview is not part of t
 
 ## Read Apply Health
 
-`OperationResult.health` contains `SandboxHealth` observations, labeled with the sandbox and its agent roster.
+`OperationResult.health` contains `SandboxHealth` observations, labeled with the sandbox and its sole agent.
 Each observation wraps `RuntimeHealth`: a `supported` flag, an optional Fabric `report`, and an optional bridge `reason_code`.
 The report uses Fabric's field names and retains check timestamps and dependency results.
 Other lifecycle operations leave this list empty.

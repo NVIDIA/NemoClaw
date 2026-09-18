@@ -6,11 +6,44 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from fabric import client, configuration, configurations, hosted_runtimes
+from fabric import client, configuration, hosted_runtime
 
 
 class HostedAgents(unittest.IsolatedAsyncioTestCase):
-    def test_agents_select_their_own_model_workspace_and_tools(self):
+    def test_every_harness_rejects_multiple_declared_agents(self):
+        inference = {"api": "openai-completions", "agents": [{"name": "alice"}, {"name": "bob"}]}
+        for harness in (
+            "deepagents",
+            "openclaw",
+            "pi",
+            "hermes",
+            "claude",
+            "codex",
+            "mini-swe-agent",
+            "nooa",
+            "nooa-bench",
+            "remote-agent",
+        ):
+            with (
+                self.subTest(harness=harness),
+                self.assertRaisesRegex(ValueError, "exactly one agent"),
+            ):
+                configuration("alice", harness, model={"model": "primary"}, inference=inference)
+
+    def test_openclaw_preserves_sandbox_runtime_and_native_agent_identities(self):
+        inference = {"api": "openai-completions", "agents": [{"name": "alice"}]}
+        config = configuration("sandbox-name", "openclaw", inference=inference)
+        self.assertEqual(config["metadata"]["name"], "sandbox-name")
+        settings = config["harness"]["settings"]
+        self.assertEqual(settings["agent_name"], "sandbox-name")
+        self.assertEqual(settings["inference"]["agents"], [{"name": "alice"}])
+
+    def test_omitted_or_empty_wire_agents_use_the_implicit_agent(self):
+        for agents in ({}, {"agents": []}):
+            config = configuration("alice", inference={"api": "openai-completions", **agents})
+            self.assertEqual(config["metadata"]["name"], "alice")
+
+    def test_agent_selects_its_model_workspace_and_tools(self):
         def agent(name, model):
             return {
                 "name": name,
@@ -31,47 +64,34 @@ class HostedAgents(unittest.IsolatedAsyncioTestCase):
                 },
             }
 
-        inference = {
-            "api": "openai-completions",
-            "agents": [agent("alice", "smart"), agent("bob", "fast")],
-        }
-        inference["agents"][1]["tools"] = {"allow": ["read"]}
-        alice = configuration("alice", "deepagents", inference=inference)
-        bob = configuration("bob", "deepagents", inference=inference)
-        self.assertEqual(alice["models"]["default"]["model"], "smart")
-        self.assertEqual(bob["models"]["default"]["model"], "fast")
-        self.assertNotEqual(alice["environment"]["workspace"], bob["environment"]["workspace"])
-        self.assertNotEqual(alice["runtime"]["artifacts"], bob["runtime"]["artifacts"])
-        self.assertNotIn("tools", alice)
-        self.assertEqual(bob["tools"], {"enabled": ["read_file"]})
+        inference = {"api": "openai-completions", "agents": [agent("alice", "smart")]}
+        inference["agents"][0]["tools"] = {"allow": ["read"]}
+        config = configuration("alice", "deepagents", inference=inference)
+        self.assertEqual(config["models"]["default"]["model"], "smart")
+        self.assertEqual(config["metadata"]["name"], "alice")
+        self.assertEqual(config["environment"]["workspace"], "/sandbox/workspace")
+        self.assertEqual(config["runtime"]["artifacts"], "/sandbox/artifacts")
+        self.assertEqual(config["tools"], {"enabled": ["read_file"]})
+        with self.assertRaisesRegex(ValueError, "declared agent"):
+            configuration("sandbox-name", "deepagents", inference=inference)
 
-    async def test_failed_start_stops_previously_started_runtimes(self):
-        first = SimpleNamespace(stop=AsyncMock())
-        start = AsyncMock(side_effect=[first, RuntimeError("second failed")])
-        with self.assertRaisesRegex(RuntimeError, "second failed"):
-            async with hosted_runtimes({"alice": {}, "bob": {}}, start):
-                self.fail("partial startup must not serve readiness")
-        first.stop.assert_awaited_once()
+    async def test_shutdown_stops_the_only_runtime_after_server_failure(self):
+        runtime = SimpleNamespace(stop=AsyncMock())
+        start = AsyncMock(return_value=runtime)
+        with self.assertRaisesRegex(RuntimeError, "server failed"):
+            async with hosted_runtime({"metadata": {"name": "alice"}}, start) as hosted:
+                self.assertIs(hosted, runtime)
+                raise RuntimeError("server failed")
+        start.assert_awaited_once()
+        runtime.stop.assert_awaited_once()
 
-    async def test_shutdown_attempts_every_runtime_even_after_a_stop_failure(self):
-        first = SimpleNamespace(stop=AsyncMock())
-        second = SimpleNamespace(stop=AsyncMock(side_effect=RuntimeError("stop failed")))
-        with self.assertRaisesRegex(RuntimeError, "stop failed"):
-            async with hosted_runtimes(
-                {"alice": {}, "bob": {}}, AsyncMock(side_effect=[first, second])
-            ) as runtimes:
-                self.assertEqual(set(runtimes), {"alice", "bob"})
-        first.stop.assert_awaited_once()
-        second.stop.assert_awaited_once()
-
-    async def test_readiness_rejects_drift_in_a_secondary_agent(self):
-        inference = {"api": "openai-completions", "agents": [{"name": "alice"}, {"name": "bob"}]}
-        configs = configurations("alice", "deepagents", inference)
+    async def test_readiness_rejects_drift_in_the_agent(self):
+        inference = {"api": "openai-completions", "agents": [{"name": "alice"}]}
+        config = configuration("alice", "deepagents", inference=inference)
         result = {
-            "config": configs["alice"],
+            "config": config,
             "runtime_id": "owned",
             "ready": True,
-            "agents": configs,
             "inference": inference,
         }
         writer = SimpleNamespace(
@@ -80,7 +100,7 @@ class HostedAgents(unittest.IsolatedAsyncioTestCase):
         for drift in (False, True):
             observed = copy.deepcopy(result)
             if drift:
-                observed["agents"]["bob"]["environment"]["workspace"] = "/wrong"
+                observed["config"]["environment"]["workspace"] = "/wrong"
             reader = SimpleNamespace(readline=AsyncMock(return_value=json.dumps(observed).encode()))
             with patch(
                 "fabric.asyncio.open_unix_connection", AsyncMock(return_value=(reader, writer))

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Parsed and defaulted form of the raw v0 export produced by NVIDIA/NemoClaw
-# b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
+# Current v1 intent authored from the reviewed raw v0 export produced by
+# NVIDIA/NemoClaw b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -57,11 +57,11 @@ spec:
                 - /opt/hermes
               read_write:
                 - /sandbox
-      agents:
-        - name: primary
-          inference:
-            routes:
-              - name: primary
-                providerRef: hosted-nvidia-prod
-                overrides:
-                  model: nvidia/nemotron-3-super-120b-a12b
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b

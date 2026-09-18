@@ -10,4 +10,9 @@ Its SHA-256 is asserted by the deterministic test.
 On 2026-09-17, it replaced the synthetic legacy export used by #11813.
 The YAML retains the credential environment-variable reference and contains no credential value.
 
-`v1.yaml` records the expected result after the ordinary v1 parser applies target-owned defaults to those raw bytes.
+`v1.yaml` records the same portable intent explicitly reauthored on 2026-09-17 for the required singular `agent` field.
+The historical raw export retains its `agents` list and is rejected by the current parser.
+The deterministic test compares the authored fixture with a test-only projection of the historical data; the SDK supplies no compatibility translator.
+
+Live verification likewise requires a separate `NEMOCLAW_LIVE_V1_CONFIG` artifact alongside the unchanged `NEMOCLAW_LIVE_V0_EXPORT`.
+It compares intent before deployment and records each artifact’s hash and redacted bytes; only the explicitly authored current configuration drives the v1 lifecycle.

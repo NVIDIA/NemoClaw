@@ -16,15 +16,18 @@ API and native-interface requirements differ between harnesses.
 The strict schema rejects unsupported combinations.
 See [inference configuration](inference.md) for API selection, OpenClaw route tuning, and Hermes authentication.
 
-## Configure the Shared Harness
+## Configure the Harness
 
 Each sandbox selects one harness implementation.
 Each sandbox must select exactly one configuration: inline `harness: {kind: openclaw}` or `harnessRef` from visible `harnesses` definitions.
-Every agent is an instance of the sandbox-selected harness implementation; multiple agents may share one runtime process.
-Agents retain their own inference choices, tools, and integrations.
-Execution defaults, tracing, and native interfaces belong inside that configuration; they no longer belong to the first agent.
+Each sandbox declares exactly one `agent` and hosts one Fabric runtime using the selected harness.
+The agent selects its inference, tools, and integrations.
+Execution defaults, tracing, and native interfaces belong inside the harness configuration.
 A shared definition reuses settings, not a running process across sandboxes.
 See [shared harness definitions](configuration-references.md#reference-a-harness-configuration) for an example.
+
+The former `agents` list is rejected; replace it with one `agent` object and put each additional agent in a separate sandbox.
+Keep the previous bundle and state for existing deployments; this schema change does not migrate resources or native data.
 
 Agent-level `harness` and `harnessRef`, the former scalar `harness`, and agent-level `execution`, `observability`, and `interfaces` fields are rejected.
 Move the harness selection to the sandbox and keep execution, observability, and interfaces inside the typed harness configuration.
@@ -37,9 +40,9 @@ That procedure uses the OpenClaw dashboard; it is not a dashboard guide for ever
 
 | Agent | Access and conversation behavior |
 |---|---|
-| OpenClaw | [Headless request](#run-one-headless-openclaw-request) or optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns a native gateway with a session per declared agent |
+| OpenClaw | [Headless request](#run-one-headless-openclaw-request) or optional [dashboard](interfaces.md#openclaw-dashboard); Fabric owns one native gateway for the sandbox’s agent |
 | Hermes | Default local adapter: [HTTP API, dashboard, and browser TUI](interfaces.md#hermes-api-dashboard-and-browser-tui), with separate API/dashboard conversations; experimental [Relay tracing](#hermes-relay-tracing) can accompany explicitly declared interfaces |
-| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request); starts a separate runtime using the named agent's route |
+| Deep Agents | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request); starts a separate invocation runtime using the sandbox agent's route |
 | Pi | [One-shot Fabric invocation](#run-one-deep-agents-or-pi-request) and a process-local conversation; see [Pi model selection](#pi-model-selection) before updates |
 | Other Fabric harnesses | Fabric hosts the native process; a complete user-facing first-message/access procedure for each harness is **TBD** |
 
@@ -48,18 +51,14 @@ NemoClaw has no `launch`, `connect`, or invocation command.
 Do not start a separate Fabric SDK `run` expecting to attach to the runtime already hosted by the deployment.
 Native channel/plugin capabilities need their own prerequisites; see [integration gaps](#additional-agent-integrations).
 
-### Multiple Deep Agents in One Sandbox
+### Deploy Several Agents
 
-Declare each instance under the sandbox’s `agents`, with its own inference, tools, and integration references.
-Each instance selects one model and has a separate Fabric runtime; all use the sandbox-selected Deep Agents harness.
-With multiple agents, workspaces are `/sandbox/workspaces/<agent-name>` and artifacts are `/sandbox/artifacts/<agent-name>`.
-Single-agent deployments retain `/sandbox/workspace` and `/sandbox/artifacts`.
-These directories separate native state, not permissions or network access within the sandbox.
-
-Apply checks every hosted configuration and reports each agent’s Fabric health separately.
-A failed startup stops runtimes already started by that launch.
-Changing the roster changes the immutable sandbox launch configuration; use a fresh deployment and an image built from this revision.
-To invoke a specific agent through the SDK procedure below, pass its declared name to `configuration()`.
+Declare one sandbox per agent, selecting its harness and inference separately.
+The [multiple-sandbox example](../examples/multiple-sandboxes.yaml) deploys two OpenClaw agents, two Deep Agents agents, and one Pi agent in five sandboxes.
+Shared harness, inference, and integration definitions reuse configuration or provider registrations; they do not share a native gateway or Fabric runtime.
+Each Deep Agents instance selects one model and uses `/sandbox/workspace` and `/sandbox/artifacts` inside its own sandbox.
+Apply checks each sandbox’s hosted configuration and Fabric health separately.
+To invoke its agent through the SDK procedure below, pass the declared agent name to `configuration()`.
 
 ### Run One Deep Agents or Pi Request
 
@@ -152,14 +151,12 @@ It also compares the full owned agent and tool sections; other native fields are
 The default [local Hermes adapter](../image/fabric/hermes_adapter.py) compares the generated top-level configuration sections, including terminal, approval, and turn settings.
 Readiness rejects conflicts in those checked fields; it does not continuously rewrite native configuration or enforce every initialization default.
 
-## Multiple OpenClaw Agents and Tool Restrictions
+## Agent Tool Restrictions
 
-A sandbox accepts one or more uniquely named OpenClaw agents.
-Agents share one harness runtime and can select different [named model choices](inference.md#give-an-agent-multiple-model-choices).
-Deep Agents also supports multiple agents, each with its own Fabric runtime. Other harnesses require one agent.
-Plain-text OpenClaw Fabric invocations require exactly one declared agent.
-With multiple OpenClaw agents, use an input object containing `agent` and `message`; there is no implicit default agent.
-Native OpenClaw commands can select any declared agent by name.
+Each sandbox accepts one agent, including OpenClaw and Deep Agents.
+OpenClaw can select several [named model choices](inference.md#give-an-agent-multiple-model-choices).
+Plain-text OpenClaw Fabric invocations target the sandbox’s sole agent.
+Native OpenClaw commands can select that agent by name.
 The local Fabric adapter also accepts an input object with `agent` and `message` fields; it rejects undeclared names before invocation.
 
 Build the selected harness image from this revision before using read-only policies; older Deep Agents and Pi images do not apply the mapping.
@@ -175,10 +172,10 @@ Only this allowlist is supported; empty lists, other tools, wildcards, and addit
 The policy selects native `read` in OpenClaw/Pi and `read_file` in Deep Agents; other tool calls are blocked.
 Omitting `tools` preserves the harness defaults.
 OpenClaw also defaults to progressive discovery.
-This policy restricts the agent's tools, not filesystem access for other processes in the shared sandbox.
-Each OpenClaw agent has a distinct session and workspace at `/sandbox/workspaces/<agent-name>`, independent of declaration order.
-Single-agent Deep Agents and Pi use `/sandbox/workspace`.
-Those directories are not separate security boundaries.
+This policy restricts the agent's tools, not filesystem access for other processes in its sandbox.
+OpenClaw uses a workspace at `/sandbox/workspaces/<agent-name>`.
+Deep Agents and Pi use `/sandbox/workspace`.
+OpenShell supplies the isolation boundary between sandboxes.
 
 An unrestricted OpenClaw agent can select tool disclosure instead of an allowlist:
 
@@ -191,18 +188,16 @@ tools:
 `direct` disables tool search and exposes permitted tools directly.
 Disclosure changes tool presentation, not permissions; progressive search and calls retain the read-only allowlist.
 The `allow` and `disclosure` forms are mutually exclusive.
-OpenClaw configures disclosure once per gateway, so unrestricted agents in a sandbox must select the same mode.
-An unrestricted agent that omits `tools` selects progressive; read-only agents use the shared mode without selecting it.
-If every agent is read-only, the shared mode is progressive.
-Conflicting modes are rejected before deployment.
+OpenClaw configures disclosure for its sandbox-local gateway.
+Omitting `tools` selects progressive; a read-only agent also uses progressive discovery.
 
-For OpenClaw, NemoClaw owns the native agent roster, agent defaults, and tool configuration.
+For OpenClaw, NemoClaw owns the single native agent entry, agent defaults, and tool configuration.
 Startup, refresh, and export reject conflicting native settings without overwriting them.
 Unrelated channels, pairing, and plugin settings remain native configuration.
-Changing the declared roster, tool policy, or disclosure mode changes the sandbox launch specification; it is not an in-place permission update.
+Changing the declared agent, tool policy, or disclosure mode changes the sandbox launch specification; it is not an in-place permission update.
 
 Build the updated OpenClaw image using the [runtime build procedure](#runtime-lifecycle) and put its printed immutable digest in `image.ref`.
-Earlier images do not implement the agent-roster and disclosure interface.
+Earlier images may not implement the current agent and disclosure interface.
 Changing YAML alone does not update an existing image or migrate retained native configuration.
 
 See [agent interfaces](interfaces.md) for OpenClaw and Hermes dashboard, API, and browser-TUI access.
@@ -226,7 +221,7 @@ An explicit interval uses an isolated heartbeat session; `0m` disables heartbeat
 Use a whole number followed by `s`, `m`, or `h`.
 See the [execution field reference](reference/configuration.md#agentexecution) for bounds.
 
-Execution settings apply to the shared OpenClaw gateway defaults.
+Execution settings apply to the sandbox’s OpenClaw gateway defaults.
 Select these settings once on the sandbox; use `harnessRef` to reuse a named configuration.
 Other harnesses accept `execution.timeoutSeconds` as the Fabric invocation timeout, defaulting to 300 seconds; they reject `heartbeatEvery`.
 Empty `execution` objects are rejected.
@@ -321,7 +316,7 @@ Production migration remains gated on a released Fabric adapter compatible with 
 
 Define an integration once in `spec.integrations` and select it from each consuming agent's `integrationRefs`.
 For reuse only within a sandbox, put the same definition in `spec.sandboxes[].integrations`.
-For one agent, define it directly in `spec.sandboxes[].agents[].integrations`; no reference is required.
+For one agent, define it directly in `spec.sandboxes[].agent.integrations`; no reference is required.
 All three locations use the same [integration type](reference/configuration.md#integration).
 
 Enclosing definitions require an explicit reference; an agent's inline definitions attach directly to that agent.
@@ -342,31 +337,34 @@ spec:
       credential:
         env: BRAVE_API_KEY
   sandboxes:
-    - name: assistant
+    - name: researcher
       harness: {kind: openclaw}
-      agents:
-        - name: researcher
-          integrationRefs: [search]
-        - name: writer
-          integrationRefs: [search]
+      agent:
+        name: researcher
+        integrationRefs: [search]
+    - name: writer
+      harness: {kind: openclaw}
+      agent:
+        name: writer
+        integrationRefs: [search]
 ```
 
 For one agent, put the definition directly under its `integrations` field:
 
 ```yaml
-agents:
-  - name: researcher
-    integrations:
-      search:
-        kind: webSearch
-        provider: brave
-        credential:
-          env: BRAVE_API_KEY
+agent:
+  name: researcher
+  integrations:
+    search:
+      kind: webSearch
+      provider: brave
+      credential:
+        env: BRAVE_API_KEY
 ```
 
 Inline definitions belong to that agent; use an enclosing definition and references to share one integration.
 The native gateway currently supports one attached Brave search definition per sandbox.
-Multiple agents may reference that definition, but attaching distinct search definitions is rejected, even when their settings are equal.
+Agents in different sandboxes may reference the same definition; attaching distinct search definitions to one agent is rejected, even when their settings are equal.
 Unused enclosing definitions create no provider, policy grant, or secret requirement.
 
 Set the referenced environment variable on the host running `nemoclaw apply`.
@@ -379,9 +377,9 @@ Destroy removes the managed provider and profile without revoking the key at Bra
 Unchanged apply does not rotate a changed value behind the same environment reference.
 
 Every attached agent must be an unrestricted OpenClaw or Deep Agents agent.
-Selected agents receive `web_search`; OpenClaw explicitly denies it for other agents, while Deep Agents only configures its MCP tool for selected agents.
+The selected sandbox agent receives `web_search`; Deep Agents exposes it through its configured MCP tool.
 Read-only policies cannot attach search.
-These are native tool restrictions within a shared sandbox, not separate process or filesystem boundaries.
+The native tool restriction applies within each sandbox; OpenShell provides isolation between sandboxes.
 Other harnesses are rejected.
 
 The integration adds a reserved `nemoclaw-brave` policy rule permitting the native Node and Python 3.14 executables to GET `/res/v1/web/search` at `api.search.brave.com:443`.
@@ -506,7 +504,7 @@ The [agent image builder](build.md#build-agent-images) runs the pinned toolchain
 Use the resulting immutable image reference in the sandbox's `image.ref`.
 See [the source notice](../image/NOTICE.md).
 
-Fabric's local OpenClaw adapter owns one native gateway with a session for each declared agent.
+Fabric's local OpenClaw adapter owns one native gateway for the sandbox’s sole agent.
 An uncertain invocation result stops that runtime and is never replayed automatically.
 Agent configuration readiness does not invoke the model.
 
