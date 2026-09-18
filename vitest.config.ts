@@ -30,9 +30,6 @@ const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundar
 const canonicalCredentialFilterBoundary = path.resolve(
   "nemoclaw/src/shared/credential-filter-boundary.cts",
 );
-const canonicalMigrationRestoreBoundary = path.resolve(
-  "nemoclaw/src/shared/migration-restore-boundary.cts",
-);
 const canonicalOpenShellExternalTargetBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
@@ -46,9 +43,6 @@ const canonicalPrivateNetworksBoundary = path.resolve(
   "nemoclaw/src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
-const canonicalSnapshotSanitizerBoundary = path.resolve(
-  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
-);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -60,10 +54,6 @@ const canonicalSourceAliases = [
   {
     find: /^.*credential-filter-boundary\.cjs$/,
     replacement: canonicalCredentialFilterBoundary,
-  },
-  {
-    find: /^.*migration-restore-boundary\.cjs$/,
-    replacement: canonicalMigrationRestoreBoundary,
   },
   {
     find: /^.*openshell-external-target-boundary\.cjs$/,
@@ -84,10 +74,6 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
-  },
-  {
-    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
