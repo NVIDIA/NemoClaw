@@ -36,9 +36,12 @@ Run `npm run test:projects:check` after adding or moving a test.
 ## Regression evidence
 
 Reproduce a defect before fixing it when feasible. If reproduction is not feasible, record why and
-preserve the strongest pre-fix evidence. Add regression coverage at the earliest stable behavior
-boundary that could detect the defect. Add higher-level coverage only for a distinct integration
-boundary. Include negative and state-safety evidence when the acceptance criteria or risk require it.
+preserve the strongest pre-fix evidence. Find the nearest semantic test owner before adding coverage.
+Prefer improving its input or oracle and remove overlapping coverage when that preserves the
+contract. Add a new case or file only for a distinct gap that existing tests cannot express. Choose
+the smallest coverage change that detects the defect. Use higher-level coverage only for a distinct
+integration boundary. Include negative and state-safety evidence when the acceptance criteria or
+risk require it.
 
 Rerun affected tests after an edit or hook autofix changes tested behavior.
 
