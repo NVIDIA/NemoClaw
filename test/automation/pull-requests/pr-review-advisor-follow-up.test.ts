@@ -137,6 +137,79 @@ describe("PR Review Advisor follow-up contracts", () => {
     });
   });
 
+  it("lets a current-head approval clear only that reviewer's earlier blockers", () => {
+    const currentHeadSha = "f".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 31,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+          body: "Blocker A was cleared on the current head.",
+        },
+        {
+          id: 32,
+          state: "CHANGES_REQUESTED",
+          commit_id: "b".repeat(40),
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-b", type: "User" },
+          body: "Blocker B remains unresolved.",
+        },
+        {
+          id: 33,
+          state: "APPROVED",
+          commit_id: currentHeadSha,
+          submitted_at: "2026-09-14T12:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+        },
+      ],
+      [],
+      currentHeadSha,
+    );
+
+    expect(selected).toMatchObject({
+      reviewId: 32,
+      reviewedHeadSha: "b".repeat(40),
+      state: "CHANGES_REQUESTED",
+      reviewer: "maintainer-b",
+    });
+    expect(selected?.body).toBe("Blocker B remains unresolved.");
+  });
+
+  it("does not emit a zero-length follow-up after current-head approval", () => {
+    const currentHeadSha = "f".repeat(40);
+    const selected = selectFollowUpReview(
+      [
+        {
+          id: 34,
+          state: "CHANGES_REQUESTED",
+          commit_id: "a".repeat(40),
+          submitted_at: "2026-09-14T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+          body: "Blocker A was cleared on the current head.",
+        },
+        {
+          id: 35,
+          state: "APPROVED",
+          commit_id: currentHeadSha,
+          submitted_at: "2026-09-14T11:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer-a", type: "User" },
+        },
+      ],
+      [],
+      currentHeadSha,
+    );
+
+    expect(selected).toBeUndefined();
+  });
+
   it("retains a bounded excerpt from every unresolved review body", () => {
     const selected = selectFollowUpReview(
       ["A", "B", "C"].map((marker, index) => ({
