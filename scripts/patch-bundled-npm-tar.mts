@@ -34,6 +34,7 @@ export const FIXED_TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 export const FIXED_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
 export const MINIMUM_SAFE_TAR_VERSION = "7.5.21";
+export const BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS = 15 * 60_000;
 
 /**
  * Source boundary for this private npm-tree remediation. The pinned upstream
@@ -173,7 +174,10 @@ function run(command: string, args: readonly string[]): void {
   const result = spawnSync(command, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
+    // The registry download permits one initial 120-second attempt plus five
+    // retries and their delays. Keep the parent process alive for that complete
+    // bounded curl policy while retaining one command-wide kill boundary.
+    timeout: BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -255,6 +259,15 @@ function prepareFixedTarReplacement(
       "--fail",
       "--silent",
       "--show-error",
+      "--retry",
+      "5",
+      "--retry-all-errors",
+      "--retry-delay",
+      "2",
+      "--connect-timeout",
+      "15",
+      "--max-time",
+      "120",
       "--output",
       archivePath,
       FIXED_TAR_TARBALL,

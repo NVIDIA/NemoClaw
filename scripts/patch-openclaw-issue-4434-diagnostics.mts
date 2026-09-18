@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary NemoClaw compatibility shim for OpenClaw 2026.7.1 TUI error output.
+ * Temporary NemoClaw compatibility shim for OpenClaw 2026.9.1 TUI error output.
  * Remove this when upstream OpenClaw reports structured unreachable-inference
  * diagnostics for sandbox fetch failures and inference timeouts.
  */

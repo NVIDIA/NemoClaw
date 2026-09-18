@@ -8,7 +8,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  abortOpenClawPostRestoreDoctor: vi.fn(),
+  beginOpenClawBackupQuiesce: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
+  finishOpenClawPostRestoreDoctor: vi.fn(),
+  retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
@@ -25,16 +29,33 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: mocks.abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce: mocks.beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor: mocks.finishOpenClawPostRestoreDoctor,
+  retireOpenClawPostRestoreDoctorForDelete: mocks.retireOpenClawPostRestoreDoctorForDelete,
+}));
 
-import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  type RebuildBackupPhaseInput,
+  retireRebuildSourceOpenClawWindowForDelete,
+  runRebuildBackupPhase,
+} from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
+    ok: true,
+    window: { sandboxName: "alpha", kind: "backup" },
+  });
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.recordRebuildRecoveryBackup.mockReset();
+  mocks.finishOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
+  mocks.retireOpenClawPostRestoreDoctorForDelete.mockReset().mockResolvedValue({ ok: true });
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -66,6 +87,18 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
+  it("retires the retained source window before the delete edge", async () => {
+    const window = { sandboxName: "alpha" };
+
+    await expect(retireRebuildSourceOpenClawWindowForDelete(window)).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
   it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
@@ -88,6 +121,14 @@ describe("rebuild policy handoff", () => {
       "capture the live policy before sandbox replacement",
       undefined,
     );
+    expect(mocks.beginOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(result?.sourceOpenClawDoctorWindow).toEqual({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {

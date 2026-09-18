@@ -393,7 +393,11 @@ async function runContainer(
       "-c",
       script,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    {
+      artifactName,
+      captureLimitBytes: 1024 * 1024,
+      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+    },
   );
   expect(
     result.exitCode,
@@ -421,7 +425,11 @@ async function runDefaultContainer(
       image,
       ...command,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    {
+      artifactName,
+      captureLimitBytes: 1024 * 1024,
+      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+    },
   );
   expect(
     result.exitCode,

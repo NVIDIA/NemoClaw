@@ -20,6 +20,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       return session;
     }),
     openclawReady: vi.fn(async () => false),
+    controlPlaneReady: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -40,6 +41,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
+      waitForSandboxControlPlaneReady: calls.controlPlaneReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -131,6 +133,10 @@ describe("handleAgentSetupState", () => {
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
     expect(calls.skippedMessage).toHaveBeenCalledWith("openclaw", "my-assistant");
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.controlPlaneReady.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.configureOpenclaw.mock.invocationCallOrder[0],
+    );
     expect(calls.recordSkip).toHaveBeenCalledWith("openclaw", {
       reason: "resume",
       sandboxName: "my-assistant",
@@ -168,6 +174,20 @@ describe("handleAgentSetupState", () => {
       model: "model",
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
     });
+  });
+
+  it("does not configure a resumed OpenClaw sandbox before its exec relay converges", async () => {
+    const { deps, calls } = createDeps({
+      isOpenclawReady: vi.fn(async () => true),
+      waitForSandboxControlPlaneReady: vi.fn(async () => false),
+    });
+
+    await expect(handleAgentSetupState({ ...baseOptions(deps), resume: true })).rejects.toThrow(
+      "Sandbox 'my-assistant' did not re-register with OpenShell before OpenClaw resume configuration.",
+    );
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("waits for resumed OpenClaw readiness before choosing setup", async () => {

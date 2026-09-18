@@ -95,7 +95,8 @@ describe("runInferenceSet OpenClaw routing", () => {
       sessionUpdated: true,
       inSandboxConfigSynced: true,
     });
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
@@ -107,7 +108,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         action: "inference_set",
         sandbox: "alpha",
         reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence pending)",
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (gateway restart and pairing convergence pending)",
       }),
     );
     expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
@@ -115,7 +116,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         action: "inference_set",
         sandbox: "alpha",
         reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence completed)",
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (gateway restart and pairing convergence completed)",
       }),
     );
     expect(JSON.stringify(deps.calls.appendAuditEntry.mock.calls)).not.toContain("do-not-report");

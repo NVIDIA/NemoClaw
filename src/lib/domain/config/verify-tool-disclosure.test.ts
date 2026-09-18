@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
@@ -62,11 +65,16 @@ describe("managed tool-disclosure export", () => {
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!).toHaveProperty("tools", {
+    const document = asExportedConfig(YAML.parse(yaml));
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toHaveProperty("tools", {
       disclosure: "direct",
     });
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+    expect(document.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
+      process: { run_as_user: "1000", run_as_group: "1000" },
+      filesystem_policy: {
+        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
+      },
+    });
     expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
   });
 
@@ -83,8 +91,9 @@ describe("managed tool-disclosure export", () => {
     ]);
     expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const sandbox = validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-    expect(sandbox.agents[0]!).toHaveProperty("tools", { disclosure: "direct" });
+    const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    expect(exportedAgentList(sandbox)[0]).toHaveProperty("tools", { disclosure: "direct" });
     expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
   });
 
@@ -95,7 +104,7 @@ describe("managed tool-disclosure export", () => {
       expect(result.outcome.ok).toBe(true);
       const [yaml] = result.writeStdout.mock.calls[0]!;
       expect(
-        validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0],
+        exportedAgentList(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!)[0],
       ).not.toHaveProperty("tools");
     },
   );
@@ -192,12 +201,9 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]!).toHaveProperty(
-      "tools",
-      {
-        disclosure: "direct",
-      },
-    );
+    expect(
+      exportedAgentList(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!)[0],
+    ).toHaveProperty("tools", { disclosure: "direct" });
   });
 
   it("does not publish when tool selection changes during both observations", async () => {

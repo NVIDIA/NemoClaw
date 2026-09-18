@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { OpenShellGatewayObservation } from "../../adapters/openshell/gateway-observer";
+import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import {
@@ -54,6 +55,7 @@ import {
 } from "../../adapters/openshell/sandbox-observer";
 import {
   detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
   formatOpenShellStateRpcIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
@@ -480,6 +482,25 @@ function schemaMismatchState(action: string): SandboxGatewayState {
       { action },
     ).join("\n"),
   };
+}
+
+/** Preserve gateway drift diagnosis for a redacted typed inference observation. */
+export async function detectInferenceRouteRpcIssue(
+  result: OpenShellInferenceRouteResult | null,
+  gatewayName: string | null,
+): Promise<OpenShellStateRpcIssue | null> {
+  if (
+    !result ||
+    result.ok ||
+    result.error.kind !== "schema" ||
+    result.error.reason !== "protocol_mismatch"
+  ) {
+    return null;
+  }
+  return detectOpenShellStateRpcResultIssue(
+    { status: 1, output: "protobuf schema mismatch" },
+    gatewayName ? { gatewayName } : {},
+  );
 }
 
 function sandboxObservationErrorState(
