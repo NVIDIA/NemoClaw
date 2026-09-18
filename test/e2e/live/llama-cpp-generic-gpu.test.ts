@@ -42,7 +42,7 @@ const RECIPE_ID =
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 const OPERATOR_CONTAINER_PREFIX = "e2e-llamacpp-operator-loopback";
-const TRANSIENT_OPERATOR_CURL_EXIT_CODES = new Set([7, 28]);
+const TRANSIENT_OPERATOR_CURL_EXIT_CODES = new Set([7, 28, 56]);
 validateSandboxName(SANDBOX_NAME);
 assert.match(RECIPE_ID, /^[a-z0-9][a-z0-9._-]{0,159}$/u, "invalid llama.cpp recipe ID");
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
