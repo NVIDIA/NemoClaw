@@ -44,6 +44,7 @@ fn explicit_spark_profile_preserves_its_hardware_and_memory_requirements() {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
         driver_major: 580,
+        compute_capability: 121,
         total: 121 * GIB,
         available: 100 * GIB,
         free: 90 * GIB,

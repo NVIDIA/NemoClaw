@@ -183,6 +183,7 @@ async fn capacity_requires_measurements_from_the_selected_execution_target() {
                         architecture: "arm64".into(),
                         gpu: "NVIDIA GB10".into(),
                         driver_major: 580,
+                        compute_capability: 121,
                         gpu_memory: None,
                         total: 128 * GIB,
                         available: 120 * GIB,
@@ -221,7 +222,10 @@ async fn capacity_requires_measurements_from_the_selected_execution_target() {
         } else if available == "missing" {
             assert_eq!(error.to_string(), "remote host measurements unavailable");
         } else {
-            assert!(matches!(error, Error::Conflict(_)));
+            assert!(matches!(
+                error,
+                Error::State("GPU compute capability is unobservable")
+            ));
         }
     }
 }

@@ -54,8 +54,8 @@ struct Measurements {
     memory: String,
     gpu: String,
     processes: String,
-    #[serde(default)]
-    gpu_memory: Option<String>,
+    compute_capability: String,
+    gpu_memory: String,
     disk_free: u64,
 }
 #[cfg(unix)]
@@ -79,18 +79,13 @@ fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
         "amd64"
     }
     .into();
-    (
-        capacity.gpu,
-        capacity.driver_major,
-        capacity.foreign_gpu_processes,
-    ) = super::nvidia::inventory(&data.gpu, &data.processes)?;
-    if capacity.gpu != "NVIDIA GB10" {
-        capacity.gpu_memory = Some(super::nvidia::dedicated_memory(
-            data.gpu_memory
-                .as_deref()
-                .ok_or(ObservationError::Incomplete)?,
-        )?);
-    }
+    super::nvidia::apply_observations(
+        &mut capacity,
+        &data.gpu,
+        &data.processes,
+        &data.compute_capability,
+        &data.gpu_memory,
+    )?;
     capacity.disk_free = data.disk_free;
     Ok(HostObservation {
         engine_id: data.daemon,
@@ -102,7 +97,48 @@ fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
 mod tests {
     use super::*;
     #[test]
-    fn collector_queries_dedicated_memory_on_arm64_and_amd64_but_not_gb10() {
+    fn unified_memory_requires_observed_compute_capability_independently_of_vram() {
+        let mut value = serde_json::json!({
+            "daemon":"remote", "architecture":"aarch64",
+            "memory":"MemTotal: 128000000 kB\nMemAvailable: 96000000 kB\nMemFree: 64000000 kB\n",
+            "gpu":"NVIDIA GB10, 580.0\n", "processes":"", "disk_free":1000000000000_u64,
+            "compute_capability":"12.1\n", "gpu_memory":"[N/A], [N/A]\n"
+        });
+        let doc = crate::config::Document::parse(
+            include_bytes!("../../../../examples/spark/vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+        let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        super::super::check_capacity(service, &observation.capacity, true, 0, 0).unwrap();
+        assert!(observation.capacity.gpu_memory.is_none());
+        assert_eq!(
+            super::super::serving_memory(service, &observation.capacity).unwrap(),
+            observation.capacity.total
+        );
+        // Reported counters do not change the declared unified-memory accounting.
+        value["gpu_memory"] = "1024, 512\n".into();
+        let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        super::super::check_capacity(service, &observation.capacity, true, 0, 0).unwrap();
+        assert_eq!(
+            super::super::serving_memory(service, &observation.capacity).unwrap(),
+            observation.capacity.total
+        );
+        value["compute_capability"] = "12.0\n".into();
+        let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(super::super::check_capacity(service, &observation.capacity, true, 0, 0).is_err());
+        for invalid in ["", "[N/A]", "12.10", "12", "12.1\n12.1", "unknown"] {
+            value["compute_capability"] = invalid.into();
+            assert!(
+                decode(&serde_json::to_vec(&value).unwrap()).is_err(),
+                "{invalid}"
+            );
+        }
+        value.as_object_mut().unwrap().remove("compute_capability");
+        assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    #[test]
+    fn collector_queries_compute_and_memory_independently_on_every_gpu() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let result = std::process::Command::new("python3")
             .arg("-B")
@@ -118,11 +154,27 @@ mod tests {
     }
     #[test]
     fn arm64_blackwell_requires_observed_hbm_instead_of_host_ram() {
-        let mut value = serde_json::json!({"daemon":"remote", "architecture":"aarch64", "memory":"MemTotal: 496000000 kB\nMemAvailable: 396000000 kB\nMemFree: 320000000 kB\n", "gpu":"NVIDIA GB300, 610.0\n", "processes":"", "disk_free":1000000000000_u64, "gpu_memory":"245760, 204800, 10.3\n"});
+        let mut value = serde_json::json!({"daemon":"remote", "architecture":"aarch64", "memory":"MemTotal: 496000000 kB\nMemAvailable: 396000000 kB\nMemFree: 320000000 kB\n", "gpu":"NVIDIA GB300, 610.0\n", "processes":"", "disk_free":1000000000000_u64, "gpu_memory":"245760, 204800\n", "compute_capability":"10.3\n"});
         let capacity = decode(&serde_json::to_vec(&value).unwrap())
             .unwrap()
             .capacity;
         assert_eq!(capacity.gpu_memory.unwrap().total, 240 * super::super::GIB);
+        value["gpu_memory"] = "[N/A], [N/A]\n".into();
+        let capacity = decode(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .capacity;
+        let mut doc = crate::config::Document::parse(
+            include_bytes!("../../../../examples/spark/vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
+        service.hardware = Some(crate::config::ServiceHardware::Profile {
+            profile: crate::config::HardwareProfile::Gb300,
+            architecture: None,
+            min_gpu_memory_bytes: None,
+        });
+        assert!(super::super::check_capacity(service, &capacity, true, 0, 0).is_err());
+        assert!(super::super::serving_memory(service, &capacity).is_err());
         for missing in [
             serde_json::Value::Null,
             serde_json::json!("[N/A], [N/A], 10.3"),
@@ -133,9 +185,9 @@ mod tests {
     }
     #[test]
     fn amd64_measurements_require_dedicated_gpu_memory_and_compute_capability() {
-        let mut value = serde_json::json!({"daemon":"remote", "architecture":"x86_64", "memory":"MemTotal: 256000000 kB\nMemAvailable: 196000000 kB\nMemFree: 64000000 kB\n", "gpu":"NVIDIA fixture, 580.0\n", "processes":"", "disk_free":1000000000000_u64});
+        let mut value = serde_json::json!({"daemon":"remote", "architecture":"x86_64", "memory":"MemTotal: 256000000 kB\nMemAvailable: 196000000 kB\nMemFree: 64000000 kB\n", "gpu":"NVIDIA H100, 580.0\n", "processes":"", "disk_free":1000000000000_u64, "compute_capability":"9.0\n"});
         assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
-        value["gpu_memory"] = "98304, 90112, 9.0\n".into();
+        value["gpu_memory"] = "98304, 90112\n".into();
         let capacity = decode(&serde_json::to_vec(&value).unwrap())
             .unwrap()
             .for_engine("remote")
@@ -150,13 +202,22 @@ mod tests {
         let value = serde_json::json!({
             "daemon":"remote", "architecture":"aarch64",
             "memory":"MemTotal: 128000000 kB\nMemAvailable: 96000000 kB\nMemFree: 64000000 kB\n",
-            "gpu":"NVIDIA GB10, 580.0\n", "processes":"", "disk_free":1000000000000_u64
+            "gpu":"NVIDIA GB10, 580.0\n", "processes":"", "disk_free":1000000000000_u64,
+            "compute_capability":"12.1\n", "gpu_memory":"[N/A], [N/A]\n"
         });
         let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(observation.for_engine("different").is_err());
         let observation = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(observation.for_engine("remote").unwrap().disk_free > 0);
-        for field in ["daemon", "memory", "gpu", "disk_free", "processes"] {
+        for field in [
+            "daemon",
+            "memory",
+            "gpu",
+            "disk_free",
+            "processes",
+            "compute_capability",
+            "gpu_memory",
+        ] {
             let mut incomplete = value.clone();
             incomplete.as_object_mut().unwrap().remove(field);
             assert!(decode(&serde_json::to_vec(&incomplete).unwrap()).is_err());

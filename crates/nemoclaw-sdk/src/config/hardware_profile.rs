@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MemoryArchitecture {
+    Unified,
+    Dedicated,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 /// GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
@@ -34,6 +40,23 @@ pub enum HardwareProfile {
 }
 
 impl HardwareProfile {
+    pub(crate) const UNIFIED_MEMORY: [Self; 1] = [Self::DgxSpark];
+
+    pub(crate) fn memory_architecture(self) -> MemoryArchitecture {
+        if Self::UNIFIED_MEMORY.contains(&self) {
+            MemoryArchitecture::Unified
+        } else {
+            MemoryArchitecture::Dedicated
+        }
+    }
+
+    pub(crate) fn min_host_memory_bytes(self) -> u64 {
+        match self {
+            Self::DgxSpark => 118 * (1 << 30),
+            _ => 0,
+        }
+    }
+
     pub(crate) const ARM64_SYSTEMS: [Self; 5] = [
         Self::DgxSpark,
         Self::DgxStation,
@@ -63,7 +86,7 @@ impl HardwareProfile {
 
     pub(crate) fn matches_gpu(self, observed: &str) -> bool {
         let family = match self {
-            Self::DgxSpark => "GB10",
+            Self::DgxSpark => return observed == "NVIDIA GB10",
             Self::DgxStation | Self::Gb300 => "GB300",
             Self::Gb200 => "GB200",
             Self::Gh200 => "GH200",

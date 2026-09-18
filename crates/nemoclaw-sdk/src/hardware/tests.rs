@@ -20,6 +20,7 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
         driver_major: 580,
+        compute_capability: 121,
         gpu_memory: None,
         total: 121 * GIB,
         available: 116 * GIB,
@@ -131,6 +132,7 @@ fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
         driver_major: 580,
+        compute_capability: 121,
         total: 121 * GIB,
         available: 100 * GIB,
         ..Default::default()

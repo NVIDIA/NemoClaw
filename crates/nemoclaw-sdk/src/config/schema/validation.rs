@@ -430,7 +430,7 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     service["allOf"] = json!([
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
-        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"const":"dgx-spark"}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
+        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"enum":crate::config::HardwareProfile::UNIFIED_MEMORY}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
         {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
     ]);
     service["dependentRequired"] =
@@ -452,7 +452,7 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
             {"if":at("profile", json!({"enum":crate::config::HardwareProfile::ARM64_SYSTEMS}),true),
              "then":at("architecture",json!({"const":"arm64"}),false),
              "else":{"required":["architecture"]}},
-            {"if":at("profile",json!({"const":"dgx-spark"}),true),"then":forbid(&["minGpuMemoryBytes"])}
+            {"if":at("profile",json!({"enum":crate::config::HardwareProfile::UNIFIED_MEMORY}),true),"then":forbid(&["minGpuMemoryBytes"])}
         ]);
     }
     property(

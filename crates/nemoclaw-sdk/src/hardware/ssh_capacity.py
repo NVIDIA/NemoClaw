@@ -35,12 +35,11 @@ with open("/proc/meminfo") as source:
 if len(memory) > 65536:
     raise ValueError("incomplete memory observation")
 gpu = run("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader,nounits")
-# GB10 shares host RAM. Grace systems with HBM still need dedicated GPU counters.
-unified = len(gpu.strip().splitlines()) == 1 and gpu.split(",", 1)[0].strip() == "NVIDIA GB10"
 print(json.dumps({
     "daemon": info["ID"], "architecture": platform.machine(), "memory": memory,
     "gpu": gpu,
-    "gpu_memory": None if unified else run("nvidia-smi", "--query-gpu=memory.total,memory.free,compute_cap", "--format=csv,noheader,nounits"),
+    "compute_capability": run("nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"),
+    "gpu_memory": run("nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits"),
     "processes": run("nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"),
     "disk_free": stat.f_bavail * stat.f_frsize,
 }))

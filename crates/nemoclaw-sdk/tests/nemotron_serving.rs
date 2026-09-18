@@ -63,7 +63,7 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
 
 #[test]
 fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
-    use nemoclaw_sdk::hardware::{Capacity, DedicatedGpu, check_capacity};
+    use nemoclaw_sdk::hardware::{Capacity, GpuMemory, check_capacity};
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
     let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
     let capacity = Capacity {
@@ -74,10 +74,10 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
         available: 200 * GIB,
         free: 100 * GIB,
         disk_free: 500 * GIB,
-        gpu_memory: Some(DedicatedGpu {
+        compute_capability: 90,
+        gpu_memory: Some(GpuMemory {
             total: 96 * GIB,
             free: 90 * GIB,
-            compute_capability: 90,
         }),
         ..Default::default()
     };
@@ -91,7 +91,7 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
                 gpu.free = 80 * GIB;
             }
             "free" => c.gpu_memory.as_mut().unwrap().free = 60 * GIB,
-            "compute" => c.gpu_memory.as_mut().unwrap().compute_capability = 89,
+            "compute" => c.compute_capability = 89,
             "driver" => c.driver_major = 579,
             "host" => c.available = 20 * GIB,
             "missing" => c.gpu_memory = None,

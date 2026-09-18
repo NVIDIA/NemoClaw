@@ -1600,7 +1600,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes dgx-spark, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -2785,7 +2785,9 @@
                     "properties": {
                       "profile": {
                         "not": {
-                          "const": "dgx-spark"
+                          "enum": [
+                            "dgx-spark"
+                          ]
                         }
                       }
                     }
@@ -3055,7 +3057,9 @@
               "if": {
                 "properties": {
                   "profile": {
-                    "const": "dgx-spark"
+                    "enum": [
+                      "dgx-spark"
+                    ]
                   }
                 },
                 "required": [
@@ -3086,7 +3090,7 @@
               "type": "string"
             },
             "minGpuMemoryBytes": {
-              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for dgx-spark. Fixed budgets otherwise use observed capacity.",
+              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
               "format": "uint64",
               "maximum": 4398046511104,
               "minimum": 4294967296,
@@ -3094,7 +3098,7 @@
             },
             "profile": {
               "$ref": "#/$defs/HardwareProfile",
-              "description": "GPU family. dgx-spark uses unified memory; all other profiles require observable dedicated GPU memory. Driver major 580 or newer is required."
+              "description": "GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters."
             }
           },
           "required": [

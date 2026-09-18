@@ -23,7 +23,7 @@ if "python3" in sys.argv:
     if control.get("low_capacity"):
         memory = "MemTotal: 134217728 kB\nMemAvailable: 1048576 kB\nMemFree: 1048576 kB\n"
     print(json.dumps({"daemon": control.get("daemon", "remote-engine"), "architecture": "aarch64",
-        "memory": memory,
+        "memory": memory, "compute_capability": "12.1\n", "gpu_memory": "[N/A], [N/A]\n",
         "gpu": "NVIDIA GB10, 580.0\n", "processes": "", "disk_free": 2**40}))
     sys.exit(0)
 if sys.argv[-3:] != ["docker", "system", "dial-stdio"]:

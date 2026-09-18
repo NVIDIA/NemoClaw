@@ -358,4 +358,5 @@ fn hex(bytes: &[u8]) -> String {
 mod hardware_profile;
 mod service_hardware;
 pub use hardware_profile::HardwareProfile;
+pub(crate) use hardware_profile::MemoryArchitecture;
 pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};
