@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -86,9 +89,11 @@ describe("read-only secondary-agent export", () => {
       const result = await exportSnapshots([observed, observed]);
       expect(result.outcome.ok).toBe(true);
       const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-      const [primary, secondary] = document.spec.sandboxes[0]!.agents;
+      const sandbox = document.spec.sandboxes[0]!;
+      expect("agents" in sandbox).toBe(true);
+      const [primary, secondary] = exportedAgentList(sandbox);
       expect(primary).toMatchObject({ name: "primary" });
-      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      expect(sandbox.harness).toMatchObject({
         observability: {
           otlp: {
             enabled: true,
@@ -139,7 +144,9 @@ describe("read-only secondary-agent export", () => {
     const result = await exportSnapshots([observed, observed]);
     expect(result.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    const [primary, ...additional] = document.spec.sandboxes[0]!.agents;
+    const sandbox = document.spec.sandboxes[0]!;
+    expect("agents" in sandbox).toBe(true);
+    const [primary, ...additional] = exportedAgentList(sandbox);
     expect(additional).toEqual([
       {
         name: "researcher",
@@ -234,6 +241,29 @@ describe("read-only secondary-agent export", () => {
       expect(result.publish).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects a vLLM roster from a different managed serving profile (#11859)", async () => {
+    const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
+    const registry = {
+      ...observed.registry,
+      provider: "vllm-local",
+      servingProfileProvenance: servingProfileProvenance(
+        loadServingCatalog(),
+        "vllm.linux-amd64-nvidia.single.nemotron-3-nano-4b-fp8",
+      ),
+    };
+    const result = await exportSnapshots([{ ...observed, registry }]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        findings: expect.arrayContaining([
+          expect.objectContaining({ field: "spec.sandboxes[].agents", category: "unsupported" }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
 
   it("rejects a reordered roster across both observation pairs (#11854)", async () => {
     const researcher = { id: "researcher", tools: { allow: ["read"] } };

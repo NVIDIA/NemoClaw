@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { retryUntilAsync } from "../../core/retry";
+import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -14,11 +18,13 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { isTransientInferenceInvocationFailure } from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
-  waitForStartedNativeGatewayProcess as waitForStartedNativeGatewayProcessImpl,
+  resolveGatewayRecoveryWaitSeconds,
+  waitForStartedHermesGatewayProcess,
 } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
@@ -62,11 +68,15 @@ export interface SandboxStartDeps {
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  delayInferenceInvocationProbe?: (delayMs: number) => Promise<void>;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
-/** Observe native startup without relaunching the agent. */
+const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+
+/** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
@@ -78,13 +88,33 @@ async function waitForStartedNativeGatewayProcess(
     return undefined;
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  return await waitForStartedNativeGatewayProcessImpl(sandboxName, nativeAgent, gatewayName, {
-    environment: deps.environment,
-    probe: deps.probeGatewayProcess,
-    delay: deps.delayGatewayProcessProbe,
-    now: deps.now,
-    log,
-  });
+  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
+  const delay = async (delayMs: number) => {
+    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
+    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
+  };
+  if (nativeAgent === "hermes") {
+    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
+      probe,
+      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+      log,
+    });
+  }
+
+  const now = deps.now ?? (() => performance.now());
+  const deadline =
+    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
+  while (now() < deadline) {
+    const remaining = Math.floor(deadline - now());
+    if (remaining < 1) break;
+    const running = await probe(sandboxName, gatewayName, {
+      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
+    });
+    if (now() >= deadline) break;
+    if (running !== false) return running;
+    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
+  }
+  return false;
 }
 
 /**
@@ -105,18 +135,32 @@ async function checkStartedSandboxInference(
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  return await (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
-    {
-      sandboxName,
-      gatewayName,
-      ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
-      provider,
-      model,
-      preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
-    },
-    {},
-    READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
-  );
+  const input = {
+    sandboxName,
+    gatewayName,
+    ...(sandbox.agent === "langchain-deepagents-code" ? { agentName: sandbox.agent } : {}),
+    provider,
+    model,
+    preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+  };
+  const probe = () =>
+    (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+      input,
+      {},
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+  if (sandbox.agent !== "hermes") return await probe();
+  return await retryUntilAsync(probe, {
+    accept: (result) => !isTransientInferenceInvocationFailure(result),
+    retryDelaysMs: START_INFERENCE_SETTLEMENT_DELAYS_MS,
+    onRetry: (result, delayMs, attempt) =>
+      log(
+        `  Inference request returned HTTP ${result.ok ? "unknown" : result.httpStatus}; ` +
+          `checking again in ${delayMs / 1_000} seconds ` +
+          `(attempt ${attempt + 1}/${START_INFERENCE_SETTLEMENT_DELAYS_MS.length + 1})…`,
+      ),
+    sleep: deps.delayInferenceInvocationProbe ?? sleep,
+  });
 }
 
 /**

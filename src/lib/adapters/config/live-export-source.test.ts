@@ -16,7 +16,10 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { asExportedConfig } from "../../../../test/support/config-export-document";
+import {
+  asExportedConfig,
+  exportedAgentList,
+} from "../../../../test/support/config-export-document";
 
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
@@ -769,7 +772,8 @@ describe("live export snapshot reader", () => {
     expect(result.ok).toBe(true);
     const yaml = writeStdout.mock.calls[0]![0];
     const config = asExportedConfig(YAML.parse(yaml));
-    const [primary, ...additional] = config.spec.sandboxes[0]!.agents;
+    const sandbox = config.spec.sandboxes[0]!;
+    const [primary, ...additional] = exportedAgentList(sandbox);
     expect(primary!.name).toBe("primary");
     expect(additional).toEqual([
       {
@@ -917,7 +921,7 @@ describe("dashboard export observation", () => {
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
-    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
       tools: { disclosure: "direct" },
     });
   });
