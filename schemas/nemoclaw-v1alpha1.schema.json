@@ -699,9 +699,28 @@
       "type": "object"
     },
     "HardwareProfile": {
-      "description": "Named hardware contracts. Selecting a profile preserves its compatibility and memory checks.",
+      "description": "GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.",
       "enum": [
-        "spark"
+        "dgx-spark",
+        "dgx-station",
+        "gb200",
+        "gb300",
+        "gh200",
+        "h100",
+        "h200",
+        "a100",
+        "a10",
+        "a10g",
+        "a40",
+        "l4",
+        "l40",
+        "l40s",
+        "t4",
+        "rtx-6000-ada",
+        "rtx-pro-6000-blackwell",
+        "rtx-3090",
+        "rtx-4090",
+        "rtx-5090"
       ],
       "type": "string"
     },
@@ -1581,7 +1600,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires dedicated service.hardware requirements and excludes a named profile, recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes dgx-spark, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -2748,20 +2767,30 @@
               {
                 "properties": {
                   "hardware": {
-                    "not": {
-                      "anyOf": [
-                        {
-                          "required": [
-                            "profile"
-                          ]
-                        }
-                      ]
-                    }
+                    "properties": {
+                      "minGpuMemoryBytes": {}
+                    },
+                    "required": [
+                      "minGpuMemoryBytes"
+                    ]
                   }
                 },
                 "required": [
                   "hardware"
                 ]
+              },
+              {
+                "properties": {
+                  "hardware": {
+                    "properties": {
+                      "profile": {
+                        "not": {
+                          "const": "dgx-spark"
+                        }
+                      }
+                    }
+                  }
+                }
               },
               {
                 "not": {
@@ -2892,7 +2921,7 @@
         },
         "hardware": {
           "$ref": "#/$defs/ServiceHardware",
-          "description": "Explicit hardware contract: profile: spark for Linux ARM64 GB10, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.",
+          "description": "Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.",
           "x-nemoclaw-required": "Without recipe"
         },
         "image": {
@@ -2991,11 +3020,81 @@
         },
         {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "else": {
+                "required": [
+                  "architecture"
+                ]
+              },
+              "if": {
+                "properties": {
+                  "profile": {
+                    "enum": [
+                      "dgx-spark",
+                      "dgx-station",
+                      "gb200",
+                      "gb300",
+                      "gh200"
+                    ]
+                  }
+                },
+                "required": [
+                  "profile"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "architecture": {
+                    "const": "arm64"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "profile": {
+                    "const": "dgx-spark"
+                  }
+                },
+                "required": [
+                  "profile"
+                ]
+              },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "minGpuMemoryBytes"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ],
           "description": "A named hardware contract with fixed compatibility requirements.",
           "properties": {
+            "architecture": {
+              "description": "Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value.",
+              "enum": [
+                "amd64",
+                "arm64"
+              ],
+              "type": "string"
+            },
+            "minGpuMemoryBytes": {
+              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for dgx-spark. Fixed budgets otherwise use observed capacity.",
+              "format": "uint64",
+              "maximum": 4398046511104,
+              "minimum": 4294967296,
+              "type": "integer"
+            },
             "profile": {
               "$ref": "#/$defs/HardwareProfile",
-              "description": "Hardware profile; spark requires Linux ARM64, one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer."
+              "description": "GPU family. dgx-spark uses unified memory; all other profiles require observable dedicated GPU memory. Driver major 580 or newer is required."
             }
           },
           "required": [

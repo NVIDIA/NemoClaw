@@ -431,7 +431,7 @@ Paths:
 
 ## HardwareProfile
 
-Named hardware contracts. Selecting a profile preserves its compatibility and memory checks.
+GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
 
 Guide: [Managed models](../models.md).
 
@@ -445,7 +445,7 @@ Paths:
 
 Accepted input: string.
 
-Constraints: `"spark"`.
+Constraints: `"dgx-spark"` or `"dgx-station"` or `"gb200"` or `"gb300"` or `"gh200"` or `"h100"` or `"h200"` or `"a100"` or `"a10"` or `"a10g"` or `"a40"` or `"l4"` or `"l40"` or `"l40s"` or `"t4"` or `"rtx-6000-ada"` or `"rtx-pro-6000-blackwell"` or `"rtx-3090"` or `"rtx-4090"` or `"rtx-5090"`.
 
 ## Harness
 
@@ -861,7 +861,7 @@ Paths:
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before the watchdog stops the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Check minFreeGiB only when available memory is below this threshold in GiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
 | `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires dedicated service.hardware requirements and excludes a named profile, recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes dgx-spark, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
 | `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
@@ -1411,7 +1411,7 @@ Paths:
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
 | `backend` | string | Yes | — | Managed inference backend. Constraints: `"vllm"`. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
-| `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: profile: spark for Linux ARM64 GB10, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
+| `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means Never; changing this does not restart a running container. |
 | `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
@@ -1483,7 +1483,9 @@ A named hardware contract with fixed compatibility requirements.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | Hardware profile; spark requires Linux ARM64, one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer. |
+| `architecture` | string | No | — | Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value. Constraints: `"amd64"` or `"arm64"`. |
+| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for dgx-spark. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | GPU family. dgx-spark uses unified memory; all other profiles require observable dedicated GPU memory. Driver major 580 or newer is required. |
 
 ## ServiceIpc
 

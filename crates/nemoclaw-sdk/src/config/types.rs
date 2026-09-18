@@ -430,7 +430,7 @@ pub struct Overrides {
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
-    /// Explicit hardware contract: profile: spark for Linux ARM64 GB10, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
+    /// Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "super::ServiceHardware")]
     #[schemars(extend("x-nemoclaw-required" = "Without recipe"))]
@@ -573,7 +573,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires dedicated service.hardware requirements and excludes a named profile, recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes dgx-spark, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"

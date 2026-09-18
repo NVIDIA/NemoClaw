@@ -33,10 +33,14 @@ pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Err
 #[cfg(any(unix, test))]
 fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u32), Error> {
     let Some(line) = lines.next() else {
-        return Err(Error::State("Spark requires exactly one observable GPU"));
+        return Err(Error::State(
+            "managed inference requires exactly one observable GPU",
+        ));
     };
     if lines.next().is_some() {
-        return Err(Error::State("Spark requires exactly one observable GPU"));
+        return Err(Error::State(
+            "managed inference requires exactly one observable GPU",
+        ));
     }
     let mut fields = line.split(',').map(str::trim);
     let (Some(name), Some(version), None) = (fields.next(), fields.next(), fields.next()) else {
@@ -103,10 +107,12 @@ pub async fn populate(capacity: &mut super::Capacity) -> Result<(), Error> {
         capacity.driver_major,
         capacity.foreign_gpu_processes,
     ) = inventory(&gpu, &processes)?;
-    if capacity.architecture == "amd64" {
+    if capacity.gpu != "NVIDIA GB10" {
         capacity.gpu_memory = Some(dedicated_memory(
             &query("--query-gpu=memory.total,memory.free,compute_cap").await?,
         )?);
+    } else {
+        capacity.gpu_memory = None;
     }
     Ok(())
 }

@@ -430,7 +430,7 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     service["allOf"] = json!([
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
-        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware",forbid(&["profile"]),true),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
+        {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"const":"dgx-spark"}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
         {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
     ]);
     service["dependentRequired"] =
@@ -438,6 +438,23 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
     service["if"] = json!({"required": ["recipe"]});
     service["then"] = at("memory/gpuMemoryGiB", json!({"const": 0}), false);
     service["else"] = at("serving/speculativeTokens", json!({"const": 0}), false);
+    for variant in defs["ServiceHardware"]["anyOf"].as_array_mut().unwrap() {
+        if variant["properties"].get("profile").is_none() {
+            continue;
+        }
+        property(variant, "architecture", json!({"enum":["amd64","arm64"]}));
+        property(
+            variant,
+            "minGpuMemoryBytes",
+            json!({"minimum":4_u64*(1<<30),"maximum":4_u64*(1<<40)}),
+        );
+        variant["allOf"] = json!([
+            {"if":at("profile", json!({"enum":crate::config::HardwareProfile::ARM64_SYSTEMS}),true),
+             "then":at("architecture",json!({"const":"arm64"}),false),
+             "else":{"required":["architecture"]}},
+            {"if":at("profile",json!({"const":"dgx-spark"}),true),"then":forbid(&["minGpuMemoryBytes"])}
+        ]);
+    }
     property(
         &mut defs["Model"],
         "repository",

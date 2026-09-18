@@ -28,7 +28,7 @@ fn inference_requires_an_explicit_hardware_or_recipe_contract() {
 #[test]
 fn explicit_spark_profile_preserves_its_hardware_and_memory_requirements() {
     let mut value = input();
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "spark"});
+    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "dgx-spark"});
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -73,8 +73,8 @@ fn spark_profile_rejects_unknown_ambiguous_and_dedicated_memory_settings() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for hardware in [
         json!({"profile": "unknown"}),
-        json!({"profile": "spark", "architecture": "amd64"}),
-        json!({"profile": "spark", "unexpected": true}),
+        json!({"profile": "dgx-spark", "architecture": "amd64"}),
+        json!({"profile": "dgx-spark", "unexpected": true}),
     ] {
         let mut value = input();
         value["spec"]["inferenceProviders"][0]["service"]["hardware"] = hardware;
@@ -83,14 +83,14 @@ fn spark_profile_rejects_unknown_ambiguous_and_dedicated_memory_settings() {
     }
     let mut value = input();
     let service = &mut value["spec"]["inferenceProviders"][0]["service"];
-    service["hardware"] = json!({"profile": "spark"});
+    service["hardware"] = json!({"profile": "dgx-spark"});
     service["memory"] = json!({"gpuMemoryUtilization": 0.75});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
 
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/spark-inline.yaml")).unwrap();
-    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "spark"});
+    value["spec"]["inferenceProviders"][0]["service"]["hardware"] = json!({"profile": "dgx-spark"});
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
     assert!(!schema.is_valid(&value));
 }

@@ -168,7 +168,9 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
                 let service = observation.spec.service.as_mut().unwrap();
                 service.recipe = None;
                 service.hardware = Some(crate::config::ServiceHardware::Profile {
-                    profile: crate::config::HardwareProfile::Spark,
+                    profile: crate::config::HardwareProfile::DgxSpark,
+                    architecture: None,
+                    min_gpu_memory_bytes: None,
                 });
                 service.backend = "vllm".into();
                 service.model.repository = "owner/model".into();

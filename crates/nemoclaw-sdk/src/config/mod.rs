@@ -355,7 +355,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+mod hardware_profile;
 mod service_hardware;
-pub use service_hardware::{
-    DedicatedHardware, HardwareProfile, ServiceContainer, ServiceHardware, ServiceIpc,
-};
+pub use hardware_profile::HardwareProfile;
+pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};

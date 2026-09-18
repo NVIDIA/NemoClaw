@@ -8,7 +8,9 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
     let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
     service.recipe = None;
     service.hardware = Some(nemoclaw_sdk::config::ServiceHardware::Profile {
-        profile: nemoclaw_sdk::config::HardwareProfile::Spark,
+        profile: nemoclaw_sdk::config::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
     });
     service.backend = "vllm".into();
     service.model.repository = "Qwen/Qwen3-0.6B".into();
@@ -49,7 +51,9 @@ fn model_identity_and_capacity_are_not_a_repository_allowlist() {
     let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
     service.recipe = None;
     service.hardware = Some(nemoclaw_sdk::config::ServiceHardware::Profile {
-        profile: nemoclaw_sdk::config::HardwareProfile::Spark,
+        profile: nemoclaw_sdk::config::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
     });
     service.backend = "vllm".into();
     service.model.repository = "some-owner/a-completely-different-model".into();

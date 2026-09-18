@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{ConfigError, Service};
+use super::{ConfigError, HardwareProfile, Service};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -10,26 +10,37 @@ pub enum ServiceHardware {
     /// One NVIDIA GPU with dedicated memory on Linux AMD64.
     Dedicated(DedicatedHardware),
     /// A named hardware contract with fixed compatibility requirements.
+    #[serde(rename_all = "camelCase")]
     Profile {
-        /// Hardware profile; spark requires Linux ARM64, one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer.
+        /// GPU family. dgx-spark uses unified memory; all other profiles require observable dedicated GPU memory. Driver major 580 or newer is required.
         profile: HardwareProfile,
+        /// Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(default, with = "String")]
+        architecture: Option<String>,
+        /// Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for dgx-spark. Fixed budgets otherwise use observed capacity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(default, with = "u64")]
+        min_gpu_memory_bytes: Option<u64>,
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-/// Named hardware contracts. Selecting a profile preserves its compatibility and memory checks.
-pub enum HardwareProfile {
-    Spark,
-}
-
 impl ServiceHardware {
-    pub fn architecture(&self) -> &str {
+    pub fn architecture(&self) -> Result<&str, ConfigError> {
         match self {
-            Self::Dedicated(hardware) => &hardware.architecture,
+            Self::Dedicated(hardware) => Ok(&hardware.architecture),
             Self::Profile {
-                profile: HardwareProfile::Spark,
-            } => "arm64",
+                profile,
+                architecture,
+                ..
+            } => match (profile.architecture(), architecture.as_deref()) {
+                (Some(required), None) => Ok(required),
+                (Some(required), Some(actual)) if required == actual => Ok(required),
+                (None, Some(actual @ ("amd64" | "arm64"))) => Ok(actual),
+                _ => Err(ConfigError::new(
+                    "hardware profile requires a compatible explicit host architecture",
+                )),
+            },
         }
     }
 }
@@ -75,16 +86,28 @@ pub enum ServiceIpc {
 }
 
 impl Service {
-    pub(crate) fn dedicated_hardware(&self) -> Option<&DedicatedHardware> {
+    pub(crate) fn dedicated_hardware(&self) -> Option<DedicatedHardware> {
         match &self.hardware {
-            Some(ServiceHardware::Dedicated(hardware)) => Some(hardware),
+            Some(ServiceHardware::Dedicated(hardware)) => Some(hardware.clone()),
+            Some(
+                hardware @ ServiceHardware::Profile {
+                    profile,
+                    min_gpu_memory_bytes,
+                    ..
+                },
+            ) if *profile != HardwareProfile::DgxSpark => Some(DedicatedHardware {
+                architecture: hardware.architecture().ok()?.into(),
+                min_compute_capability: profile.compute_capability(),
+                min_gpu_memory_bytes: min_gpu_memory_bytes.unwrap_or(4 * (1 << 30)),
+                min_driver_major: 580,
+            }),
             _ => None,
         }
     }
 
     pub(crate) fn architecture(&self) -> Result<&str, ConfigError> {
         match (&self.hardware, &self.recipe) {
-            (Some(hardware), None) => Ok(hardware.architecture()),
+            (Some(hardware), None) => hardware.architecture(),
             (None, Some(recipe)) => Ok(&recipe.compatibility.architecture),
             _ => Err(ConfigError::new(
                 "declare exactly one of service.hardware or service.recipe",
@@ -94,7 +117,27 @@ impl Service {
 
     pub(crate) fn validate_hardware(&self) -> Result<(), ConfigError> {
         self.architecture()?;
-        if let Some(h) = self.dedicated_hardware()
+        if let Some(ServiceHardware::Profile {
+            profile,
+            min_gpu_memory_bytes,
+            ..
+        }) = &self.hardware
+        {
+            if min_gpu_memory_bytes.is_some_and(|bytes| {
+                *profile == HardwareProfile::DgxSpark
+                    || !(4 * (1 << 30)..=4 * (1 << 40)).contains(&bytes)
+            }) {
+                return Err(ConfigError::new(
+                    "profile minimum GPU memory must be 4 GiB through 4 TiB and excludes dgx-spark",
+                ));
+            }
+            if self.memory.gpu_memory_utilization.is_some() && min_gpu_memory_bytes.is_none() {
+                return Err(ConfigError::new(
+                    "profile GPU utilization requires explicit minGpuMemoryBytes",
+                ));
+            }
+        }
+        if let Some(ServiceHardware::Dedicated(h)) = &self.hardware
             && (h.architecture != "amd64"
                 || !(10..=999).contains(&h.min_compute_capability)
                 || !(4 * (1 << 30)..=4 * (1 << 40)).contains(&h.min_gpu_memory_bytes)

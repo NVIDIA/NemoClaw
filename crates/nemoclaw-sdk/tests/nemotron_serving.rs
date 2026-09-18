@@ -198,7 +198,8 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
             .unwrap()
             .hardware
             .unwrap()
-            .architecture(),
+            .architecture()
+            .unwrap(),
         "amd64"
     );
     assert!(spec.runtime_service().unwrap().placement.is_none());

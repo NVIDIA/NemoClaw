@@ -101,6 +101,13 @@ pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Err
 }
 
 fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
+    if let Some(crate::config::ServiceHardware::Profile { profile, .. }) = &service.hardware
+        && !profile.matches_gpu(&c.gpu)
+    {
+        return Err(Error::Conflict(
+            "execution GPU does not match the declared hardware profile",
+        ));
+    }
     if let Some(required) = service.dedicated_hardware() {
         let gpu = c
             .gpu_memory
@@ -132,7 +139,8 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
     } else if matches!(
         service.hardware,
         Some(crate::config::ServiceHardware::Profile {
-            profile: crate::config::HardwareProfile::Spark
+            profile: crate::config::HardwareProfile::DgxSpark,
+            ..
         })
     ) {
         super::spark::check_compatibility(c)

@@ -121,7 +121,9 @@ fn combined_budgets_reject_overcommit_and_do_not_count_running_allocations_twice
     let mut service = service();
     service.recipe = None;
     service.hardware = Some(crate::config::ServiceHardware::Profile {
-        profile: crate::config::HardwareProfile::Spark,
+        profile: crate::config::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
     });
     service.memory.gpu_memory_gib = 20;
     service.memory.kv_cache_gib = 6;
