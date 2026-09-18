@@ -164,6 +164,79 @@ class AdapterPathControls(unittest.TestCase):
                 r"C:\Program Files\NVIDIA\NemoClaw-other\bash.exe"
             ).relative_to(root)
 
+    def test_owned_state_walk_omits_only_the_denied_volume_anchor(self):
+        state = PureWindowsPath(
+            r"C:\NemoClawState-S-1-5-21-100-200-300-1001-hermes"
+        )
+        target = state / ".hermes" / "logs" / "curator"
+        self.assertEqual(
+            adapter._owned_state_walk(target, str(state)),
+            (
+                state,
+                state / ".hermes",
+                state / ".hermes" / "logs",
+                target,
+            ),
+        )
+        self.assertIsNone(
+            adapter._owned_state_walk(
+                PureWindowsPath(r"C:\Program Files\NVIDIA"), str(state)
+            )
+        )
+        with self.assertRaises(adapter.NativeStartupRefusal):
+            adapter._owned_state_walk(target, r"C:\untrusted-state")
+
+    def test_config_home_link_scan_never_queries_the_denied_volume_anchor(self):
+        class ContainedPath(PureWindowsPath):
+            def is_symlink(self):
+                if str(self) == self.anchor:
+                    raise PermissionError("the volume anchor is outside the grant")
+                return self.name == "linked"
+
+        state = ContainedPath(
+            r"C:\NemoClawState-S-1-5-21-100-200-300-1001-hermes"
+        )
+        module = ModuleType("hermes_cli.config_home")
+        module._directory_links = lambda path: [
+            part for part in (*reversed(path.parents), path) if part.is_symlink()
+        ]
+        with patch.dict(os.environ, {"NEMOCLAW_AGENT_HOME": str(state)}):
+            adapter._adapt_module(module, self.root, self.bash)
+            self.assertEqual(
+                module._directory_links(state / ".hermes" / "linked"),
+                [state / ".hermes" / "linked"],
+            )
+
+    def test_prebuilt_tui_preserves_validated_main_path_without_volume_realpath(self):
+        node = self.root / "node/node.exe"
+        entry = self.root / "hermes-agent/ui-tui/dist/entry.js"
+        for file in (node, entry):
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(b"owned")
+        module = ModuleType("hermes_cli.main_tui_launch")
+        module._make_tui_argv = lambda _root, _dev: (
+            [str(node), "--expose-gc", str(entry)],
+            entry.parent.parent,
+        )
+        with (
+            patch.dict(os.environ, {"HERMES_NODE": str(node)}),
+            patch.object(adapter, "_regular_file", side_effect=lambda path, _root: path),
+            patch.object(
+                adapter,
+                "_prebuilt_node",
+                return_value={"tui": entry, "web": self.root / "web/index.html"},
+            ),
+        ):
+            adapter._adapt_module(module, self.root, self.bash)
+        argv, cwd = module._make_tui_argv(entry.parent.parent, False)
+        self.assertEqual(
+            argv,
+            [str(node), "--preserve-symlinks-main", "--expose-gc", str(entry)],
+        )
+        self.assertEqual(cwd, entry.parent.parent)
+        with self.assertRaises(adapter.NativeStartupRefusal):
+            module._make_tui_argv(entry.parent.parent, True)
+
     def test_relative_traversal_device_stream_and_unbounded_paths_refused(self):
         for value in (
             "git/bash.exe",
