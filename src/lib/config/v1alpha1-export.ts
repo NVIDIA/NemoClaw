@@ -11,6 +11,31 @@ export function isV1Alpha1ExportName(value: unknown): value is string {
   return typeof value === "string" && V1_SLUG_PATTERN.test(value);
 }
 
+interface V1Alpha1HostedInferenceProvider {
+  readonly name: string;
+  readonly provider: "anthropic" | "openai";
+  readonly api: "anthropic-messages" | "openai-completions" | "openai-responses";
+  readonly endpoint: string;
+  readonly credential?: Readonly<{ env: string }>;
+  readonly management?: never;
+  readonly ollamaProxy?: never;
+}
+
+interface V1Alpha1OllamaInferenceProvider {
+  readonly name: string;
+  readonly provider: "openai";
+  readonly api: "openai-completions";
+  readonly management: "external";
+  readonly endpoint: string;
+  readonly credential?: never;
+  readonly ollamaProxy: Readonly<{
+    management: "managed";
+    engine: "unix:///var/run/docker.sock";
+    endpoint: string;
+    model: Readonly<{ management: "external"; digest: string }>;
+  }>;
+}
+
 /** Producer-owned shape emitted by v0. The v1 Rust parser remains the target contract authority. */
 export interface V1Alpha1Export {
   readonly apiVersion: typeof V1ALPHA1_EXPORT_API_VERSION;
@@ -18,13 +43,9 @@ export interface V1Alpha1Export {
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
     gateway: Readonly<{ management: "managed"; endpoint: string }>;
-    inferenceProviders: readonly Readonly<{
-      name: string;
-      provider: "anthropic" | "openai";
-      api: "anthropic-messages" | "openai-completions" | "openai-responses";
-      endpoint: string;
-      credential?: Readonly<{ env: string }>;
-    }>[];
+    inferenceProviders: readonly Readonly<
+      V1Alpha1HostedInferenceProvider | V1Alpha1OllamaInferenceProvider
+    >[];
     sandboxes: readonly Readonly<{
       name: string;
       runtime: Readonly<{ provider: "docker" }>;

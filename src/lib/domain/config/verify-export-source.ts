@@ -37,6 +37,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
+import { validateOllamaServing } from "./verify-ollama-serving";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -1000,6 +1001,8 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -1037,16 +1040,12 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 
 function validateInitialCompatibility(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (
-    inference.topology === "managed" ||
-    inference.provider === "ollama-local" ||
-    inference.ollamaServing
-  )
+  if (inference.topology === "managed")
     return [
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+        "V1alpha1 export currently supports hosted and attached Ollama inference; managed vLLM compatibility is deferred.",
       ),
     ];
   return [];

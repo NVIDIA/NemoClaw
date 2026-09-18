@@ -15,16 +15,41 @@ function providerLocalName(provider: string): string {
 
 function exportedProviderName(inference: VerifiedExportSource["inference"]): string {
   if ("serving" in inference)
-    return inference.serving.backend === "vllm" ? "managed-vllm" : "local-ollama";
+    return inference.serving.backend === "vllm" ? "managed-vllm" : "local";
   return providerLocalName(inference.provider);
+}
+
+function bareSha256Digest(digest: string): string {
+  const match = /^sha256:([a-f0-9]{64})$/u.exec(digest);
+  if (!match) throw new Error("Verified Ollama model digest is invalid.");
+  return match[1];
 }
 
 function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
 ): V1Alpha1Export["spec"]["inferenceProviders"][number] {
-  if ("serving" in source.inference)
-    throw new Error("Deferred local inference cannot be exported to v1alpha1.");
+  if ("serving" in source.inference) {
+    if (source.inference.serving.backend !== "ollama")
+      throw new Error("Deferred managed inference cannot be exported to v1alpha1.");
+    const { daemon, proxy, model } = source.inference.serving;
+    return {
+      name,
+      provider: "openai",
+      api: "openai-completions",
+      management: "external",
+      endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
+      ollamaProxy: {
+        management: "managed",
+        engine: "unix:///var/run/docker.sock",
+        endpoint: `http://host.openshell.internal:${proxy.hostPort}/v1`,
+        model: {
+          management: "external",
+          digest: bareSha256Digest(model.digest),
+        },
+      },
+    };
+  }
   const driver: "anthropic" | "openai" =
     source.inference.api === "anthropic-messages" ? "anthropic" : "openai";
   const provider = {
