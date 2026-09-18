@@ -274,6 +274,13 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireValues(errors, `${JOB_ID} CLI artifact restore`, record(restore?.with), {
     "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
   });
+  const restoreIndex = restore ? steps.indexOf(restore) : -1;
+  const rebuiltCliArtifact = steps
+    .slice(restoreIndex + 1)
+    .find((step) => String(step.run ?? "").includes("npm run build:policy-boundary"));
+  if (rebuiltCliArtifact) {
+    errors.push(`${JOB_ID} must not rebuild CLI artifact files after exact artifact restoration`);
+  }
 
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
   requireFragments(errors, activation, [

@@ -145,6 +145,23 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects rebuilding CLI artifact files after exact restoration", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const restoreIndex = steps.indexOf(
+      namedMultiarchStep(value, "Restore exact-commit CLI artifact"),
+    );
+    steps.splice(restoreIndex + 1, 0, {
+      name: "Rebuild restored policy boundary",
+      run: "npm run build:policy-boundary",
+    });
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must not rebuild CLI artifact files after exact artifact restoration",
+    );
+  });
+
   it.each([
     ["Prepare E2E workspace", "if", "false"],
     ["Prepare E2E workspace", "continue-on-error", true],
