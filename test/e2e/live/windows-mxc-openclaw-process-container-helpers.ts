@@ -1309,6 +1309,11 @@ async function runCommand(
     activityLabel,
     progress,
     spawn: {
+      // Qualification commands must not inherit the source checkout as their
+      // working directory. A scheduled Windows session can omit LOCALAPPDATA,
+      // which makes Windows PowerShell place ModuleAnalysisCache relative to
+      // cwd and dirties the checkout before the repeat-cycle identity check.
+      cwd: os.tmpdir(),
       env: environment,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
