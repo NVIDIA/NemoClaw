@@ -102,8 +102,16 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
-import { getSandboxDockerRuntime } from "./docker-health";
-import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import {
+  getSandboxDockerRuntime,
+  listPublishedSandboxNamesForDockerRuntime,
+} from "./docker-health";
+import {
+  classifySandboxPhaseRecoveryAction,
+  getSandboxPhaseRecoveryGuidance,
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
   state: string;
@@ -1143,6 +1151,7 @@ export async function ensureLiveSandboxOrExit(
     selectOwningGateway,
   });
   if (lookup.state === "present") {
+    const sandboxEntry = getKnownSandboxTarget(sandboxName);
     const phase = lookup.phase ?? null;
     // A policy read can fail because the Docker-backed gateway is unavailable.
     // Preserve the more specific host-runtime diagnosis even for probe-only
@@ -1152,7 +1161,7 @@ export async function ensureLiveSandboxOrExit(
       phase !== "Ready" &&
       phase !== "Running" &&
       !isTerminalSandboxPhase(phase) &&
-      isDockerRuntimeDown(sandboxName)
+      isDockerRuntimeDown(sandboxName, { getSandbox: () => sandboxEntry })
     ) {
       printDockerRuntimeDownGuidance(sandboxName);
       exit(1);
@@ -1162,7 +1171,10 @@ export async function ensureLiveSandboxOrExit(
       exit(1);
     }
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
-      const dockerRuntime = getSandboxDockerRuntime(sandboxName);
+      const dockerRuntime = getSandboxDockerRuntime(sandboxName, {
+        getSandbox: () => sandboxEntry,
+        listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
+      });
       if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
         console.error("  Workspace state is preserved.");
@@ -1187,17 +1199,23 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      if (phase === "Error" && dockerRuntime?.containerName) {
-        console.error(
-          `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
-        );
-        console.error(
-          `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
-        );
-      } else {
-        console.error(
-          `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
-        );
+      const openshellDriver = sandboxEntry?.openshellDriver;
+      const recoveryAction = classifySandboxPhaseRecoveryAction({
+        phase,
+        openshellDriver,
+        dockerContainerName: dockerRuntime.containerName,
+      });
+      if (
+        recoveryAction === "replace_missing_docker_container" &&
+        isDockerRuntimeDown(sandboxName, {
+          getSandbox: () => ({ openshellDriver }),
+        })
+      ) {
+        printDockerRuntimeDownGuidance(sandboxName);
+        exit(1);
+      }
+      for (const line of getSandboxPhaseRecoveryGuidance(sandboxName, recoveryAction)) {
+        console.error(line);
       }
       exit(1);
     }

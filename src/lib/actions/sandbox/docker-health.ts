@@ -6,6 +6,11 @@ import { dockerCapture } from "../../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
+import type { SandboxEntry } from "../../state/registry/types";
 
 export type DockerHealthState = "healthy" | "unhealthy" | "starting" | "none" | "unknown";
 
@@ -29,7 +34,7 @@ export interface SandboxDockerRuntime {
 }
 
 interface ResolveDeps {
-  getSandbox: (name: string) => registry.SandboxEntry | null;
+  getSandbox: (name: string) => SandboxEntry | null;
   listSandboxNames: () => string[];
   dockerPsNames: () => string;
   findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
@@ -37,13 +42,16 @@ interface ResolveDeps {
   dockerInspectPaused: (containerName: string) => string;
 }
 
+export function listPublishedSandboxNamesForDockerRuntime(): string[] {
+  return listPublishedSandboxNamesAcrossGatewayRoots();
+}
+
 const defaultDeps: ResolveDeps = {
-  getSandbox: (name) => registry.getSandbox(name),
-  listSandboxNames: () =>
-    registry
-      .listSandboxes()
-      .sandboxes.filter(registry.isPublishedSandboxRegistration)
-      .map((entry) => entry.name),
+  getSandbox: (name) => {
+    const entry = findSandboxAcrossGatewayRoots(name)?.entry ?? null;
+    return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+  },
+  listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
   findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
   dockerInspectHealth: (containerName) =>

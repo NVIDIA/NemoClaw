@@ -35,6 +35,7 @@ export interface GatewayRegistryEntry extends Record<string, unknown> {
 
 export interface GatewayRegistryDocument extends Record<string, unknown> {
   defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
   sandboxes: Record<string, GatewayRegistryEntry>;
 }
 
@@ -92,6 +93,14 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
     typeof parsed.defaultSandbox !== "string"
   ) {
     throw stateError(`${filePath} has an invalid defaultSandbox`);
+  }
+  if (
+    parsed.defaultSelectionRevision !== undefined &&
+    (typeof parsed.defaultSelectionRevision !== "number" ||
+      !Number.isSafeInteger(parsed.defaultSelectionRevision) ||
+      parsed.defaultSelectionRevision < 0)
+  ) {
+    throw stateError(`${filePath} has an invalid defaultSelectionRevision`);
   }
 
   const sandboxes: Record<string, GatewayRegistryEntry> = {};

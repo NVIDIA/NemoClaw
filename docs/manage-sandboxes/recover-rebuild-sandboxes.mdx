@@ -49,8 +49,13 @@ which can happen when something started the container outside OpenShell. It repo
 starting the sandbox through OpenShell rather than treating the running container as already
 started.
 If the container is paused, follow the printed `docker unpause` guidance instead.
-If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement.
-Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+If OpenShell reports the sandbox in `Phase: Error` but Docker no longer has its driver container,
+NemoClaw cannot back up the live workspace for rebuild. Destroy the stale entry, onboard a clean
+replacement, and restore a separately created snapshot afterward if one is available.
+If the sandbox is absent from the live OpenShell gateway, NemoClaw preserves its registry entry.
+Retry status after the gateway finishes reconnecting. If the sandbox is stuck mid-provision, retry
+rebuild after it reappears. If the sandbox was intentionally deleted, run
+`$$nemoclaw <sandbox-name> destroy --yes` to remove the stale entry before onboarding a replacement.
 
 <AgentOnly variant="openclaw,hermes">
   The `start` command repairs the agent runtime and host-side port forwards.
@@ -220,6 +225,10 @@ If replacement onboarding returns a nonzero status, rebuild stops before post-cr
 It does not report a successful rebuild.
 
 If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
+
+If OpenShell still reports the sandbox in `Phase: Error` but its Docker-driver container is missing,
+rebuild cannot back up its live workspace and stops before replacement. Use the clean replacement
+flow described above, then restore a separately created snapshot if one is available.
 
 <AgentOnly variant="hermes">
 
