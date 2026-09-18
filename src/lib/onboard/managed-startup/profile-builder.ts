@@ -65,7 +65,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  * change; otherwise construction fails before a sandbox is launched.
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
-  openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
+  openclaw: "5e543c26c75c5f364dbe26b584e6e2ea656a05d0f54c7e69f8f298f69f68d3c2",
   hermes: "795c97be2dcb1921e06328a6d23b1f7389ebb2f6a085fa67b7aaa0f287ce88e0",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
@@ -683,6 +683,7 @@ function assertEnvironmentConsistency(
     NEMOCLAW_MODEL: profile.inference?.model ?? null,
     NEMOCLAW_INFERENCE_PROVIDER_ID: profile.inference?.routeProvider ?? null,
     NEMOCLAW_UPSTREAM_PROVIDER: profile.inference?.upstreamProvider ?? null,
+    NEMOCLAW_SERVING_PRESET: profile.inference?.servingPreset ?? null,
     NEMOCLAW_PRIMARY_MODEL_REF: profile.inference?.primaryModelRef ?? null,
     NEMOCLAW_INFERENCE_BASE_URL: profile.inference?.routedBaseUrl ?? null,
     NEMOCLAW_INFERENCE_API: profile.inference?.api ?? null,
@@ -991,6 +992,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
         : {
             routeProvider: inference.routeProvider,
             upstreamProvider: inference.upstreamProvider,
+            servingPreset: presentEnvironmentValue(input.environment, "NEMOCLAW_SERVING_PRESET"),
             model: inference.model,
             routedBaseUrl: inference.routedBaseUrl,
             upstreamEndpointUrl: inference.upstreamEndpointUrl,

@@ -49,6 +49,21 @@ Live execution happens through shared fixtures:
 - `onboard` performs supported onboarding profiles.
 - `lifecycle` performs supported post-onboard mutations.
 - `stateValidation` probes host-observable expected state.
+- `configExportValidation` runs after state validation. Each typed target declares
+  one config export expectation:
+  - `required` must match the target manifest, live sandbox registry, and
+    effective network policy.
+  - `expected-refusal` must complete with its declared category without
+    creating a file.
+  - `no-usable-sandbox` must record an expected preflight or onboarding
+    failure. State validation must also prove that the sandbox is absent. This
+    expectation does not invoke config export.
+
+  The missing-custom-presets target fails after creating its sandbox. It must
+  validate that retained sandbox and export its configuration with `required`.
+  The onboarding fixture still requires the missing-presets failure. Export
+  validation checks the retained runtime configuration, not onboarding completion.
+
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
@@ -65,6 +80,67 @@ Live execution happens through shared fixtures:
 
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
+
+Before it validates deployment semantics, the config export fixture scans raw
+export text for literal known fixture secrets, wrapped or YAML-escaped base64
+and base64url forms, and literal, escaped, wrapped, or encoded internal
+credential transport markers. It separately checks decoded YAML scalar keys
+and values, including binary scalars, for literal or encoded secrets and
+internal transport markers.
+The fixture caps each exporter stdout and stderr stream at 64 KiB. Effective
+policy stdout is limited to 1 MiB; truncated observations fail before export.
+Before reading or retaining an export, it opens the file without following symbolic
+links.
+The open descriptor must identify a regular file with exactly one hard link,
+no larger than 1 MiB. After the descriptor read, the published path must still
+identify the same device and inode with exactly one hard link. The fixture
+rejects a replacement or an added hard link. It
+creates the export in a private temporary directory, registers cleanup before
+it invokes the CLI, and removes the directory before it writes retained evidence.
+
+For `required` coverage, the canonical `NemoClawConfig` validator checks the
+complete exported document. Semantic expectations remain independent of the
+exporter. The fixture reads the target manifest and host registry directly,
+then queries the effective policy through the OpenShell CLI. It captures these
+expectations before it invokes config export, so exporter-side mutations cannot
+redefine the expected deployment state. It rejects an unsafe registry inference
+endpoint before invoking export or publishing endpoint data in evidence.
+Policy reads and config export use the same filtered host environment as
+onboarding and state validation, preserving configuration paths and runtime
+selection without passing undeclared credentials. When the hosted inference
+adapter is active, its `compatible-endpoint` binding maps the manifest's
+`NVIDIA_INFERENCE_API_KEY` reference to `COMPATIBLE_API_KEY`; other credential
+references must still be declared by the manifest.
+
+The typed live-target timeout contract budgets a two-minute config export
+ceiling for `required` and `expected-refusal`. A `required` target also budgets
+a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
+ceiling because it does not invoke config export. The
+`dcode-rebuild-invalid-credential` lifecycle adds a 20-minute budget. With its
+expected refusal, its default test timeout is 52 minutes and its job ceiling is
+72 minutes. `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
+lower the derived test timeout. The derived job ceiling keeps at least 20
+minutes of headroom and rounds up to a whole minute.
+
+The `config-export-evidence.v1.json` artifact binds each result to the source
+revision, CLI version, and compiled CLI entry-point hash. Each record includes
+elapsed time and a structured command outcome when the fixture invokes the
+CLI. A timed-out, signaled, or otherwise incomplete command fails as a
+transport error before refusal classification. Successful `required` evidence
+includes the exact validated export bytes, byte count, and SHA-256 hash after
+the security checks and cleanup pass. Failure evidence omits export metadata.
+Its failure stage distinguishes transport errors from export failures, while
+cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
+diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
+secrets and internal credential transport markers before publication.
+
+The secret scan covers registered fixture values, not arbitrary unregistered
+secrets. Review selected exports before retaining them as migration fixtures.
+
+After a live target succeeds, the E2E workflow requires
+`config-export-evidence.v1.json` before artifact upload. A missing file fails
+the target job. The workflow uploads the file with the target's retained
+artifacts.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
@@ -94,11 +170,12 @@ protects the registry-target catalogue when collection includes
 omits it does not run this guard.
 
 Every typed-registry declaration must have executable platform, install,
-runtime, and onboarding routes plus resolved coverage metadata. A declared
-lifecycle route must also be executable. Registry construction rejects invalid
-declarations. Proposed combinations belong in planning issues until their live
-fixtures exist; they must not be added as empty skipped tests. Selecting a
-removed or unknown target ID fails and lists the available IDs.
+runtime, and onboarding routes plus resolved coverage metadata and a config
+export expectation. A declared lifecycle route must also be executable.
+Registry construction rejects invalid declarations. Proposed combinations
+belong in planning issues until their live fixtures exist; they must not be
+added as empty skipped tests. Selecting a removed or unknown target ID fails
+and lists the available IDs.
 
 ## Run Live E2E Locally
 

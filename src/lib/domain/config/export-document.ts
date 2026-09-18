@@ -1,22 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
-import type {
-  NemoClawConfig,
-  NemoClawAgentConfig,
-  NemoClawConfigDocumentName,
-  NemoClawConfigDocumentUid,
-  NemoClawInferenceProviderConfig,
-} from "../../config/model";
+import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
+import type { V1Alpha1Export } from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
 
 function providerLocalName(provider: string): string {
   const normalized = provider
     .toLowerCase()
-    .replace(/[^a-z0-9.-]+/gu, "-")
+    .replace(/[^a-z0-9-]+/gu, "-")
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, "");
-  return `hosted-${normalized || "provider"}`.slice(0, 63).replace(/[^a-z0-9]+$/gu, "");
+  return `hosted-${normalized || "provider"}`.slice(0, 40).replace(/[^a-z0-9]+$/gu, "");
 }
 
 function exportedProviderName(inference: VerifiedExportSource["inference"]): string {
@@ -28,26 +22,14 @@ function exportedProviderName(inference: VerifiedExportSource["inference"]): str
 function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
-): NemoClawInferenceProviderConfig {
-  if ("serving" in source.inference) {
-    if (source.inference.serving.backend === "ollama") {
-      return {
-        name,
-        provider: "ollama-local",
-        api: "openai-completions",
-        serving: source.inference.serving,
-      };
-    }
-    return {
-      name,
-      provider: "vllm-local",
-      api: "openai-completions",
-      serving: source.inference.serving,
-    };
-  }
+): V1Alpha1Export["spec"]["inferenceProviders"][number] {
+  if ("serving" in source.inference)
+    throw new Error("Deferred local inference cannot be exported to v1alpha1.");
+  const driver: "anthropic" | "openai" =
+    source.inference.api === "anthropic-messages" ? "anthropic" : "openai";
   const provider = {
     name,
-    provider: source.inference.provider,
+    provider: driver,
     api: source.inference.api,
     endpoint: source.inference.endpoint,
   };
@@ -60,26 +42,33 @@ function agentSettings(source: VerifiedExportSource) {
   return {
     ...(source.agent === "openclaw"
       ? {
-          type: "openclaw" as const,
-          ...(source.tools === undefined ? {} : { tools: source.tools }),
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
           ...(source.observability ? { observability: source.observability } : {}),
         }
       : {
-          type: "hermes" as const,
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
         }),
     ...(source.execution ? { execution: source.execution } : {}),
   };
 }
 
-function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+function exportAgent(
+  source: VerifiedExportSource,
+  providerName: string,
+  agent: Readonly<{
+    name: string;
+    primary: boolean;
+    tools?: Readonly<{ allow: readonly "read"[] }>;
+  }>,
+): V1Alpha1Export["spec"]["sandboxes"][number]["agents"][number] {
+  const tools = agent.primary ? source.tools : agent.tools;
   return {
-    name: "primary",
-    ...(source.auth === undefined
-      ? {}
-      : { auth: { method: source.auth.method, providerRef: providerName } }),
-    ...agentSettings(source),
+    name: agent.name,
+    ...(tools === undefined ? {} : { tools }),
+    ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
+      ? { integrationRefs: ["brave-search" as const] }
+      : {}),
+    ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
       routes: [
         {
@@ -87,9 +76,6 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
           providerRef: providerName,
           overrides: {
             model: source.inference.model,
-            ...(source.inference.provider === "vllm-local" && "serving" in source.inference
-              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
-              : {}),
             ...("overrides" in source.inference ? source.inference.overrides : {}),
           },
         },
@@ -98,17 +84,49 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
   };
 }
 
-function exportAgents(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig[] {
-  const primary = exportAgent(source, providerName);
+function exportAgents(
+  source: VerifiedExportSource,
+  providerName: string,
+): V1Alpha1Export["spec"]["sandboxes"][number]["agents"] {
+  const primary = exportAgent(source, providerName, { name: "primary", primary: true });
   return [
     primary,
-    ...(source.additionalAgents ?? []).map((agent) => ({
-      name: agent.name,
-      type: "openclaw" as const,
-      tools: agent.tools,
-      inference: primary.inference,
-    })),
+    ...(source.additionalAgents ?? []).map((agent) =>
+      exportAgent(source, providerName, {
+        name: agent.name,
+        primary: false,
+        tools: agent.tools,
+      }),
+    ),
   ];
+}
+
+function targetProcess(policy: Record<string, unknown>): void {
+  const process = policy.process as Record<string, unknown> | undefined;
+  if (process?.run_as_user === "sandbox") process.run_as_user = "1000";
+  if (process?.run_as_group === "sandbox") process.run_as_group = "1000";
+}
+
+function targetFilesystem(
+  policy: Record<string, unknown>,
+  agent: VerifiedExportSource["agent"],
+): void {
+  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
+  if (!filesystem) return;
+  const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
+  const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
+  const roots = ["/opt/fabric", "/opt/nemoclaw", agent === "openclaw" ? "/app" : "/opt/hermes"];
+  for (const root of roots) {
+    if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
+  }
+  filesystem.read_only = readOnly;
+}
+
+function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
+  const policy = structuredClone(source.policy) as Record<string, unknown>;
+  targetProcess(policy);
+  targetFilesystem(policy, source.agent);
+  return policy;
 }
 
 export interface ExportConfigBuildIdentity {
@@ -120,37 +138,44 @@ export interface ExportConfigBuildIdentity {
 export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
-): NemoClawConfig {
+): V1Alpha1Export {
   const providerName = exportedProviderName(source.inference);
   const candidate = {
-    apiVersion: "nemoclaw.nvidia.com/v1",
+    apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
     metadata: { name: identity.documentName, uid: identity.documentUid },
     spec: {
       gateway: {
-        management: "nemoclaw",
-        name: source.gateway.name,
-        port: source.gateway.port,
+        management: "managed",
+        endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
       inferenceProviders: [inferenceProvider(source, providerName)],
       sandboxes: [
         {
           name: source.sandboxName,
           runtime: {
-            provider: source.runtime.provider,
-            image: { ref: source.runtime.imageRef },
+            provider: "docker" as const,
           },
           network: {
-            policy: { explicit: source.policy },
+            policy: { explicit: targetPolicy(source) },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
           ...(source.webSearch === undefined
             ? {}
-            : { integrations: { webSearch: source.webSearch } }),
+            : {
+                integrations: {
+                  "brave-search": {
+                    kind: "webSearch",
+                    provider: source.webSearch.provider,
+                    credential: source.webSearch.credential,
+                  },
+                },
+              }),
+          harness: { kind: source.agent, ...agentSettings(source) },
           agents: exportAgents(source, providerName),
         },
       ],
     },
-  } satisfies NemoClawConfig;
+  } satisfies V1Alpha1Export;
   return candidate;
 }

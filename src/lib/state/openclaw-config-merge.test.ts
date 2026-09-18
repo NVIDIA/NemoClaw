@@ -116,4 +116,35 @@ describe("mergeOpenClawRestoredConfig", () => {
       list: [{ id: "main", default: true, model: "inference/current" }],
     });
   });
+
+  it("keeps the fresh generated compaction policy during restore (#11805)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            compaction: { mode: "safeguard", timeoutSeconds: 120, reserveTokens: 20000 },
+          },
+        },
+      },
+      {
+        agents: {
+          defaults: {
+            compaction: {
+              mode: "safeguard",
+              timeoutSeconds: 300,
+              reserveTokens: 4096,
+              reserveTokensFloor: 4096,
+            },
+          },
+        },
+      },
+    ) as Record<string, any>;
+
+    expect(merged.agents.defaults.compaction).toEqual({
+      mode: "safeguard",
+      timeoutSeconds: 300,
+      reserveTokens: 4096,
+      reserveTokensFloor: 4096,
+    });
+  });
 });

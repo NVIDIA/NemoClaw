@@ -273,7 +273,8 @@ async function rebuildSandboxUnlocked(
           recoveryManifest.rebuildMcpHandoff?.retired === true ||
           recoveryManifest.hermesOperatorConfigHandoff?.retired === true
         : false;
-      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      const activeRecoverySession = onboardSession.loadSession();
+      const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
       // Older manifests and a crash immediately after marker creation can lack
       // the MCP handoff. Re-observe only while the journal remains pre-delete
       // and the journaled source identity is verified before MCP inspection.
@@ -312,6 +313,7 @@ async function rebuildSandboxUnlocked(
         assertRebuildRecoverySource(
           activeRecoveryTransaction,
           target,
+          activeRecoverySession.sessionId,
           recreateOptions.runtimeSelection,
         );
       }

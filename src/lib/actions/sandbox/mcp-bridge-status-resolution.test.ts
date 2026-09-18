@@ -7,35 +7,34 @@ import path from "node:path";
 
 import { describe, expect, it, type TestContext } from "vitest";
 import {
+  expectTrustedPrivateStatusResult,
+  statusHarnessConfig,
+  TRUSTED_PRIVATE_STATUS_HARNESS,
+} from "./mcp-bridge/status-resolution-test-fixture.js";
+import {
   createAbortAwareLimiter,
   createControlledHarnessProcess,
 } from "../../../../test/helpers/controlled-concurrency-harness";
 import { runOnboardProcessAsync } from "../../../../test/helpers/onboard-child-process-harness";
 
-const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
-const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-  .filter(Boolean)
-  .join(" ");
-const harnessConcurrency = 4;
-const harnessTimeoutMs = 60_000;
 let runHarnessProcess = runOnboardProcessAsync;
+const {
+  concurrency: harnessConcurrency,
+  sourceNodeOptions,
+  timeoutMs: harnessTimeoutMs,
+} = statusHarnessConfig;
+const limitHarness = createAbortAwareLimiter(harnessConcurrency);
 
 function describeConcurrentProbeSuite(name: string, factory: () => void): void {
   describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
 }
 
-const limitHarness = createAbortAwareLimiter(harnessConcurrency);
-
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
-// Shared subprocess prelude: a healthy committed bridge whose provider
-// metadata is all-green, with the in-sandbox probe answering an identical
-// rejection for the placeholder and control requests — the exact "status lies
-// while the wire fails" shape from #6379. __PROBE_HTTP_STATUS__ is substituted
-// per test so both the 401 (auth-shaped) and 400 (validation-ambiguous)
-// warnings are exercised end-to-end.
+// Healthy committed bridge with identical placeholder/control rejections: the #6379 "status lies
+// while wire fails" shape. __PROBE_HTTP_STATUS__ covers auth-shaped and ambiguous failures.
 const harnessPreludeTemplate = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -1119,6 +1118,15 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       truncated: false,
       commandStatus: 0,
     });
+  });
+
+  it("uses recorded trusted-private host for status probes (#11377)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-trusted-private-status-");
+    const { stdout } = await runHarness(context, home, TRUSTED_PRIVATE_STATUS_HARNESS, {
+      controlHttpStatus: 401,
+      probeHttpStatus: 200,
+    });
+    expectTrustedPrivateStatusResult(stdout);
   });
 
   it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", async (context) => {
