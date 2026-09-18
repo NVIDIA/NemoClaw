@@ -165,6 +165,72 @@ internal static class Program
             throw new InvalidOperationException("Native setup cancellation interrupted preparation instead of waiting for its safe checkpoint.");
     }
 
+    private static void AssertRecoverableMaintenanceCancellationCanRetry()
+    {
+        var cancellation = new NativeCancellationState();
+        using var firstAttempt = new CancellationTokenSource();
+        cancellation.Request(firstAttempt);
+        if (!cancellation.IsRequested || !firstAttempt.IsCancellationRequested)
+            throw new InvalidOperationException("The first maintenance cancellation was not delivered.");
+
+        cancellation.ResetForRetry();
+        using var retry = new CancellationTokenSource();
+        if (cancellation.IsRequested || retry.IsCancellationRequested)
+            throw new InvalidOperationException("A recoverable maintenance cancellation leaked into its retry.");
+
+        cancellation.Request(retry);
+        if (!cancellation.IsRequested || !retry.IsCancellationRequested)
+            throw new InvalidOperationException("The retried maintenance attempt could not be cancelled independently.");
+    }
+
+    private static string ProductionMethod(string source, string start, string end)
+    {
+        var startIndex = source.IndexOf(start, StringComparison.Ordinal);
+        if (startIndex < 0)
+            throw new InvalidOperationException($"The production cancellation fixture could not locate {start}.");
+        var endIndex = source.IndexOf(end, startIndex + start.Length, StringComparison.Ordinal);
+        if (endIndex < 0)
+            throw new InvalidOperationException($"The production cancellation fixture could not locate {start}.");
+        return source[startIndex..endIndex];
+    }
+
+    private static string RepositoryRoot()
+    {
+        foreach (var candidate in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            for (var directory = new DirectoryInfo(candidate); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "package.json")) &&
+                    File.Exists(Path.Combine(directory.FullName, "packaging", "windows", "bootstrapper", "MainWindow.xaml.cs")))
+                    return directory.FullName;
+            }
+        }
+        throw new InvalidOperationException("The production cancellation fixture could not locate the repository root.");
+    }
+
+    private static void AssertRecoverableMaintenanceProductionWiring()
+    {
+        var bootstrapperRoot = Path.Combine(RepositoryRoot(), "packaging", "windows", "bootstrapper");
+        var application = File.ReadAllText(Path.Combine(bootstrapperRoot, "NemoClawBootstrapperApplication.cs"));
+        var beginMaintenance = ProductionMethod(application, "private async Task BeginMaintenanceAsync", "private async Task ReplacePreviousPreviewAsync");
+        var replacePreview = ProductionMethod(application, "private async Task ReplacePreviousPreviewAsync", "private void ShowRecoverableMaintenanceError");
+        const string recover = "this.ShowRecoverableMaintenanceError(error);";
+        if (!beginMaintenance.Contains(recover, StringComparison.Ordinal) ||
+            !replacePreview.Contains(recover, StringComparison.Ordinal))
+            throw new InvalidOperationException("A recoverable maintenance catch no longer clears cancellation before retry.");
+
+        var recovery = ProductionMethod(application, "private void ShowRecoverableMaintenanceError", "private async Task PrepareHeadlessMaintenanceAsync");
+        var resetIndex = recovery.IndexOf("this.cancellation.ResetForRetry();", StringComparison.Ordinal);
+        var maintenanceIndex = recovery.IndexOf("this.window?.ShowMaintenance();", StringComparison.Ordinal);
+        if (resetIndex < 0 || maintenanceIndex < resetIndex)
+            throw new InvalidOperationException("The recoverable maintenance path no longer resets cancellation before restoring maintenance UI.");
+
+        var window = File.ReadAllText(Path.Combine(bootstrapperRoot, "MainWindow.xaml.cs"));
+        var showMaintenance = ProductionMethod(window, "public void ShowMaintenance()", "public void ShowProgress(");
+        if (!showMaintenance.Contains("this.cancellation.ResetForRetry();", StringComparison.Ordinal))
+            throw new InvalidOperationException("The maintenance UI no longer clears its cancellation latch for retry.");
+    }
+
     internal static async Task<int> Main()
     {
         await AssertPrecancelledSaveDoesNotLaunchAsync();
@@ -172,7 +238,9 @@ internal static class Program
         await AssertCancellationDuringCommitTransitionStopsMutationAsync();
         await AssertSuccessfulOrderingAsync();
         await AssertCancellationIsDeferredUntilPreparationFinishesAsync();
-        Console.WriteLine("5 native setup deferred-cancellation controls passed; preparation finishes before cancellation and mutation begins only after the commit boundary.");
+        AssertRecoverableMaintenanceCancellationCanRetry();
+        AssertRecoverableMaintenanceProductionWiring();
+        Console.WriteLine("7 native setup cancellation controls passed; preparation finishes before cancellation, mutation begins only after the commit boundary, and every recoverable maintenance path can retry.");
         return 0;
     }
 }

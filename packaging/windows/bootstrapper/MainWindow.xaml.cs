@@ -31,9 +31,9 @@ public partial class MainWindow : Window
     private readonly NativeRuntimeAvailability runtimeAvailability = NativeRuntimeAvailability.Load();
     private double? displayedPercentage;
     private readonly DispatcherTimer elapsedTimer;
+    private readonly NativeCancellationState cancellation = new();
     private bool busy;
     private bool canCancel;
-    private bool cancelling;
     private bool completed;
     private bool packageInstalled;
     private bool configurationSaved;
@@ -141,6 +141,9 @@ public partial class MainWindow : Window
     public void ShowMaintenance()
     {
         this.busy = false;
+        this.canCancel = false;
+        this.cancellation.ResetForRetry();
+        this.CancelButton.IsEnabled = false;
         this.StopElapsed();
         this.MaintenanceError.Visibility = Visibility.Collapsed;
         this.HidePanels();
@@ -155,11 +158,11 @@ public partial class MainWindow : Window
         this.SetJourneyStage(3);
         this.HidePanels();
         this.ProgressPanel.Visibility = Visibility.Visible;
-        this.ProgressTitle.Text = this.cancelling ? "Cancelling safely" : title;
-        this.ProgressDetail.Text = this.cancelling ? "Please keep this window open while Windows completes rollback." : detail;
-        this.progress.Report(this.cancelling ? "cancelling" : phase ?? title);
+        this.ProgressTitle.Text = this.cancellation.IsRequested ? "Cancelling safely" : title;
+        this.ProgressDetail.Text = this.cancellation.IsRequested ? "Please keep this window open while Windows completes rollback." : detail;
+        this.progress.Report(this.cancellation.IsRequested ? "cancelling" : phase ?? title);
         this.ProgressLabel.Text = "CURRENT STEP";
-        this.CancelButton.IsEnabled = !this.cancelling;
+        this.CancelButton.IsEnabled = !this.cancellation.IsRequested;
         this.elapsedTimer.Start();
         this.RenderProgress();
     }
@@ -173,7 +176,7 @@ public partial class MainWindow : Window
 
     public void SetPackageProgress(int percentage)
     {
-        if (!this.busy || this.cancelling) return;
+        if (!this.busy || this.cancellation.IsRequested) return;
         this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(percentage, 100, "percent"));
         this.RenderProgress();
     }
@@ -181,7 +184,7 @@ public partial class MainWindow : Window
     public void ShowMeasuredProgress(string phase, string title, string detail, long completed, long total)
     {
         this.ShowProgress(title, detail, phase);
-        if (this.cancelling) return;
+        if (this.cancellation.IsRequested) return;
         this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(completed, total, "bytes"));
         this.RenderProgress();
     }
@@ -523,8 +526,8 @@ public partial class MainWindow : Window
             this.ProgressDetail.Text = "Waiting for the native model helper to stop safely.";
             return;
         }
-        if (!this.canCancel || this.cancelling) return;
-        this.cancelling = true;
+        if (!this.canCancel || this.cancellation.IsRequested) return;
+        this.cancellation.Request();
         this.CancelButton.IsEnabled = false;
         this.CancelRequested?.Invoke(this, EventArgs.Empty);
         this.ProgressTitle.Text = "Cancelling safely";

@@ -9,7 +9,8 @@ param([Parameter(Mandatory)][string]$SourceRoot,
     [Parameter(Mandatory)][string]$ArtifactSourceRevision,
     [ValidateSet('current-build','built-0.1.3-replay')][string]$Mode = 'current-build',
     [ValidateSet('openclaw','hermes','pi')][string]$Agent = 'openclaw',
-    [ValidateSet('full-acceptance','startup-only')][string]$ValidationScope = 'full-acceptance')
+    [ValidateSet('full-acceptance','startup-only')][string]$ValidationScope = 'full-acceptance',
+    [string]$ControllerNodePath = '')
 $ErrorActionPreference = 'Stop'
 $controllerSource = $env:GITHUB_SHA
 if ($Agent -cne 'openclaw' -and $Mode -cne 'current-build') { throw 'Only OpenClaw can reuse the historical replay lane.' }
@@ -20,15 +21,35 @@ if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or $PSVersion
     $ProductVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Installed acceptance requires explicit Windows CI identities.' }
 $head = (& git -C $SourceRoot rev-parse HEAD | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $controllerSource) { throw 'The acceptance controller differs from this checkout.' }
-if ($Mode -ceq 'current-build') {
-    if ($ArtifactSourceRevision -cne $controllerSource) { throw 'Normal build acceptance requires the exact current source.' }
-} elseif ($ArtifactSourceRevision -cne '491a3a3d5e7206d82c741198062b6e2aa98dc72c' -or $ProductVersion -cne '0.1.3') {
+if ($ValidationScope -ceq 'full-acceptance' -and -not $ControllerNodePath) {
+    throw 'Full acceptance requires an isolated controller-owned Node executable.'
+}
+# The trusted default-branch controller may qualify a separately authorized PR
+# artifact. Its checkout and four-file controller receipt remain bound to
+# controllerSource; the package receipt below remains bound independently to
+# ArtifactSourceRevision.
+if ($Mode -ceq 'built-0.1.3-replay' -and
+    ($ArtifactSourceRevision -cne '491a3a3d5e7206d82c741198062b6e2aa98dc72c' -or $ProductVersion -cne '0.1.3')) {
     throw 'Built-preview replay accepts only the fixed 0.1.3 artifact source.'
 }
 # These held-pipe controls run outside install/startup timing and do not execute app code.
-$ciNode = Join-Path $WorkDirectory 'application\node\node.exe'
-if ((Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant() -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878') {
+$work = [IO.Path]::GetFullPath($WorkDirectory)
+$ciNode = if ($ControllerNodePath) { [IO.Path]::GetFullPath($ControllerNodePath) } else { Join-Path $work 'application\node\node.exe' }
+$ciNodeItem = Get-Item -LiteralPath $ciNode -Force
+if (($ciNodeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+    (Get-FileHash -LiteralPath $ciNode -Algorithm SHA256).Hash.ToLowerInvariant() -cne '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878') {
     throw 'The CI controller Node executable differs from the pinned Windows ARM64 input.'
+}
+if ($ControllerNodePath) {
+    $nodeDirectory = Get-Item -LiteralPath (Split-Path -Parent $ciNode) -Force
+    $workPrefix = [IO.Path]::TrimEndingDirectorySeparator($work) + [IO.Path]::DirectorySeparatorChar
+    $nodeInventory = @(Get-ChildItem -LiteralPath $nodeDirectory.FullName -Force)
+    if ($ciNode.StartsWith($workPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        ($nodeDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $nodeInventory.Count -ne 1 -or $nodeInventory[0] -isnot [IO.FileInfo] -or
+        $nodeInventory[0].Name -cne 'node.exe') {
+        throw 'Credentialed acceptance requires an isolated controller-owned Node directory.'
+    }
 }
 $controlFiles = @(
     'packaging/windows/installer/control-installed-openclaw-input.test.mts',
@@ -60,7 +81,6 @@ if ($Agent -ceq 'pi' -and $ValidationScope -ceq 'full-acceptance') {
     if ($LASTEXITCODE -ne 0) { throw 'The Pi terminal observer controls failed.' }
 }
 
-$work = [IO.Path]::GetFullPath($WorkDirectory)
 $setup = "$work\package\NemoClawSetup-$ProductVersion-windows-arm64.exe"
 $installation = "$env:ProgramFiles\NVIDIA\NemoClaw"
 if (Test-Path -LiteralPath $installation) { throw 'Fresh preview acceptance requires no preexisting NemoClaw installation.' }
@@ -75,7 +95,7 @@ foreach ($file in $build.files) {
     throw 'The downloaded preview executable/MSI differs from its build receipt.'
   }
 }
-$timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = $false; mode = $Mode; measurement = 'fresh-runner-installed-preview'; agent = $Agent;
+$timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = ($ArtifactSourceRevision -ceq $controllerSource); mode = $Mode; measurement = 'fresh-runner-installed-preview'; agent = $Agent;
   validationScope = $ValidationScope; fullInstalledQualification = $false; migrationQualified = $false;
   hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; installTargetMilliseconds = 30000; installTargetSatisfied = $false; primaryException = $null; nativeRuntimeFailure = $null; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
 function Invoke-OwnedSetup([string]$Action, [string]$Log) {
@@ -113,7 +133,7 @@ try {
     if ($Agent -cin @('hermes','pi') -and $case.name -ceq 'warmInstalledLaunch') {
       $caseArguments += @('--previous-acceptance', "$work\installed-acceptance\installed-$Agent-acceptance.json")
     }
-    & "$work\application\node\node.exe" --experimental-strip-types --no-warnings $qualification `
+    & $ciNode --experimental-strip-types --no-warnings $qualification `
       --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
       --output "$work\$($case.directory)" --browser-driver-root $driverRoot @caseArguments
     $code = $LASTEXITCODE
@@ -140,7 +160,7 @@ try {
   }
   $timings.startupComparisonAvailable = $true
   if ($Agent -ceq 'openclaw') {
-    & "$work\application\node\node.exe" --experimental-strip-types `
+    & $ciNode --experimental-strip-types `
       "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
       --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
     if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }

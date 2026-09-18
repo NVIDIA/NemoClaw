@@ -17,7 +17,11 @@ import {
   validateHermesEdgeReceipt,
   createHermesPtyState,
   finalHermesAssistant,
+  finalHermesTurn,
   hermesTurnIndex,
+  hermesMessagesAfter,
+  hermesTranscriptRoute,
+  applyHermesSocketObservations,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -277,16 +281,142 @@ test("actual PTY readiness excludes sidecar, lazy agent and tool completion befo
   assert.throws(() => state.assertHealthy(), /idle sample/u);
 });
 
+test("live Hermes transcript polls cannot reuse a completed-turn URL", () => {
+  assert.equal(
+    hermesTranscriptRoute("saved-real", "profile real", 1),
+    "/api/sessions/saved-real/messages?limit=500&order=latest&profile=profile%20real&poll=1",
+  );
+  assert.notEqual(
+    hermesTranscriptRoute("saved-real", "profile real", 1),
+    hermesTranscriptRoute("saved-real", "profile real", 2),
+  );
+  assert.throws(() => hermesTranscriptRoute("saved-real", "profile-real", 0), /poll identity/u);
+});
+
+test("in-page Hermes socket observations preserve real PTY lifecycle evidence", () => {
+  const state = createHermesPtyState();
+  const channel = "actual-pty";
+  const ptyUrl = `ws://127.0.0.1:49152/api/pty?channel=${channel}`;
+  const eventsUrl = `ws://127.0.0.1:49152/api/events?channel=${channel}`;
+  const event = (type: string, seq: number, payload?: object) =>
+    JSON.stringify({
+      method: "event",
+      params: {
+        type,
+        session_id: "runtime-real",
+        seq,
+        ...(payload === undefined ? {} : { payload }),
+      },
+    });
+  applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+    overflow: false,
+    records: [
+      { kind: "open", url: ptyUrl },
+      { kind: "open", url: eventsUrl },
+      { kind: "message", url: ptyUrl },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("session.info", 1, {
+          version: "0.21.1",
+          lazy: false,
+          running: false,
+          stored_session_id: "saved-real",
+          profile_name: "profile-real",
+        }),
+      },
+    ],
+  });
+  state.assertHealthy();
+  assert.equal(state.usable(), true);
+  const mark = state.markTurn();
+  applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+    overflow: false,
+    records: [
+      { kind: "message", url: eventsUrl, text: event("message.start", 2) },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("message.complete", 3, { status: "complete", text: "done" }),
+      },
+      {
+        kind: "message",
+        url: eventsUrl,
+        text: event("session.info", 4, {
+          version: "0.21.1",
+          lazy: false,
+          running: false,
+          stored_session_id: "saved-real",
+          profile_name: "profile-real",
+        }),
+      },
+    ],
+  });
+  assert.equal(state.settledAfter(mark), true);
+  assert.throws(
+    () =>
+      applyHermesSocketObservations(state, "http://127.0.0.1:49152", {
+        overflow: true,
+        records: [],
+      }),
+    /exceeded its bound/u,
+  );
+});
+
 test("closing one same-channel PTY connection preserves the remaining live connection", () => {
   const state = createHermesPtyState();
   state.bindEvents("actual-pty");
   state.bindPty("actual-pty");
   state.bindPty("actual-pty");
   state.ptyData();
+  state.receive("actual-pty", {
+    method: "event",
+    params: {
+      type: "session.info",
+      session_id: "real-runtime",
+      seq: 1,
+      payload: {
+        version: "0.21.1",
+        lazy: false,
+        running: false,
+        stored_session_id: "saved-real",
+        profile_name: "profile-real",
+      },
+    },
+  });
   state.ptyClosed("actual-pty");
   state.assertHealthy();
   state.ptyClosed("actual-pty");
   assert.throws(() => state.assertHealthy(), /PTY socket closed/u);
+});
+
+test("pre-session PTY reconnect still requires replacement live feeds", () => {
+  const state = createHermesPtyState();
+  state.bindEvents("actual-pty");
+  state.bindPty("actual-pty");
+  state.eventsClosed("actual-pty");
+  state.ptyClosed("actual-pty");
+  assert.throws(() => state.assertHealthy(), /not live/u);
+  state.bindEvents("actual-pty");
+  state.bindPty("actual-pty");
+  state.ptyData();
+  state.receive("actual-pty", {
+    method: "event",
+    params: {
+      type: "session.info",
+      session_id: "real-runtime",
+      seq: 1,
+      payload: {
+        version: "0.21.1",
+        lazy: false,
+        running: false,
+        stored_session_id: "saved-real",
+        profile_name: "profile-real",
+      },
+    },
+  });
+  state.assertHealthy();
+  assert.equal(state.usable(), true);
 });
 
 test("settled conversation still needs a final saved assistant and a real execute_code kernel bootstrap", () => {
@@ -317,14 +447,28 @@ test("settled conversation still needs a final saved assistant and a real execut
     },
   ];
   assert(recordedHermesCode(messages, code, sentinel));
+  assert.equal(finalHermesTurn(messages), false);
   assert.equal(finalHermesAssistant(messages, prompt), false);
   messages.push({ role: "assistant", content: "Both operations completed." });
+  assert.equal(finalHermesTurn(messages), true);
   assert.equal(finalHermesAssistant(messages, prompt), true);
   const normalizedPaste = structuredClone(messages);
   normalizedPaste[0].content = "normalized paste wrapper\n" + code + "\nend wrapper";
   assert.equal(hermesTurnIndex(normalizedPaste, prompt, [code]), 0);
   assert.equal(finalHermesAssistant(normalizedPaste, prompt, [code]), true);
   assert.equal(finalHermesAssistant(normalizedPaste, prompt, ["different exact code"]), false);
+  assert.deepEqual(
+    hermesMessagesAfter(
+      [
+        { id: 4, role: "assistant" },
+        { id: 1, role: "user" },
+        { id: 3, role: "tool" },
+      ],
+      1,
+    ).map((row) => row.id),
+    [3, 4],
+  );
+  assert.throws(() => hermesMessagesAfter([{ id: 0 }], 0), /no identity/u);
   const failed = structuredClone(messages);
   failed[2].content = JSON.stringify({
     status: "success",

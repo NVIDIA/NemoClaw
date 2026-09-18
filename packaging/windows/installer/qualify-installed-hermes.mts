@@ -150,6 +150,54 @@ export function hermesInstalledToolCommand(nonce: string) {
   return `set -euo pipefail; f=nemoclaw-${nonce}.txt; printf '%s\\n' '${sentinel}' > "$f"; test "$(cat "$f")" = '${sentinel}'; rg --fixed-strings '${sentinel}' "$f"; rm -- "$f"; test ! -e "$f"; python -c 'import pathlib,tempfile; t=tempfile.TemporaryDirectory(); p=pathlib.Path(t.name)/"proof"; p.write_text("${sentinel}"); assert p.read_text()=="${sentinel}"; t.cleanup(); print("${sentinel}")'; printf '%s\\n' '${sentinel}'`;
 }
 
+export function hermesTranscriptRoute(id: string, profile: string, poll: number) {
+  assert(id.length > 0 && id.length <= 128, "Hermes stored session identity is invalid");
+  assert(profile.length > 0 && profile.length <= 128, "Hermes profile identity is invalid");
+  assert(Number.isSafeInteger(poll) && poll > 0, "Hermes transcript poll identity is invalid");
+  return (
+    "/api/sessions/" +
+    encodeURIComponent(id) +
+    "/messages?limit=500&order=latest&profile=" +
+    encodeURIComponent(profile) +
+    "&poll=" +
+    poll
+  );
+}
+
+export function applyHermesSocketObservations(pty: any, origin: string, batch: any) {
+  assert.equal(batch?.overflow, false, "The in-page Hermes socket observation exceeded its bound");
+  assert(Array.isArray(batch?.records) && batch.records.length <= 512);
+  for (const record of batch.records) {
+    assert(
+      record &&
+        ["open", "message", "close"].includes(record.kind) &&
+        typeof record.url === "string" &&
+        record.url.length <= 4096,
+      "Invalid in-page Hermes socket observation",
+    );
+    const url = new URL(record.url);
+    if (url.origin.replace(/^ws/u, "http") !== origin) continue;
+    const channel = url.searchParams.get("channel");
+    if (!channel) continue;
+    if (url.pathname === "/api/pty") {
+      if (record.kind === "open") pty.bindPty(channel);
+      if (record.kind === "message") pty.ptyData();
+      if (record.kind === "close") pty.ptyClosed(channel);
+      continue;
+    }
+    if (url.pathname !== "/api/events") continue;
+    if (record.kind === "open") pty.bindEvents(channel);
+    if (record.kind === "close") pty.eventsClosed(channel);
+    if (record.kind === "message") {
+      assert(
+        typeof record.text === "string" && record.text.length <= 1024 * 1024,
+        "The actual PTY event frame is invalid or oversized",
+      );
+      pty.receive(channel, JSON.parse(record.text));
+    }
+  }
+}
+
 export function createHermesPtyState() {
   let channel: string | null = null,
     sessionId: string | null = null,
@@ -293,7 +341,7 @@ export function createHermesPtyState() {
     },
     eventsClosed(value: string) {
       openEventFeeds.set(value, Math.max(0, (openEventFeeds.get(value) ?? 0) - 1));
-      if (observing && value === channel && !eventFeedOpen())
+      if (observing && sessionId !== null && value === channel && !eventFeedOpen())
         failure = "The actual PTY event feed closed";
     },
     ptyData() {
@@ -301,7 +349,7 @@ export function createHermesPtyState() {
     },
     ptyClosed(value: string) {
       openPtyFeeds.set(value, Math.max(0, (openPtyFeeds.get(value) ?? 0) - 1));
-      if (observing && value === channel && !ptyFeedOpen())
+      if (observing && sessionId !== null && value === channel && !ptyFeedOpen())
         failure = "The actual PTY socket closed";
     },
     assertHealthy() {
@@ -375,14 +423,26 @@ export function hermesTurnIndex(messages: any[], prompt: string, markers: string
   );
 }
 
-export function finalHermesAssistant(messages: any[], prompt: string, markers: string[] = []) {
-  const user = hermesTurnIndex(messages, prompt, markers);
+export function finalHermesTurn(messages: any[]) {
+  const user = messages.findIndex((row) => row.role === "user");
   if (user < 0) return false;
   const last = messages.at(-1);
   if (last?.role !== "assistant" || typeof last.content !== "string" || !last.content.trim())
     return false;
   const calls = typeof last.tool_calls === "string" ? JSON.parse(last.tool_calls) : last.tool_calls;
   return messages.length > user + 1 && (!calls || calls.length === 0);
+}
+
+export function finalHermesAssistant(messages: any[], prompt: string, markers: string[] = []) {
+  const user = hermesTurnIndex(messages, prompt, markers);
+  return user >= 0 && finalHermesTurn(messages.slice(user));
+}
+
+export function hermesMessagesAfter(messages: any[], mark: number) {
+  assert(Number.isSafeInteger(mark) && mark >= 0, "Hermes transcript mark is invalid");
+  for (const row of messages)
+    assert(Number.isSafeInteger(row.id) && row.id > 0, "Hermes transcript row has no identity");
+  return [...messages].sort((left, right) => left.id - right.id).filter((row) => row.id > mark);
 }
 
 function argument(name: string, fallback?: string) {
@@ -708,30 +768,70 @@ async function main() {
       timeout: Math.max(1, Math.min(30_000, 120_000 - (performance.now() - started))),
     });
     const page = await browser.newPage();
-    const pty = createHermesPtyState();
-    page.on("websocket", (socket: any) => {
-      const url = new URL(socket.url());
-      if (url.origin.replace(/^ws/u, "http") !== origin.origin) return;
-      const channel = url.searchParams.get("channel");
-      if (!channel) return;
-      if (url.pathname === "/api/pty") {
-        pty.bindPty(channel);
-        socket.on("framereceived", () => pty.ptyData());
-        socket.on("close", () => pty.ptyClosed(channel));
-      } else if (url.pathname === "/api/events") {
-        pty.bindEvents(channel);
-        socket.on("close", () => pty.eventsClosed(channel));
-        socket.on("framereceived", ({ payload }: { payload: string | Buffer }) => {
+    await page.addInitScript(() => {
+      const target = globalThis as any;
+      const observation = { records: [] as any[], overflow: false };
+      Object.defineProperty(target, "__nemoclawSocketObservation", {
+        value: observation,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+      });
+      const push = (record: any) => {
+        if (
+          observation.records.length >= 512 ||
+          (typeof record.text === "string" && record.text.length > 1024 * 1024)
+        ) {
+          observation.overflow = true;
+          return;
+        }
+        observation.records.push(record);
+      };
+      const NativeWebSocket = target.WebSocket;
+      const ObservedWebSocket = new Proxy(NativeWebSocket, {
+        construct(constructor, args, newTarget) {
+          const socket = Reflect.construct(constructor, args, newTarget);
+          const url = String(socket.url || args[0] || "");
+          let eventFeed = false;
           try {
-            const text = typeof payload === "string" ? payload : payload.toString("utf8");
-            assert(text.length <= 1024 * 1024);
-            pty.receive(channel, JSON.parse(text));
+            eventFeed = new URL(url).pathname === "/api/events";
           } catch {
-            observerFailure = new Error("The actual PTY event frame is invalid or oversized");
+            observation.overflow = true;
           }
-        });
-      }
+          socket.addEventListener("open", () => push({ kind: "open", url }));
+          socket.addEventListener("message", (event: MessageEvent) => {
+            let text: string | undefined;
+            if (eventFeed) {
+              if (typeof event.data === "string") text = event.data;
+              else if (event.data instanceof ArrayBuffer)
+                text = new TextDecoder().decode(event.data);
+              else observation.overflow = true;
+            }
+            push({ kind: "message", url, ...(text === undefined ? {} : { text }) });
+          });
+          socket.addEventListener("close", () => push({ kind: "close", url }));
+          return socket;
+        },
+      });
+      Object.defineProperty(target, "WebSocket", {
+        value: ObservedWebSocket,
+        configurable: true,
+        writable: true,
+      });
     });
+    const pty = createHermesPtyState();
+    const pumpHermesSockets = async () => {
+      const batch = await page.evaluate(() => {
+        const observation = (globalThis as any).__nemoclawSocketObservation;
+        if (!observation) return null;
+        const records = observation.records.splice(0);
+        const overflow = observation.overflow;
+        observation.overflow = false;
+        return { records, overflow };
+      });
+      assert(batch, "The in-page Hermes socket observer is missing");
+      applyHermesSocketObservations(pty, origin.origin, batch);
+    };
     let sessionToken: string | undefined;
     page.on("request", (request: any) => {
       if (new URL(request.url()).origin === origin.origin)
@@ -748,8 +848,10 @@ async function main() {
     });
     while (!pty.usable() && performance.now() - started < 120_000) {
       if (observerFailure) throw observerFailure;
+      await pumpHermesSockets();
       await sleep(100);
     }
+    await pumpHermesSockets();
     pty.assertHealthy();
     assert(
       pty.usable() && performance.now() - started < 120_000,
@@ -788,6 +890,7 @@ async function main() {
         }) => {
           const response = await fetch(route, {
             headers: token ? { "X-Hermes-Session-Token": token } : {},
+            cache: "no-store",
             signal: AbortSignal.timeout(5000),
           });
           if (allowNotFound && response.status === 404) return null;
@@ -811,30 +914,26 @@ async function main() {
       messagingRequested: false,
       tavilyLiveLookup: "not-tested-user-waiver",
     };
-    const messagesFor = async (prompt: string, markers: string[]) => {
+    let transcriptPoll = 0;
+    const sessionMessages = async () => {
       const id = pty.storedSessionId(),
         profile = pty.profileName();
       if (!id || !profile) return [];
       // Hermes deliberately creates the stored row on the first prompt, so
       // the first bounded transcript poll can precede that row.
-      const detail = await api(
-        "/api/sessions/" +
-          encodeURIComponent(id) +
-          "/messages?limit=500&order=latest&profile=" +
-          encodeURIComponent(profile),
-        true,
-      );
+      // This is a live evidence read, not dashboard hydration. A unique URL
+      // plus no-store prevents Chromium's HTTP cache from freezing the first
+      // completed turn while later PTY turns continue and settle.
+      const detail = await api(hermesTranscriptRoute(id, profile, ++transcriptPoll), true);
       if (detail === null) return [];
       assert.equal(detail.session_id, id);
       assert(Array.isArray(detail.messages));
-      return hermesTurnIndex(detail.messages, prompt, markers) >= 0 ? detail.messages : [];
+      return hermesMessagesAfter(detail.messages, 0);
     };
     let lastTurnMark = 0;
-    const turn = async (
-      prompt: string,
-      accept: (messages: any[]) => unknown,
-      markers: string[] = [],
-    ) => {
+    const turn = async (prompt: string, accept: (messages: any[]) => unknown) => {
+      const previous = await sessionMessages();
+      const transcriptMark = previous.at(-1)?.id ?? 0;
       const mark = pty.markTurn();
       lastTurnMark = mark;
       const start = performance.now();
@@ -844,22 +943,23 @@ async function main() {
       await page.keyboard.press("Enter");
       while (performance.now() - start < 120_000) {
         if (observerFailure) throw observerFailure;
+        await pumpHermesSockets();
         pty.assertHealthy();
-        const messages = await messagesFor(prompt, markers);
+        const messages = hermesMessagesAfter(await sessionMessages(), transcriptMark);
         lastMessages = messages;
         const value = accept(messages);
-        if (value && finalHermesAssistant(messages, prompt, markers) && pty.settledAfter(mark))
+        if (value && finalHermesTurn(messages) && pty.settledAfter(mark))
           return {
             conversationElapsedMs: performance.now() - start,
             measurement: "end-to-end conversation interval including model, tools and UI/protocol",
             isolatedProviderLatencyMs: null,
             value,
           };
-        if (finalHermesAssistant(messages, prompt, markers) && pty.settledAfter(mark)) {
+        if (finalHermesTurn(messages) && pty.settledAfter(mark)) {
           results.failedTurn = {
             prompt,
             pty: pty.snapshot(),
-            messages: messages.slice(hermesTurnIndex(messages, prompt, markers)),
+            messages,
           };
           throw new Error(
             "The actual settled Hermes turn did not produce the required recorded result",
@@ -896,7 +996,6 @@ async function main() {
         const executeCode = recordedHermesCode(messages, code, "NEMOCLAW_EXECUTE_CODE_" + nonce);
         return terminal && executeCode ? { terminal, executeCode } : null;
       },
-      [script, code],
     );
     results.toolsScope = {
       bash: true,
@@ -920,7 +1019,6 @@ async function main() {
         browserCode +
         "\n```",
       (messages) => recordedHermesBrowser(messages, browserCode, browserSentinel),
-      [browserCode],
     );
     results.browserToolScope = {
       browser: "native-arm64-microsoft-edge",
@@ -951,6 +1049,7 @@ async function main() {
       },
       path.join(output, "installed-idle.json"),
     );
+    await pumpHermesSockets();
     results.idle.acceptedAsIdle =
       pty.settledAfter(lastTurnMark) && results.idle.status === "measured";
     results.settledPty = pty.snapshot();

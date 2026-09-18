@@ -11,6 +11,7 @@ import {
   standardEdgeCandidates,
   validateEdgeMetadata,
   readNativeEdgeEndpoint,
+  transientEdgeEndpointRead,
 } from "./native-edge-browser.mts";
 
 test("Edge reads only a bounded ordinary endpoint file", (context) => {
@@ -27,6 +28,24 @@ test("Edge reads only a bounded ordinary endpoint file", (context) => {
   assert.throws(() => readNativeEdgeEndpoint(file), /exceeds its limit/u);
   fs.writeFileSync(file, "51234\nhttps://example.test/\n");
   assert.throws(() => readNativeEdgeEndpoint(file), /valid CDP endpoint/u);
+});
+
+test("only a transient Edge endpoint file lock is retryable", () => {
+  assert.equal(
+    transientEdgeEndpointRead(Object.assign(new Error("locked"), { code: "EBUSY" })),
+    true,
+  );
+  for (const code of ["EACCES", "ENOENT", "EPERM", undefined])
+    assert.equal(
+      transientEdgeEndpointRead(Object.assign(new Error("not transient"), { code })),
+      false,
+    );
+});
+
+test("Edge endpoint polling has one deadline owner", () => {
+  const source = fs.readFileSync(new URL("./native-edge-browser.mts", import.meta.url), "utf8");
+  assert.match(source, /while \(Date\.now\(\) < deadline\)/u);
+  assert.doesNotMatch(source, /while \(!endpoint\s*&&/u);
 });
 
 test("Edge retries only transient Windows endpoint sharing violations", () => {

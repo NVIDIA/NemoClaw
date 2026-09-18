@@ -248,9 +248,10 @@ test(
     const script = String.raw`
 $ErrorActionPreference = 'Stop'
 $work = Join-Path ([IO.Path]::GetTempPath()) ('installed-controller-proof-' + [guid]::NewGuid().ToString('N'))
+$trustedNodeDirectory = "$work-controller-node"
 try {
   $controls = Join-Path $work 'application\controls'
-  $fakeNode = Join-Path $work 'application\node\node.exe'
+  $fakeNode = Join-Path $trustedNodeDirectory 'node.exe'
   [IO.Directory]::CreateDirectory($controls) | Out-Null
   [IO.Directory]::CreateDirectory((Split-Path -Parent $fakeNode)) | Out-Null
   [IO.File]::WriteAllBytes($fakeNode, [byte[]]@(0))
@@ -283,7 +284,7 @@ try {
   }
   $env:GITHUB_ACTIONS = 'true'; $env:GITHUB_SHA = $revision; $env:OS = 'Windows_NT'
   try {
-    & $env:NEMOCLAW_ACCEPTANCE_SOURCE -SourceRoot $env:NEMOCLAW_SOURCE_ROOT -WorkDirectory $work -ProductVersion 0.1.10 -ArtifactSourceRevision $revision -Agent openclaw -Mode current-build
+    & $env:NEMOCLAW_ACCEPTANCE_SOURCE -SourceRoot $env:NEMOCLAW_SOURCE_ROOT -WorkDirectory $work -ProductVersion 0.1.10 -ArtifactSourceRevision $revision -Agent openclaw -Mode current-build -ControllerNodePath $fakeNode
     throw 'Unexpected acceptance success.'
   } catch {
     if ($_.Exception.Message -notlike '*immutable-package-build.json*' -and
@@ -294,6 +295,7 @@ try {
   Write-Output 'SAME_RUN_CONTROLLER_PROOF_PASS'
 } finally {
   if (Test-Path -LiteralPath $work) { [IO.Directory]::Delete($work, $true) }
+  if (Test-Path -LiteralPath $trustedNodeDirectory) { [IO.Directory]::Delete($trustedNodeDirectory, $true) }
 }
 `;
     const result = spawnSync("pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
@@ -399,7 +401,7 @@ $owner = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automati
 $branch = @($owner[0].Body.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] })
 # Replace only the external process boundary; execute the actual case loop,
 # argument routing and evidence checks without installing or contacting inference.
-$execute = [scriptblock]::Create($branch[0].Extent.Text.Replace('& "$work\application\node\node.exe"', '& Invoke-TestAgent'))
+$execute = [scriptblock]::Create($branch[0].Extent.Text.Replace('& $ciNode', '& Invoke-TestAgent'))
 $ValidationScope = 'full-acceptance'; $Agent = $env:TEST_AGENT; $SourceRoot = 'source-fixture'
 $work = 'work-fixture'; $installation = 'install-fixture'
 function Invoke-TestAgent {
@@ -597,6 +599,76 @@ Write-Output 'pass'
         encoding: "utf8",
         windowsHide: true,
         timeout: 30000,
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout.trim(), "pass");
+  },
+);
+
+test(
+  "migration requires tier-specific native preparation evidence",
+  { skip: process.platform !== "win32" },
+  () => {
+    const script = String.raw`
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:MIGRATION_SOURCE,[ref]$tokens,[ref]$errors)
+if ($errors.Count) { throw 'Migration controller does not parse.' }
+$function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-MigrationPreparationNoop'},$true)
+if ($null -eq $function) { throw 'Migration preparation owner is missing.' }
+. ([scriptblock]::Create($function.Extent.Text))
+$root=Join-Path ([IO.Path]::GetTempPath()) ('migration-preparation-' + [guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($root) | Out-Null
+function Reject([scriptblock]$Fixture) {
+  $failed=$false
+  try { & $Fixture } catch { $failed=$true }
+  if (-not $failed) { throw 'Invalid migration preparation evidence was accepted.' }
+}
+try {
+  $base=Join-Path $root 'base.log'
+  [IO.File]::WriteAllText($base,('prefix MXC preparation tier: base-container'+[Environment]::NewLine))
+  $baseResult=Assert-MigrationPreparationNoop $base
+  if ($baseResult.tier -cne 'base-container' -or $baseResult.helperSkipped -ne $true -or $baseResult.addedAces -ne 0 -or $baseResult.writeCalls -ne 0 -or $null -ne $baseResult.sidecarSha256) { throw 'BaseContainer preparation result is incomplete.' }
+
+  $app=Join-Path $root 'app.log'; $attempt='a' * 32
+  [IO.File]::WriteAllText($app,('prefix MXC preparation tier: appcontainer-dacl'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  $sidecar=$app + '.host-preparation-' + $attempt + '.json'
+  @{classification='nemoclaw-host-preparation-diagnostic';operation='prepare-system-drive';status='succeeded';addedAces=0;writeCalls=0;elapsedMilliseconds=7;attemptId=$attempt} | ConvertTo-Json -Compress | Set-Content -LiteralPath $sidecar -NoNewline
+  $appResult=Assert-MigrationPreparationNoop $app
+  if ($appResult.tier -cne 'appcontainer-dacl' -or $appResult.helperSkipped -ne $false -or $appResult.addedAces -ne 0 -or $appResult.writeCalls -ne 0 -or $appResult.elapsedMilliseconds -ne 7 -or $appResult.sidecarSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'AppContainer preparation result is incomplete.' }
+
+  [IO.File]::WriteAllText((Join-Path $root 'bad-tier.log'),('MXC preparation tier: unsupported'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'bad-tier.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'duplicate.log'),('MXC preparation tier: base-container'+[Environment]::NewLine+'MXC preparation tier: base-container'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'duplicate.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'base-helper.log'),('MXC preparation tier: base-container'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'base-helper.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'missing-sidecar.log'),('MXC preparation tier: appcontainer-dacl'+[Environment]::NewLine+'Applying execute package: MxcSystemDrivePreparation'+[Environment]::NewLine))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'missing-sidecar.log') }
+  [IO.File]::WriteAllText((Join-Path $root 'oversized.log'),('x' * 1048577))
+  Reject { Assert-MigrationPreparationNoop (Join-Path $root 'oversized.log') }
+} finally {
+  Remove-Item -LiteralPath $root -Recurse -Force
+}
+Write-Output 'pass'
+`;
+    const result = spawnSync(
+      "pwsh.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      {
+        env: powershellEnvironment({
+          MIGRATION_SOURCE: fileURLToPath(new URL("run-preview-migration.ps1", import.meta.url)),
+        }),
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 30_000,
       },
     );
     assert.equal(result.error, undefined);

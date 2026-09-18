@@ -5,7 +5,7 @@ import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 import {
   watchNativeUiSandbox,
   attemptNativeUiCleanup,
@@ -23,8 +23,8 @@ import { readNativeServiceEnvironment } from "./native-options.mts";
 
 import {
   configureNativeFromStdin,
+  nativeAgentConfigurationRecord,
   normalizeOnboardingConfiguration,
-  writeNativeAgentConfiguration,
   type NativeOnboardingConfiguration,
 } from "./native-setup-configuration.mts";
 
@@ -134,6 +134,25 @@ async function updateWindowsCredential(
         ? "Windows Credential Manager could not protect this API key."
         : "Windows Credential Manager could not clear the previous API key.",
     );
+}
+
+export async function saveNativeOnboardingConfiguration(
+  launcher: string,
+  configuration: NativeOnboardingConfiguration,
+  dependencies: {
+    updateCredential?: typeof updateWindowsCredential;
+    configure?: typeof configureNativeFromStdin;
+  } = {},
+) {
+  await (dependencies.updateCredential ?? updateWindowsCredential)(launcher, configuration);
+  const record = nativeAgentConfigurationRecord(configuration);
+  const configPath = await (dependencies.configure ?? configureNativeFromStdin)(
+    launcher,
+    [],
+    Readable.from([Buffer.from(JSON.stringify(record), "utf8")]),
+  );
+  if (typeof configPath !== "string") fail("graphical onboarding did not save its configuration");
+  return configPath;
 }
 
 function readNativeAgentConfiguration(agent: string) {
@@ -497,10 +516,9 @@ async function startOnboardingServer(
         }
         const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         const normalized = normalizeOnboardingConfiguration(submitted, qualification);
-        if (!qualification) {
-          await updateWindowsCredential(launcher, normalized);
-        }
-        const configPath = qualification ? null : writeNativeAgentConfiguration(normalized);
+        const configPath = qualification
+          ? null
+          : await saveNativeOnboardingConfiguration(launcher, normalized);
         selection = {
           schemaVersion: 1,
           agent: normalized.agent,

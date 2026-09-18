@@ -126,13 +126,24 @@ function Invoke-MigrationQuietUninstall([string]$SetupPath, [string]$Label) {
     } finally { $child.Dispose() }
 }
 function Assert-MigrationPreparationNoop([string]$LogPath) {
+    $logFile = Get-Item -LiteralPath $LogPath
+    if ($logFile.PSIsContainer -or $logFile.Length -le 0 -or $logFile.Length -gt 1048576) { throw 'The migrated installer log is missing or exceeds its bound.' }
+    $logText = Get-Content -LiteralPath $logFile.FullName -Raw
+    $tiers = @([regex]::Matches($logText, 'MXC preparation tier: (base-container|appcontainer-dacl)(?:\r?\n|$)'))
+    if ($tiers.Count -ne 1) { throw 'The migrated installer did not record one supported MXC preparation tier.' }
+    $tier = $tiers[0].Groups[1].Value
+    $helperExecutions = @([regex]::Matches($logText, 'Applying execute package: MxcSystemDrivePreparation'))
     $files = @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($LogPath)) -Filter ([IO.Path]::GetFileName($LogPath) + '.host-preparation-*.json') -File)
-    if ($files.Count -ne 1 -or $files[0].Length -gt 8192) { throw 'The migrated installation did not retain its exact helper diagnostic.' }
+    if ($tier -ceq 'base-container') {
+        if ($helperExecutions.Count -ne 0 -or $files.Count -ne 0) { throw 'BaseContainer migration unexpectedly invoked the AppContainer preparation helper.' }
+        return @{tier=$tier;helperSkipped=$true;addedAces=0;writeCalls=0;elapsedMilliseconds=$null;sidecarSha256=$null}
+    }
+    if ($helperExecutions.Count -ne 1 -or $files.Count -ne 1 -or $files[0].Length -gt 8192) { throw 'The AppContainer migration did not retain its exact helper diagnostic.' }
     $detail = Get-Content -LiteralPath $files[0].FullName -Raw | ConvertFrom-Json
     if ($detail.classification -cne 'nemoclaw-host-preparation-diagnostic' -or $detail.operation -cne 'prepare-system-drive' -or
         $detail.status -cne 'succeeded' -or $detail.addedAces -ne 0 -or $detail.writeCalls -ne 0 -or
         $detail.attemptId -cnotmatch '^[a-f0-9]{32}$' -or $files[0].Name -cne ([IO.Path]::GetFileName($LogPath) + '.host-preparation-' + $detail.attemptId + '.json')) { throw 'The new installer did not prove a zero-write preparation on the already prepared root.' }
-    return @{addedAces=$detail.addedAces;writeCalls=$detail.writeCalls;elapsedMilliseconds=$detail.elapsedMilliseconds;sidecarSha256=(Get-FileHash -LiteralPath $files[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+    return @{tier=$tier;helperSkipped=$false;addedAces=$detail.addedAces;writeCalls=$detail.writeCalls;elapsedMilliseconds=$detail.elapsedMilliseconds;sidecarSha256=(Get-FileHash -LiteralPath $files[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
 try {
     Assert-MigrationRegistrations ''

@@ -406,19 +406,50 @@ export async function preclean(
   });
 }
 
-async function verifyExactCleanup(
-  host: HostCliClient,
-  sandbox: SandboxClient,
+type ExactCleanupOptions = {
+  attempts?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+};
+
+export async function verifyExactCleanup(
+  host: Pick<HostCliClient, "command">,
+  sandbox: Pick<SandboxClient, "list">,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  options: ExactCleanupOptions = {},
 ): Promise<void> {
-  const openshellList = await sandbox.list({
-    artifactName: `post-destroy-openshell-list-${sandboxName}`,
-    env,
-    timeoutMs: 30_000,
-  });
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
-  expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
+  const attempts = options.attempts ?? 60;
+  const intervalMs = options.intervalMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const deadline = performance.now() + timeoutMs;
+  let openshellList: Awaited<ReturnType<SandboxClient["list"]>> | undefined;
+  let probes = 0;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const remainingMs = deadline - performance.now();
+    if (attempt > 1 && remainingMs <= 0) break;
+    openshellList = await sandbox.list({
+      artifactName:
+        attempt === 1
+          ? `post-destroy-openshell-list-${sandboxName}`
+          : `post-destroy-openshell-list-${sandboxName}-${attempt}`,
+      env,
+      timeoutMs: Math.max(1, Math.min(30_000, Math.ceil(remainingMs))),
+    });
+    probes = attempt;
+    assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
+    if (!outputContainsSandbox(openshellList, sandboxName)) break;
+    if (attempt === attempts || performance.now() >= deadline) break;
+    const delayMs = Math.min(intervalMs, Math.max(0, Math.ceil(deadline - performance.now())));
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  const cleanupInventory = openshellList ? resultText(openshellList) : "no inventory completed";
+  const sandboxRemains =
+    openshellList === undefined || outputContainsSandbox(openshellList, sandboxName);
+  expect(
+    sandboxRemains,
+    `OpenShell sandbox '${sandboxName}' remained present after ${probes} cleanup probes within ${timeoutMs}ms: ${cleanupInventory}`,
+  ).toBe(false);
   const containers = await host.command(
     "docker",
     ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],

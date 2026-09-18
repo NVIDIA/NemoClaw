@@ -329,6 +329,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_PROXY_PORT: "3128",
       NEMOCLAW_REASONING: "true",
       NEMOCLAW_REASONING_EFFORT: "high",
+      NEMOCLAW_SERVING_PRESET: "",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",

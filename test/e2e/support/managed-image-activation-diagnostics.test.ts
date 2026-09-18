@@ -9,7 +9,22 @@ import {
   managedOpenClawSubagentCommand,
   preclean,
   summarizeOnboardFailureStartupSignals,
+  verifyExactCleanup,
 } from "../live/managed-image-activation-e2e-helpers.ts";
+
+type CleanupListOptions = Parameters<Parameters<typeof verifyExactCleanup>[1]["list"]>[0];
+
+function commandResult(stdout: string, exitCode = 0, stderr = "") {
+  return {
+    command: ["fixture"],
+    exitCode,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr,
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
+}
 
 describe("managed image activation failure diagnostics", () => {
   it("installs activation proof plugins through native OpenClaw ownership", () => {
@@ -120,5 +135,97 @@ describe("managed image activation failure diagnostics", () => {
       }),
     ).rejects.toThrow("startup failed");
     expect(calls).toEqual([]);
+  });
+
+  it("waits for a transient Deleting sandbox before verifying Docker cleanup", async () => {
+    const sandbox = {
+      list: vi
+        .fn()
+        .mockResolvedValueOnce(commandResult("NAME PHASE\nmi-act-hermes Deleting\n"))
+        .mockResolvedValueOnce(commandResult("No sandboxes found.\n")),
+    };
+    const host = {
+      command: vi.fn(async () => commandResult("")),
+    };
+
+    await verifyExactCleanup(
+      host,
+      sandbox,
+      "mi-act-hermes",
+      { OPENSHELL_GATEWAY: "nemoclaw" },
+      {
+        attempts: 2,
+        intervalMs: 0,
+      },
+    );
+
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(sandbox.list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ artifactName: "post-destroy-openshell-list-mi-act-hermes-2" }),
+    );
+    expect(host.command).toHaveBeenCalledExactlyOnceWith(
+      "docker",
+      ["ps", "-aq", "--filter", "label=openshell.ai/sandbox-name=mi-act-hermes"],
+      expect.objectContaining({ artifactName: "post-destroy-docker-inventory-mi-act-hermes" }),
+    );
+  });
+
+  it("bounds cleanup convergence and preserves the last OpenShell inventory", async () => {
+    const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
+    const sandbox = { list: vi.fn(async () => deleting) };
+    const host = { command: vi.fn() };
+
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 2, intervalMs: 0 }),
+    ).rejects.toThrow(/remained present after 2 cleanup probes within 60000ms:.*Deleting/su);
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(host.command).not.toHaveBeenCalled();
+  });
+
+  it("caps probes to the remaining cleanup deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
+      const sandbox = { list: vi.fn(async (_options: CleanupListOptions) => deleting) };
+      const host = { command: vi.fn() };
+      const verification = verifyExactCleanup(
+        host,
+        sandbox,
+        "mi-act-hermes",
+        {},
+        {
+          attempts: 10,
+          intervalMs: 1_000,
+          timeoutMs: 1_500,
+        },
+      );
+      const rejected = expect(verification).rejects.toThrow(
+        /remained present after 2 cleanup probes within 1500ms:.*Deleting/su,
+      );
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await rejected;
+
+      expect(sandbox.list).toHaveBeenCalledTimes(2);
+      expect(sandbox.list.mock.calls[0]?.[0]?.timeoutMs).toBeLessThanOrEqual(1_500);
+      expect(sandbox.list.mock.calls[1]?.[0]?.timeoutMs).toBeLessThanOrEqual(500);
+      expect(host.command).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails immediately when the OpenShell inventory probe errors", async () => {
+    const sandbox = {
+      list: vi.fn(async () => commandResult("", 1, "gateway unavailable")),
+    };
+    const host = { command: vi.fn() };
+
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 3, intervalMs: 0 }),
+    ).rejects.toThrow(/list OpenShell sandboxes.*gateway unavailable/u);
+    expect(sandbox.list).toHaveBeenCalledTimes(1);
+    expect(host.command).not.toHaveBeenCalled();
   });
 });

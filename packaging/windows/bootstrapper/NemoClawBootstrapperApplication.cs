@@ -25,7 +25,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private bool relatedOnly;
     private bool preparingMaintenance;
     private bool replacedPreviousPreview;
-    private bool cancelRequested;
+    private readonly NativeCancellationState cancellation = new();
     private bool executingPackage;
     private string? executingPackageId;
     private readonly string preparationAttempt = Guid.NewGuid().ToString("N");
@@ -94,8 +94,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 this.window.ReplacePreviewRequested += (_, _) => _ = this.ReplacePreviousPreviewAsync();
                 this.window.CancelRequested += (_, _) =>
                 {
-                    this.cancelRequested = true;
-                    this.maintenanceCancellation?.Cancel();
+                    this.cancellation.Request(this.maintenanceCancellation);
                 };
                 this.window.OpenLogRequested += (_, _) => this.OpenBundleLog();
                 this.window.ConfigureRequested += (_, _) => _ = this.ConfigureInstalledAgentAsync();
@@ -150,7 +149,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         this.ApplyBegin += (_, _) => this.Ui(() => this.window?.ShowProgress("Preparing your changes", "Windows is preparing the selected changes to NemoClaw on this PC."));
         this.CacheAcquireProgress += (_, args) =>
         {
-            args.Cancel = this.cancelRequested;
+            args.Cancel = this.cancellation.IsRequested;
             if (!this.executingPackage)
             {
                 var completed = args.Progress;
@@ -161,7 +160,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         };
         this.CacheContainerOrPayloadVerifyProgress += (_, args) =>
         {
-            args.Cancel = this.cancelRequested;
+            args.Cancel = this.cancellation.IsRequested;
             if (!this.executingPackage)
             {
                 var completed = args.Progress;
@@ -178,13 +177,13 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         };
         this.ExecuteProgress += (_, args) =>
         {
-            args.Cancel = this.cancelRequested;
+            args.Cancel = this.cancellation.IsRequested;
             var percentage = args.ProgressPercentage;
             this.UiProgress(() => this.window?.SetPackageProgress(percentage));
         };
         this.Progress += (_, args) =>
         {
-            args.Cancel = this.cancelRequested;
+            args.Cancel = this.cancellation.IsRequested;
             var percentage = args.OverallPercentage;
             this.UiProgress(() => this.window?.SetInstallerProgress(percentage), overall: true);
         };
@@ -304,8 +303,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         catch (Exception error)
         {
             this.result = 1;
-            this.window?.ShowMaintenance();
-            this.window?.ShowRecoverableError(error.Message);
+            this.ShowRecoverableMaintenanceError(error);
         }
         finally
         {
@@ -347,14 +345,20 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         catch (Exception error)
         {
             this.result = 1;
-            this.window?.ShowMaintenance();
-            this.window?.ShowRecoverableError(error.Message);
+            this.ShowRecoverableMaintenanceError(error);
         }
         finally
         {
             if (ReferenceEquals(this.maintenanceCancellation, cancellation)) this.maintenanceCancellation = null;
             this.preparingMaintenance = false;
         }
+    }
+
+    private void ShowRecoverableMaintenanceError(Exception error)
+    {
+        this.cancellation.ResetForRetry();
+        this.window?.ShowMaintenance();
+        this.window?.ShowRecoverableError(error.Message);
     }
 
     private async Task PrepareHeadlessMaintenanceAsync(LaunchAction action)
@@ -401,7 +405,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             "NemoClawArm64Msi" => ("Installing NemoClaw", "Windows is installing the application and native agent runtimes. Large runtimes can take several minutes."),
             _ => ("Installing required components", "Windows is processing the next component in the installation."),
         };
-        args.Cancel = this.cancelRequested;
+        args.Cancel = this.cancellation.IsRequested;
         this.Ui(() => this.window?.ShowProgress(title, detail, "package-" + args.PackageId));
     }
 
@@ -412,7 +416,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             this.RememberPreparationFailure(args.ErrorCode);
         var detail = this.preparationFailure?.Summary ?? $"Windows reported setup error {args.ErrorCode}. Setup log contains the saved details.";
         this.Ui(() => this.window?.ShowRecoverableError(detail));
-        args.Result = this.cancelRequested ? Result.Cancel : args.Recommendation;
+        args.Result = this.cancellation.IsRequested ? Result.Cancel : args.Recommendation;
     }
 
     private void RememberPreparationFailure(int status)
@@ -437,7 +441,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 try { NativeDesktopIntegration.RemoveOwned(NativeSetupOperations.InstalledLauncher()); }
                 catch (Exception) { this.Engine.Log(LogLevel.Error, "NemoClaw was removed, but a desktop shortcut could not be removed safely."); }
             }
-            if (this.command?.Display == Display.Full && this.plannedAction == LaunchAction.Install && !this.cancelRequested)
+            if (this.command?.Display == Display.Full && this.plannedAction == LaunchAction.Install && !this.cancellation.IsRequested)
             {
                 this.Ui(() => _ = this.ConfigureInstalledAgentAsync());
             }
@@ -467,7 +471,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             using var serviceCredentials = this.window.CopyServiceCredentials();
             await NativeSetupOperations.SaveAsync(configuration, password, serviceCredentials, this.window.ShowModelProgress, cancellation.Token);
             this.result = 0;
-            this.cancelRequested = false;
+            this.cancellation.ResetForRetry();
             this.window.ShowConfiguredSuccess();
         }
         catch (OperationCanceledException)
@@ -571,7 +575,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
     private int NormalizeExitCode(int code)
     {
-        if (this.cancelRequested && code == 0)
+        if (this.cancellation.IsRequested && code == 0)
         {
             return UserCancelled;
         }

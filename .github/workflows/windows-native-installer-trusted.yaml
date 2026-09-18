@@ -1,0 +1,423 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Trusted Windows Installer Qualification
+
+# This workflow is deliberately callable only from the same commit as its
+# caller. The caller admits only an exact, current refs/heads/main dispatch, so
+# qualification remains unavailable until both workflow files land on main.
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      candidate_repository:
+        required: true
+        type: string
+      candidate_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      workflow_sha:
+        required: true
+        type: string
+      agent:
+        required: true
+        type: string
+      product_version:
+        required: true
+        type: string
+      installer_cache_key:
+        required: true
+        type: string
+      installer_manifest_sha256:
+        required: true
+        type: string
+      application_cache_key:
+        required: true
+        type: string
+      application_manifest_sha256:
+        required: true
+        type: string
+    outputs:
+      preview_id:
+        description: Artifact ID of the fully qualified runnable installer
+        value: ${{ jobs.publish-qualified-installer.outputs.preview_id }}
+      preview_digest:
+        description: Artifact digest of the fully qualified runnable installer
+        value: ${{ jobs.publish-qualified-installer.outputs.preview_digest }}
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  authorize:
+    name: Reauthorize exact PR against exact current main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      trusted_main: ${{ steps.authorization.outputs.trusted_main }}
+      exact_workflow: ${{ steps.authorization.outputs.exact_workflow }}
+      exact_pr: ${{ steps.authorization.outputs.exact_pr }}
+      credential_authorized: ${{ steps.authorization.outputs.credential_authorized }}
+    steps:
+      - name: Require current main controller and exact internal PR identity
+        id: authorization
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          SELECTED_AGENT: ${{ inputs.agent }}
+          PRODUCT_VERSION: ${{ inputs.product_version }}
+          INSTALLER_CACHE_KEY: ${{ inputs.installer_cache_key }}
+          APPLICATION_CACHE_KEY: ${{ inputs.application_cache_key }}
+          INSTALLER_MANIFEST: ${{ inputs.installer_manifest_sha256 }}
+          APPLICATION_MANIFEST: ${{ inputs.application_manifest_sha256 }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'NVIDIA/NemoClaw' && "$GITHUB_REF" == 'refs/heads/main' ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$CANDIDATE_REPOSITORY" == 'NVIDIA/NemoClaw' ]]
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$INSTALLER_MANIFEST" =~ ^[a-f0-9]{64}$ && "$APPLICATION_MANIFEST" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$SELECTED_AGENT" =~ ^(openclaw|hermes|pi)$ && "$PRODUCT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$INSTALLER_CACHE_KEY" == "windows-finished-installer-v1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$CANDIDATE_SHA-$SELECTED_AGENT" ]]
+          [[ "$APPLICATION_CACHE_KEY" == "windows-finished-application-v1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$CANDIDATE_SHA-$SELECTED_AGENT" ]]
+          [[ "$BASE_SHA" == "$WORKFLOW_SHA" ]]
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$main_sha" == "$WORKFLOW_SHA" ]]
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          [[ "$(jq -r '.state' <<<"$pr")" == 'open' ]]
+          [[ "$(jq -r '.base.repo.full_name' <<<"$pr")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r '.base.ref' <<<"$pr")" == 'main' ]]
+          [[ "$(jq -r '.base.sha' <<<"$pr")" == "$BASE_SHA" ]]
+          [[ "$(jq -r '.head.repo.full_name' <<<"$pr")" == "$CANDIDATE_REPOSITORY" ]]
+          [[ "$(jq -r '.head.repo.owner.login' <<<"$pr")" == 'NVIDIA' ]]
+          [[ "$(jq -r '.head.repo.owner.type' <<<"$pr")" == 'Organization' ]]
+          [[ "$(jq -r '.head.sha' <<<"$pr")" == "$CANDIDATE_SHA" ]]
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$WORKFLOW_SHA...$CANDIDATE_SHA")"
+          [[ "$(jq -r '.merge_base_commit.sha' <<<"$comparison")" == "$WORKFLOW_SHA" ]]
+          [[ "$(jq -r '.behind_by' <<<"$comparison")" == '0' ]]
+          for principal in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$principal/permission" --jq '.permission')"
+            [[ "$permission" =~ ^(admin|maintain|write)$ ]]
+          done
+          {
+            echo 'trusted_main=true'
+            echo 'exact_workflow=true'
+            echo 'exact_pr=true'
+            echo 'credential_authorized=true'
+          } >> "$GITHUB_OUTPUT"
+
+  full-installed-acceptance:
+    name: Protected full installed acceptance (ARM64)
+    needs: authorize
+    if: ${{ needs.authorize.outputs.trusted_main == 'true' && needs.authorize.outputs.exact_workflow == 'true' && needs.authorize.outputs.exact_pr == 'true' && needs.authorize.outputs.credential_authorized == 'true' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 60
+    # External security boundary required before first use: administrators must
+    # create this environment with main-only deployment branches, required reviewers,
+    # prevent-self-review, and fresh environment-only READY + qualification
+    # inference secrets. Never define the WINDOWS_NATIVE_INSTALLER_* secrets at
+    # repository/organization scope or rely on generic repository-key fallback;
+    # rotate any qualification key previously exposed to the legacy workflow.
+    # Without that setup this job fails before candidate code executes. The
+    # legacy Actions workflow ID 350766812 must also be permanently disabled.
+    environment: windows-native-installer-qualification
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      CONTROLLER_SHA: ${{ inputs.workflow_sha }}
+      SELECTED_AGENT: ${{ inputs.agent }}
+      PRODUCT_VERSION: ${{ inputs.product_version }}
+      TRUSTED_CONTROLLER_NODE: ${{ github.workspace }}\trusted-controller-node\node.exe
+    steps:
+      - name: Require configured protected qualification environment
+        shell: pwsh
+        env:
+          ENVIRONMENT_READY: ${{ secrets.WINDOWS_NATIVE_INSTALLER_QUALIFICATION_READY }}
+        run: |
+          if ($env:ENVIRONMENT_READY -cne 'reviewed-main-v1') {
+            throw 'The protected qualification environment is not configured; no candidate code will receive credentials.'
+          }
+      - name: Check out the exact trusted main controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.workflow_sha }}
+          path: controller
+          persist-credentials: false
+      - name: Restore exact same-run installer cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/finished-windows-product-transfer
+          key: ${{ inputs.installer_cache_key }}
+          fail-on-cache-miss: true
+      - name: Restore exact same-run compiled application cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/finished-windows-application-transfer
+          key: ${{ inputs.application_cache_key }}
+          fail-on-cache-miss: true
+      - name: Verify and materialize exact qualified inputs
+        shell: pwsh
+        env:
+          INSTALLER_MANIFEST: ${{ inputs.installer_manifest_sha256 }}
+          APPLICATION_MANIFEST: ${{ inputs.application_manifest_sha256 }}
+        run: |
+          $controllerHead = (& git -C "$env:GITHUB_WORKSPACE\controller" rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $controllerHead -cne $env:CONTROLLER_SHA) { throw 'The trusted controller checkout is not exact.' }
+          $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
+          $application = "$env:RUNNER_TEMP\finished-windows-application-transfer"
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
+            -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $application `
+            -Kind compiled-application -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:APPLICATION_MANIFEST
+          if ($LASTEXITCODE -ne 0) { throw 'A qualification transfer did not match its producer.' }
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          [void][IO.Directory]::CreateDirectory($work)
+          Copy-Item -LiteralPath "$product\package" -Destination "$work\package" -Recurse
+          Copy-Item -LiteralPath "$product\assembled" -Destination "$work\assembled" -Recurse
+          Copy-Item -LiteralPath "$application\application" -Destination "$work\application" -Recurse
+          $trustedNodeSha256 = '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878'
+          $transferredNode = Get-Item -LiteralPath "$work\application\node\node.exe" -Force
+          if (($transferredNode.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+              (Get-FileHash -LiteralPath $transferredNode.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $trustedNodeSha256) {
+            throw 'The transferred controller Node executable is not the pinned trusted input.'
+          }
+          $trustedNodeDirectory = Split-Path -Parent $env:TRUSTED_CONTROLLER_NODE
+          if (Test-Path -LiteralPath $trustedNodeDirectory) { throw 'The trusted controller Node directory must be fresh.' }
+          [void][IO.Directory]::CreateDirectory($trustedNodeDirectory)
+          Copy-Item -LiteralPath $transferredNode.FullName -Destination $env:TRUSTED_CONTROLLER_NODE
+          $trustedNodeFiles = @(Get-ChildItem -LiteralPath $trustedNodeDirectory -Force)
+          if ($trustedNodeFiles.Count -ne 1 -or $trustedNodeFiles[0] -isnot [IO.FileInfo] -or
+              $trustedNodeFiles[0].Name -cne 'node.exe' -or
+              ($trustedNodeFiles[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+              (Get-FileHash -LiteralPath $env:TRUSTED_CONTROLLER_NODE -Algorithm SHA256).Hash.ToLowerInvariant() -cne $trustedNodeSha256) {
+            throw 'The isolated trusted controller Node inventory is invalid.'
+          }
+      - name: Rebuild acceptance-controller proof from trusted main
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:CONTROLLER_SHA
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $output = "$work\application\controls"
+          [void][IO.Directory]::CreateDirectory($output)
+          $tests = @(
+            'packaging/windows/installer/control-installed-openclaw-input.test.mts',
+            'packaging/windows/installer/run-installed-acceptance.test.mts',
+            'packaging/windows/installer/qualify-finished-package.test.mts',
+            'packaging/windows/runtime/native-ui-tunnel.test.mts'
+          )
+          $absoluteTests = @($tests | ForEach-Object { Join-Path "$env:GITHUB_WORKSPACE\controller" $_ })
+          & $env:TRUSTED_CONTROLLER_NODE --experimental-strip-types --no-warnings --test @absoluteTests
+          if ($LASTEXITCODE -ne 0) { throw 'The trusted acceptance-controller controls failed.' }
+          $files = @($tests | ForEach-Object {
+            $file = Join-Path "$env:GITHUB_WORKSPACE\controller" $_
+            @{ file = $_; bytes = (Get-Item -LiteralPath $file).Length; sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() }
+          })
+          [IO.File]::WriteAllText("$output\installed-acceptance-controller.json", (@{
+            schemaVersion = 1
+            classification = 'same-run-installed-acceptance-controller-controls'
+            sourceRevision = $env:CONTROLLER_SHA
+            nodeSha256 = (Get-FileHash -LiteralPath $env:TRUSTED_CONTROLLER_NODE -Algorithm SHA256).Hash.ToLowerInvariant()
+            passed = $true
+            files = $files
+          } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+      - name: Exercise installed preview, real inference and owned cleanup
+        shell: pwsh
+        env:
+          NVIDIA_API_KEY: ${{ secrets.WINDOWS_NATIVE_INSTALLER_NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.WINDOWS_NATIVE_INSTALLER_NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          $env:GITHUB_SHA = $env:CONTROLLER_SHA
+          if (-not $env:NVIDIA_API_KEY -and -not $env:NVIDIA_INFERENCE_API_KEY) { throw 'The protected environment has no inference credential.' }
+          & "$env:GITHUB_WORKSPACE\controller\packaging\windows\installer\run-installed-acceptance.ps1" `
+            -SourceRoot "$env:GITHUB_WORKSPACE\controller" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" `
+            -ProductVersion $env:PRODUCT_VERSION -ArtifactSourceRevision $env:CANDIDATE_SHA -Mode current-build `
+            -Agent $env:SELECTED_AGENT -ControllerNodePath $env:TRUSTED_CONTROLLER_NODE
+      - name: Stage only non-runnable full acceptance evidence
+        id: full_evidence
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $inputs = @(
+            "$work\installed-smoke", "$work\installed-acceptance",
+            "$work\installed-acceptance-warm", "$work\installed-stage-timings.json"
+          )
+          foreach ($pattern in @("$work\*.log", "$work\package\*.json")) {
+            $inputs += @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          }
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\stage-windows-native-evidence.ps1" `
+            -SourceBase $work -InputPath $inputs -OutputRoot "$env:RUNNER_TEMP\finished-windows-full-evidence"
+      - name: Preserve full installed acceptance evidence
+        if: ${{ always() && steps.full_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: finished-windows-full-acceptance-${{ inputs.candidate_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/finished-windows-full-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  migration:
+    name: Trusted same-product setup and migration acceptance (ARM64)
+    needs: [authorize, full-installed-acceptance]
+    if: ${{ needs.authorize.outputs.credential_authorized == 'true' && needs.full-installed-acceptance.result == 'success' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 35
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      CONTROLLER_SHA: ${{ inputs.workflow_sha }}
+      SELECTED_AGENT: ${{ inputs.agent }}
+      PRODUCT_VERSION: ${{ inputs.product_version }}
+    steps:
+      - name: Check out the exact trusted migration controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.workflow_sha }}
+          path: controller
+          persist-credentials: false
+      - name: Restore exact same-run installer cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/finished-windows-product-transfer
+          key: ${{ inputs.installer_cache_key }}
+          fail-on-cache-miss: true
+      - name: Verify and materialize exact migration input
+        shell: pwsh
+        env:
+          INSTALLER_MANIFEST: ${{ inputs.installer_manifest_sha256 }}
+        run: |
+          $product = "$env:RUNNER_TEMP\finished-windows-product-transfer"
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify -Root $product `
+            -Kind finished-installer -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST
+          if ($LASTEXITCODE -ne 0) { throw 'The migration transfer did not match its producer.' }
+          [void][IO.Directory]::CreateDirectory("$env:RUNNER_TEMP\finished-windows")
+          Copy-Item -LiteralPath "$product\package" -Destination "$env:RUNNER_TEMP\finished-windows\package" -Recurse
+          Copy-Item -LiteralPath "$product\assembled" -Destination "$env:RUNNER_TEMP\finished-windows\assembled" -Recurse
+      - name: Prepare pinned native fixture compiler
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+      - name: Build actual Burn failure fixture from the same native UI
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:CANDIDATE_SHA
+          $tools = "$env:RUNNER_TEMP\setup-regression-tools"
+          dotnet tool install --tool-path $tools wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned WiX installation failed.' }
+          & "$env:GITHUB_WORKSPACE\controller\packaging\windows\installer\build-burn-diagnostics-fixture.ps1" -SourceRoot "$env:GITHUB_WORKSPACE\controller" -PackageDirectory "$env:RUNNER_TEMP\finished-windows\package" -OutputDirectory "$env:RUNNER_TEMP\finished-windows\diagnostics-fixture" -ProductVersion $env:PRODUCT_VERSION -WixPath "$tools\wix.exe"
+      - name: Exercise backend-specific native prerequisite selection
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:CANDIDATE_SHA
+          & "$env:GITHUB_WORKSPACE\controller\packaging\windows\installer\test-burn-diagnostics.ps1" -FixtureDirectory "$env:RUNNER_TEMP\finished-windows\diagnostics-fixture" -OutputDirectory "$env:RUNNER_TEMP\finished-windows\burn-diagnostics" -Agent $env:SELECTED_AGENT
+      - name: Exercise previous EXE migration and native selective reset
+        shell: pwsh
+        run: |
+          $env:GITHUB_SHA = $env:CANDIDATE_SHA
+          & "$env:GITHUB_WORKSPACE\controller\packaging\windows\installer\run-preview-migration.ps1" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" -ProductVersion $env:PRODUCT_VERSION -NewAgent $env:SELECTED_AGENT
+      - name: Stage only non-runnable setup and migration evidence
+        id: migration_evidence
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $inputs = @("$work\diagnostics-fixture\fixture.json")
+          $allowed = @('.csv', '.etl', '.jpeg', '.jpg', '.json', '.log', '.md', '.png', '.txt', '.xml')
+          foreach ($directory in @("$work\burn-diagnostics", "$work\migration")) {
+            $inputs += @(Get-ChildItem -LiteralPath $directory -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension -in $allowed } | ForEach-Object FullName)
+          }
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\stage-windows-native-evidence.ps1" `
+            -SourceBase $work -InputPath $inputs -OutputRoot "$env:RUNNER_TEMP\finished-windows-migration-evidence"
+      - name: Preserve setup and migration evidence
+        if: ${{ always() && steps.migration_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-setup-migration-${{ inputs.candidate_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/finished-windows-migration-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish-qualified-installer:
+    name: Publish only fully qualified runnable installer
+    needs: [authorize, full-installed-acceptance, migration]
+    if: ${{ needs.authorize.outputs.credential_authorized == 'true' && needs.full-installed-acceptance.result == 'success' && needs.migration.result == 'success' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 15
+    # External security boundary required before first use: create a separate
+    # environment with main-only deployment branches, required reviewers and
+    # prevent-self-review, then define its READY sentinel only at environment scope.
+    environment: windows-native-installer-publication
+    outputs:
+      preview_id: ${{ steps.preview.outputs.artifact-id }}
+      preview_digest: ${{ steps.preview.outputs.artifact-digest }}
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      CONTROLLER_SHA: ${{ inputs.workflow_sha }}
+      SELECTED_AGENT: ${{ inputs.agent }}
+      PRODUCT_VERSION: ${{ inputs.product_version }}
+    steps:
+      - name: Require configured protected publication environment
+        shell: pwsh
+        env:
+          ENVIRONMENT_READY: ${{ secrets.WINDOWS_NATIVE_INSTALLER_PUBLICATION_READY }}
+        run: |
+          if ($env:ENVIRONMENT_READY -cne 'reviewed-main-v1') { throw 'The protected publication environment is not configured.' }
+      - name: Check out the exact trusted publication controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.workflow_sha }}
+          path: controller
+          persist-credentials: false
+      - name: Restore exact accepted installer cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/finished-windows-product-transfer
+          key: ${{ inputs.installer_cache_key }}
+          fail-on-cache-miss: true
+      - name: Verify exact accepted installer bytes
+        shell: pwsh
+        env:
+          INSTALLER_MANIFEST: ${{ inputs.installer_manifest_sha256 }}
+        run: |
+          $expectedMsi = "NemoClaw-$env:PRODUCT_VERSION-windows-arm64.msi"
+          $expectedSetup = "NemoClawSetup-$env:PRODUCT_VERSION-windows-arm64.exe"
+          & "$env:GITHUB_WORKSPACE\controller\scripts\checks\windows-native-transfer.ps1" -Mode Verify `
+            -Root "$env:RUNNER_TEMP\finished-windows-product-transfer" -Kind finished-installer `
+            -SourceRevision $env:CANDIDATE_SHA -Agent $env:SELECTED_AGENT `
+            -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -ExpectedManifestSha256 $env:INSTALLER_MANIFEST `
+            -ExpectedPackageRunnables @($expectedMsi, $expectedSetup)
+          if ($LASTEXITCODE -ne 0) { throw 'The publication transfer did not match the accepted bytes.' }
+      - name: Publish fully qualified runnable installer
+        id: preview
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qualified-windows-installer-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/finished-windows-product-transfer/package/NemoClawSetup-${{ inputs.product_version }}-windows-arm64.exe
+            ${{ runner.temp }}/finished-windows-product-transfer/package/immutable-package-build.json
+            ${{ runner.temp }}/finished-windows-product-transfer/package/compiled-msi.json
+            ${{ runner.temp }}/finished-windows-product-transfer/package/migration-inputs.json
+            ${{ runner.temp }}/finished-windows-product-transfer/assembled/runtime-identity.json
+            ${{ runner.temp }}/finished-windows-product-transfer/transfer-manifest.json
+          if-no-files-found: error
+          retention-days: 14

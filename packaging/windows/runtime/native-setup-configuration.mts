@@ -164,16 +164,8 @@ export function normalizeOnboardingConfiguration(
   };
 }
 
-export function writeNativeAgentConfiguration(configuration: NativeOnboardingConfiguration) {
-  const localAppData = requiredDirectory(
-    process.env.LOCALAPPDATA ?? "",
-    "Windows local application-data directory",
-  );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
-  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-  const configPath = path.join(stateRoot, "native-windows.json");
-  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  const persisted = {
+export function nativeAgentConfigurationRecord(configuration: NativeOnboardingConfiguration) {
+  return {
     schemaVersion: 1,
     classification: "nemoclaw-native-windows-agent-configuration",
     agent: configuration.agent,
@@ -185,10 +177,22 @@ export function writeNativeAgentConfiguration(configuration: NativeOnboardingCon
     ...(configuration.localModel ? { localModel: configuration.localModel } : {}),
     options: Object.fromEntries(
       Object.entries(configuration.options).filter(
-        ([name]) => !["credential", "endpoint", "model"].includes(name),
+        ([name]) => !["credential", "endpoint", "launch", "model"].includes(name),
       ),
     ),
   };
+}
+
+function writeNativeAgentConfiguration(configuration: NativeOnboardingConfiguration) {
+  const localAppData = requiredDirectory(
+    process.env.LOCALAPPDATA ?? "",
+    "Windows local application-data directory",
+  );
+  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
+  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+  const configPath = path.join(stateRoot, "native-windows.json");
+  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const persisted = nativeAgentConfigurationRecord(configuration);
   fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",
@@ -348,7 +352,7 @@ export async function configureNativeFromStdin(
         ? nativeCredentialBinding(previous)
         : null;
     state.assertHeld();
-    writeNativeAgentConfiguration(normalized);
+    const configPath = writeNativeAgentConfiguration(normalized);
     if (previousBinding && previousBinding !== binding)
       await (dependencies.deleteCredential ?? deleteCredentialByBinding)(
         launcher,
@@ -365,6 +369,7 @@ export async function configureNativeFromStdin(
         );
     }
     state.assertHeld();
+    return configPath;
   } finally {
     await state.release();
   }
