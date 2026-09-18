@@ -610,6 +610,7 @@
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
