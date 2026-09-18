@@ -46,7 +46,6 @@ pub(crate) enum InstallStage {
 
 /// Declarative install result. OpenTofu performs the mutations in dependency order.
 pub(crate) struct InstallPlan {
-    pub stage: InstallStage,
     pub targets: Vec<crate::compile::Target>,
     pub dependencies: std::collections::BTreeMap<String, Vec<String>>,
 }

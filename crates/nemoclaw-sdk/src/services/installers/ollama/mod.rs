@@ -16,7 +16,7 @@ use crate::{
     backend::Backend,
     compile::{Generations, Target},
     config::Document,
-    services::contract::{InstallPlan, InstallStage, Installer, RemovePlan, validate_runtime},
+    services::contract::{InstallPlan, Installer, RemovePlan, validate_runtime},
     state::StateBinding,
 };
 use std::{
@@ -241,7 +241,6 @@ impl Installer for ManagedOllama {
     ) -> Result<InstallPlan, Error> {
         let service = address("ollama", name);
         Ok(InstallPlan {
-            stage: InstallStage::Deployment,
             targets: managed_targets(document, name, self, generations)?,
             dependencies: BTreeMap::from([(service, vec![address("ollama_storage", name)])]),
         })
@@ -288,7 +287,6 @@ impl Installer for OllamaProxy {
     ) -> Result<InstallPlan, Error> {
         let service = address(proxy::PROXY, name);
         Ok(InstallPlan {
-            stage: InstallStage::Deployment,
             targets: proxy::targets(document, name, self, generations)?,
             dependencies: BTreeMap::from([(
                 service,

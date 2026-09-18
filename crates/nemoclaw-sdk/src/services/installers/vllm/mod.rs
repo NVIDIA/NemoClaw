@@ -51,7 +51,7 @@ use crate::{
     compile::{Generations, Target},
     config::{ConfigError, Document},
     managed::{Process, Spec, Storage},
-    services::contract::{InstallPlan, InstallStage, Installer, RemovePlan, validate_runtime},
+    services::contract::{InstallPlan, Installer, RemovePlan, validate_runtime},
     state::StateBinding,
 };
 use std::{collections::BTreeMap, time::Duration};
@@ -261,7 +261,6 @@ impl Installer for Service {
             service_dependencies.insert(0, "nemoclaw_managed_gateway.runtime".into());
         }
         Ok(InstallPlan {
-            stage: InstallStage::Runtime,
             targets,
             dependencies: BTreeMap::from([(service, service_dependencies)]),
         })

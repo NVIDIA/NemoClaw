@@ -32,6 +32,11 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
         .iter()
         .find(|t| t.address == "nemoclaw_provider.inference_qwen")
         .unwrap();
+    let profile = targets
+        .iter()
+        .find(|t| t.address == "nemoclaw_provider_profile.inference_qwen")
+        .unwrap();
+    assert_eq!(profile.values["authenticated"], "true");
     let source: Value = serde_json::from_str(&provider.values["credential_source"]).unwrap();
     assert_eq!(source["kind"], "managedService");
     assert_eq!(source["spec"]["owner"], doc.metadata.uid);

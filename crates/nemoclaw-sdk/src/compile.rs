@@ -26,8 +26,31 @@ fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, C
         .map(String::as_str)
         .ok_or(ConfigError::new("missing resource generation"))
 }
+
+pub(super) fn service_plans(
+    document: &Document,
+    generations: &Generations,
+    stage: crate::services::InstallStage,
+) -> Result<crate::services::InstallPlans, ConfigError> {
+    crate::services::install_plans(document, generations, stage)
+        .map_err(|_| ConfigError::new("invalid service install plan"))
+}
+
 pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, ConfigError> {
     document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Deployment,
+    )?;
+    targets_with_plans(document, generations, &service_plans)
+}
+
+fn targets_with_plans(
+    document: &Document,
+    generations: &Generations,
+    service_plans: &crate::services::InstallPlans,
+) -> Result<Vec<Target>, ConfigError> {
     let workspace = document.workspace();
     let mut result = vec![Target {
         kind: "workspace".into(),
@@ -174,7 +197,7 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 .insert("credential_source".into(), source);
         }
     }
-    result.extend(crate::services::deployment_targets(document, generations)?);
+    result.extend(service_plans.targets().cloned());
     Ok(result)
 }
 
@@ -242,7 +265,22 @@ pub fn compile(
     generations: &Generations,
     version: &str,
 ) -> Result<Value, ConfigError> {
-    let targets = targets(document, generations)?;
+    document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Deployment,
+    )?;
+    compile_with_plans(document, generations, version, &service_plans)
+}
+
+pub(super) fn compile_with_plans(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+    service_plans: &crate::services::InstallPlans,
+) -> Result<Value, ConfigError> {
+    let targets = targets_with_plans(document, generations, service_plans)?;
     let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint});
     if let Some(c) = &gateway.credential {
@@ -278,12 +316,7 @@ pub fn compile(
             }
             attributes["depends_on"] = json!(provider_dependencies);
         }
-        if let Some(dependencies) = crate::services::dependencies(
-            document,
-            generations,
-            crate::services::InstallStage::Deployment,
-            &target.address,
-        )? {
+        if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attributes["depends_on"] = json!(dependencies);
         }
         if target.kind == "provider"

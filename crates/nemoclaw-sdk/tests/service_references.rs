@@ -36,6 +36,10 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
     assert!(graph["resource"]["nemoclaw_ollama"]["ollama-server"].is_object());
     assert!(graph["resource"]["nemoclaw_ollama"]["unused"].is_object());
     assert_eq!(
+        graph["resource"]["nemoclaw_provider_profile"]["inference_local"]["authenticated"],
+        "false"
+    );
+    assert_eq!(
         document.inference_endpoint().unwrap(),
         "http://172.20.0.1:11436/v1"
     );

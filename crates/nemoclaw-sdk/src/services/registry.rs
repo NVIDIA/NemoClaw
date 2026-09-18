@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct ResolvedInference {
     pub endpoint: String,
     pub served_model: String,
-    pub authentication: Option<String>,
+    pub requires_authentication: bool,
     pub resource_dependencies: Vec<String>,
 }
 
@@ -176,40 +176,26 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
     installers::vllm::schema::constrain(defs);
 }
 
-enum RegisteredInstaller<'a> {
-    Ollama(&'a ManagedOllama),
-    OllamaProxy(&'a OllamaProxy),
-    Vllm(&'a installers::vllm::Service),
-}
+trait InferenceCapability {
+    fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError>;
 
-enum RegisteredInference<'a> {
-    Ollama(&'a ManagedOllama),
-    OllamaProxy(&'a OllamaProxy),
-    Vllm(&'a installers::vllm::Service),
-}
+    fn validate_route(
+        &self,
+        provider: &InferenceProvider,
+        sandbox_runtime: &str,
+        harness: &str,
+        model: &str,
+    ) -> Result<(), ConfigError>;
 
-impl<'a> RegisteredInstaller<'a> {
-    fn from_definition(definition: &'a ServiceDefinition) -> Self {
-        match definition {
-            ServiceDefinition::Ollama(service) => Self::Ollama(service),
-            ServiceDefinition::OllamaProxy(service) => Self::OllamaProxy(service),
-            ServiceDefinition::Vllm(service) => Self::Vllm(service),
-        }
-    }
-
-    fn install(
+    fn credential_source(
         &self,
         document: &Document,
         name: &str,
         generations: &Generations,
-    ) -> Result<InstallPlan, crate::Error> {
-        match self {
-            Self::Ollama(service) => service.install(document, name, generations),
-            Self::OllamaProxy(service) => service.install(document, name, generations),
-            Self::Vllm(service) => service.install(document, name, generations),
-        }
-    }
+    ) -> Result<Option<String>, crate::Error>;
+}
 
+impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::OllamaProxy(_) => InstallStage::Deployment,
@@ -217,52 +203,9 @@ impl<'a> RegisteredInstaller<'a> {
         }
     }
 
-    fn inference(&self) -> Option<RegisteredInference<'_>> {
-        Some(match self {
-            Self::Ollama(service) => RegisteredInference::Ollama(service),
-            Self::OllamaProxy(service) => RegisteredInference::OllamaProxy(service),
-            Self::Vllm(service) => RegisteredInference::Vllm(service),
-        })
-    }
-
-    async fn check_running(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-        connections: &crate::docker::Connections,
-        bindings: &BTreeMap<String, StateBinding>,
-        cancel: &crate::CancellationToken,
-    ) -> Result<(), crate::Error> {
+    fn inference(&self) -> Option<&dyn InferenceCapability> {
         match self {
-            Self::Ollama(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::OllamaProxy(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-            Self::Vllm(service) => {
-                service
-                    .check_running(document, name, generations, connections, bindings, cancel)
-                    .await
-            }
-        }
-    }
-
-    fn remove(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-    ) -> Result<RemovePlan, crate::Error> {
-        match self {
-            Self::Ollama(service) => service.remove(document, name, generations),
-            Self::OllamaProxy(service) => service.remove(document, name, generations),
-            Self::Vllm(service) => service.remove(document, name, generations),
+            Self::Ollama(_) | Self::OllamaProxy(_) | Self::Vllm(_) => Some(self),
         }
     }
 
@@ -307,24 +250,88 @@ impl<'a> RegisteredInstaller<'a> {
             port: service.serving.port,
         }))
     }
+
+    pub fn runtime(&self) -> &ServiceRuntime {
+        match self {
+            Self::Ollama(service) => &service.runtime,
+            Self::OllamaProxy(service) => &service.runtime,
+            Self::Vllm(service) => &service.runtime,
+        }
+    }
 }
 
-impl RegisteredInference<'_> {
+impl Installer for ServiceDefinition {
+    fn install(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+    ) -> Result<InstallPlan, crate::Error> {
+        match self {
+            Self::Ollama(service) => service.install(document, name, generations),
+            Self::OllamaProxy(service) => service.install(document, name, generations),
+            Self::Vllm(service) => service.install(document, name, generations),
+        }
+    }
+
+    async fn check_running(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+        connections: &crate::docker::Connections,
+        bindings: &BTreeMap<String, StateBinding>,
+        cancel: &crate::CancellationToken,
+    ) -> Result<(), crate::Error> {
+        match self {
+            Self::Ollama(service) => {
+                service
+                    .check_running(document, name, generations, connections, bindings, cancel)
+                    .await
+            }
+            Self::OllamaProxy(service) => {
+                service
+                    .check_running(document, name, generations, connections, bindings, cancel)
+                    .await
+            }
+            Self::Vllm(service) => {
+                service
+                    .check_running(document, name, generations, connections, bindings, cancel)
+                    .await
+            }
+        }
+    }
+
+    fn remove(
+        &self,
+        document: &Document,
+        name: &str,
+        generations: &Generations,
+    ) -> Result<RemovePlan, crate::Error> {
+        match self {
+            Self::Ollama(service) => service.remove(document, name, generations),
+            Self::OllamaProxy(service) => service.remove(document, name, generations),
+            Self::Vllm(service) => service.remove(document, name, generations),
+        }
+    }
+}
+
+impl InferenceCapability for ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
-            Self::Ollama(service) => ResolvedInference {
+            ServiceDefinition::Ollama(service) => ResolvedInference {
                 endpoint: service.endpoint.clone(),
                 served_model: service.model.name.clone(),
-                authentication: None,
+                requires_authentication: false,
                 resource_dependencies: vec![format!("nemoclaw_ollama_model.{name}")],
             },
-            Self::OllamaProxy(service) => ResolvedInference {
+            ServiceDefinition::OllamaProxy(service) => ResolvedInference {
                 endpoint: service.endpoint.clone(),
                 served_model: service.upstream.model.name.clone(),
-                authentication: Some(String::new()),
+                requires_authentication: true,
                 resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
             },
-            Self::Vllm(service) => ResolvedInference {
+            ServiceDefinition::Vllm(service) => ResolvedInference {
                 endpoint: match &service.publication {
                     Some(publication) => publication.endpoint.clone(),
                     None => format!(
@@ -334,7 +341,7 @@ impl RegisteredInference<'_> {
                     ),
                 },
                 served_model: service.served_model().into(),
-                authentication: service.authentication.as_ref().map(|_| String::new()),
+                requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
             },
         })
@@ -348,9 +355,9 @@ impl RegisteredInference<'_> {
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
-            Self::Ollama(_) => Ok(()),
-            Self::OllamaProxy(service) => service.validate(provider, model, harness),
-            Self::Vllm(service) => crate::config::validation::require(
+            ServiceDefinition::Ollama(_) => Ok(()),
+            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
+            ServiceDefinition::Vllm(service) => crate::config::validation::require(
                 sandbox_runtime == "docker" || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
@@ -364,11 +371,13 @@ impl RegisteredInference<'_> {
         generations: &Generations,
     ) -> Result<Option<String>, crate::Error> {
         match self {
-            Self::Ollama(_) => Ok(None),
-            Self::OllamaProxy(service) => {
+            ServiceDefinition::Ollama(_) => Ok(None),
+            ServiceDefinition::OllamaProxy(service) => {
                 service.credential_source(document, generations).map(Some)
             }
-            Self::Vllm(service) => service.credential_source(document, name, generations),
+            ServiceDefinition::Vllm(service) => {
+                service.credential_source(document, name, generations)
+            }
         }
     }
 }
@@ -378,16 +387,6 @@ struct NetworkAllocation {
     network_cidr: String,
     bind_address: String,
     port: i64,
-}
-
-impl ServiceDefinition {
-    pub fn runtime(&self) -> &ServiceRuntime {
-        match self {
-            Self::Ollama(service) => &service.runtime,
-            Self::OllamaProxy(service) => &service.runtime,
-            Self::Vllm(service) => &service.runtime,
-        }
-    }
 }
 
 pub(crate) fn defaults(definition: &mut ServiceDefinition) {
@@ -433,7 +432,7 @@ pub(crate) fn resolve(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(None);
     };
-    RegisteredInstaller::from_definition(definition)
+    definition
         .inference()
         .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
         .resolve(document, name)
@@ -445,24 +444,39 @@ pub(crate) fn provider_authenticated(
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
     Ok(provider.credential.is_some()
-        || resolve(document, provider)?.is_some_and(|service| service.authentication.is_some()))
+        || resolve(document, provider)?.is_some_and(|service| service.requires_authentication))
 }
 
-fn plans(
+/// Installer results retained for one graph compilation.
+pub(crate) struct InstallPlans {
+    plans: Vec<InstallPlan>,
+}
+
+impl InstallPlans {
+    pub(crate) fn targets(&self) -> impl Iterator<Item = &Target> {
+        self.plans.iter().flat_map(|plan| plan.targets.iter())
+    }
+
+    pub(crate) fn dependencies(&self, address: &str) -> Option<&[String]> {
+        self.plans
+            .iter()
+            .find_map(|plan| plan.dependencies.get(address).map(Vec::as_slice))
+    }
+}
+
+pub(crate) fn install_plans(
     document: &Document,
     generations: &Generations,
     stage: InstallStage,
-) -> Result<Vec<InstallPlan>, crate::Error> {
-    document
+) -> Result<InstallPlans, crate::Error> {
+    let plans = document
         .spec
         .services
         .iter()
-        .map(|(name, definition)| (name.as_str(), definition))
-        .filter(|(_, definition)| RegisteredInstaller::from_definition(definition).stage() == stage)
-        .map(|(name, definition)| {
-            RegisteredInstaller::from_definition(definition).install(document, name, generations)
-        })
-        .collect()
+        .filter(|(_, definition)| definition.stage() == stage)
+        .map(|(name, definition)| definition.install(document, name, generations))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(InstallPlans { plans })
 }
 
 pub(crate) fn has_runtime(document: &Document) -> bool {
@@ -470,17 +484,15 @@ pub(crate) fn has_runtime(document: &Document) -> bool {
         .spec
         .services
         .values()
-        .map(RegisteredInstaller::from_definition)
-        .any(|installer| installer.stage() == InstallStage::Runtime)
+        .any(|definition| definition.stage() == InstallStage::Runtime)
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     use crate::config::validation::{SLUG, require};
     for (name, definition) in &document.spec.services {
         require(SLUG.is_match(name), "service names must be lowercase slugs")?;
-        let installer = RegisteredInstaller::from_definition(definition);
-        installer.validate_definition()?;
-        installer.validate_installation(&document.spec.gateway)?;
+        definition.validate_definition()?;
+        definition.validate_installation(&document.spec.gateway)?;
     }
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
@@ -489,8 +501,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
         networks.insert(gateway.engine.clone(), gateway.network_cidr.clone());
     }
     for definition in document.spec.services.values() {
-        let installer = RegisteredInstaller::from_definition(definition);
-        let Some(allocation) = installer.allocation(gateway)? else {
+        let Some(allocation) = definition.allocation(gateway)? else {
             continue;
         };
         require(
@@ -516,9 +527,7 @@ pub(crate) fn validate_provider(
         return Ok(false);
     };
     require(
-        RegisteredInstaller::from_definition(definition)
-            .inference()
-            .is_some(),
+        definition.inference().is_some(),
         "serviceRef must name an inference-capable service",
     )?;
     require(
@@ -543,8 +552,7 @@ pub(crate) fn validate_route(
     let Some((_, definition)) = definition(document, provider)? else {
         return Ok(());
     };
-    let installer = RegisteredInstaller::from_definition(definition);
-    let inference = installer
+    let inference = definition
         .inference()
         .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?;
     let resolved = inference.resolve(
@@ -558,39 +566,6 @@ pub(crate) fn validate_route(
     inference.validate_route(provider, sandbox_runtime, harness, model)
 }
 
-pub(crate) fn runtime_targets(
-    document: &Document,
-    generations: &Generations,
-) -> Result<Vec<Target>, crate::Error> {
-    Ok(plans(document, generations, InstallStage::Runtime)?
-        .into_iter()
-        .flat_map(|plan| plan.targets)
-        .collect())
-}
-
-pub(crate) fn deployment_targets(
-    document: &Document,
-    generations: &Generations,
-) -> Result<Vec<Target>, ConfigError> {
-    Ok(plans(document, generations, InstallStage::Deployment)
-        .map_err(|_| ConfigError::new("invalid service install plan"))?
-        .into_iter()
-        .flat_map(|plan| plan.targets)
-        .collect())
-}
-
-pub(crate) fn dependencies(
-    document: &Document,
-    generations: &Generations,
-    stage: InstallStage,
-    address: &str,
-) -> Result<Option<Vec<String>>, ConfigError> {
-    Ok(plans(document, generations, stage)
-        .map_err(|_| ConfigError::new("invalid service install plan"))?
-        .into_iter()
-        .find_map(|plan| plan.dependencies.get(address).cloned()))
-}
-
 pub(crate) fn credential_source_json(
     document: &Document,
     provider: &InferenceProvider,
@@ -599,7 +574,7 @@ pub(crate) fn credential_source_json(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(None);
     };
-    RegisteredInstaller::from_definition(definition)
+    definition
         .inference()
         .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
         .credential_source(document, name, generations)
@@ -630,9 +605,7 @@ pub(crate) fn remove_plans(
         .services
         .iter()
         .map(|(name, definition)| (name.as_str(), definition))
-        .map(|(name, definition)| {
-            RegisteredInstaller::from_definition(definition).remove(document, name, generations)
-        })
+        .map(|(name, definition)| definition.remove(document, name, generations))
         .collect()
 }
 
@@ -714,9 +687,8 @@ pub(crate) async fn check_running(
     cancel: &crate::CancellationToken,
 ) -> Result<(), crate::Error> {
     for (name, definition) in &document.spec.services {
-        let installer = RegisteredInstaller::from_definition(definition);
-        if installer.install(document, name, generations)?.stage == stage {
-            installer
+        if definition.stage() == stage {
+            definition
                 .check_running(document, name, generations, connections, bindings, cancel)
                 .await?;
         }

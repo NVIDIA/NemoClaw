@@ -10,6 +10,19 @@ pub fn runtime_targets(
     generations: &Generations,
 ) -> Result<Vec<Target>, Error> {
     document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Runtime,
+    )?;
+    runtime_targets_with_plans(document, generations, &service_plans)
+}
+
+fn runtime_targets_with_plans(
+    document: &Document,
+    generations: &Generations,
+    service_plans: &crate::services::InstallPlans,
+) -> Result<Vec<Target>, Error> {
     if !document.has_runtime() {
         return Ok(Vec::new());
     }
@@ -38,7 +51,7 @@ pub fn runtime_targets(
     } else {
         Vec::new()
     };
-    result.extend(crate::services::runtime_targets(document, generations)?);
+    result.extend(service_plans.targets().cloned());
     Ok(result)
 }
 pub fn compile_runtime(
@@ -46,9 +59,15 @@ pub fn compile_runtime(
     generations: &Generations,
     version: &str,
 ) -> Result<Value, Error> {
-    let mut graph = compile(document, generations, version)?;
+    document.validate()?;
+    let service_plans = service_plans(
+        document,
+        generations,
+        crate::services::InstallStage::Runtime,
+    )?;
+    let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
     graph["resource"] = json!({});
-    for target in runtime_targets(document, generations)? {
+    for target in runtime_targets_with_plans(document, generations, &service_plans)? {
         let mut attrs =
             json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
         if target.kind == GATEWAY_STORAGE_KIND
@@ -59,12 +78,7 @@ pub fn compile_runtime(
         if target.kind == GATEWAY_KIND {
             attrs["depends_on"] = json!(["nemoclaw_gateway_storage.runtime"]);
         }
-        if let Some(dependencies) = crate::services::dependencies(
-            document,
-            generations,
-            crate::services::InstallStage::Runtime,
-            &target.address,
-        )? {
+        if let Some(dependencies) = service_plans.dependencies(&target.address) {
             attrs["depends_on"] = json!(dependencies);
         }
         let (kind, logical) = target.address.split_once('.').unwrap();
