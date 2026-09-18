@@ -832,7 +832,7 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     const verifyDocker = step(activation, "Verify Docker stayed unavailable").run ?? "";
     expect(verifyDocker).toMatch(
-      /docker-absence-after-candidate\.json[\s\S]*Docker invocation guard recorded candidate execution[\s\S]*docker_candidate[\s\S]*E2E_DOCKER_GUARD_BIN[\s\S]*dockerd became active during managed Podman activation/u,
+      /dockerGuardCommands[\s\S]*docker-absence-after-candidate\.json[\s\S]*Docker invocation guard recorded candidate execution[\s\S]*docker_candidate[\s\S]*E2E_DOCKER_GUARD_BIN[\s\S]*dockerd became active during managed Podman activation/u,
     );
   });
   it("leaves MCP qualification to the normal E2E workflow (#11828)", () => {

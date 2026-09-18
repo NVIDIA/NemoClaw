@@ -1310,7 +1310,9 @@ jobs:
           : >"$guard_log"
           cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
           #!/usr/bin/env bash
-          printf '%s\n' "$*" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          subcommand="${1:-missing}"
+          [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
+          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
           printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
           exit 97
           DOCKER_GUARD
@@ -1394,6 +1396,7 @@ jobs:
           set -euo pipefail
           test -f "$E2E_DOCKER_GUARD_LOG"
           guard_bytes="$(wc -c <"$E2E_DOCKER_GUARD_LOG" | tr -d '[:space:]')"
+          guard_commands="$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' "$E2E_DOCKER_GUARD_LOG")"
           docker_candidate="$(command -v docker || true)"
           docker_service_state="$(systemctl is-active docker.service 2>/dev/null || true)"
           docker_socket_state="$(systemctl is-active docker.socket 2>/dev/null || true)"
@@ -1407,6 +1410,7 @@ jobs:
             --arg dockerSocketState "$docker_socket_state" \
             --argjson dockerDaemonActive "$docker_daemon_active" \
             --argjson dockerSocketPresent "$docker_socket_present" \
+            --argjson dockerGuardCommands "$guard_commands" \
             --argjson guardBytes "$guard_bytes" \
             '{
               schemaVersion: 1,
@@ -1416,10 +1420,11 @@ jobs:
               dockerDaemonActive: $dockerDaemonActive,
               dockerSocketPresent: $dockerSocketPresent,
               dockerGuardBytes: $guardBytes,
+              dockerGuardCommands: $dockerGuardCommands,
               dockerCandidate: $dockerCandidate
             }' >"$E2E_ARTIFACT_DIR/docker-absence-after-candidate.json"
           if [ "$guard_bytes" -ne 0 ]; then
-            echo "::error::Docker invocation guard recorded candidate execution" >&2
+            echo "::error::Docker invocation guard recorded candidate execution: $(jq -r 'join(",")' <<<"$guard_commands")" >&2
             exit 1
           fi
           if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
