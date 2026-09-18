@@ -68,10 +68,8 @@ function isHermesReloadRelayLossResult(
 }
 
 function rawHermesCommandOutput(result: ReturnType<typeof runOpenshellProviderCommand>): string {
-  const stdout =
-    typeof result.stdout === "string" ? result.stdout : (result.stdout?.toString() ?? "");
-  const stderr =
-    typeof result.stderr === "string" ? result.stderr : (result.stderr?.toString() ?? "");
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
   return `${stderr}${stdout}`.replace(/\r/gu, "").trim();
 }
 
