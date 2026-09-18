@@ -91,17 +91,19 @@ function requireFragments(
 
 function executableShellLines(step: WorkflowStep | undefined): string[] {
   const lines: string[] = [];
-  let heredocDelimiter: string | undefined;
+  let heredoc: { delimiter: string; stripLeadingTabs: boolean } | undefined;
 
   for (const line of text(step?.run).split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (heredocDelimiter) {
-      if (trimmed === heredocDelimiter) heredocDelimiter = undefined;
+    if (heredoc) {
+      const candidate = heredoc.stripLeadingTabs ? line.replace(/^\t+/u, "") : line;
+      if (candidate === heredoc.delimiter) heredoc = undefined;
       continue;
     }
     if (trimmed && !trimmed.startsWith("#")) lines.push(trimmed);
-    const heredoc = line.match(/<<-?\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
-    heredocDelimiter = heredoc?.[1] ?? heredoc?.[2] ?? heredoc?.[3];
+    const match = line.match(/<<(-?)\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
+    const delimiter = match?.[2] ?? match?.[3] ?? match?.[4];
+    if (delimiter) heredoc = { delimiter, stripLeadingTabs: match?.[1] === "-" };
   }
 
   return lines;

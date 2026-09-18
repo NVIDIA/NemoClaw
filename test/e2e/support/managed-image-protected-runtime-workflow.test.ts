@@ -133,6 +133,10 @@ describe("protected managed-image runtime workflow", () => {
   it.each([
     ["a commented command", "# npm run build:policy-boundary"],
     ["heredoc data", "cat <<'EOF'\nnpm run build:policy-boundary\nEOF"],
+    [
+      "data after a space-indented heredoc marker",
+      "cat <<'EOF'\n EOF\nnpm run build:policy-boundary\nEOF",
+    ],
   ])("rejects %s in place of the shared boundary build", (_description, replacement) => {
     const value = workflow();
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
