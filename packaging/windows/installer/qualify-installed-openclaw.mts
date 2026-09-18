@@ -371,8 +371,23 @@ async function main() {
     false,
     "Acceptance requires an unconfigured disposable runner.",
   );
+  const runnerTempValue = process.env.RUNNER_TEMP;
+  assert(runnerTempValue && path.isAbsolute(runnerTempValue), "RUNNER_TEMP must be absolute.");
+  const runnerTemp = path.resolve(runnerTempValue);
+  const outputFromRunnerTemp = path.relative(runnerTemp, output);
+  assert(
+    outputFromRunnerTemp !== ".." &&
+      !outputFromRunnerTemp.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(outputFromRunnerTemp),
+    "The observer output must remain beneath RUNNER_TEMP.",
+  );
   assert.equal(fs.existsSync(output), false);
   fs.mkdirSync(output, { recursive: true });
+  const observerStopSentinel = path.join(
+    output,
+    `observer-stop-${randomBytes(32).toString("hex")}.sentinel`,
+  );
+  assert.equal(fs.existsSync(observerStopSentinel), false);
   const environment = childEnvironment(process.env);
   const launcher = path.join(install, "bin", "NemoClaw.exe");
   const ps = path.join(
@@ -551,10 +566,18 @@ async function main() {
         "-InstallRoot",
         install,
       ],
-      { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+      {
+        env: {
+          ...environment,
+          RUNNER_TEMP: runnerTemp,
+          NEMOCLAW_OBSERVER_CONTROLLER_PID: String(process.pid),
+          NEMOCLAW_OBSERVER_STOP_SENTINEL: observerStopSentinel,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
     );
     observerClosed = closed(observer, "observer");
-    observer.stdin!.on("error", () => {});
     capture(observer, "stderr", "observerStderr");
     let pending = "",
       observedBytes = 0;
@@ -885,9 +908,10 @@ async function main() {
       }
     if (observer && agentClosed && observerClosed) {
       try {
-        observer.stdin!.end("stop\n");
+        fs.writeFileSync(observerStopSentinel, "", { flag: "wx" });
         assert.equal(await boundedClose(agentClosed, 130_000), 0);
         assert.equal(await boundedClose(observerClosed, 5000), 0);
+        fs.unlinkSync(observerStopSentinel);
         assert.equal(stopInvoked, true);
         assert.equal(stopped, true);
         const session = path.join(output, "session");

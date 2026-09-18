@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import { createServer } from "node:net";
@@ -145,13 +145,14 @@ for (const agent of ["pi", "hermes"] as const) {
             NVIDIA_API_KEY: "nvapi-synthetic-fixture",
             LOCALAPPDATA: "C:\\UserData",
             ProgramFiles: "C:\\Program Files",
+            RUNNER_TEMP: "C:\\RunnerTemp",
             SystemRoot: "C:\\Windows",
           },
         },
         argument: (name: string, fallback?: string) =>
           ({
             "--install-root": "C:\\Installed",
-            "--output": "C:\\Evidence",
+            "--output": "C:\\RunnerTemp\\Evidence",
             "--runtime-identity": "identity.json",
             "--previous-acceptance": "previous.json",
           })[name] ?? fallback,
@@ -164,6 +165,7 @@ for (const agent of ["pi", "hermes"] as const) {
           },
         },
         childEnvironment: () => ({}),
+        randomBytes,
         acceptanceProcessesStopped,
         retainedAcceptance,
         retainedPiAcceptance,
@@ -204,7 +206,7 @@ for (const agent of ["pi", "hermes"] as const) {
         : [["--state-session", agent]];
       if (scenario === "owned-state") expected.push(["--remove-native-data", "--agent", agent]);
       assert.deepEqual(calls, expected);
-      const receipt = receipts[`C:\\Evidence\\installed-${agent}-acceptance.json`];
+      const receipt = receipts[`C:\\RunnerTemp\\Evidence\\installed-${agent}-acceptance.json`];
       assert.equal(receipt.verdict, "fail");
       assert.equal(receipt.results.configurationPreserved, false);
       assert.deepEqual(receipt.cleanupErrors, []);
@@ -256,6 +258,7 @@ test("observer additions stay out of product children and do not admit secrets",
     SystemRoot: "windows",
     PATH: "tools",
     GITHUB_ACTIONS: "true",
+    RUNNER_TEMP: "runner-temp",
     PSModulePath: "modules",
     "ProgramFiles(x86)": "programs",
     NVIDIA_API_KEY: "secret",

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { stripTypeScriptTypes } from "node:module";
 import { acceptanceProcessesStopped } from "./qualify-finished-package.mts";
 import {
@@ -50,24 +51,27 @@ for (const existing of ["configuration", "agent-data"])
           GITHUB_ACTIONS: "true",
           NVIDIA_API_KEY: "nvapi-synthetic-fixture",
           LOCALAPPDATA: "C:\\UserData",
+          RUNNER_TEMP: "C:\\RunnerTemp",
           SystemRoot: "C:\\Windows",
         },
       },
       argument: (name: string, fallback?: string) =>
         ({
           "--install-root": "C:\\Installed",
-          "--output": "C:\\Evidence",
+          "--output": "C:\\RunnerTemp\\Evidence",
           "--runtime-identity": "identity.json",
         })[name] ?? fallback,
       fs: {
         readFileSync: () => "{}",
-        existsSync: (name: string) => existing === "configuration" && name !== "C:\\Evidence",
+        existsSync: (name: string) =>
+          existing === "configuration" && name === "C:\\UserData\\NVIDIA\\NemoClaw\\agents\\hermes",
         mkdirSync() {},
         writeFileSync: (name: string, value: string) => {
           receipts[name] = JSON.parse(value);
         },
       },
       childEnvironment: () => ({}),
+      randomBytes,
       nativeCredentialBinding: () => "synthetic-binding",
       acceptanceProcessesStopped,
       captureOwned: async (_launcher: string, args: string[]) => {
@@ -95,7 +99,7 @@ for (const existing of ["configuration", "agent-data"])
       /Fresh Hermes acceptance (requires no saved configuration|cannot use pre-existing agent data)/u,
     );
     assert.deepEqual(calls, existing === "configuration" ? [] : [["--state-session", "hermes"]]);
-    const receipt = receipts["C:\\Evidence\\installed-hermes-acceptance.json"];
+    const receipt = receipts["C:\\RunnerTemp\\Evidence\\installed-hermes-acceptance.json"];
     assert.equal(receipt.verdict, "fail");
     assert.equal(receipt.failedStage, "configuration");
     assert.deepEqual(receipt.cleanupErrors, []);

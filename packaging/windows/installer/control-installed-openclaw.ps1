@@ -9,6 +9,45 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true') { throw 'The installed UI control requires the disposable Windows runner.' }
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+if ([string]::IsNullOrWhiteSpace($env:NEMOCLAW_OBSERVER_CONTROLLER_PID) -or
+    [string]::IsNullOrWhiteSpace($env:NEMOCLAW_OBSERVER_STOP_SENTINEL) -or
+    [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+    throw 'The installed UI controller ownership environment is incomplete.'
+}
+$controllerProcessId = 0
+if (-not [int]::TryParse([string]$env:NEMOCLAW_OBSERVER_CONTROLLER_PID, [ref]$controllerProcessId) -or $controllerProcessId -le 0) {
+    throw 'The installed UI controller parent identity is invalid.'
+}
+$self = @(Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop)
+if ($self.Count -ne 1 -or [int]$self[0].ParentProcessId -ne $controllerProcessId) {
+    throw 'The installed UI controller was not started by its declared owner.'
+}
+$controller = [Diagnostics.Process]::GetProcessById($controllerProcessId)
+$controllerHandle = $controller.Handle
+$selfStarted = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime()
+if ($controller.HasExited -or $controller.StartTime.ToUniversalTime() -gt $selfStarted) {
+    throw 'The installed UI controller owner already exited or its identity was replaced.'
+}
+$runnerTemp = [IO.Path]::GetFullPath([string]$env:RUNNER_TEMP).TrimEnd('\')
+$stopSentinelPath = [IO.Path]::GetFullPath([string]$env:NEMOCLAW_OBSERVER_STOP_SENTINEL)
+$runnerPrefix = $runnerTemp + '\'
+if (-not [IO.Directory]::Exists($runnerTemp) -or
+    -not $stopSentinelPath.StartsWith($runnerPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+    [IO.Path]::GetFileName($stopSentinelPath) -cnotmatch '^observer-stop-[a-f0-9]{64}\.sentinel$' -or
+    -not [IO.Directory]::Exists([IO.Path]::GetDirectoryName($stopSentinelPath)) -or
+    [IO.File]::Exists($stopSentinelPath) -or [IO.Directory]::Exists($stopSentinelPath)) {
+    throw 'The installed UI controller Stop sentinel is invalid.'
+}
+function Test-OwnedStopSentinel {
+    if ([IO.Directory]::Exists($stopSentinelPath)) { throw 'The owned Stop sentinel became a directory.' }
+    if (-not [IO.File]::Exists($stopSentinelPath)) { return $false }
+    $item = Get-Item -LiteralPath $stopSentinelPath -Force -ErrorAction Stop
+    if ($item -isnot [IO.FileInfo] -or $item.Length -ne 0 -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The owned Stop sentinel must be an empty regular file.'
+    }
+    return $true
+}
 $rootPath = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $root = [Diagnostics.Process]::GetProcessById($RootProcessId)
 $handle = $root.Handle
@@ -16,10 +55,6 @@ $started = $root.StartTime.ToUniversalTime()
 if (-not [string]::Equals($root.MainModule.FileName, (Join-Path $rootPath 'bin\NemoClaw.exe'), [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The UI controller root is not the installed native launcher.'
 }
-# Bind the raw stdin read to a dedicated thread so discovery can run while stdin stays open.
-$inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true), $false, 1024, $false)
-$inputRead = [Func[string]][Delegate]::CreateDelegate([Func[string]], $inputReader, [IO.StreamReader].GetMethod('ReadLine', [Type[]]@()))
-$inputLine = [Threading.Tasks.Task[string]]::Factory.StartNew($inputRead, [Threading.CancellationToken]::None, [Threading.Tasks.TaskCreationOptions]::LongRunning, [Threading.Tasks.TaskScheduler]::Default)
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $stopWatch = $null
 $last = ''
@@ -46,6 +81,7 @@ function Write-StopSnapshot([string]$Label) {
 }
 try {
     while (-not $root.HasExited) {
+        if ($controller.HasExited) { throw 'The installed UI controller owner exited before Stop.' }
         if ($watch.ElapsedMilliseconds -gt 600000) { throw 'The installed session observer exceeded its bound.' }
         if ($null -ne $stopWatch -and $stopWatch.ElapsedMilliseconds -gt 120000) {
             Write-StopSnapshot 'stop-deadline'
@@ -116,8 +152,7 @@ try {
                         $record.openEnabled = $null -ne $open -and $open.Current.IsEnabled -and $open.Current.Name -ceq 'Open Web UI'
                         $record.openFound = $null -ne $open
                         if ($null -ne $open) { $record.openName = $open.Current.Name; $record.openControlEnabled = $open.Current.IsEnabled }
-                        if (-not $stopped -and $inputLine.IsCompleted) {
-                            if ($inputLine.GetAwaiter().GetResult() -cne 'stop') { throw 'The owned session command was not Stop.' }
+                        if (-not $stopped -and (Test-OwnedStopSentinel)) {
                             $stopCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'NativeWebSessionStop')
                             $button = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $stopCondition)
                             if ($null -eq $button -or -not $button.Current.IsEnabled -or $button.Current.Name -cne 'Stop session') { throw 'The actual session Stop control is unavailable.' }
@@ -150,7 +185,7 @@ try {
 } finally {
     if ($null -ne $stopSnapshot) { $stopSnapshot.Dispose() }
     if ($null -ne $heldHost) { $heldHost.Dispose() }
-    $inputReader.Dispose()
     if ($null -ne $session) { $session.Dispose() }
     $root.Dispose()
+    $controller.Dispose()
 }

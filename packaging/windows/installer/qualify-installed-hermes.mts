@@ -488,8 +488,23 @@ async function main() {
     secret.startsWith("nvapi-") && secret.length <= 2048 && !/[\r\n\0]/u.test(secret),
     "An authorized NVIDIA credential is required",
   );
+  const runnerTempValue = process.env.RUNNER_TEMP;
+  assert(runnerTempValue && path.isAbsolute(runnerTempValue), "RUNNER_TEMP must be absolute.");
+  const runnerTemp = path.resolve(runnerTempValue);
+  const outputFromRunnerTemp = path.relative(runnerTemp, output);
+  assert(
+    outputFromRunnerTemp !== ".." &&
+      !outputFromRunnerTemp.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(outputFromRunnerTemp),
+    "The observer output must remain beneath RUNNER_TEMP.",
+  );
   assert(!fs.existsSync(output));
   fs.mkdirSync(output, { recursive: true });
+  const observerStopSentinel = path.join(
+    output,
+    `observer-stop-${randomBytes(32).toString("hex")}.sentinel`,
+  );
+  assert.equal(fs.existsSync(observerStopSentinel), false);
   const environment = childEnvironment(process.env);
   delete environment.GITHUB_ACTIONS;
   const observerEnvironment = { ...environment, GITHUB_ACTIONS: "true" };
@@ -687,7 +702,16 @@ async function main() {
         "-InstallRoot",
         install,
       ],
-      { env: observerEnvironment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+      {
+        env: {
+          ...observerEnvironment,
+          RUNNER_TEMP: runnerTemp,
+          NEMOCLAW_OBSERVER_CONTROLLER_PID: String(process.pid),
+          NEMOCLAW_OBSERVER_STOP_SENTINEL: observerStopSentinel,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
     );
     observerClosed = closed(observer);
     void observerClosed.catch(() => {});
@@ -1062,9 +1086,10 @@ async function main() {
     if (browser) await browser.close().catch(() => cleanupErrors.push("automation browser"));
     if (observer && guardianClosed && observerClosed) {
       try {
-        observer.stdin!.end("stop\n");
+        fs.writeFileSync(observerStopSentinel, "", { flag: "wx" });
         assert.equal(await bounded(guardianClosed, 130_000), 0);
         assert.equal(await bounded(observerClosed, 5000), 0);
+        fs.unlinkSync(observerStopSentinel);
         assert(stopInvoked && stopCompleted, "Actual native Stop did not finish");
         const end = JSON.parse(
           fs.readFileSync(path.join(output, "session/dashboard-end.json"), "utf8"),

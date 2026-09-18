@@ -136,6 +136,41 @@ describe("native Windows installer pull request acceptance", () => {
     },
   );
 
+  // source-shape-contract: compatibility -- Early dual-Node ordering makes controller regressions fail before expensive Windows compilation
+  it("runs Node 22 and Node 24 controller checks before expensive Windows builds", () => {
+    const compiled = requiredJob(workflow, "windows-compiled-application");
+    const runtime = requiredJob(workflow, "windows-runtime-controls");
+    const compiledController = requiredStep(
+      compiled,
+      "Verify installed acceptance controller Windows compatibility",
+    );
+    const runtimeController = requiredStep(
+      runtime,
+      "Exercise installed acceptance controller compatibility",
+    );
+    const runtimeNode = requiredStep(
+      runtime,
+      "Set up actual ARM64 Node for controller preflight and shared-file fixtures",
+    );
+    const runtimeRust = requiredStep(
+      runtime,
+      "Set up pinned Rust for the native ownership controls",
+    );
+    const requiredControllerTest = "control-installed-openclaw-input.test.mts";
+
+    expect(compiledController.run).toContain(requiredControllerTest);
+    expect(compiled.steps!.indexOf(compiledController)).toBeLessThan(
+      compiled.steps!.findIndex(
+        (step) => step.name === "Restore immutable application build inputs",
+      ),
+    );
+    expect(runtimeNode.with?.["node-version"]).toBe("24.18.1");
+    expect(runtimeController.run).toContain(requiredControllerTest);
+    expect(runtime.steps!.indexOf(runtimeController)).toBeLessThan(
+      runtime.steps!.indexOf(runtimeRust),
+    );
+  });
+
   // source-shape-contract: security -- Exact cache keys and producer manifests prevent stale or substituted executable handoffs from reaching acceptance
   it.each([
     {

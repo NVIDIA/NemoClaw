@@ -9,20 +9,21 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-async function heldInputControl(reader: string) {
+async function heldSentinelControl(reader: string, contents: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "installed-observer-input-"));
+  const sentinel = path.join(root, `observer-stop-${"a".repeat(64)}.sentinel`);
   const script = path.join(root, "observer.ps1");
   fs.writeFileSync(
     script,
     `$ErrorActionPreference='Stop'
-[Console]::Out.WriteLine('before-reader'); [Console]::Out.Flush()
+$stopSentinelPath = '${sentinel.replaceAll("'", "''")}'
 ${reader}
+[Console]::Out.WriteLine('before-sentinel'); [Console]::Out.Flush()
 [Console]::Out.WriteLine('discovery-entered'); [Console]::Out.Flush()
-try {
-  if ($inputLine.GetAwaiter().GetResult() -cne 'stop') { throw 'Invalid owned Stop input.' }
-} finally {
-  if (Get-Variable inputReader -ErrorAction SilentlyContinue) { $inputReader.Dispose() }
+while (-not (Test-OwnedStopSentinel)) {
+  Start-Sleep -Milliseconds 10
 }
+[Console]::Out.WriteLine('stop-observed'); [Console]::Out.Flush()
 `,
   );
   const powershell =
@@ -36,23 +37,39 @@ try {
         )
       : "pwsh";
   const child = spawn(powershell, ["-NoProfile", "-File", script], {
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
   let stdout = "",
     stderr = "",
-    discoveryBeforeStop = false;
-  let inputTimer: ReturnType<typeof setTimeout> | undefined;
-  let deadline = setTimeout(() => child.kill(), 60_000);
-  child.stdin.on("error", () => {});
+    discoveryBeforeSignal = false,
+    signalFailure: unknown;
+  let signalTimer: ReturnType<typeof setTimeout> | undefined;
+  let rejectDeadline: ((error: Error) => void) | undefined;
+  const deadlineExpired = new Promise<never>((_, reject) => {
+    rejectDeadline = reject;
+  });
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const armDeadline = (milliseconds: number) => {
+    clearTimeout(deadline);
+    deadline = setTimeout(() => {
+      child.kill();
+      rejectDeadline!(new Error(`Sentinel control timed out.\n${stdout}${stderr}`));
+    }, milliseconds);
+  };
+  armDeadline(60_000);
   child.stdout.on("data", (chunk: Buffer) => {
     stdout += chunk.toString("utf8");
-    if (stdout.includes("before-reader") && !inputTimer) {
-      clearTimeout(deadline);
-      deadline = setTimeout(() => child.kill(), 15_000);
-      inputTimer = setTimeout(() => {
-        discoveryBeforeStop = stdout.includes("discovery-entered");
-        child.stdin.end("stop\n");
+    if (stdout.includes("discovery-entered") && !signalTimer) {
+      armDeadline(15_000);
+      signalTimer = setTimeout(() => {
+        discoveryBeforeSignal = stdout.includes("discovery-entered") && !fs.existsSync(sentinel);
+        try {
+          fs.writeFileSync(sentinel, contents, { flag: "wx" });
+        } catch (error) {
+          signalFailure = error;
+          child.kill();
+        }
       }, 1000);
     }
   });
@@ -60,33 +77,62 @@ try {
     stderr += chunk.toString("utf8");
   });
   try {
-    const code = await new Promise<number | null>((resolve, reject) => {
+    const closed = new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", resolve);
     });
-    assert.equal(code, 0, stdout + stderr);
-    assert(stdout.includes("discovery-entered"));
-    return discoveryBeforeStop;
+    const code = await Promise.race([closed, deadlineExpired]);
+    if (signalFailure) throw signalFailure;
+    return { code, stdout, stderr, discoveryBeforeSignal };
   } finally {
     clearTimeout(deadline);
-    clearTimeout(inputTimer);
-    if (child.exitCode === null) child.kill();
+    clearTimeout(signalTimer);
+    if (child.exitCode === null) {
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.kill();
+      child.unref();
+    }
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
-test("the exact observer reader starts discovery while its Stop pipe remains open", async () => {
+test("the exact observer sentinel preserves discovery before Stop", async () => {
   const source = fs.readFileSync(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "control-installed-openclaw.ps1"),
     "utf8",
   );
-  const reader = source.match(
-    /^\$inputReader = .+\r?\n\$inputRead = .+\r?\n\$inputLine = .+$/mu,
-  )?.[0];
+  const reader = source.match(/^function Test-OwnedStopSentinel \{[\s\S]*?^\}$/mu)?.[0];
   assert(reader);
-  assert.equal(await heldInputControl(reader), true);
+  assert.doesNotMatch(source, /OpenStandardInput|ReadLine/u);
+  const result = await heldSentinelControl(reader, "");
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(result.discoveryBeforeSignal, true);
+  assert.match(result.stdout, /stop-observed/u);
 });
 
-test("the prior Console.In call reproduces the observed pre-discovery block", async () => {
-  assert.equal(await heldInputControl("$inputLine = [Console]::In.ReadLineAsync()"), false);
+test("the exact observer sentinel rejects nonempty files", async () => {
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "control-installed-openclaw.ps1"),
+    "utf8",
+  );
+  const reader = source.match(/^function Test-OwnedStopSentinel \{[\s\S]*?^\}$/mu)?.[0];
+  assert(reader);
+  const result = await heldSentinelControl(reader, "stop\n");
+  assert.notEqual(result.code, 0);
+  assert.equal(result.discoveryBeforeSignal, true);
+  assert.match(result.stderr, /empty regular file/u);
+});
+
+test("installed observers receive private runner-owned controls", () => {
+  for (const name of ["qualify-installed-openclaw.mts", "qualify-installed-hermes.mts"]) {
+    const source = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), name),
+      "utf8",
+    );
+    assert.match(source, /RUNNER_TEMP: runnerTemp/u);
+    assert.match(source, /NEMOCLAW_OBSERVER_CONTROLLER_PID: String\(process\.pid\)/u);
+    assert.match(source, /NEMOCLAW_OBSERVER_STOP_SENTINEL: observerStopSentinel/u);
+    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/u);
+  }
 });

@@ -318,6 +318,11 @@
     },
     {
       "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
+      "test": "runs Node 22 and Node 24 controller checks before expensive Windows builds",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
       "test": "uses exact same-run caches with producer manifests instead of runnable artifacts for $caseName",
       "category": "security"
     },
