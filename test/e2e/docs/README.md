@@ -48,9 +48,11 @@ Live execution happens through shared fixtures:
 - `environment` checks CLI/install/runtime readiness.
 - `onboard` performs supported onboarding profiles.
 - `lifecycle` performs supported post-onboard mutations.
-- `stateValidation` probes host-observable expected state.
-- `configExportValidation` runs after state validation. Each typed target declares
-  one config export expectation:
+- `stateValidation` normally probes host-observable expected state before
+  configuration export. Targets with ordered cloud checks run it after export
+  so those checks can first restore any export-relevant settings they change.
+- `configExportValidation` runs against the retained state. Each typed target
+  declares one config export expectation:
   - `required` must match the target manifest, live sandbox registry, and
     effective network policy.
   - `expected-refusal` must complete with its declared category without
@@ -98,12 +100,14 @@ rejects a replacement or an added hard link. It
 creates the export in a private temporary directory, registers cleanup before
 it invokes the CLI, and removes the directory before it writes retained evidence.
 
-For `required` coverage, the canonical `NemoClawConfig` validator checks the
-complete exported document. Semantic expectations remain independent of the
-exporter. The fixture reads the target manifest and host registry directly,
-then queries the effective policy through the OpenShell CLI. It captures these
-expectations before it invokes config export, so exporter-side mutations cannot
-redefine the expected deployment state. It rejects an unsafe registry inference
+For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
+and all fields used in its semantic comparison. Cross-branch import
+compatibility remains a separate contract. Semantic expectations remain
+independent of the exporter. The fixture reads the target manifest and host
+registry directly, then queries the effective policy through the OpenShell CLI.
+It captures these expectations before it invokes config export, so exporter-side
+mutations cannot redefine the expected deployment state. It also compares the
+registry before and after the command. It rejects an unsafe registry inference
 endpoint before invoking export or publishing endpoint data in evidence.
 Policy reads and config export use the same filtered host environment as
 onboarding and state validation, preserving configuration paths and runtime
@@ -116,9 +120,10 @@ The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
 a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
 ceiling because it does not invoke config export. The
-`dcode-rebuild-invalid-credential` lifecycle adds a 20-minute budget. With its
-expected refusal, its default test timeout is 52 minutes and its job ceiling is
-72 minutes. `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
+`dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
+lifecycle and ordered cloud checks. With required export, its default test
+timeout is 133 minutes and its job ceiling is 153 minutes.
+`NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
 lower the derived test timeout. The derived job ceiling keeps at least 20
 minutes of headroom and rounds up to a whole minute.
 
