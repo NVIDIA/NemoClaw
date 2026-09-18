@@ -55,7 +55,7 @@ hardware:
   profile: dgx-spark
 ```
 
-This profile requires one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer.
+This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
 For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `service.hardware`.
 
@@ -134,9 +134,20 @@ memory:
   gpuMemoryGiB: 48
 ```
 
-All profiles except `dgx-spark` require observable dedicated GPU memory and compute capability.
-They use reported GPU total/free memory for serving checks and measure host RAM separately, including on ARM64 Grace systems.
-Missing or `N/A` GPU counters stop the operation; host RAM is not substituted for GPU memory.
+Every named profile requires an observed compute capability that meets its catalog minimum, including 12.1 for `dgx-spark`.
+Compute capability is queried independently of GPU memory counters on both local and SSH hosts.
+Missing, unsupported, or malformed compute capability stops the operation.
+
+The profile's memory architecture determines capacity accounting:
+
+| Memory architecture | Serving budget and observations |
+|---|---|
+| Unified (`dgx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve. Dedicated framebuffer counters may report `N/A`. |
+| Dedicated (the other current profiles) | Use GPU total/free counters for serving and measure host RAM separately, including on ARM64 Grace systems. Unsupported GPU counters reject the configuration; host RAM is never substituted. |
+
+The collectors preserve an explicit unsupported-counter result; they do not infer unified memory from `N/A` or from a GPU name.
+Failed queries and malformed or partial counter responses stop the operation for either memory architecture.
+NVIDIA documents why [DGX Spark has no dedicated framebuffer memory](https://docs.nvidia.com/dgx/dgx-spark/known-issues.html#nvidia-smi-reports-memory-usage-not-supported).
 DGX Station's coherent CPU/GPU address space is not treated as a combined serving budget.
 Its [memory mode](https://docs.nvidia.com/dgx/dgx-station-development-guide/coherency.html) must expose the dedicated counters; NemoClaw does not change the host's driver or memory mode.
 
@@ -157,7 +168,7 @@ memory:
 This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of observed GPU capacity for serving.
 It rejects GPUs below the declared 64 GiB minimum.
 Omit fixed GPU and KV-cache budgets in fractional mode.
-DGX Spark rejects both `minGpuMemoryBytes` and fractional allocation and retains its unified-memory reserve checks.
+Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
 All profiles retain the resident host-memory watchdog.
 
 The [profile catalog](../crates/nemoclaw-sdk/src/config/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
