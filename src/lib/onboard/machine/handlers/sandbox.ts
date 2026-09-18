@@ -1182,11 +1182,7 @@ class SandboxStateFlow<
   private reserveHostLocalCreateRoute(sandboxName: string): void {
     const sessionId = this.options.session?.sessionId;
     const entry = this.deps.getSandboxRegistryEntry(sandboxName);
-    if (
-      !sessionId ||
-      entry?.hostLocalInferenceProvenance === undefined ||
-      entry.pendingRouteReservation === true
-    ) {
+    if (!sessionId || entry?.hostLocalInferenceProvenance === undefined) {
       return;
     }
     // Preserve the receipt's exact runtime authority. The registry rejects any

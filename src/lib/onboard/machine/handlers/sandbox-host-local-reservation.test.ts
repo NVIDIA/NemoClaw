@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,18 +56,22 @@ async function resumedHostLocalSandbox() {
   registry.restoreSandboxEntry({ name: "saved", ...route });
   const original = registry.getSandbox("saved");
   const admitted = new Error("create admission reached");
-  const createSandbox = vi.fn(async () => {
-    qualifyPendingSandboxCreateReservation(
-      {
-        sandboxName: "saved",
-        gatewayName: route.gatewayName,
-        sessionId: session.sessionId,
-        selection: normalizeInferenceSelection(route),
-      },
-      registry.getSandbox("saved"),
-    );
-    throw admitted;
-  });
+  const createSandbox = vi.fn(
+    async (...args: Parameters<ReturnType<typeof createDeps>["deps"]["createSandbox"]>) => {
+      const authority = args[14];
+      assert(authority, "Missing create reservation authority");
+      const entry = registry.getSandbox(args[4]);
+      expect(authority.sessionId).toBe(session.sessionId);
+      expect(normalizeInferenceSelection(authority.selection)).toEqual(
+        normalizeInferenceSelection(route),
+      );
+      qualifyPendingSandboxCreateReservation(
+        { sandboxName: args[4], gatewayName: route.gatewayName, ...authority },
+        entry,
+      );
+      throw admitted;
+    },
+  );
   const { deps } = createDeps(
     {
       createSandbox,
@@ -118,8 +123,9 @@ it("does not take over a pending reservation owned by another session", async ()
   });
   const before = test.registry.getSandbox("saved");
   await expect(test.run()).rejects.toThrow(
-    "The sandbox create route reservation is not owned by this onboarding session",
+    "its inference route reservation belongs to another onboarding session",
   );
+  expect(test.createSandbox).not.toHaveBeenCalled();
   expect(test.registry.getSandbox("saved")).toEqual(before);
 });
 
@@ -133,3 +139,35 @@ it("rejects host-local authority without a recorded gateway port", async () => {
   expect(test.createSandbox).not.toHaveBeenCalled();
   expect(test.registry.getSandbox("saved")).toEqual(before);
 });
+
+it("reuses the same session's pending host-local authority without changing the row", async () => {
+  const test = await resumedHostLocalSandbox();
+  test.registry.reserveSandboxInferenceRoute("saved", {
+    ...test.route,
+    reservationSessionId: test.session.sessionId,
+  });
+  const before = test.registry.getSandbox("saved");
+  await expect(test.run()).rejects.toBe(test.admitted);
+  expect(test.createSandbox).toHaveBeenCalledOnce();
+  expect(test.registry.getSandbox("saved")).toEqual(before);
+});
+
+it.each(["gatewayPort", "openshellDriver"] as const)(
+  "rejects a pending host-local row missing %s before create",
+  async (field) => {
+    const test = await resumedHostLocalSandbox();
+    test.registry.restoreSandboxEntry({
+      name: "saved",
+      ...test.route,
+      [field]: undefined,
+      pendingRouteReservation: true,
+      reservationSessionId: test.session.sessionId,
+    });
+    const before = test.registry.getSandbox("saved");
+    await expect(test.run()).rejects.toThrow(
+      "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+    );
+    expect(test.createSandbox).not.toHaveBeenCalled();
+    expect(test.registry.getSandbox("saved")).toEqual(before);
+  },
+);
