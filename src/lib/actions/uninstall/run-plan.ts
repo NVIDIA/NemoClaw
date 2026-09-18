@@ -2446,7 +2446,7 @@ function removeForceFreshManagedImageContainers(runtime: UninstallRuntime): bool
     });
     const inspection = runtime.runDocker(["container", "inspect", id], {
       env: runtime.env,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
     });
     if (removal.status === 0 && dockerContainerInspectionProvesAbsence(id, inspection)) {
       runtime.log(`Removed managed-image Docker container ${id}`);
@@ -2524,7 +2524,7 @@ function dockerVolumeInspectionProvesAbsence(name: string, result: RunResult): b
 function removeDockerVolume(name: string, runtime: UninstallRuntime): boolean {
   const inspection = runtime.runDocker(["volume", "inspect", name], {
     env: runtime.env,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
   if (inspection.status !== 0) {
     if (dockerVolumeInspectionProvesAbsence(name, inspection)) return true;

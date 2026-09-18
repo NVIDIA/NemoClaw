@@ -300,6 +300,10 @@ describe("uninstall Docker resource scope", () => {
 
       expect(result.exitCode).toBe(1);
       expect(runDocker).toHaveBeenCalledWith(failureCommand, expect.any(Object));
+      expect(runDocker).toHaveBeenCalledWith(
+        ["volume", "inspect", "openshell-cluster-nemoclaw"],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
     },
   );
 
@@ -353,6 +357,9 @@ describe("uninstall Docker resource scope", () => {
 
     expect(result.exitCode).toBe(0);
     expect(runDocker).toHaveBeenCalledWith(["rm", "-f", ownedId], expect.any(Object));
-    expect(runDocker).toHaveBeenCalledWith(["container", "inspect", ownedId], expect.any(Object));
+    expect(runDocker).toHaveBeenCalledWith(
+      ["container", "inspect", ownedId],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
   });
 });
