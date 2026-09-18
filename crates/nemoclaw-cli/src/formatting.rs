@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn health_failure_keeps_structured_evidence_in_stderr() {
+    fn health_failure_keeps_error_details_in_stderr() {
         let health = serde_json::from_value(serde_json::json!({
             "sandbox": "research", "agents": ["researcher"],
             "supported": true, "report": null, "reason_code": "fabric_health_timeout"

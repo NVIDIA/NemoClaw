@@ -102,7 +102,7 @@ fn mutation_identity_checks_reject_foreign_ownership_and_replacements() {
 #[test]
 fn deletion_timestamp_presence_blocks_observation_but_allows_cleanup() {
     let mut meta = metadata();
-    // A present epoch timestamp is still a tombstone; absence alone means live.
+    // Even a zero deletion timestamp marks the resource for deletion; only an absent timestamp allows normal observation.
     meta.deletion_time = Some(Default::default());
     assert!(base(Some(meta.clone()), "workspace", false).is_err());
     assert!(base(Some(meta), "workspace", true).is_ok());

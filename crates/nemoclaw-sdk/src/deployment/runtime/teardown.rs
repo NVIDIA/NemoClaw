@@ -279,7 +279,7 @@ fn validate_teardown_state(
 ) -> Result<(), Error> {
     if record.pending {
         return Err(Error::Conflict(
-            "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
+            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
         ));
     }
     if record.document.lifecycle_provider()?.ollama.is_some()
@@ -303,6 +303,24 @@ fn retained_bindings(bindings: &BTreeMap<String, StateBinding>, runtime: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unfinished_apply_explains_how_to_recover_before_destroy() {
+        let document = Document::parse(
+            include_bytes!("../../../../../examples/fabric-openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut record = Record::new(document).unwrap();
+        let bindings = BTreeMap::new();
+        validate_teardown_state(&record, &bindings).unwrap();
+        record.pending = true;
+        assert_eq!(
+            validate_teardown_state(&record, &bindings)
+                .unwrap_err()
+                .to_string(),
+            "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
+        );
+    }
     const MODEL_STORAGE: &str = "nemoclaw_inference_storage.inference_qwen";
 
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {

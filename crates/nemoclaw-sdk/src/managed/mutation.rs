@@ -19,7 +19,7 @@ use bollard::{
 use futures_util::StreamExt;
 use serde_json::json;
 #[async_trait::async_trait]
-trait CapacityGate: Sync {
+trait CapacityCheck: Sync {
     async fn check(
         &self,
         engine: &Engine,
@@ -29,7 +29,7 @@ trait CapacityGate: Sync {
 }
 struct HostCapacity;
 #[async_trait::async_trait]
-impl CapacityGate for HostCapacity {
+impl CapacityCheck for HostCapacity {
     async fn check(
         &self,
         engine: &Engine,
@@ -47,7 +47,7 @@ impl Engine {
         &self,
         spec: &Spec,
         id: &str,
-        capacity: &dyn CapacityGate,
+        capacity: &dyn CapacityCheck,
     ) -> Result<RuntimeObservation, Error> {
         let observed = match self.observe_runtime(spec, id).await {
             Err(Error::PartialRuntime) => None,

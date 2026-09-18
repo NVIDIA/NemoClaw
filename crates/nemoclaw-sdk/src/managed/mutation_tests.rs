@@ -4,9 +4,9 @@ use super::*;
 use crate::docker::fixture::Fixture;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-struct Gate(bool);
+struct CapacityResult(bool);
 #[async_trait::async_trait]
-impl CapacityGate for Gate {
+impl CapacityCheck for CapacityResult {
     async fn check(
         &self,
         _: &Engine,
@@ -207,13 +207,13 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
     let engine = fixture.engine_for(&spec.gateway.engine);
     assert!(
         engine
-            .ensure_runtime_checked(&spec, "", &Gate(false))
+            .ensure_runtime_checked(&spec, "", &CapacityResult(false))
             .await
             .is_err()
     );
     assert_eq!(state.lock().unwrap().starts, 0);
     let first = engine
-        .ensure_runtime_checked(&spec, "", &Gate(true))
+        .ensure_runtime_checked(&spec, "", &CapacityResult(true))
         .await
         .unwrap();
     assert!(!first.running);
@@ -222,13 +222,13 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
     assert_eq!(state.lock().unwrap().starts, 1);
     state.lock().unwrap().exit_on_start = false;
     let recovered = engine
-        .ensure_runtime_checked(&spec, &first.id, &Gate(true))
+        .ensure_runtime_checked(&spec, &first.id, &CapacityResult(true))
         .await
         .unwrap();
     assert!(recovered.running);
     assert_eq!(recovered.id, first.id);
     engine
-        .ensure_runtime_checked(&spec, &first.id, &Gate(false))
+        .ensure_runtime_checked(&spec, &first.id, &CapacityResult(false))
         .await
         .unwrap();
     assert_eq!(state.lock().unwrap().starts, 2);
@@ -238,19 +238,19 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
     assert!(state.lock().unwrap().volume.is_some());
     assert!(
         engine
-            .ensure_runtime_checked(&spec, &first.id, &Gate(true))
+            .ensure_runtime_checked(&spec, &first.id, &CapacityResult(true))
             .await
             .is_err()
     );
     state.lock().unwrap().lose_create = true;
     assert!(
         engine
-            .ensure_runtime_checked(&spec, "", &Gate(true))
+            .ensure_runtime_checked(&spec, "", &CapacityResult(true))
             .await
             .is_err()
     );
     let recreated = engine
-        .ensure_runtime_checked(&spec, "", &Gate(true))
+        .ensure_runtime_checked(&spec, "", &CapacityResult(true))
         .await
         .unwrap();
     assert!(recreated.running);

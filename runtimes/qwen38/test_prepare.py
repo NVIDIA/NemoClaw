@@ -44,7 +44,7 @@ class PreparationRecovery(unittest.TestCase):
                 for name in [NAME, NAME + ".json"]:
                     self.assertEqual((output / name).read_bytes(), b"candidate")
                     self.assertEqual((previous / name).read_bytes(), b"candidate")
-                self.assertFalse((output / "complete.json").exists())
+                self.assertFalse((output / "manifest.json").exists())
             self.invoke(output, previous, inspect)
 
 

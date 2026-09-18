@@ -15,7 +15,7 @@ output = Path(request["outputDirectory"])
 name = "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8"
 previous = request.get("previousDirectory")
 # Reuse published bytes only as a candidate. The verifier must check them before
-# the supervisor accepts a new receipt. Never modify the previous directory.
+# the runtime writes the output manifest. Never modify the previous directory.
 if previous and Path(previous).is_dir():
     for filename in (name, name + ".json"):
         source = Path(previous) / filename

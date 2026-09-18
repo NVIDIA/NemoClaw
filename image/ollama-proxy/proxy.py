@@ -47,8 +47,8 @@ def load_key(root):
     if not re.fullmatch("[0-9a-f]{64}", key):
         raise RuntimeError("managed inference credential is invalid")
     marker.touch(mode=0o600, exist_ok=True)
-    with marker.open("rb") as receipt:
-        os.fsync(receipt.fileno())
+    with marker.open("rb") as marker_file:
+        os.fsync(marker_file.fileno())
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(directory)

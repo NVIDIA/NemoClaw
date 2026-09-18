@@ -301,7 +301,7 @@ impl SandboxRuntimeSettings {
                 || primary.tuning != self.tuning
             {
                 return Err(ConfigError::new(
-                    "runtime inference envelope differs from the canonical agent selection",
+                    "runtime inference settings differ from the agent's default model settings",
                 ));
             }
         }
@@ -404,5 +404,34 @@ impl Document {
             interfaces: harness.interfaces.clone(),
             auth,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mismatched_runtime_settings_identify_the_agents_default_model() {
+        let document =
+            Document::parse(include_bytes!("../../../../examples/fabric-openclaw.yaml").as_slice())
+                .unwrap();
+        let generations = ["workspace", "provider", "sandbox"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let targets = crate::compile::targets(&document, &generations).unwrap();
+        let sandbox = targets
+            .iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap();
+        let settings: SandboxRuntimeSettings =
+            serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+        settings.validate("openclaw").unwrap();
+        let mut changed = settings;
+        changed.connection.model = Some("different-model".into());
+        assert_eq!(
+            changed.validate("openclaw").unwrap_err().to_string(),
+            "runtime inference settings differ from the agent's default model settings"
+        );
     }
 }
