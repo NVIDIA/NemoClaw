@@ -51,6 +51,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
+  assertNoAmbiguousMcpCredentialTarget,
   assertNoDerivedResourceCollision,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -488,6 +489,12 @@ async function addMcpBridgeUnlocked(
       : undefined;
   const adapterEnvValues = resolveCredentialEnv(options.env);
   const policyName = buildMcpBridgePolicyName(options.server);
+  assertNoAmbiguousMcpCredentialTarget(
+    observed.bridges,
+    options.server,
+    normalizedUrl,
+    providerName,
+  );
   assertNoDerivedResourceCollision(observed.bridges, options.server, providerName, policyName);
   let requestedEntry: McpSourceEntry = {
     server: options.server,

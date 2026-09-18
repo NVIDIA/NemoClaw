@@ -768,6 +768,29 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
   });
 
+  it("stops a legacy-only MCP rebuild before teardown or sandbox deletion", async () => {
+    const harness = createRebuildFlowHarness({
+      mcpLegacySources: [
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter-config",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+        },
+      ],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Legacy MCP agent configuration requires explicit migration for 'github'");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
   it("keeps the journaled row when replacement creation fails (#7734)", async () => {
     const harness = createRebuildFlowHarness({
       onboard: () => {
