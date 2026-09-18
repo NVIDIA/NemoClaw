@@ -18,8 +18,11 @@ The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
 Direct hardware checks use recipe-declared compatibility or an explicit `service.hardware` contract for ordinary models.
-The named `spark` profile retains its GB10 and host-memory requirements; dedicated GPU requirements select Linux AMD64.
-Both paths retain resident memory protection; see [managed models](../models.md#pin-and-serve-the-model) for configuration and qualification limits.
+The named `dgx-spark` profile retains its GB10 and host-memory requirements.
+Other named profiles validate GPU family and dedicated memory independently of CPU architecture; GPU-only profiles require an explicit host architecture, while Grace system profiles fix ARM64.
+Custom dedicated GPU requirements retain their Linux AMD64 contract.
+Hardware identity does not select device placement or parallelism: current collectors require one GPU and the backend uses tensor parallel size 1.
+All paths retain resident memory protection; see [hardware profiles](../models.md#choose-a-hardware-profile) for configuration and qualification limits.
 
 For example, changing a recipe's preparation executable should not change how the supervisor terminates a process group.
 Changing a memory threshold should not change the model snapshot's identity.

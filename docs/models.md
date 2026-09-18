@@ -52,14 +52,14 @@ For ordinary models on DGX Spark, select the existing Linux ARM64 contract expli
 ```yaml
 # Under service:
 hardware:
-  profile: spark
+  profile: dgx-spark
 ```
 
 This profile requires one NVIDIA GB10, at least 118 GiB host RAM, and driver major 580 or newer.
-For Linux AMD64 with dedicated GPU memory, use the [explicit hardware requirements](#configure-nemotron-on-an-amd64-gpu-host) instead.
+For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `service.hardware`.
 
-Older YAML that omitted both fields is rejected; add the explicit Spark profile when preserving that configuration's hardware contract.
+Older YAML that omitted both fields or used `profile: spark` is rejected; use `profile: dgx-spark` when preserving that configuration's hardware contract.
 Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
 
 Backend startup still establishes actual model compatibility.
@@ -98,6 +98,71 @@ A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-run
 For models requiring preparation or patches, keep `backend: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe’s tools in the pinned runtime image.
 There are no built-in model-specific backends.
+
+## Choose a Hardware Profile
+
+Named profiles check the GPU family, CPU architecture, driver, and memory on the selected execution host.
+They do not choose a model, runtime image, or GPU count.
+Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
+The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
+The backend uses tensor parallel size 1.
+GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
+
+| Profile | Hardware identity | Host architecture |
+|---|---|---|
+| `dgx-spark` | GB10 with unified host/GPU memory | ARM64 |
+| `dgx-station` | GB300 GPU on ARM64; intended for current DGX Station | ARM64 |
+| `gb200`, `gb300`, `gh200` | Corresponding Grace Blackwell or Grace Hopper GPU family | ARM64 |
+| `h100`, `h200`, `a100`, `a10`, `a10g`, `a40` | Corresponding NVIDIA GPU family | Explicit `amd64` or `arm64` |
+| `l4`, `l40`, `l40s`, `t4` | Corresponding NVIDIA GPU family | Explicit `amd64` or `arm64` |
+| `rtx-6000-ada`, `rtx-pro-6000-blackwell` | RTX 6000 Ada or RTX PRO 6000 Blackwell | Explicit `amd64` or `arm64` |
+| `rtx-3090`, `rtx-4090`, `rtx-5090` | Corresponding GeForce RTX GPU family | Explicit `amd64` or `arm64` |
+
+System profiles fix ARM64; an optional `architecture` must agree.
+They check GPU family and CPU architecture, not chassis identity; `dgx-station` shares the `gb300` checks and excludes earlier Volta and A100 Stations.
+GPU-only profiles require `architecture` because GPU identity does not determine the host CPU.
+There are no `spark`, `gb100`, or B100/B200/B300 profile names.
+
+For example, declare an H100 on an AMD64 host and a fixed serving budget:
+
+```yaml
+# Under service:
+hardware:
+  profile: h100
+  architecture: amd64
+memory:
+  gpuMemoryGiB: 48
+```
+
+All profiles except `dgx-spark` require observable dedicated GPU memory and compute capability.
+They use reported GPU total/free memory for serving checks and measure host RAM separately, including on ARM64 Grace systems.
+Missing or `N/A` GPU counters stop the operation; host RAM is not substituted for GPU memory.
+DGX Station's coherent CPU/GPU address space is not treated as a combined serving budget.
+Its [memory mode](https://docs.nvidia.com/dgx/dgx-station-development-guide/coherency.html) must expose the dedicated counters; NemoClaw does not change the host's driver or memory mode.
+
+Dedicated-memory profiles require at least 4 GiB of GPU memory, but do not assume a SKU's advertised capacity.
+Set `hardware.minGpuMemoryBytes` to require more.
+This field is required with fractional allocation so snapshot validation has a declared minimum:
+
+```yaml
+# Under service:
+hardware:
+  profile: h100
+  architecture: amd64
+  minGpuMemoryBytes: 68719476736 # 64 GiB
+memory:
+  gpuMemoryUtilization: 0.75
+```
+
+This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of observed GPU capacity for serving.
+It rejects GPUs below the declared 64 GiB minimum.
+Omit fixed GPU and KV-cache budgets in fractional mode.
+DGX Spark rejects both `minGpuMemoryBytes` and fractional allocation and retains its unified-memory reserve checks.
+All profiles retain the resident host-memory watchdog.
+
+The [profile catalog](../crates/nemoclaw-sdk/src/config/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
+[Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
+Live model/image qualification on the newly named hardware remains **TBD**; profile acceptance does not establish successful inference or support for every GPU SKU, quantization format, or host architecture.
 
 ## Diagnose and Recover a Stopped Runtime
 
