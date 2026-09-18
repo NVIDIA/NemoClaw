@@ -77,6 +77,45 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     expect(normalizeInferenceSetProvider("totally-made-up")).toBe("totally-made-up");
   });
 
+  // #11369: underscore-spelled provider inputs (installer-style) must normalize
+  // to the canonical hyphenated OpenShell provider name, instead of being
+  // rejected as unsupported.
+  it("normalizes the underscore spelling of a canonical local provider name", () => {
+    expect(normalizeInferenceSetProvider("ollama_local")).toBe("ollama-local");
+    expect(normalizeInferenceSetProvider("vllm_local")).toBe("vllm-local");
+  });
+
+  it("normalizes underscore spellings of other canonical provider names", () => {
+    expect(normalizeInferenceSetProvider("nvidia_prod")).toBe("nvidia-prod");
+    expect(normalizeInferenceSetProvider("llama_cpp_local")).toBe("llama-cpp-local");
+  });
+
+  it("normalizes underscore spellings of installer alias keys", () => {
+    expect(normalizeInferenceSetProvider("open_router")).toBe("openrouter-api");
+    expect(normalizeInferenceSetProvider("nim_local")).toBe("nvidia-nim");
+    expect(normalizeInferenceSetProvider("llama_cpp")).toBe("llama-cpp-local");
+    expect(normalizeInferenceSetProvider("nous_portal")).toBe("hermes-provider");
+  });
+
+  it("is case-insensitive and trims whitespace on underscore spellings", () => {
+    expect(normalizeInferenceSetProvider("  Ollama_Local  ")).toBe("ollama-local");
+    expect(normalizeInferenceSetProvider("VLLM_LOCAL")).toBe("vllm-local");
+  });
+
+  it("passes an unsupported underscore spelling through unchanged (validation still rejects it)", () => {
+    // A made-up name is not rescued by underscore folding; it passes through so
+    // downstream validation still rejects it.
+    expect(normalizeInferenceSetProvider("totally_made_up")).toBe("totally_made_up");
+  });
+
+  it.each([...INFERENCE_SET_SUPPORTED_PROVIDER_NAMES])(
+    "normalizes the underscore spelling of canonical name %s back to the hyphenated form",
+    (name) => {
+      const underscored = name.replaceAll("-", "_");
+      expect(normalizeInferenceSetProvider(underscored)).toBe(name);
+    },
+  );
+
   it.each(Object.entries(INFERENCE_SET_INSTALLER_PROVIDER_ALIASES))(
     "resolves the %s installer alias to the supported %s provider",
     (alias, resolved) => {
