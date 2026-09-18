@@ -202,7 +202,7 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
   });
 
-  it("backfills only a receipt-qualified legacy Hermes portable profile", async () => {
+  it("admits only a receipt-qualified legacy Hermes portable profile", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -218,9 +218,6 @@ describe("startSandbox native lifecycle", () => {
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
 
-    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", {
-      portableLifecycleProfile: "hermes",
-    });
     expect(h.recoverPortableSandbox).toHaveBeenCalledOnce();
     expect(h.startOpenShellSandbox).not.toHaveBeenCalled();
   });

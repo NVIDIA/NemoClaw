@@ -303,7 +303,7 @@ export function qualifyPortableAgentLifecycleAuthority(
   return { ...disposition, entry };
 }
 
-/** Admit only an exact retained Hermes receipt for one-time profile backfill. */
+/** Admit only an exact retained Hermes receipt for legacy profile compatibility. */
 export function qualifyLegacyHermesPortableLifecycleProfile(
   sandboxName: string,
   deps: PortableAgentLifecycleAuthorityDeps,

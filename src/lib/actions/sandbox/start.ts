@@ -211,16 +211,6 @@ async function startSandboxWithinLifecycleFence(
           readRegistry: (name) => input.readRegistry?.(name) ?? null,
         },
       );
-    if (
-      legacyHermesPortableProfile &&
-      !(deps.updateSandbox ?? registry.updateSandbox)(sandboxName, {
-        portableLifecycleProfile: "hermes",
-      })
-    ) {
-      throw new Error(
-        `Sandbox '${sandboxName}' has verified Hermes portable authority, but NemoClaw could not record its lifecycle profile.`,
-      );
-    }
     const portableAuthorityRecorded =
       resolved.bundle.identity.id === "docker" &&
       ((legacyHermesPortableProfile && resolved.sandbox.agent === "hermes") ||
