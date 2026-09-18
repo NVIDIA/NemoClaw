@@ -23,6 +23,7 @@ import {
   hermesTranscriptRoute,
   applyHermesSocketObservations,
   hermesPromptLines,
+  hermesPromptFrames,
 } from "./qualify-installed-hermes.mts";
 
 for (const existing of ["configuration", "agent-data"])
@@ -300,6 +301,19 @@ test("multiline Hermes prompts preserve exact bytes without an asynchronous past
   assert.deepEqual(lines, ["First line", "```sh", "printf fixture", "```", "", "Last line"]);
   assert.equal(lines.join("\n"), prompt);
   assert(lines.every((line) => !line.includes("\n")));
+  assert.deepEqual(hermesPromptFrames(prompt), [
+    "First line",
+    "\u001b[13;2u",
+    "```sh",
+    "\u001b[13;2u",
+    "printf fixture",
+    "\u001b[13;2u",
+    "```",
+    "\u001b[13;2u",
+    "\u001b[13;2u",
+    "Last line",
+    "\r",
+  ]);
   assert.throws(() => hermesPromptLines("windows\r\nlines"), /canonical newlines/u);
 });
 

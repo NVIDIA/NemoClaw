@@ -170,6 +170,17 @@ export function hermesPromptLines(prompt: string) {
   return prompt.split("\n");
 }
 
+export function hermesPromptFrames(prompt: string) {
+  const frames: string[] = [];
+  const lines = hermesPromptLines(prompt);
+  for (const [index, line] of lines.entries()) {
+    if (line) frames.push(line);
+    if (index + 1 < lines.length) frames.push("\u001b[13;2u");
+  }
+  frames.push("\r");
+  return frames;
+}
+
 export function applyHermesSocketObservations(pty: any, origin: string, batch: any) {
   assert.equal(batch?.overflow, false, "The in-page Hermes socket observation exceeded its bound");
   assert(Array.isArray(batch?.records) && batch.records.length <= 512);
@@ -776,7 +787,12 @@ async function main() {
     const page = await browser.newPage();
     await page.addInitScript(() => {
       const target = globalThis as any;
-      const observation = { records: [] as any[], overflow: false };
+      const observation = {
+        records: [] as any[],
+        overflow: false,
+        sockets: new Map<number, { socket: any; url: string }>(),
+        nextSocketId: 1,
+      };
       Object.defineProperty(target, "__nemoclawSocketObservation", {
         value: observation,
         configurable: false,
@@ -798,6 +814,8 @@ async function main() {
         construct(constructor, args, newTarget) {
           const socket = Reflect.construct(constructor, args, newTarget);
           const url = String(socket.url || args[0] || "");
+          const socketId = observation.nextSocketId++;
+          observation.sockets.set(socketId, { socket, url });
           let eventFeed = false;
           try {
             eventFeed = new URL(url).pathname === "/api/events";
@@ -815,7 +833,10 @@ async function main() {
             }
             push({ kind: "message", url, ...(text === undefined ? {} : { text }) });
           });
-          socket.addEventListener("close", () => push({ kind: "close", url }));
+          socket.addEventListener("close", () => {
+            observation.sockets.delete(socketId);
+            push({ kind: "close", url });
+          });
           return socket;
         },
       });
@@ -938,13 +959,32 @@ async function main() {
     };
     let lastTurnMark = 0;
     const submitPrompt = async (prompt: string) => {
-      const lines = hermesPromptLines(prompt);
-      await terminal.focus();
-      for (const [index, line] of lines.entries()) {
-        if (line) await page.keyboard.insertText(line);
-        if (index + 1 < lines.length) await page.keyboard.press("Shift+Enter");
-      }
-      await page.keyboard.press("Enter");
+      const channel = pty.snapshot().channel;
+      assert(channel, "The actual Hermes PTY channel is unavailable");
+      const frames = hermesPromptFrames(prompt);
+      const result = await page.evaluate(
+        ({ channel, frames, origin }: { channel: string; frames: string[]; origin: string }) => {
+          const observation = (globalThis as any).__nemoclawSocketObservation;
+          if (!observation?.sockets) return { matches: 0 };
+          const matches = [...observation.sockets.values()].filter((entry: any) => {
+            try {
+              const url = new URL(entry.url);
+              return (
+                url.origin.replace(/^ws/u, "http") === origin &&
+                url.pathname === "/api/pty" &&
+                url.searchParams.get("channel") === channel &&
+                entry.socket.readyState === 1
+              );
+            } catch {
+              return false;
+            }
+          });
+          if (matches.length === 1) for (const frame of frames) matches[0].socket.send(frame);
+          return { matches: matches.length };
+        },
+        { channel, frames, origin: origin.origin },
+      );
+      assert.equal(result.matches, 1, "The actual dashboard does not own one live PTY input");
     };
     const turn = async (prompt: string, accept: (messages: any[]) => unknown) => {
       const previous = await sessionMessages();
