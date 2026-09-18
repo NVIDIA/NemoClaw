@@ -37,6 +37,23 @@ const REGISTRY_IMAGE =
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_HERMES_RESOLVER_ROOT = ".trusted-hermes-resolver";
 const REVIEWED_HERMES_PLATFORM_ACTION = `./${TRUSTED_HERMES_RESOLVER_ROOT}/.github/actions/resolve-reviewed-hermes-platform`;
+const SHARED_POLICY_BOUNDARY_RUN = [
+  "set -euo pipefail",
+  "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
+  '  echo "::error::Shared policy boundary output exists before the candidate build" >&2',
+  "  exit 1",
+  "}",
+  "npm run build:policy-boundary",
+  "for artifact in \\",
+  "  nemoclaw/dist/shared/openshell-policy-boundary.cjs \\",
+  "  nemoclaw/dist/shared/sandbox-name.cjs; do",
+  '  [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {',
+  '    echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2',
+  "    exit 1",
+  "  }",
+  "done",
+  "",
+].join("\n");
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -87,61 +104,6 @@ function requireFragments(
       errors.push(`${JOB_ID} step '${step.name}' must include ${fragment}`);
     }
   }
-}
-
-function executableShellLines(step: WorkflowStep | undefined): string[] {
-  const lines: string[] = [];
-  let heredoc: { delimiter: string; stripLeadingTabs: boolean } | undefined;
-
-  for (const line of text(step?.run).split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (heredoc) {
-      const candidate = heredoc.stripLeadingTabs ? line.replace(/^\t+/u, "") : line;
-      if (candidate === heredoc.delimiter) heredoc = undefined;
-      continue;
-    }
-    if (trimmed && !trimmed.startsWith("#")) lines.push(trimmed);
-    const match = line.match(/<<(-?)\s*(?!<)(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/u);
-    const delimiter = match?.[2] ?? match?.[3] ?? match?.[4];
-    if (delimiter) heredoc = { delimiter, stripLeadingTabs: match?.[1] === "-" };
-  }
-
-  return lines;
-}
-
-function normalizeShellWhitespace(value: string): string {
-  return value.replace(/\\\s+/gu, " ").replace(/\s+/gu, " ").trim();
-}
-
-function executableShellText(step: WorkflowStep | undefined): string {
-  return normalizeShellWhitespace(executableShellLines(step).join("\n"));
-}
-
-function requireExecutableFragments(
-  errors: string[],
-  step: WorkflowStep | undefined,
-  fragments: readonly string[],
-): void {
-  if (!step) return;
-  const run = executableShellText(step);
-  for (const fragment of fragments) {
-    if (!run.includes(normalizeShellWhitespace(fragment))) {
-      errors.push(`${JOB_ID} step '${step.name}' must include ${fragment}`);
-    }
-  }
-}
-
-function requireExecutableCommand(
-  errors: string[],
-  step: WorkflowStep | undefined,
-  command: string,
-): void {
-  if (!step) return;
-  const expected = normalizeShellWhitespace(command);
-  const found = executableShellLines(step).some(
-    (line) => normalizeShellWhitespace(line) === expected,
-  );
-  if (!found) errors.push(`${JOB_ID} step '${step.name}' must execute ${command}`);
 }
 
 function requireOrderedSteps(
@@ -315,20 +277,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   if (policyBoundary?.if !== undefined || policyBoundary?.["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} shared policy boundary step must not set if or continue-on-error`);
   }
-  requireExecutableFragments(errors, policyBoundary, [
-    "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
-    "nemoclaw/dist/shared/openshell-policy-boundary.cjs",
-    "nemoclaw/dist/shared/sandbox-name.cjs",
-    '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
-  ]);
-  requireExecutableCommand(errors, policyBoundary, "npm run build:policy-boundary");
-  const executablePolicyBoundary = executableShellText(policyBoundary);
-  if (
-    ["npm run build:cli", "npm --prefix nemoclaw run build"].some((command) =>
-      executablePolicyBoundary.includes(command),
-    )
-  ) {
-    errors.push(`${JOB_ID} shared policy boundary step must not build the full CLI or plugin`);
+  if (policyBoundary?.run !== SHARED_POLICY_BOUNDARY_RUN) {
+    errors.push(`${JOB_ID} shared policy boundary step must match the reviewed narrow script`);
   }
 
   const activation = requireStep(errors, steps, "Validate candidate activation contract");

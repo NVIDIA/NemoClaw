@@ -12,6 +12,8 @@ import { validateManagedImageProtectedRuntimeWorkflow } from "../../../tools/e2e
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 type WorkflowRecord = Record<string, unknown>;
+const POLICY_BOUNDARY_SCRIPT_ERROR =
+  "managed-image-multiarch-startup shared policy boundary step must match the reviewed narrow script";
 
 function workflow(): WorkflowRecord {
   return YAML.parse(
@@ -125,9 +127,7 @@ describe("protected managed-image runtime workflow", () => {
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
     boundary.run = String(boundary.run).replace(required, replacement);
 
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      `managed-image-multiarch-startup step 'Build shared policy boundary' must include ${required}`,
-    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
   });
 
   it.each([
@@ -142,9 +142,7 @@ describe("protected managed-image runtime workflow", () => {
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
     boundary.run = String(boundary.run).replace("npm run build:policy-boundary", replacement);
 
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup step 'Build shared policy boundary' must execute npm run build:policy-boundary",
-    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
   });
 
   it.each([
@@ -157,9 +155,7 @@ describe("protected managed-image runtime workflow", () => {
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
     boundary.run = `${String(boundary.run)}\n${command}`;
 
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup shared policy boundary step must not build the full CLI or plugin",
-    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
   });
 
   it.each([
@@ -170,9 +166,60 @@ describe("protected managed-image runtime workflow", () => {
     const boundary = namedMultiarchStep(value, "Build shared policy boundary");
     boundary.run = String(boundary.run).replace(guard, `# ${guard}`);
 
-    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      `managed-image-multiarch-startup step 'Build shared policy boundary' must include ${guard}`,
-    );
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["comment heredoc opener", (run: string) => `${run}\n# cat <<true\nnpm run build:cli\ntrue`],
+    ["here-string", (run: string) => `${run}\ncat <<<true\nnpm run build:cli`],
+    ["quoted heredoc text", (run: string) => `${run}\nprintf '%s\\n' '<<true'\nnpm run build:cli`],
+    [
+      "false branch",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "if false; then\n  npm run build:policy-boundary\nfi",
+        ),
+    ],
+    [
+      "errexit disabled",
+      (run: string) => run.replace("set -euo pipefail", "set +e\nset -uo pipefail"),
+    ],
+    [
+      "duplicate build command",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "npm run build:policy-boundary\nnpm run build:policy-boundary",
+        ),
+    ],
+    [
+      "numeric heredoc body",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<123\nnpm run build:policy-boundary\n123",
+        ),
+    ],
+    [
+      "escaped heredoc delimiter",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<\\\\EOF\nnpm run build:policy-boundary\nEOF",
+        ),
+    ],
+    [
+      "empty quoted heredoc delimiter",
+      (run: string) =>
+        run.replace("npm run build:policy-boundary", 'cat <<""\nnpm run build:policy-boundary\n\n'),
+    ],
+  ])("rejects the %s shell bypass", (_description, mutate) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = mutate(String(boundary.run));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
   });
 
   it.each([
