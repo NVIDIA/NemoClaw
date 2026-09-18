@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use nemoclaw_e2e::qualification::{LiveInputs, StateSnapshot};
 use nemoclaw_sdk::{
     CancellationToken, Deployment,
     backend::Row,
@@ -8,11 +9,7 @@ use nemoclaw_sdk::{
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fs, path::Path, sync::Arc};
 
 fn confirmed_reply(harness: &str, response: &[u8]) -> bool {
     let Ok(value) = serde_json::from_slice::<Value>(response) else {
@@ -70,54 +67,15 @@ fn a_prompt_echo_or_failed_result_is_not_an_agent_reply() {
     ));
 }
 
-fn bindings(directory: &Path) -> (Value, Row) {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let mut ids = serde_json::Map::new();
-    let mut sandbox = None;
-    let resources = state["resources"].as_array().unwrap();
-    for resource in resources {
-        let instances = resource["instances"].as_array().unwrap();
-        assert_eq!(instances.len(), 1);
-        let attributes = &instances[0]["attributes"];
-        ids.insert(
-            format!(
-                "{}.{}",
-                resource["type"].as_str().unwrap(),
-                resource["name"].as_str().unwrap()
-            ),
-            attributes["id"].clone(),
-        );
-        if resource["type"] == "nemoclaw_sandbox" {
-            assert!(
-                sandbox
-                    .replace(serde_json::from_value(attributes.clone()).unwrap())
-                    .is_none(),
-                "expected one sandbox binding"
-            );
-        }
-    }
-    (Value::Object(ids), sandbox.unwrap())
+fn bindings(directory: &Path) -> (nemoclaw_e2e::qualification::ResourceIdentities, Row) {
+    let state = StateSnapshot::read(&directory.join("terraform.tfstate")).unwrap();
+    let sandbox = serde_json::from_value(state.only("nemoclaw_sandbox").unwrap().clone()).unwrap();
+    (state.identities(), sandbox)
 }
-fn managed_bindings(directory: &Path) -> Value {
-    let path = directory.join("runtime/terraform.tfstate");
-    if !path.exists() {
-        return json!({});
-    }
-    let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    let mut result = serde_json::Map::new();
-    for resource in state["resources"].as_array().unwrap() {
-        assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
-        result.insert(
-            format!(
-                "{}.{}",
-                resource["type"].as_str().unwrap(),
-                resource["name"].as_str().unwrap()
-            ),
-            resource["instances"][0]["attributes"].clone(),
-        );
-    }
-    Value::Object(result)
+fn managed_bindings(directory: &Path) -> std::collections::BTreeMap<String, Value> {
+    StateSnapshot::read_optional(&directory.join("runtime/terraform.tfstate"))
+        .unwrap()
+        .attributes()
 }
 async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8> {
     let (exit, output) = client
@@ -162,15 +120,11 @@ async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
 async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
-    let explicit = |name| {
-        let path = PathBuf::from(std::env::var_os(name).expect(name));
-        assert!(path.is_absolute());
-        path
-    };
-    let document =
-        Document::parse(fs::File::open(explicit("NEMOCLAW_LIVE_FABRIC_CONFIG")).unwrap()).unwrap();
-    let directory = explicit("NEMOCLAW_LIVE_FABRIC_STATE");
-    let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
+    let inputs =
+        LiveInputs::from_env("NEMOCLAW_LIVE_FABRIC_CONFIG", "NEMOCLAW_LIVE_FABRIC_STATE").unwrap();
+    let document = Document::parse(fs::File::open(inputs.config).unwrap()).unwrap();
+    let directory = inputs.state;
+    let bundle = inputs.bundle;
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
     assert_eq!(document.spec.gateway.management, "external");
@@ -343,14 +297,10 @@ fn upgrade_gate_requires_inference_to_exist_independently_of_apply() {
 #[tokio::test]
 #[ignore = "requires explicit NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
 async fn dependency_upgrade_survives_apply_process_exit() {
-    let explicit = |name| {
-        let path = PathBuf::from(std::env::var_os(name).expect(name));
-        assert!(path.is_absolute(), "{name} must be absolute");
-        path
-    };
-    let config = explicit("NEMOCLAW_UPGRADE_CONFIG");
-    let directory = explicit("NEMOCLAW_UPGRADE_STATE");
-    let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
+    let inputs = LiveInputs::from_env("NEMOCLAW_UPGRADE_CONFIG", "NEMOCLAW_UPGRADE_STATE").unwrap();
+    let config = inputs.config;
+    let directory = inputs.state;
+    let bundle = inputs.bundle;
     let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
     assert!(
         upgrade_gate_configuration(&document),
