@@ -38,6 +38,11 @@ describe("parsePort (plugin)", () => {
     expect(() => parsePort(ENV_KEY, 18789)).toThrow("Invalid port");
   });
 
+  it("rejects a leading-zero port", () => {
+    process.env[ENV_KEY] = "08000";
+    expect(() => parsePort(ENV_KEY, 18789)).toThrow("Invalid port");
+  });
+
   it("rejects below 1024", () => {
     process.env[ENV_KEY] = "80";
     expect(() => parsePort(ENV_KEY, 18789)).toThrow("1024 and 65535");

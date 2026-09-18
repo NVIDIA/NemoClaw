@@ -285,6 +285,19 @@ if (scenario.mode === "dashboard-spawn-failure") {
   require(${gatewayServicePath}).hasOpenShellGatewayUserService = () => false;
 }
 const dashboardScenario = scenario.mode.startsWith("dashboard-");
+// Slice dispatch uses fixture gateway bindings and must not observe host listeners.
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))})
+  .checkPortAvailable = async () => ({ ok: true });
+const gatewayReadiness = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "readiness", "gateway-production.ts"))});
+const createGatewayReadiness = gatewayReadiness.createProductionGatewayReadinessDependencies;
+gatewayReadiness.createProductionGatewayReadinessDependencies = (options) => ({
+  ...createGatewayReadiness(options),
+  observeManagedGateway: async () => ({
+    reuseState: "missing",
+    driftState: "not-detected",
+    portConflictState: "none",
+  }),
+});
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});

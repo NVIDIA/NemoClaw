@@ -145,41 +145,53 @@ function mockManagedVllmSource(
 }
 
 describe("managed vLLM export pipeline", () => {
-  it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
-    mockManagedVllmSource();
-    const output = vi.fn(async (_value: string) => {});
-    const publish = vi.fn();
-    const result = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: parseNemoClawConfigDocumentName("alpha"),
-        target: { kind: "stdout" },
-      },
-      {
-        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
-        createDocumentUid: () =>
-          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
-        publish,
-        writeStdout: output,
-      },
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: [
-          {
-            field: "spec.inferenceProviders",
-            category: "unsupported",
-            diagnostic:
-              "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
-          },
-        ],
-      },
-    });
-    expect(output).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
-  });
+  it.each([
+    { count: 1, names: ["researcher"] },
+    { count: 2, names: ["researcher", "reviewer"] },
+    { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
+  ])(
+    "admits all $count fixed-profile secondaries before the deferred target mapping (#11859)",
+    async ({ names }) => {
+      mockManagedVllmSource({
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
+          names.map((id) => ({ id, tools: { allow: ["read"] } })),
+        ),
+      });
+      const output = vi.fn(async (_value: string) => {});
+      const publish = vi.fn();
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
+          publish,
+          writeStdout: output,
+        },
+      );
+      expect(result).toEqual({
+        ok: false,
+        failure: {
+          kind: "observation",
+          attempts: 1,
+          findings: [
+            {
+              field: "spec.inferenceProviders",
+              category: "unsupported",
+              diagnostic:
+                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+            },
+          ],
+        },
+      });
+      expect(output).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("exports direct tools, managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
     mockManagedVllmSource(

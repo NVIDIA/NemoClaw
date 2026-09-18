@@ -717,7 +717,9 @@ function supportsAdditionalAgents(
 ): boolean {
   return (
     entry.openshellDriver === "docker" &&
-    entry.servingProfileProvenance === undefined &&
+    (entry.servingProfileProvenance === undefined ||
+      (entry.provider === "vllm-local" &&
+        entry.servingProfileProvenance.preset.id === EXPORTED_VLLM_PROFILE_ID)) &&
     manifest.agents.length > 0 &&
     Object.keys(manifest.defaults.subagents).length === 0 &&
     Object.keys(manifest.main).length === 0

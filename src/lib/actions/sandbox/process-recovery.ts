@@ -683,27 +683,16 @@ export async function isSandboxGatewayRunningForStatus(
     startup?: { timeoutMs: number };
     commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
-    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
   } = {},
 ): Promise<boolean | null> {
   const agent = (options.getSessionAgent ?? agentRuntime.getSessionAgent)(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
-  if (agent?.name === "hermes") {
-    const result = (options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction)(
-      sandboxName,
-      "probe",
-      OPENSHELL_PROBE_TIMEOUT_MS,
-    );
-    if (hasGatewayRecoveryMarker(result)) return true;
-    if (isExactlyManagedControlMarker(result, "SUPERVISOR_NOT_RUNNING")) return false;
-    return null;
-  }
   return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
 }
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
-/** Retry a stopped Hermes gateway observation before returning the probe result. */
+/** Require one positive Hermes gateway observation after startup within the bounded window. */
 export async function waitForStartedHermesGatewayProcess(
   sandboxName: string,
   gatewayName: string,
@@ -712,7 +701,7 @@ export async function waitForStartedHermesGatewayProcess(
     sleep?: (delayMs: number) => Promise<void>;
     log?: (message: string) => void;
   } = {},
-): Promise<boolean | null> {
+): Promise<boolean> {
   const probe = options.probe ?? isSandboxGatewayRunningForStatus;
   let attempt = 0;
   let running: boolean | null = null;
@@ -721,12 +710,12 @@ export async function waitForStartedHermesGatewayProcess(
       attempt += 1;
       running = await probe(sandboxName, gatewayName);
       const delayMs = HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS[attempt - 1];
-      if (running === false && delayMs !== undefined) {
+      if (running !== true && delayMs !== undefined) {
         options.log?.(
           `  Hermes gateway is still starting; checking again in ${delayMs / 1_000} seconds…`,
         );
       }
-      return running !== false;
+      return running === true;
     },
     {
       maxAttempts: HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS.length + 1,
@@ -736,7 +725,7 @@ export async function waitForStartedHermesGatewayProcess(
       ...(options.sleep ? { sleep: options.sleep } : {}),
     },
   );
-  return running;
+  return running === true;
 }
 
 export async function isSandboxGatewayHttpReachableForStatus(
