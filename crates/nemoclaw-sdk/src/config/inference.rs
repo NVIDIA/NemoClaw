@@ -12,9 +12,7 @@ pub struct InferenceConnection {
 impl Document {
     pub fn has_runtime(&self) -> bool {
         self.spec.gateway.management == "managed"
-            || self
-                .selected_inference_providers()
-                .is_ok_and(|providers| providers.iter().any(|p| p.service.is_some()))
+            || crate::services::has_runtime(self).unwrap_or(false)
     }
     /// Validate the document and resolve its inference connection.
     /// Managed inference retains its publication; external inference uses its explicit URL.
@@ -32,34 +30,11 @@ impl Document {
         &self,
         provider: &InferenceProvider,
     ) -> Result<InferenceConnection, ConfigError> {
-        let endpoint = match &provider.service {
-            None => provider
-                .ollama_proxy
-                .as_ref()
-                .map_or_else(|| provider.endpoint.clone(), |proxy| proxy.endpoint.clone()),
-            Some(service) => match &service.publication {
-                Some(publication) => publication.endpoint.clone(),
-                None => format!(
-                    "http://{}:{}/v1",
-                    self.spec.gateway.bridge()?,
-                    service.serving.port
-                ),
-            },
-        };
+        let endpoint = crate::services::resolve(self, provider)?
+            .map_or_else(|| provider.endpoint.clone(), |service| service.endpoint);
         Ok(InferenceConnection {
             endpoint,
             credential: provider.credential.clone(),
         })
-    }
-}
-
-impl InferenceProvider {
-    pub(crate) fn authenticated(&self) -> bool {
-        self.credential.is_some()
-            || self
-                .service
-                .as_ref()
-                .is_some_and(|service| service.authentication.is_some())
-            || self.ollama_proxy.is_some()
     }
 }

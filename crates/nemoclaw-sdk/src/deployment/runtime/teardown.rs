@@ -37,11 +37,13 @@ impl Deployment {
             None
         };
         let mut result = OperationResult::planned(Vec::new());
-        result.retained.extend(retained_bindings(&bindings, false));
+        result
+            .retained
+            .extend(retained_bindings(&record, &bindings, false)?);
         if let Some(stage) = &runtime {
             result
                 .retained
-                .extend(retained_bindings(&stage.bindings()?, true));
+                .extend(retained_bindings(&record, &stage.bindings()?, true)?);
         }
         if record.destroyed {
             if !preview {
@@ -119,7 +121,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
-        let retained = retained_addresses(runtime, &bindings);
+        let retained = retained_addresses(record, &bindings, runtime)?;
         let graph = teardown_graph(
             record,
             &bundle.manifest.version,
@@ -153,26 +155,23 @@ impl Deployment {
 }
 
 fn retained_addresses(
-    runtime: bool,
+    record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
-) -> BTreeSet<String> {
-    if runtime {
-        bindings
-            .keys()
-            .filter(|address| {
-                address.as_str() == GATEWAY_STORAGE
-                    || address.starts_with("nemoclaw_inference_storage.")
-            })
-            .cloned()
-            .collect()
+    runtime: bool,
+) -> Result<BTreeSet<String>, Error> {
+    let mut retained: BTreeSet<_> =
+        crate::services::remove_plans(&record.document, &record.generations)?
+            .into_iter()
+            .flat_map(|plan| plan.retained)
+            .filter(|address| bindings.contains_key(address))
+            .collect();
+    retained.insert(if runtime {
+        GATEWAY_STORAGE.into()
     } else {
-        [
-            "nemoclaw_workspace.deployment".into(),
-            crate::deployment::ollama::STORAGE.into(),
-            "nemoclaw_ollama_proxy_storage.credentials".into(),
-        ]
-        .into()
-    }
+        "nemoclaw_workspace.deployment".into()
+    });
+    retained.retain(|address| bindings.contains_key(address));
+    Ok(retained)
 }
 
 fn teardown_expected(
@@ -186,20 +185,13 @@ fn teardown_expected(
         compile::targets(&record.document, &record.generations)?
     };
     if runtime {
-        bind_teardown_processes(&mut targets, bindings)?;
+        bind_teardown_processes(record, &mut targets, bindings)?;
     } else if !bindings.contains_key("nemoclaw_workspace.deployment") {
         return Err(Error::Conflict(
             "destroy requires the retained workspace binding",
         ));
     }
-    let mut expected = allowed(&targets);
-    if !runtime {
-        crate::deployment::ollama::extend_allowed(
-            &record.document,
-            &record.generations,
-            &mut expected,
-        )?;
-    }
+    let expected = allowed(&targets);
     for (address, binding) in bindings {
         let want = expected.get(address).ok_or(Error::Conflict(
             "destroy encountered an undeclared resource binding",
@@ -219,15 +211,23 @@ fn teardown_expected(
 }
 
 fn bind_teardown_processes(
+    record: &Record,
     targets: &mut [Target],
     bindings: &BTreeMap<String, StateBinding>,
 ) -> Result<(), Error> {
     for target in targets {
-        let storage = match target.kind.as_str() {
-            GATEWAY_KIND => GATEWAY_STORAGE.to_owned(),
-            SERVICE_KIND => model_storage(&target.address),
-            _ => continue,
+        let storage = if target.kind == GATEWAY_KIND {
+            Some(GATEWAY_STORAGE.to_owned())
+        } else if crate::services::resource_behavior(&target.kind).runtime_process {
+            crate::services::required_storage_address(
+                &record.document,
+                &record.generations,
+                &target.address,
+            )?
+        } else {
+            None
         };
+        let Some(storage) = storage else { continue };
         if bindings.contains_key(&target.address) && !bindings.contains_key(&storage) {
             return Err(Error::Conflict(
                 "destroy requires independent storage bindings before removing a managed process",
@@ -252,19 +252,14 @@ fn teardown_graph(
 ) -> Result<Value, Error> {
     let mut graph = compile::compile(&record.document, &record.generations, version)?;
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    let resources = graph["resource"].take();
     graph["resource"] = json!({});
     for address in retained {
         if bindings.contains_key(address) {
             let (kind, name) = address
                 .split_once('.')
                 .ok_or(Error::State("invalid resource address"))?;
-            let retained_values = if address == crate::deployment::ollama::STORAGE {
-                resources["nemoclaw_ollama_storage"]["models"].clone()
-            } else {
-                serde_json::to_value(&expected[address])
-                    .map_err(|_| Error::State("cannot encode retained resource"))?
-            };
+            let retained_values = serde_json::to_value(&expected[address])
+                .map_err(|_| Error::State("cannot encode retained resource"))?;
             let mut attrs = retained_values;
             attrs["lifecycle"] = json!({"prevent_destroy":true});
             graph["resource"][kind][name] = attrs;
@@ -282,22 +277,28 @@ fn validate_teardown_state(
             "unfinished apply may have unbound effects; reconcile its original configuration before destroy",
         ));
     }
-    if record.document.lifecycle_provider()?.ollama.is_some()
-        && bindings.contains_key("nemoclaw_ollama.service")
-        && !bindings.contains_key(crate::deployment::ollama::STORAGE)
+    for (service, storage) in crate::services::remove_plans(&record.document, &record.generations)?
+        .into_iter()
+        .flat_map(|plan| plan.required_storage)
     {
-        return Err(Error::Conflict(
-            "apply once to establish independent Ollama storage binding before destroy",
-        ));
+        if bindings.contains_key(&service) && !bindings.contains_key(&storage) {
+            return Err(Error::Conflict(
+                "apply once to establish independent service storage binding before destroy",
+            ));
+        }
     }
     Ok(())
 }
 
-fn retained_bindings(bindings: &BTreeMap<String, StateBinding>, runtime: bool) -> Vec<String> {
-    retained_addresses(runtime, bindings)
+fn retained_bindings(
+    record: &Record,
+    bindings: &BTreeMap<String, StateBinding>,
+    runtime: bool,
+) -> Result<Vec<String>, Error> {
+    Ok(retained_addresses(record, bindings, runtime)?
         .into_iter()
         .filter(|address| bindings.contains_key(address))
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -331,7 +332,17 @@ mod tests {
         let (mut record, _) = runtime_state();
         let mut provider = record.document.spec.inference_providers[0].clone();
         provider.name = "other".into();
-        provider.service.as_mut().unwrap().serving.port += 1;
+        provider.service_ref = Some("other".into());
+        let mut definition = record.document.spec.services["qwen"].clone();
+        let crate::config::ServiceDefinition::Vllm(service) = &mut definition else {
+            panic!("expected vLLM service");
+        };
+        service.serving.port += 1;
+        record
+            .document
+            .spec
+            .services
+            .insert("other".into(), definition);
         record.document.spec.inference_providers.push(provider);
         let mut sandbox = record.document.spec.sandboxes[0].clone();
         sandbox.name = "other".into();
@@ -352,7 +363,7 @@ mod tests {
                 })
                 .collect();
         let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let retained = retained_addresses(true, &bindings);
+        let retained = retained_addresses(&record, &bindings, true).unwrap();
         assert_eq!(retained.len(), 3);
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
         assert_eq!(
@@ -394,15 +405,16 @@ mod tests {
     #[test]
     fn teardown_preserves_bound_process_specs_and_retains_only_storage_in_the_graph() {
         let (mut record, bindings) = runtime_state();
-        record.document.spec.inference_providers[0]
-            .service
-            .as_mut()
-            .unwrap()
-            .image = format!("local@sha256:{}", "a".repeat(64));
+        let crate::config::ServiceDefinition::Vllm(service) =
+            record.document.spec.services.get_mut("qwen").unwrap()
+        else {
+            panic!("expected vLLM service");
+        };
+        service.runtime.image = format!("local@sha256:{}", "a".repeat(64));
         let expected = teardown_expected(&record, &bindings, true).unwrap();
         let process = "nemoclaw_inference_service.inference_qwen";
         assert_eq!(expected[process]["spec"], bindings[process].spec);
-        let retained = retained_addresses(true, &bindings);
+        let retained = retained_addresses(&record, &bindings, true).unwrap();
         let graph = teardown_graph(&record, "0.1.0", &expected, &bindings, &retained).unwrap();
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 2);

@@ -63,7 +63,7 @@ async fn run_owned(
         ));
     }
     let capacity = crate::hardware::before_start(spec, cancel).await?;
-    let (mut command, readiness) = crate::backend::launch(
+    let (mut command, readiness) = crate::vllm::launch(
         spec,
         &prepared,
         nemoclaw_sdk::hardware::serving_memory(spec, &capacity)?,
@@ -92,7 +92,7 @@ async fn run_owned(
         }
     });
     let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move { crate::backend::wait_ready(readiness, ready_tx).await });
+    let health = tokio::spawn(async move { crate::vllm::wait_ready(readiness, ready_tx).await });
     let result = supervisor::supervise(
         supervisor::Policy {
             startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),

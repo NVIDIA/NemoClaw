@@ -24,9 +24,6 @@ pub(crate) fn gpu_bytes(service: &Service) -> u64 {
         * GIB
 }
 pub fn validate(service: &Service) -> Result<(), ConfigError> {
-    if service.backend != c::BACKEND {
-        return Err(ConfigError::new("unsupported inference backend"));
-    }
     service.validate_hardware()?;
     crate::recipes::huggingface::validate_model(service)?;
     if let Some(recipe) = &service.recipe {

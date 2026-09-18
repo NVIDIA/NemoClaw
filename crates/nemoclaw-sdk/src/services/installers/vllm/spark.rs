@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{Capacity, GIB};
-use crate::{Error, config::constraints as c};
+use crate::{
+    Error,
+    config::constraints as c,
+    hardware::{Capacity, GIB},
+};
 
 pub(super) fn check_compatibility(c: &Capacity) -> Result<(), Error> {
     if c.architecture != "arm64"

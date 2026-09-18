@@ -328,7 +328,7 @@ impl Document {
             &self.provider_key(provider),
             &connection.endpoint,
             &provider.provider,
-            provider.authenticated(),
+            crate::services::provider_authenticated(self, provider)?,
         )
         .map_err(|_| ConfigError::new("invalid native inference profile"))?;
         Ok(RuntimeModel {

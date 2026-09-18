@@ -386,12 +386,6 @@ impl Engine {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
-    pub async fn preflight_ollama(&self, spec: &ServiceSpec, id: &str) -> Result<(), Error> {
-        match self.observe_ollama(spec, id).await {
-            Err(Error::PartialRuntime) if id.is_empty() => Ok(()),
-            other => other.map(|_| ()),
-        }
-    }
     pub async fn bound_ollama(&self, id: &str, endpoint: &str) -> Result<Service, Error> {
         let parts: Vec<_> = id.split('/').collect();
         if parts.len() != 3 || parts.iter().any(|s| s.is_empty()) {

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{RuntimeObservation, capacity::regular_stat};
+use super::capacity::regular_stat;
 use crate::{
     Error,
     docker::Engine,
+    managed::RuntimeObservation,
     snapshot::{Receipt, VerifiedFile},
 };
 use serde::{Deserialize, Serialize};
@@ -67,18 +68,18 @@ impl Engine {
                 .as_ref()
                 .ok_or(Error::State("missing inference specification"))?;
             if service.authentication.is_some() {
-                crate::inference_auth::read_key(self, &observed.container_id).await?;
+                crate::services::authentication::read_key(self, &observed.container_id).await?;
             }
-            let model = format!("/data/{}", crate::recipes::huggingface::directory(service));
+            let model = format!("/data/{}", super::recipes::huggingface::directory(service));
             let bytes = self
                 .read_file(
                     &observed.container_id,
-                    &format!("{model}/{}", crate::recipes::huggingface::MANIFEST_FILE),
+                    &format!("{model}/{}", super::recipes::huggingface::MANIFEST_FILE),
                     4 << 20,
                 )
                 .await?
                 .ok_or(Error::State("selected model manifest is unobservable"))?;
-            let manifest = crate::recipes::huggingface::decode_manifest(service, &bytes)?;
+            let manifest = super::recipes::huggingface::decode_manifest(service, &bytes)?;
             let bytes = self
                 .read_file(
                     &observed.container_id,
@@ -105,10 +106,10 @@ impl Engine {
                     )
                     .await?
                     .ok_or(Error::State("recipe completion is unobservable"))?;
-                let receipt: crate::recipes::preparation::Completion =
+                let receipt: super::recipes::preparation::Completion =
                     serde_json::from_slice(&bytes)
                         .map_err(|_| Error::State("invalid recipe completion receipt"))?;
-                crate::recipes::preparation::validate_receipt(recipe, &key, &receipt)?;
+                super::recipes::preparation::validate_receipt(recipe, &key, &receipt)?;
                 for file in &receipt.files {
                     self.verify_artifact_file(&observed.container_id, &prepared, file)
                         .await?;

@@ -15,14 +15,19 @@ pub struct Definition {
     pub kind: &'static str,
     pub fields: Vec<&'static str>,
     pub mutable: Vec<&'static str>,
+    pub computed_digest: bool,
+    pub observed_running: bool,
 }
 
 impl Definition {
     pub fn new(kind: &'static str, fields: &[&'static str], mutable: &[&'static str]) -> Self {
+        let behavior = nemoclaw_sdk::services::resource_behavior(kind);
         Self {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
+            computed_digest: behavior.computed_digest,
+            observed_running: behavior.observed_running || kind == "managed_gateway",
         }
     }
 }
@@ -41,7 +46,7 @@ pub fn plan_update(
     {
         proposed.insert("id".into(), id.clone());
     }
-    if matches!(definition.kind, "managed_gateway" | "inference_service") {
+    if definition.observed_running {
         match prior.get("running") {
             Some(Value::Value(value)) if value == "false" => {
                 proposed.insert("running".into(), Value::Unknown);
@@ -52,7 +57,7 @@ pub fn plan_update(
             None => {}
         }
     }
-    if definition.kind == "ollama_model" {
+    if definition.computed_digest {
         proposed.insert(
             "digest".into(),
             if definition

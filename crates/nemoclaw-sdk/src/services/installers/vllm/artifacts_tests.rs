@@ -5,7 +5,8 @@ use crate::docker::fixture::Fixture;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 fn observed() -> RuntimeObservation {
-    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("../../../managed/reference.json")).unwrap();
     RuntimeObservation {
         spec: serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap(),
         id: "binding".into(),
@@ -156,7 +157,6 @@ async fn unavailable_artifacts_are_errors_not_runtime_absence() {
             if generic {
                 let service = observation.spec.service.as_mut().unwrap();
                 service.recipe = None;
-                service.backend = "vllm".into();
                 service.model.repository = "owner/model".into();
                 service.model.revision = "a".repeat(40);
             }

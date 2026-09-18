@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::{Document, validate_endpoint};
+use nemoclaw_sdk::config::{Document, ServiceDefinition, validate_endpoint};
 use serde_json::Value;
 
 #[test]
@@ -99,16 +99,11 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     defaulted.spec.gateway.endpoint.clear();
     defaulted.spec.gateway.engine.clear();
     defaulted.spec.gateway.image.clear();
-    defaulted.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .serving = Default::default();
-    defaulted.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .memory = Default::default();
+    let ServiceDefinition::Vllm(service) = defaulted.spec.services.get_mut("qwen").unwrap() else {
+        panic!("expected vLLM service");
+    };
+    service.serving = Default::default();
+    service.memory = Default::default();
     defaulted.spec.sandboxes[0].image.ref_.clear();
     defaulted.spec.sandboxes[0].runtime.provider.clear();
     defaulted.spec.sandboxes[0].network.tier.clear();
@@ -116,24 +111,21 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     assert_eq!(defaulted, original);
     for timeout in [0, 59, 3601] {
         let mut changed = original.clone();
-        changed.spec.inference_providers[0]
-            .service
-            .as_mut()
-            .unwrap()
-            .serving
-            .startup_timeout_seconds = timeout;
+        let ServiceDefinition::Vllm(service) = changed.spec.services.get_mut("qwen").unwrap()
+        else {
+            panic!("expected vLLM service");
+        };
+        service.serving.startup_timeout_seconds = timeout;
         assert!(changed.validate().is_err());
     }
     let mut changed = original.clone();
     changed.spec.inference_providers[0].endpoint = "http://127.0.0.1:18888/v1".into();
     assert!(changed.validate().is_err());
     let mut changed = original;
-    changed.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .memory
-        .host_reserve_gib = 1;
+    let ServiceDefinition::Vllm(service) = changed.spec.services.get_mut("qwen").unwrap() else {
+        panic!("expected vLLM service");
+    };
+    service.memory.host_reserve_gib = 1;
     assert!(changed.validate().is_err());
 }
 
@@ -360,8 +352,8 @@ fn harness_selection_does_not_determine_service_ownership() {
     );
     claude.spec.inference_providers[0].provider = "anthropic".into();
     assert!(
-        claude.validate().is_ok(),
-        "ownership does not imply API compatibility of the actual server"
+        claude.validate().is_err(),
+        "managed vLLM exposes the OpenAI API regardless of harness ownership"
     );
     let mut external =
         Document::parse(include_str!("fixtures/config/fabric-claude.yaml").as_bytes()).unwrap();

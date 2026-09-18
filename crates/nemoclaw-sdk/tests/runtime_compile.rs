@@ -76,9 +76,9 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670"});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["inferenceProviders"][0]["service"]["placement"] =
-        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
-    value["spec"]["inferenceProviders"][0]["service"]["publication"] =
+    value["spec"]["services"]["qwen"]["runtime"]["engine"] = json!("ssh://operator@gpu-box");
+    value["spec"]["services"]["qwen"]["placement"] = json!({"networkCidr":"172.30.119.0/24"});
+    value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let bytes = serde_json::to_vec(&value).unwrap();
     let document = Document::parse(bytes.as_slice()).unwrap();
@@ -126,7 +126,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     );
     for field in ["placement", "publication"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]
+        invalid["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(field);
@@ -134,13 +134,11 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     }
     for cidr in ["172.30.119.8/24", "10.0.0.0/24"] {
         let mut invalid = value.clone();
-        invalid["spec"]["inferenceProviders"][0]["service"]["placement"]["networkCidr"] =
-            json!(cidr);
+        invalid["spec"]["services"]["qwen"]["placement"]["networkCidr"] = json!(cidr);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
     let mut invalid = value.clone();
-    invalid["spec"]["inferenceProviders"][0]["service"]["publication"]["bindAddress"] =
-        json!("0.0.0.0");
+    invalid["spec"]["services"]["qwen"]["publication"]["bindAddress"] = json!("0.0.0.0");
     assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
 }
 

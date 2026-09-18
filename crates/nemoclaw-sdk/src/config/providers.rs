@@ -134,45 +134,6 @@ impl Document {
         Ok(selected.into_values().collect())
     }
 
-    // Ollama lifecycle callers still require one selected daemon/proxy.
-    // Managed services are compiled independently for each selected provider.
-    pub(crate) fn lifecycle_provider(&self) -> Result<&InferenceProvider, ConfigError> {
-        let providers = self.selected_inference_providers()?;
-        let mut managed = providers
-            .into_iter()
-            .filter(|provider| provider.ollama.is_some() || provider.ollama_proxy.is_some());
-        let selected = managed.next();
-        if managed.next().is_some() {
-            return Err(ConfigError::new(
-                "a deployment supports at most one provider with managed inference dependencies",
-            ));
-        }
-        selected.map_or_else(
-            || {
-                self.selected_inference_providers()?
-                    .into_iter()
-                    .min_by_key(|p| &p.name)
-                    .ok_or(ConfigError::new("no selected providers"))
-            },
-            Ok,
-        )
-    }
-
-    pub(crate) fn provider_model<'a>(
-        &'a self,
-        provider: &InferenceProvider,
-    ) -> Result<&'a str, ConfigError> {
-        for agent in self.spec.sandboxes.iter().map(|sandbox| &sandbox.agent) {
-            let (inference, scope) = self.scoped_inference(agent)?;
-            for route in &inference.routes {
-                if std::ptr::eq(self.route_provider(route, scope)?, provider) {
-                    return Ok(&route.overrides.model);
-                }
-            }
-        }
-        Err(ConfigError::new("provider has no selected model"))
-    }
-
     pub(crate) fn selected_provider_mut(
         &mut self,
         name: &str,

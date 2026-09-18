@@ -35,7 +35,8 @@ fn invalid_placement_network_does_not_panic() {
         serde_json::from_str(include_str!("reference.json")).unwrap();
     let mut value: serde_json::Value =
         serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
-    value["service"]["placement"] = json!({"engine":"ssh://host","networkCidr":"invalid"});
+    value["service"]["runtime"]["engine"] = json!("ssh://host");
+    value["service"]["placement"] = json!({"networkCidr":"invalid"});
     let spec: Spec = serde_json::from_value(value).unwrap();
     assert!(spec.bridge().is_err());
 }

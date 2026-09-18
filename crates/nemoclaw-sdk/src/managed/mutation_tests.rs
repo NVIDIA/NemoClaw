@@ -126,7 +126,7 @@ async fn failed_startup_and_explicit_recovery_keep_container_and_storage_identit
         let mut state=shared.lock().unwrap();
         let (status,value)=match (request.method.as_str(),request.path.split('?').next().unwrap()) {
             ("GET","/info")=>(200,json!({"ID":"engine","DockerRootDir":"/var/lib/docker"})),
-            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.backend":service.backend,"org.nemoclaw.model":service.model.revision}}})),
+            ("GET",path) if path.starts_with("/images/")=>(200,json!({"Id":"sha256:runtime","Architecture":"arm64","Os":"linux","Config":{"Env":[],"Labels":{"org.nemoclaw.recipe.protocol":"v1","org.nemoclaw.backend":"vllm","org.nemoclaw.model":service.model.revision}}})),
             ("GET",path) if path.starts_with("/networks/")=>(200,state.network.clone()),
             ("GET",path) if path.starts_with("/volumes/")=>state.volume.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),
             ("GET",path) if path.starts_with("/containers/")=>state.container.clone().map(|v|(200,v)).unwrap_or((404,json!({"message":"missing"}))),

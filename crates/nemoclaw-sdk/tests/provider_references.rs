@@ -150,7 +150,7 @@ fn references_reject_missing_names_shadowing_and_distinct_inline_instances() {
     }
 }
 #[test]
-fn inline_managed_providers_preserve_runtime_graphs_and_defaults() {
+fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
     for input in [
         include_str!("../../../examples/managed-ollama.yaml"),
         include_str!("../../../examples/spark/vllm.yaml"),
@@ -178,26 +178,10 @@ fn inline_managed_providers_preserve_runtime_graphs_and_defaults() {
         );
         let local_runtime = nemoclaw_sdk::compile::runtime_targets(&local, &generations).unwrap();
         let shared_runtime = nemoclaw_sdk::compile::runtime_targets(&shared, &generations).unwrap();
-        assert_eq!(local_runtime.len(), shared_runtime.len());
-        for (local, shared) in local_runtime.iter().zip(&shared_runtime) {
-            assert_eq!(local.kind, shared.kind);
-            let mut actual: Value = serde_json::from_str(&local.values["spec"]).unwrap();
-            let mut expected: Value = serde_json::from_str(&shared.values["spec"]).unwrap();
-            if local.kind.starts_with("inference_") {
-                assert_ne!(
-                    local.address, shared.address,
-                    "scoped definitions have distinct identities"
-                );
-                for field in ["name", "Name"] {
-                    actual.as_object_mut().unwrap().remove(field);
-                    expected.as_object_mut().unwrap().remove(field);
-                }
-            }
-            assert_eq!(
-                actual, expected,
-                "scope changes identity, not service settings"
-            );
-        }
+        assert_eq!(
+            local_runtime, shared_runtime,
+            "provider scope must not duplicate a referenced service"
+        );
         assert_eq!(local.has_runtime(), shared.has_runtime());
         assert_eq!(
             Document::parse(local.yaml().unwrap().as_bytes()).unwrap(),

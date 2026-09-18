@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    config::Document,
+    config::{Document, ServiceDefinition},
     hardware::{Capacity, GIB},
 };
 fn service() -> nemoclaw_sdk::config::Service {
-    Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes())
-        .unwrap()
-        .spec
-        .inference_providers
-        .remove(0)
-        .service
-        .unwrap()
+    let mut document =
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    let ServiceDefinition::Vllm(service) = document.spec.services.remove("qwen").unwrap() else {
+        panic!("expected vLLM service");
+    };
+    *service
 }
 #[test]
 fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
@@ -48,9 +47,12 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
     assert!(nemoclaw_sdk::hardware::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
     service.model.revision = "0".repeat(40);
     assert!(service.validate().is_err());
-    service = self::service();
-    service.backend = "llama.cpp".into();
-    assert!(service.validate().is_err());
+    let mut document = serde_json::to_value(
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    document["spec"]["services"]["qwen"]["kind"] = "llamaCpp".into();
+    assert!(Document::parse(serde_json::to_vec(&document).unwrap().as_slice()).is_err());
 }
 
 #[test]

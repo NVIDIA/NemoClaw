@@ -42,7 +42,7 @@ fn schema_generation_is_repeatable_and_check_rejects_missing_or_stale_output() {
     let markdown =
         fs::read_to_string(&reference).expect("generation includes the YAML field reference");
     assert!(markdown.contains("## Gateway"));
-    assert!(markdown.contains("spec.inferenceProviders[].service.serving"));
+    assert!(markdown.contains("spec.services.{key}.serving"));
     fs::write(&reference, "stale reference\n").unwrap();
     assert!(!generate(directory.path(), true).status.success());
     assert_eq!(fs::read_to_string(&reference).unwrap(), "stale reference\n");

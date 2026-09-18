@@ -176,7 +176,7 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     assert_eq!(document.spec.gateway.management, "external");
     // Ollama recovery/destroy is fixture-qualified separately; this live target
     // has not qualified its complete agent lifecycle.
-    assert!(provider.ollama.is_none());
+    assert!(provider.service_ref.is_none());
     fs::create_dir_all(&directory).unwrap();
     let save = |name: &str, value: &Value| {
         fs::write(
@@ -313,11 +313,9 @@ fn upgrade_gate_configuration(document: &Document) -> bool {
             .selected_inference_providers()
             .is_ok_and(|providers| {
                 providers.len() == 1
-                    && providers.iter().all(|provider| {
-                        provider.service.is_none()
-                            && provider.ollama.is_none()
-                            && provider.ollama_proxy.is_none()
-                    })
+                    && providers
+                        .iter()
+                        .all(|provider| provider.service_ref.is_none())
             })
 }
 

@@ -66,6 +66,16 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"description": "Integration implementation selected by this definition."}),
         );
     }
+    for variant in defs["ServiceDefinition"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged service variants")
+    {
+        property(
+            variant,
+            "kind",
+            json!({"description": "Supported installer selected by this service definition."}),
+        );
+    }
     for name in ["Spec", "Sandbox", "Agent"] {
         property(
             &mut defs[name],
@@ -85,6 +95,11 @@ pub(super) fn constrain(root: &mut Value) {
             json!({"propertyNames": {"pattern": c::SLUG}}),
         );
     }
+    property(
+        &mut defs["Spec"],
+        "services",
+        json!({"propertyNames": {"pattern": c::SLUG}}),
+    );
     property(
         &mut defs["Agent"],
         "inferenceRef",
@@ -254,36 +269,27 @@ pub(super) fn constrain(root: &mut Value) {
 
     let provider = &mut defs["InferenceProvider"];
     property(provider, "provider", json!({"enum": c::PROVIDERS}));
-    provider["if"] = json!({"required": ["service"]});
-    provider["then"] = json!({"properties": {"endpoint": {"const": ""}}, "allOf": [forbid(&["credential", "ollama", "ollamaProxy"])]});
-    provider["else"] =
-        json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
+    property(provider, "serviceRef", json!({"pattern": c::SLUG}));
+    provider["if"] = json!({"required": ["serviceRef"]});
+    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""},"management":{"const":"managed"}}, "allOf": [forbid(&["credential"])]});
+    provider["else"] = json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"},"management":{"const":"external"}}});
     provider["allOf"] = json!([
-        {"if": {"anyOf": [{"required": ["service"]}, {"required": ["ollama"]}]},
-         "then": {"properties": {"management": {"const": "managed"}}},
-         "else": {"properties": {"management": {"const": "external"}}}},
-        {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])},
-        {"if": {"required": ["ollama"]}, "then": {
-            "properties": {"endpoint": {"pattern": "^http://.+:[0-9]+/v1$"}},
-            "allOf": [forbid(&["credential"])]
-        }}
+        {"if": at("endpoint", json!({"pattern": "^http:"}), true), "then": forbid(&["credential"])}
     ]);
-    provider["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["ollamaProxy"]},"then":{
-        "properties":{"provider":{"const":"openai"},"management":{"const":"external"}},"allOf":[forbid(&["ollama","service","credential"])]}}));
     property(
-        &mut defs["OllamaProxy"],
-        "engine",
-        json!({"pattern":"^unix:///"}),
+        &mut defs["ServiceRuntime"],
+        "provider",
+        json!({"const":"docker"}),
     );
     property(
-        &mut defs["OllamaProxy"],
+        &mut defs["ServiceRuntime"],
+        "engine",
+        json!({"pattern":"^(unix:///|ssh://)"}),
+    );
+    property(
+        &mut defs["ServiceRuntime"],
         "image",
         json!({"pattern":c::IMAGE}),
-    );
-    property(
-        &mut defs["ManagedOllama"],
-        "engine",
-        json!({"pattern": "^unix:///"}),
     );
     defs["NetworkReference"]["anyOf"][0]["pattern"] = json!(c::SLUG);
     property(
@@ -292,9 +298,14 @@ pub(super) fn constrain(root: &mut Value) {
         json!({"pattern": c::SLUG}),
     );
     property(
-        &mut defs["ManagedOllama"],
-        "image",
-        json!({"pattern": "^ollama/ollama@sha256:[a-f0-9]{64}$"}),
+        &mut defs["OllamaModel"],
+        "name",
+        json!({"pattern":c::OLLAMA_MODEL}),
+    );
+    property(
+        &mut defs["ExternalOllamaModel"],
+        "name",
+        json!({"pattern":c::OLLAMA_MODEL}),
     );
     property(
         &mut defs["OpenClawDashboard"],
@@ -376,15 +387,9 @@ pub(super) fn constrain(root: &mut Value) {
         ),
     ] {
         let agent = "spec/sandboxes/[]/agent";
-        let runtime = "spec/sandboxes/[]/runtime/provider";
         let route = format!("{agent}/inference/routes/[]/overrides");
-        let service = format!("{provider}/service");
         let rules = json!([
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"const": "pi"}), true), "then": at(provider, forbid(&["api"]), false)},
-            {"if": {"allOf": [at(&service, json!({}), true), {"anyOf": [
-                at("spec/gateway/management", json!({"const": "external"}), true),
-                at(runtime, json!({"const": "podman"}), true)
-             ]}]}, "then": at(&service, json!({"required": ["placement"]}), true)},
             {"if": {"anyOf": [at(&format!("{provider}/api"), json!({"const": "anthropic-messages"}), true),
                 {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "claude"}), true), at(provider, forbid(&["api"]), true)]}]},
              "then": at(&format!("{provider}/provider"), json!({"const": "anthropic"}), false),
@@ -396,11 +401,9 @@ pub(super) fn constrain(root: &mut Value) {
              "then": at(&route, forbid(&["contextWindow", "reasoning", "reasoningEffort"]), false)},
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"enum": ["openclaw", "deepagents", "mini-swe-agent", "remote-agent"]}}), true),
              "then": at(&route, forbid(&["maxTokens"]), false)},
-            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["ollamaProxy"]},{"required":["service"],"properties":{"service":{"required":["authentication"]}}}]}), true)]}},
+            {"if": at(&format!("{agent}/auth"), json!({}), true), "then": {"allOf": [at("spec/sandboxes/[]/harness/kind", json!({"const": "hermes"}), false), at(provider, json!({"anyOf":[{"required":["credential"]},{"required":["serviceRef"]}]}), true)]}},
             {"if": at("spec/sandboxes/[]/harness/kind", json!({"not": {"const": "pi"}}), true),
-             "then": at(&route, forbid(&["piModel"]), false)},
-            {"if": at(&format!("{provider}/ollama"), json!({}), true),
-             "then": at(&format!("{route}/model"), json!({"pattern": c::OLLAMA_MODEL}), false)}
+             "then": at(&route, forbid(&["piModel"]), false)}
         ]);
         root["allOf"]
             .as_array_mut()
@@ -424,9 +427,12 @@ pub(super) fn constrain(root: &mut Value) {
 }
 
 fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
-    let service = &mut defs["Service"];
-    property(service, "backend", json!({"const": c::BACKEND}));
-    property(service, "image", json!({"pattern": c::IMAGE}));
+    let service = defs["ServiceDefinition"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged service variants")
+        .iter_mut()
+        .find(|variant| variant["properties"]["kind"]["const"] == "vllm")
+        .expect("vLLM service variant");
     service["allOf"] = json!([
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
         {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
@@ -446,11 +452,6 @@ fn service_constraints(defs: &mut serde_json::Map<String, Value>) {
         &mut defs["Model"],
         "revision",
         json!({"pattern": c::REVISION}),
-    );
-    property(
-        &mut defs["ServicePlacement"],
-        "engine",
-        json!({"pattern": "^ssh://"}),
     );
     property(
         &mut defs["ServicePlacement"],

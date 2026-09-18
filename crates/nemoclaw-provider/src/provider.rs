@@ -6,10 +6,9 @@ use async_trait::async_trait;
 use nemoclaw_sdk::{
     ObservationError,
     config::{Credential, Gateway, TLS},
-    docker::{Connections, Engine},
-    managed::ManagedBackend,
-    ollama::OllamaBackend,
+    docker::Connections,
     openshell::{EnvironmentSecrets, OpenShell},
+    services::BackendRegistry,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -32,7 +31,6 @@ pub struct ProviderConfig {
     tls_ca_env: Value<String>,
     tls_certificate_env: Value<String>,
     tls_key_env: Value<String>,
-    ollama_engine: Value<String>,
     destroy: Value<bool>,
 }
 fn text(value: Value<String>) -> String {
@@ -42,27 +40,8 @@ fn text(value: Value<String>) -> String {
     }
 }
 #[derive(Default)]
-struct ConfiguredBackend(
-    RwLock<Option<OpenShell>>,
-    RwLock<Option<Engine>>,
-    Connections,
-);
+struct ConfiguredBackend(RwLock<Option<OpenShell>>, Connections);
 impl ConfiguredBackend {
-    fn managed(&self, kind: &str, row: &Row) -> Result<ManagedBackend, ObservationError> {
-        nemoclaw_sdk::managed::runtime_engine(&self.2, kind, row)
-            .map(ManagedBackend::new)
-            .map_err(|_| ObservationError::Backend("engine connection unavailable"))
-    }
-    fn ollama(&self) -> Result<OllamaBackend, ObservationError> {
-        self.1
-            .read()
-            .map_err(|_| ObservationError::Query)?
-            .clone()
-            .map(OllamaBackend::new)
-            .ok_or(ObservationError::Backend(
-                "managed Ollama engine is not configured",
-            ))
-    }
     fn client(&self) -> Result<OpenShell, ObservationError> {
         self.0
             .read()
@@ -79,26 +58,16 @@ impl Backend for ConfiguredBackend {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        if ManagedBackend::supports(kind) {
-            return self.managed(kind, prior)?.read(kind, prior, removing).await;
-        }
-        if OllamaBackend::supports(kind) {
-            return self.ollama()?.read(kind, prior, removing).await;
+        if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
+            return backend.read(kind, prior, removing).await;
         }
         self.client()?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        if ManagedBackend::supports(kind) {
-            return match self.managed(kind, desired) {
-                Ok(backend) => backend.ensure(kind, desired).await,
-                Err(error) => Mutation::failed(error),
-            };
-        }
-        if OllamaBackend::supports(kind) {
-            return match self.ollama() {
-                Ok(backend) => backend.ensure(kind, desired).await,
-                Err(error) => Mutation::failed(error),
-            };
+        match BackendRegistry::new(&self.1).resolve(kind, desired) {
+            Ok(Some(backend)) => return backend.ensure(kind, desired).await,
+            Err(error) => return Mutation::failed(error),
+            Ok(None) => {}
         }
         match self.client() {
             Ok(client) => client.ensure(kind, desired).await,
@@ -111,14 +80,8 @@ impl Backend for ConfiguredBackend {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if ManagedBackend::supports(kind) {
-            return self
-                .managed(kind, prior)?
-                .remove(kind, prior, destroying)
-                .await;
-        }
-        if OllamaBackend::supports(kind) {
-            return self.ollama()?.remove(kind, prior, destroying).await;
+        if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
+            return backend.remove(kind, prior, destroying).await;
         }
         self.client()?.remove(kind, prior, destroying).await
     }
@@ -140,7 +103,6 @@ impl Provider for NemoClawProvider {
             "tls_ca_env",
             "tls_certificate_env",
             "tls_key_env",
-            "ollama_engine",
             "destroy",
         ] {
             attributes.insert(
@@ -174,25 +136,6 @@ impl Provider for NemoClawProvider {
         _: String,
         config: ProviderConfig,
     ) -> Option<()> {
-        let endpoint = text(config.ollama_engine);
-        let engine = if endpoint.is_empty() {
-            None
-        } else {
-            match self.backend.2.resolve(&endpoint) {
-                Ok(engine) => Some(engine),
-                Err(error) => {
-                    diags.root_error("Ollama engine configuration", error.to_string());
-                    return None;
-                }
-            }
-        };
-        match self.backend.1.write() {
-            Ok(mut slot) => *slot = engine,
-            Err(_) => {
-                diags.root_error_short("Provider configuration lock failed");
-                return None;
-            }
-        }
         let mut gateway = Gateway {
             management: "external".into(),
             endpoint: text(config.endpoint),
@@ -241,84 +184,13 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let definitions = [
-            Definition::new(
-                "ollama_proxy_storage",
-                &[
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "bind_address",
-                    "upstream",
-                    "model",
-                    "digest",
-                ],
-                &[],
-            ),
-            Definition::new(
-                "ollama_proxy",
-                &[
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "bind_address",
-                    "upstream",
-                    "model",
-                    "digest",
-                    "running",
-                ],
-                &["running"],
-            ),
-            Definition::new(
-                "ollama_external_model",
-                &[
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "bind_address",
-                    "upstream",
-                    "model",
-                    "digest",
-                ],
-                &[],
-            ),
-            Definition::new(
-                "ollama_storage",
-                &[
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "network",
-                    "bind_address",
-                ],
-                &[],
-            ),
-            Definition::new(
-                "ollama",
-                &[
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "network",
-                    "bind_address",
-                    "running",
-                ],
-                &["running"],
-            ),
-            Definition::new(
-                "ollama_model",
-                &["service_id", "endpoint", "model"],
-                &["model"],
-            ),
+        let mut definitions: Vec<_> = nemoclaw_sdk::services::resource_schemas()
+            .into_iter()
+            .map(|schema| Definition::new(schema.kind, schema.fields, schema.mutable))
+            .collect();
+        definitions.extend([
             Definition::new("managed_gateway", &["spec", "running"], &["running"]),
-            Definition::new("inference_service", &["spec", "running"], &["running"]),
             Definition::new("gateway_storage", &["spec"], &[]),
-            Definition::new("inference_storage", &["spec"], &[]),
             Definition::new(
                 "provider_profile",
                 &[
@@ -364,7 +236,7 @@ impl Provider for NemoClawProvider {
                 ],
                 &[],
             ),
-        ];
+        ]);
         Some(
             definitions
                 .into_iter()

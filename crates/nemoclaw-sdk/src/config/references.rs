@@ -250,7 +250,7 @@ pub(super) fn diagnostic_name(name: &str) -> &str {
         "<invalid name>"
     }
 }
-pub(super) fn missing_reference<'a>(
+pub(crate) fn missing_reference<'a>(
     path: &str,
     kind: &str,
     name: &str,

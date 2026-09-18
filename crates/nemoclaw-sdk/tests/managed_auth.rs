@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
     let mut input: Value =
         serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
-    input["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
+    input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
     let doc =
         Document::parse(input.to_string().as_bytes()).expect("managed bearer auth must parse");
     assert!(
@@ -42,7 +42,7 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc
     );
-    input["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("secret-text");
+    input["spec"]["services"]["qwen"]["authentication"] = json!("secret-text");
     assert!(Document::parse(input.to_string().as_bytes()).is_err());
     assert!(
         !jsonschema::validator_for(&input_schema())
@@ -55,8 +55,8 @@ fn bearer_auth_compiles_a_managed_credential_reference_without_a_secret() {
 fn generated_credential_and_runtime_specs_preserve_literal_recipe_environment() {
     let mut input: Value =
         serde_saphyr::from_str(include_str!("fixtures/config/spark.yaml")).unwrap();
-    input["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
-    input["spec"]["inferenceProviders"][0]["service"]["recipe"]["serving"]["environment"]["VLLM_LITERAL"] =
+    input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+    input["spec"]["services"]["qwen"]["recipe"]["serving"]["environment"]["VLLM_LITERAL"] =
         json!("${literal.value} %{if untouched}");
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     let generations = [

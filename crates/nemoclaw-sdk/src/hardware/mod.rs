@@ -4,7 +4,7 @@
 //! This implementation combines pressure samples and latches a trip.
 //! Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
 //! Host observations and validated memory protection, independent of a recipe.
-use crate::{Error, config::Service};
+use crate::Error;
 use std::{collections::BTreeMap, io::Read};
 pub const GIB: u64 = 1 << 30;
 #[derive(Clone, Debug, Default)]
@@ -93,16 +93,6 @@ impl ProtectionPolicy {
             consecutive,
         })
     }
-    pub fn for_service(service: &Service) -> Result<Self, Error> {
-        service.validate()?;
-        let memory = &service.memory;
-        Self::new(
-            memory.min_available_gib as u64 * GIB,
-            memory.min_free_gib as u64 * GIB,
-            memory.free_gate_gib as u64 * GIB,
-            memory.consecutive_samples as u64,
-        )
-    }
 }
 pub struct Watchdog {
     policy: ProtectionPolicy,
@@ -110,9 +100,6 @@ pub struct Watchdog {
     tripped: bool,
 }
 impl Watchdog {
-    pub fn new(service: &Service) -> Result<Self, Error> {
-        Ok(Self::from_policy(ProtectionPolicy::for_service(service)?))
-    }
     pub fn from_policy(policy: ProtectionPolicy) -> Self {
         Self {
             policy,
@@ -133,10 +120,10 @@ impl Watchdog {
     }
 }
 
-mod capacity;
-mod spark;
-pub use capacity::{check_capacity, check_memory, check_service_budgets, serving_memory};
-pub(crate) use spark::validate_memory;
+pub use crate::services::installers::vllm::hardware_capacity::{
+    check_capacity, check_memory, check_service_budgets, serving_memory,
+};
+pub(crate) use crate::services::installers::vllm::spark::validate_memory;
 
 #[cfg(target_os = "linux")]
 pub mod linux;

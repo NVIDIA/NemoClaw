@@ -13,13 +13,14 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17801
     networkCIDR: 172.30.161.0/24
-  inferenceProviders:
-  - name: local
-    provider: openai
-    service:
-      backend: vllm
+  services:
+    local:
+      kind: vllm
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
-      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       model:
         repository: Qwen/Qwen3-4B
         revision: 1cfa9a7208912126459214e8b04321603b3df60c
@@ -39,6 +40,10 @@ spec:
         minFreeGiB: 3
         freeGateGiB: 12
         consecutiveSamples: 5
+  inferenceProviders:
+  - name: local
+    provider: openai
+    serviceRef: local
   sandboxes:
   - name: assistant
     image:

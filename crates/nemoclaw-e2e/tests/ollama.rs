@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 use nemoclaw_e2e::{docker, openshell};
-use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
+use nemoclaw_sdk::{
+    CancellationToken, Deployment,
+    config::{Document, ServiceDefinition},
+};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
@@ -85,12 +88,13 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
     )
     .unwrap();
     document.spec.gateway.endpoint = gateway.endpoint.clone();
-    document.spec.inference_providers[0].endpoint = endpoint;
-    document.spec.inference_providers[0]
-        .ollama
-        .as_mut()
-        .unwrap()
-        .engine = engine.endpoint.clone();
+    let ServiceDefinition::Ollama(service) =
+        document.spec.services.get_mut("ollama-server").unwrap()
+    else {
+        panic!("expected Ollama service");
+    };
+    service.endpoint = endpoint;
+    service.runtime.engine = engine.endpoint.clone();
     let directory = tempfile::tempdir().unwrap();
     let deployment = Deployment::new(directory.path(), &bundle).with_engines(
         nemoclaw_sdk::docker::Connections::fixed([nemoclaw_sdk::docker::Engine::connect(
@@ -140,7 +144,10 @@ async fn managed_ollama_bundle_preserves_models_across_noop_export_and_failed_ob
     let recovery = deployment.plan(&document, &cancel).await.unwrap();
     assert!(!recovery.deferred.is_empty());
     assert_eq!(recovery.changes.len(), 1);
-    assert_eq!(recovery.changes[0].resource, "nemoclaw_ollama.service");
+    assert_eq!(
+        recovery.changes[0].resource,
+        "nemoclaw_ollama.ollama-server"
+    );
     assert_eq!(shared.lock().unwrap().starts, 1);
     shared.lock().unwrap().fail_start = true;
     assert!(deployment.apply(&document, &cancel).await.is_err());

@@ -11,14 +11,22 @@ spec:
   gateway:
     management: external
     endpoint: http://127.0.0.1:17671
+  services:
+    ollama-server:
+      kind: ollama
+      management: managed
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
+      endpoint: http://172.20.0.1:11436/v1
+      network: nc-prototype-slice
+      model:
+        name: qwen3:0.6b
   inferenceProviders:
     - name: local
       provider: openai
-      endpoint: http://172.20.0.1:11436/v1
-      ollama:
-        engine: unix:///var/run/docker.sock
-        image: ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
-        network: nc-prototype-slice
+      serviceRef: ollama-server
   sandboxes:
     - name: assistant
       image:

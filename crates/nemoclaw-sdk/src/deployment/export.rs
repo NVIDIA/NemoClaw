@@ -37,15 +37,11 @@ impl Deployment {
                     .id
                     .clone(),
             );
-            let observed = if crate::ollama::proxy::supports(&target.kind) {
-                let proxy = document
-                    .lifecycle_provider()?
-                    .ollama_proxy
-                    .as_ref()
-                    .ok_or(Error::State("missing proxy settings"))?;
-                crate::ollama::OllamaBackend::new(self.engines.resolve(&proxy.engine)?)
-                    .read(&target.kind, &expected, false)
-                    .await?
+            let observed = if let Some(backend) =
+                crate::services::BackendRegistry::new(&self.engines)
+                    .resolve(&target.kind, &expected)?
+            {
+                backend.read(&target.kind, &expected, false).await?
             } else {
                 client.read(&target.kind, &expected, false).await?
             }
@@ -73,7 +69,6 @@ impl Deployment {
                 _ => {}
             }
         }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.export_ollama(&document, &record.generations, &bindings)=>result? }
         document.validate()?;
         Ok(document)
     }
@@ -107,7 +102,7 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         .into_iter()
         .find(|provider| document.provider_key(provider) == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
-    let managed = provider.service.is_some();
+    let managed = provider.service_ref.is_some();
     if managed
         && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
             || !observed["credential_env"].is_empty())

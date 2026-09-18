@@ -161,28 +161,9 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         }
     }
     for provider in document.selected_inference_providers()? {
-        if provider
-            .service
-            .as_ref()
-            .is_some_and(|s| s.authentication.is_some())
+        if let Some(source) =
+            crate::services::credential_source_json(document, provider, generations)?
         {
-            let spec = runtime_targets(document, generations)
-                .map_err(|_| ConfigError::new("invalid managed credential source"))?
-                .into_iter()
-                .find(|t| {
-                    t.address
-                        == format!(
-                            "nemoclaw_inference_service.inference_{}",
-                            document.provider_key(provider)
-                        )
-                })
-                .ok_or(ConfigError::new("missing managed credential source"))?
-                .values["spec"]
-                .clone();
-            let source = crate::inference_auth::Source::ManagedService {
-                spec: serde_json::from_str(&spec)
-                    .map_err(|_| ConfigError::new("invalid managed credential source"))?,
-            };
             result
                 .iter_mut()
                 .find(|r| {
@@ -190,28 +171,10 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
                 })
                 .unwrap()
                 .values
-                .insert("credential_source".into(), source.json()?);
+                .insert("credential_source".into(), source);
         }
     }
-    let provider = document.lifecycle_provider()?;
-    if let Some(proxy) = &provider.ollama_proxy {
-        let spec = crate::ollama::proxy::specification(document, generations)
-            .map_err(|_| ConfigError::new("invalid Ollama proxy specification"))?;
-        let source = crate::inference_auth::Source::OllamaProxy {
-            engine: proxy.engine.clone(),
-            spec: Box::new(spec),
-        };
-        result
-            .iter_mut()
-            .find(|r| r.kind == "provider" && r.values["name"] == document.provider_key(provider))
-            .unwrap()
-            .values
-            .insert("credential_source".into(), source.json()?);
-        result.extend(
-            crate::ollama::proxy::targets(document, generations)
-                .map_err(|_| ConfigError::new("invalid proxy resources"))?,
-        );
-    }
+    result.extend(crate::services::deployment_targets(document, generations)?);
     Ok(result)
 }
 
@@ -255,7 +218,10 @@ fn inference_targets(
         format!("nemoclaw-inference-{}", document.provider_key(provider)),
     );
     profile.remove("credential_env");
-    profile.insert("authenticated".into(), provider.authenticated().to_string());
+    profile.insert(
+        "authenticated".into(),
+        crate::services::provider_authenticated(document, provider)?.to_string(),
+    );
     Ok([
         Target {
             kind: "provider_profile".into(),
@@ -278,7 +244,6 @@ pub fn compile(
 ) -> Result<Value, ConfigError> {
     let targets = targets(document, generations)?;
     let gateway = &document.spec.gateway;
-    let inference = document.lifecycle_provider()?;
     let mut provider = json!({"endpoint":gateway.endpoint});
     if let Some(c) = &gateway.credential {
         provider["credential_env"] = json!(c.env);
@@ -288,35 +253,7 @@ pub fn compile(
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
-    if let Some(proxy) = &inference.ollama_proxy {
-        provider["ollama_engine"] = json!(proxy.engine);
-    }
     let mut resources = json!({});
-    if let Some(ollama) = &inference.ollama {
-        provider["ollama_engine"] = json!(ollama.engine);
-        let authority = inference
-            .endpoint
-            .strip_prefix("http://")
-            .ok_or(ConfigError::new("invalid Ollama endpoint"))?
-            .split('/')
-            .next()
-            .unwrap_or("");
-        resources["nemoclaw_ollama"] = json!({"service":{
-            "name":format!("{}-ollama",document.workspace()),"owner":document.metadata.uid,
-            "generation":generation(generations,"ollama")?,"image":ollama.image,"network":ollama.network.name(),
-            "bind_address":authority,"running":"true","lifecycle":{"prevent_destroy":true}
-        }});
-        let mut storage = resources["nemoclaw_ollama"]["service"].clone();
-        storage.as_object_mut().unwrap().remove("running");
-        resources["nemoclaw_ollama_storage"] = json!({"models": storage});
-        resources["nemoclaw_ollama"]["service"]["depends_on"] =
-            json!(["nemoclaw_ollama_storage.models"]);
-        resources["nemoclaw_ollama_model"] = json!({"inference":{
-            "service_id":"${nemoclaw_ollama.service.id}","endpoint":inference.endpoint,
-            "model":document.provider_model(inference)?,
-            "lifecycle":{"prevent_destroy":true}
-        }});
-    }
     let provider_dependencies: Vec<_> = targets
         .iter()
         .filter(|target| target.kind == "provider")
@@ -341,11 +278,13 @@ pub fn compile(
             }
             attributes["depends_on"] = json!(provider_dependencies);
         }
-        if target.address == "nemoclaw_ollama_proxy.service" {
-            attributes["depends_on"] = json!([
-                "nemoclaw_ollama_proxy_storage.credentials",
-                "nemoclaw_ollama_external_model.inference"
-            ]);
+        if let Some(dependencies) = crate::services::dependencies(
+            document,
+            generations,
+            crate::services::InstallStage::Deployment,
+            &target.address,
+        )? {
+            attributes["depends_on"] = json!(dependencies);
         }
         if target.kind == "provider"
             && target
@@ -355,13 +294,13 @@ pub fn compile(
         {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
-            if target.values["name"] == document.provider_key(inference) {
-                if inference.ollama.is_some() {
-                    dependencies.push("nemoclaw_ollama_model.inference".into());
-                }
-                if inference.ollama_proxy.is_some() {
-                    dependencies.push("nemoclaw_ollama_proxy.service".into());
-                }
+            if let Some(selected) = document
+                .selected_inference_providers()?
+                .into_iter()
+                .find(|provider| document.provider_key(provider) == target.values["name"])
+                && let Some(service) = crate::services::resolve(document, selected)?
+            {
+                dependencies.extend(service.resource_dependencies);
             }
             attributes["depends_on"] = json!(dependencies);
         }

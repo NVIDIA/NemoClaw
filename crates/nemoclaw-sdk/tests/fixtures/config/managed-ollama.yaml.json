@@ -1,5 +1,5 @@
 {
-  "digest": "6d128baa1fff86d5d31782be54e133db3f6329da835db747411c0140147efbbb",
+  "digest": "240bc44b307eb6f509e87bfa8acbf1e9b71a76a4e8e807a91e1531b806de3d2b",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -14,14 +14,9 @@
       },
       "inferenceProviders": [
         {
-          "endpoint": "http://172.20.0.1:11436/v1",
           "name": "local",
-          "ollama": {
-            "engine": "unix:///var/run/docker.sock",
-            "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
-            "network": "nc-prototype-slice"
-          },
-          "provider": "openai"
+          "provider": "openai",
+          "serviceRef": "ollama-server"
         }
       ],
       "sandboxes": [
@@ -54,7 +49,23 @@
             "provider": "docker"
           }
         }
-      ]
+      ],
+      "services": {
+        "ollama-server": {
+          "endpoint": "http://172.20.0.1:11436/v1",
+          "kind": "ollama",
+          "management": "managed",
+          "model": {
+            "name": "qwen3:0.6b"
+          },
+          "network": "nc-prototype-slice",
+          "runtime": {
+            "engine": "unix:///var/run/docker.sock",
+            "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+            "provider": "docker"
+          }
+        }
+      }
     }
   },
   "endpoint": "http://172.20.0.1:11436/v1",

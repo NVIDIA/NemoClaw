@@ -3,8 +3,6 @@
 #[cfg(target_os = "linux")]
 mod authentication;
 #[cfg(target_os = "linux")]
-mod backend;
-#[cfg(target_os = "linux")]
 mod hardware;
 #[cfg(target_os = "linux")]
 mod inline_recipe;
@@ -14,6 +12,8 @@ mod recipe;
 mod runtime;
 #[cfg(target_os = "linux")]
 mod supervisor;
+#[cfg(target_os = "linux")]
+mod vllm;
 
 #[cfg(target_os = "linux")]
 #[tokio::main]

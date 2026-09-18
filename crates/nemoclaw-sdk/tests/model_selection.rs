@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::Document;
+use nemoclaw_sdk::config::{Document, Service, ServiceDefinition};
+
+fn service(document: &mut Document) -> &mut Service {
+    let ServiceDefinition::Vllm(service) = document.spec.services.get_mut("qwen").unwrap() else {
+        panic!("expected vLLM service");
+    };
+    service
+}
 
 #[test]
 fn a_different_model_uses_generic_serving_without_recipe_settings() {
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
-    let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
+    let service = service(&mut doc);
     service.recipe = None;
-    service.backend = "vllm".into();
     service.model.repository = "Qwen/Qwen3-0.6B".into();
     service.model.revision = "c1899de289a04d12100db370d81485cdf75e47ca".into();
     service.validate().unwrap();
@@ -43,9 +49,8 @@ fn model_identity_and_capacity_are_not_a_repository_allowlist() {
         snapshot::{File, Manifest},
     };
     let mut doc = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
-    let service = doc.spec.inference_providers[0].service.as_mut().unwrap();
+    let service = service(&mut doc);
     service.recipe = None;
-    service.backend = "vllm".into();
     service.model.repository = "some-owner/a-completely-different-model".into();
     service.model.revision = "a".repeat(40);
     service.validate().unwrap();

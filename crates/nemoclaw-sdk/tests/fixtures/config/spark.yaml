@@ -12,12 +12,13 @@ spec:
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.110.0/24
-  inferenceProviders:
-  - name: qwen
-    provider: openai
-    service:
-      backend: vllm
-      image: fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  services:
+    qwen:
+      kind: vllm
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         repository: fixture/model
         revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -74,6 +75,10 @@ spec:
           - name: model.safetensors
             size: 1
             sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  inferenceProviders:
+  - name: qwen
+    provider: openai
+    serviceRef: qwen
   sandboxes:
   - name: assistant
     image:

@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{RuntimeObservation, Spec};
-use crate::{Error, docker::Engine};
+use crate::{
+    Error,
+    docker::Engine,
+    managed::{RuntimeObservation, Spec},
+};
 impl Engine {
     pub async fn check_capacity(
         &self,
@@ -23,13 +26,13 @@ impl Engine {
                 let host = self.host_observer.observe(self).await?;
                 let info = self.info().await?;
                 let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
-                let directory = crate::recipes::huggingface::directory(service);
+                let directory = super::recipes::huggingface::directory(service);
                 let cached = if let Some(observed) = observed {
                     self.read_file(
                         &observed.container_id,
                         &format!(
                             "/data/{directory}/{}",
-                            crate::recipes::huggingface::MANIFEST_FILE
+                            super::recipes::huggingface::MANIFEST_FILE
                         ),
                         4 << 20,
                     )
@@ -38,8 +41,8 @@ impl Engine {
                     None
                 };
                 let manifest = match cached {
-                    Some(bytes) => crate::recipes::huggingface::decode_manifest(service, &bytes)?,
-                    None => crate::recipes::huggingface::resolve_manifest(service).await?,
+                    Some(bytes) => super::recipes::huggingface::decode_manifest(service, &bytes)?,
+                    None => super::recipes::huggingface::resolve_manifest(service).await?,
                 };
                 let mut download = manifest.bytes()?;
                 let preparation = service

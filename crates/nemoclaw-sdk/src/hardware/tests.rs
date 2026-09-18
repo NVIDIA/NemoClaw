@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::config::Service;
+use crate::config::{Service, ServiceDefinition};
 fn service() -> Service {
-    crate::config::Document::parse(
+    let mut document = crate::config::Document::parse(
         include_str!("../../tests/fixtures/config/spark.yaml").as_bytes(),
     )
-    .unwrap()
-    .spec
-    .inference_providers
-    .remove(0)
-    .service
-    .unwrap()
+    .unwrap();
+    let ServiceDefinition::Vllm(service) = document.spec.services.remove("qwen").unwrap() else {
+        panic!("expected vLLM service");
+    };
+    *service
 }
 #[test]
 fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {

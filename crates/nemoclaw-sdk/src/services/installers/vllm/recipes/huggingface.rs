@@ -47,7 +47,7 @@ pub fn validate_manifest(service: &Service, manifest: &Manifest) -> Result<(), E
             "snapshot manifest conflicts with selected model",
         ));
     }
-    crate::backends::validation::validate_weights(service, manifest)
+    crate::services::installers::vllm::validation::validate_weights(service, manifest)
 }
 pub fn decode_manifest(service: &Service, bytes: &[u8]) -> Result<Manifest, Error> {
     let manifest: Manifest = serde_json::from_slice(bytes)

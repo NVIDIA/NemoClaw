@@ -5,7 +5,6 @@
 mod tests;
 
 mod export;
-mod ollama;
 mod plan;
 mod runtime;
 mod timing;
@@ -187,17 +186,13 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        if (document.lifecycle_provider()?.ollama.is_some()
-            || document.lifecycle_provider()?.ollama_proxy.is_some())
-            && record
-                .generations
-                .get("ollama")
-                .is_none_or(String::is_empty)
-        {
-            record.generations.insert(
-                "ollama".into(),
-                Record::new(document.clone())?.generations["ollama"].clone(),
-            );
+        for kind in crate::services::generation_kinds(&document)? {
+            if record.generations.get(kind).is_none_or(String::is_empty) {
+                record.generations.insert(
+                    kind.into(),
+                    Record::new(document.clone())?.generations[kind].clone(),
+                );
+            }
         }
         let (runtime_changes, deferred) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
@@ -212,8 +207,7 @@ impl Deployment {
         let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
         let bindings = store.bindings()?;
         let targets = compile::targets(&document, &record.generations)?;
-        let mut allowed = allowed(&targets);
-        ollama::extend_allowed(&document, &record.generations, &mut allowed)?;
+        let allowed = allowed(&targets);
         if bindings
             .iter()
             .any(|(address, binding)| !allowed.contains_key(address) || !binding.spec.is_empty())
@@ -222,7 +216,6 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
-        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.preflight_ollama(&document, &record.generations, &bindings)=>result? }
         (self.progress)(Progress::Preflight);
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.preflight(&client,&document,&targets,&bindings)=>result?}
         self.prepare(
@@ -238,16 +231,6 @@ impl Deployment {
             cancel,
         )
         .await?;
-        let (recovery_changes, deferred) = self
-            .recover_ollama(&bundle, &store, &document, &mut record, apply, cancel)
-            .await?;
-        let mut runtime_changes = runtime_changes;
-        runtime_changes.extend(recovery_changes);
-        if deferred {
-            let mut result = OperationResult::planned(runtime_changes);
-            result.deferred.push("Model inventory and the complete deployment plan require recovery of the stopped Ollama service".into());
-            return Ok(result);
-        }
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -330,6 +313,16 @@ impl Deployment {
         record.pending = false;
         store.save(&record)?;
         let bindings = store.bindings()?;
+        (self.progress)(Progress::Readiness);
+        crate::services::check_running(
+            &document,
+            &record.generations,
+            crate::services::InstallStage::Deployment,
+            &self.engines,
+            &bindings,
+            cancel,
+        )
+        .await?;
         for target in targets.iter().filter(|target| target.kind == "sandbox") {
             let definition = document.sandbox(&target.values["name"])?;
             let mut sandbox = target.values.clone();
@@ -400,15 +393,11 @@ impl Deployment {
                     client.check_sandbox_phase(&expected).await?;
                 }
             }
-            let observed = if crate::ollama::proxy::supports(&target.kind) {
-                let config = document
-                    .lifecycle_provider()?
-                    .ollama_proxy
-                    .as_ref()
-                    .ok_or(Error::State("missing proxy settings"))?;
-                crate::ollama::OllamaBackend::new(self.engines.resolve(&config.engine)?)
-                    .read(&target.kind, &expected, false)
-                    .await?
+            let observed = if let Some(backend) =
+                crate::services::BackendRegistry::new(&self.engines)
+                    .resolve(&target.kind, &expected)?
+            {
+                backend.read(&target.kind, &expected, false).await?
             } else {
                 client.read(&target.kind, &expected, false).await?
             };

@@ -90,15 +90,15 @@ mod tests {
     #[tokio::test]
     async fn bearer_key_reaches_only_the_backend_child_and_authenticated_readiness() {
         let root = tempfile::tempdir().unwrap();
-        let mut service = nemoclaw_sdk::config::Document::parse(
+        let mut document = nemoclaw_sdk::config::Document::parse(
             include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_bytes(),
         )
-        .unwrap()
-        .spec
-        .inference_providers
-        .remove(0)
-        .service
         .unwrap();
+        let nemoclaw_sdk::config::ServiceDefinition::Vllm(mut service) =
+            document.spec.services.remove("qwen").unwrap()
+        else {
+            panic!("expected vLLM service");
+        };
         service.authentication = Some(nemoclaw_sdk::config::ServiceAuthentication::Bearer);
         let key = crate::authentication::load(root.path()).unwrap();
         let module = root.path().join("vllm/entrypoints/openai");

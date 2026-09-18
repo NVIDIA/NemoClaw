@@ -5,7 +5,7 @@ use crate::{
     Error, ObservationError,
     backend::Row,
     compile::{Generations, Target},
-    config::Document,
+    config::{Document, OllamaProxy},
 };
 pub const PROXY: &str = "ollama_proxy";
 pub const STORAGE: &str = "ollama_proxy_storage";
@@ -13,12 +13,11 @@ pub const MODEL: &str = "ollama_external_model";
 pub fn supports(kind: &str) -> bool {
     matches!(kind, PROXY | STORAGE | MODEL)
 }
-pub fn specification(document: &Document, generations: &Generations) -> Result<ServiceSpec, Error> {
-    let provider = document.lifecycle_provider()?;
-    let proxy = provider
-        .ollama_proxy
-        .as_ref()
-        .ok_or(Error::State("missing proxy configuration"))?;
+pub fn specification(
+    document: &Document,
+    proxy: &OllamaProxy,
+    generations: &Generations,
+) -> Result<ServiceSpec, Error> {
     let spec = ServiceSpec {
         name: format!("{}-ollama-proxy", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -26,7 +25,7 @@ pub fn specification(document: &Document, generations: &Generations) -> Result<S
             .get("ollama")
             .ok_or(Error::State("missing proxy generation"))?
             .clone(),
-        image: proxy.image.clone(),
+        image: proxy.runtime.image.clone(),
         network: "host".into(),
         bind_address: proxy
             .endpoint
@@ -35,12 +34,10 @@ pub fn specification(document: &Document, generations: &Generations) -> Result<S
             .ok_or(Error::State("invalid proxy endpoint"))?
             .into(),
         proxy: Some(ProxySettings {
-            upstream: provider.endpoint.clone(),
+            upstream: proxy.upstream.endpoint.clone(),
             endpoint: proxy.endpoint.clone(),
-            model: document
-                .provider_model(document.lifecycle_provider()?)?
-                .to_owned(),
-            digest: proxy.model.digest.clone(),
+            model: proxy.upstream.model.name.clone(),
+            digest: proxy.upstream.model.digest.clone(),
         }),
     };
     spec.validate()?;
@@ -71,8 +68,13 @@ pub fn row_spec(row: &Row) -> Result<ServiceSpec, Error> {
     spec.validate()?;
     Ok(spec)
 }
-pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Target>, Error> {
-    let spec = specification(document, generations)?;
+pub fn targets(
+    document: &Document,
+    service_name: &str,
+    proxy: &OllamaProxy,
+    generations: &Generations,
+) -> Result<Vec<Target>, Error> {
+    let spec = specification(document, proxy, generations)?;
     let settings = spec.proxy.as_ref().unwrap();
     let common: Row = [
         ("name", spec.name.clone()),
@@ -83,28 +85,25 @@ pub fn targets(document: &Document, generations: &Generations) -> Result<Vec<Tar
         ("upstream", settings.upstream.clone()),
         ("model", settings.model.clone()),
         ("digest", settings.digest.clone()),
+        ("engine", proxy.runtime.engine.clone()),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v))
     .collect();
-    Ok([
-        (STORAGE, "credentials"),
-        (PROXY, "service"),
-        (MODEL, "inference"),
-    ]
-    .into_iter()
-    .map(|(kind, name)| {
-        let mut values = common.clone();
-        if kind == PROXY {
-            values.insert("running".into(), "true".into());
-        }
-        Target {
-            kind: kind.into(),
-            address: format!("nemoclaw_{kind}.{name}"),
-            values,
-        }
-    })
-    .collect())
+    Ok([STORAGE, PROXY, MODEL]
+        .into_iter()
+        .map(|kind| {
+            let mut values = common.clone();
+            if kind == PROXY {
+                values.insert("running".into(), "true".into());
+            }
+            Target {
+                kind: kind.into(),
+                address: format!("nemoclaw_{kind}.{service_name}"),
+                values,
+            }
+        })
+        .collect())
 }
 pub async fn verify_model(settings: &ProxySettings) -> Result<(), Error> {
     let model = Models::new(&settings.upstream)?
@@ -182,7 +181,7 @@ impl OllamaBackend {
             let deadline = std::time::Instant::now()
                 + std::time::Duration::from_secs(if apply { 30 } else { 0 });
             loop {
-                match crate::inference_auth::read_key(&self.engine, container).await {
+                match crate::services::authentication::read_key(&self.engine, container).await {
                     Ok(_) => break,
                     Err(_) if apply && std::time::Instant::now() < deadline => {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await

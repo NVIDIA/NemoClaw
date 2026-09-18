@@ -3,11 +3,33 @@
 #![cfg(target_os = "linux")]
 use nemoclaw_sdk::{
     CancellationToken, Deployment,
-    config::Document,
+    config::{Document, Service, ServiceDefinition},
     docker::Engine,
     managed::{RuntimeObservation, Spec},
     recipes::huggingface,
 };
+
+fn vllm(document: &Document) -> &Service {
+    let name = document.spec.inference_providers[0]
+        .service_ref
+        .as_ref()
+        .unwrap();
+    let ServiceDefinition::Vllm(service) = &document.spec.services[name] else {
+        panic!("expected vLLM service");
+    };
+    service
+}
+
+fn vllm_mut(document: &mut Document) -> &mut Service {
+    let name = document.spec.inference_providers[0]
+        .service_ref
+        .clone()
+        .unwrap();
+    let ServiceDefinition::Vllm(service) = document.spec.services.get_mut(&name).unwrap() else {
+        panic!("expected vLLM service");
+    };
+    service
+}
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -140,7 +162,7 @@ async fn spark_apply_export_capacity_and_watchdog_recovery_preserve_identity_and
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let document = Document::parse(fs::File::open(input).unwrap()).unwrap();
     assert_eq!(document.spec.gateway.management, "managed");
-    assert!(document.spec.inference_providers[0].service.is_some());
+    assert!(document.spec.inference_providers[0].service_ref.is_some());
     fs::create_dir_all(&directory).unwrap();
     let mut evidence = Evidence {
         path: directory.join("spark-validation.json"),
@@ -177,12 +199,7 @@ async fn spark_apply_export_capacity_and_watchdog_recovery_preserve_identity_and
     assert_eq!(before, capture(&directory).await);
     evidence.record("exportReapply", reapplied);
     let mut oversized = document.clone();
-    oversized.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .memory
-        .host_reserve_gib = 64;
+    vllm_mut(&mut oversized).memory.host_reserve_gib = 64;
     oversized.validate().unwrap();
     let rejection = deployment
         .plan(&oversized, &cancel)
@@ -267,24 +284,10 @@ async fn spark_image_change_preserves_independent_bindings_and_prepared_data() {
     let old: Document =
         serde_json::from_value(state(&directory.join("intent.json"))["document"].clone()).unwrap();
     let mut comparison = document.clone();
-    let new_image = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap()
-        .image
-        .clone();
-    let old_image = old.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap()
-        .image
-        .clone();
+    let new_image = vllm(&document).runtime.image.clone();
+    let old_image = vllm(&old).runtime.image.clone();
     assert_ne!(old_image, new_image);
-    comparison.spec.inference_providers[0]
-        .service
-        .as_mut()
-        .unwrap()
-        .image = old_image.clone();
+    vllm_mut(&mut comparison).runtime.image = old_image.clone();
     assert_eq!(comparison, old, "only the artifact pin may change");
     let before = capture(&directory).await;
     let mut evidence = Evidence {

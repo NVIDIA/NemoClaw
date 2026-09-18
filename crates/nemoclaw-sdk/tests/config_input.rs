@@ -62,7 +62,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
             .remove(key);
     }
     for key in ["serving", "memory"] {
-        omitted["spec"]["inferenceProviders"][0]["service"]
+        omitted["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -75,12 +75,12 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     explicit["spec"]["sandboxes"][0]["image"] = json!({"ref": ""});
     explicit["spec"]["sandboxes"][0]["runtime"] = json!({"provider": ""});
     explicit["spec"]["sandboxes"][0]["network"] = json!({"tier": ""});
-    explicit["spec"]["inferenceProviders"][0]["service"]["serving"] = json!({
+    explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,
         "startupTimeoutSeconds": 0, "speculativeTokens": 0,
         "toolParser": "", "reasoningParser": ""
     });
-    explicit["spec"]["inferenceProviders"][0]["service"]["memory"] = json!({
+    explicit["spec"]["services"]["qwen"]["memory"] = json!({
         "hostReserveGiB": 0, "kvCacheGiB": 0, "minAvailableGiB": 0,
         "minFreeGiB": 0, "freeGateGiB": 0, "consecutiveSamples": 0,
         "gpuMemoryGiB": 0
@@ -90,7 +90,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     for path in [
         "/spec/gateway/endpoint",
         "/spec/sandboxes/0/image",
-        "/spec/inferenceProviders/0/service/serving/port",
+        "/spec/services/qwen/serving/port",
     ] {
         let mut invalid = explicit.clone();
         *invalid.pointer_mut(path).unwrap() = Value::Null;

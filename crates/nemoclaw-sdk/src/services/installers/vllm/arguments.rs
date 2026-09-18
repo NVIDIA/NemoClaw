@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// Spark serving-budget rounding follows MiaAI Lab's start.sh guidance.
+// Spark serving-budget rounding follows the qualified serving recipe guidance.
 // Upstream AGPL-3.0-or-later recipe and revision: crates/nemoclaw-sdk/NOTICE.md.
 use crate::{Error, config::Service, hardware::GIB};
 

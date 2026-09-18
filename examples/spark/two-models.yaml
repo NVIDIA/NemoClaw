@@ -13,13 +13,14 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17804
     networkCIDR: 172.30.164.0/24
-  inferenceProviders:
-  - name: fast
-    provider: openai
-    service:
-      backend: vllm
+  services:
+    fast:
+      kind: vllm
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
-      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       model:
         repository: Qwen/Qwen3-4B
         revision: 1cfa9a7208912126459214e8b04321603b3df60c
@@ -39,12 +40,13 @@ spec:
         minFreeGiB: 3
         freeGateGiB: 12
         consecutiveSamples: 5
-  - name: smart
-    provider: openai
-    service:
-      backend: vllm
+    smart:
+      kind: vllm
+      runtime:
+        provider: docker
+        engine: unix:///var/run/docker.sock
+        image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       authentication: bearer
-      image: nc-prototype-vllm@sha256:a08d7d6542a20cff9a7f5303e100f71a121d241d0e33fc3be5da6ad6d3bc0c31
       model:
         repository: nvidia/Qwen3.6-27B-NVFP4
         revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
@@ -64,6 +66,13 @@ spec:
         minFreeGiB: 3
         freeGateGiB: 12
         consecutiveSamples: 5
+  inferenceProviders:
+  - name: fast
+    provider: openai
+    serviceRef: fast
+  - name: smart
+    provider: openai
+    serviceRef: smart
   sandboxes:
   - name: assistant
     image:

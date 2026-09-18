@@ -144,8 +144,7 @@ impl Spec {
     pub fn engine(&self) -> &str {
         self.service
             .as_ref()
-            .and_then(|s| s.placement.as_ref())
-            .map_or(&self.gateway.engine, |p| &p.engine)
+            .map_or(&self.gateway.engine, |service| &service.runtime.engine)
     }
     pub fn network_cidr(&self) -> &str {
         self.service
@@ -172,6 +171,9 @@ impl Spec {
         ))?;
         service.placement = None;
         service.publication = None;
+        // The in-container runtime receives package settings, not the host's
+        // SSH placement. It does not connect to a container engine itself.
+        service.runtime.engine = "unix:///var/run/docker.sock".into();
         Ok(service)
     }
     /// Serialize a validated runtime specification.
@@ -207,7 +209,7 @@ impl Spec {
     pub fn image(&self) -> &str {
         self.service
             .as_ref()
-            .map(|service| service.image.as_str())
+            .map(|service| service.runtime.image.as_str())
             .unwrap_or(&self.gateway.image)
     }
     /// Compile the container launch configuration for the runtime.

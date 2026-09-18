@@ -8,13 +8,15 @@ pub(crate) mod integration_policy;
 mod integrations;
 pub use integrations::*;
 mod observability;
-mod ollama_proxy;
 pub use observability::*;
-pub use ollama_proxy::*;
 mod inference;
 mod interfaces;
 mod providers;
-mod references;
+pub(crate) mod references;
+pub use crate::services::{
+    ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaModel, OllamaProxy,
+    ServiceDefinition, ServiceRuntime,
+};
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;
@@ -26,7 +28,7 @@ pub use network::*;
 pub mod schema;
 mod types;
 pub use inference::InferenceConnection;
-mod validation;
+pub(crate) mod validation;
 use sha2::{Digest, Sha256};
 use std::{fmt, io::Read};
 pub use types::*;
@@ -248,10 +250,8 @@ impl Document {
                 ),
             );
         }
-        for provider in self.provider_definitions_mut() {
-            if let Some(service) = &mut provider.service {
-                service.defaults();
-            }
+        for service in self.spec.services.values_mut() {
+            crate::services::defaults(service);
         }
         for sandbox in &mut self.spec.sandboxes {
             default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
@@ -285,73 +285,11 @@ impl Gateway {
         bridge_address(&self.network_cidr)
     }
 }
-impl Service {
-    pub fn served_model(&self) -> &str {
-        if let Some(recipe) = &self.recipe {
-            return &recipe.serving.model_name;
-        }
-        if self.serving.model_name.is_empty() {
-            &self.model.repository
-        } else {
-            &self.serving.model_name
-        }
-    }
-
-    pub fn defaults(&mut self) {
-        for (value, default) in [
-            (&mut self.serving.port, constraints::PORT.default),
-            (
-                &mut self.serving.context_tokens,
-                constraints::CONTEXT_TOKENS.default,
-            ),
-            (
-                &mut self.serving.max_sequences,
-                constraints::MAX_SEQUENCES.default,
-            ),
-            (
-                &mut self.serving.batch_tokens,
-                constraints::BATCH_TOKENS.default,
-            ),
-            (
-                &mut self.serving.startup_timeout_seconds,
-                constraints::STARTUP_TIMEOUT.default,
-            ),
-            (
-                &mut self.memory.host_reserve_gib,
-                constraints::HOST_RESERVE.default,
-            ),
-            (
-                &mut self.memory.kv_cache_gib,
-                if self.memory.gpu_memory_utilization.is_some() {
-                    0
-                } else {
-                    constraints::KV_CACHE.default
-                },
-            ),
-            (
-                &mut self.memory.min_available_gib,
-                constraints::MIN_AVAILABLE.default,
-            ),
-            (&mut self.memory.min_free_gib, constraints::MIN_FREE.default),
-            (
-                &mut self.memory.free_gate_gib,
-                constraints::FREE_GATE.default,
-            ),
-            (
-                &mut self.memory.consecutive_samples,
-                constraints::CONSECUTIVE_SAMPLES.default,
-            ),
-        ] {
-            if *value == 0 {
-                *value = default;
-            }
-        }
-    }
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-mod service_hardware;
-pub use service_hardware::{ServiceContainer, ServiceHardware, ServiceIpc};
+pub use crate::services::installers::vllm::{
+    Memory, Model, Service, ServiceAuthentication, ServiceContainer, ServiceHardware, ServiceIpc,
+    ServicePlacement, ServicePublication, Serving,
+};

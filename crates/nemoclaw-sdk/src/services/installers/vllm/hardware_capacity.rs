@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host-reserve policy informed by MiaAI Lab's single-Spark start.sh (AGPL-3.0-or-later).
 // Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
-use super::{Capacity, GIB};
-use crate::{Error, config::Service};
+use crate::{
+    Error,
+    config::Service,
+    hardware::{Capacity, GIB},
+};
 pub fn check_capacity(
     service: &Service,
     c: &Capacity,

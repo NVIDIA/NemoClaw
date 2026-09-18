@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, runtime_targets, targets},
-    config::Document,
+    config::{Document, ServiceDefinition},
 };
 
 #[test]
@@ -56,7 +56,10 @@ fn spark_scenarios_compile_their_shared_and_independent_resources() {
             doc
         );
         for provider in &doc.spec.inference_providers {
-            if let Some(service) = &provider.service {
+            if let Some(name) = &provider.service_ref {
+                let ServiceDefinition::Vllm(service) = &doc.spec.services[name] else {
+                    panic!("{name}: expected vLLM service");
+                };
                 assert!(
                     service.authentication.is_some(),
                     "{name}: managed inference requires bearer auth"

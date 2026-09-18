@@ -161,9 +161,10 @@ This backend uses a local Docker engine and an existing network that supports pu
 It does not create that network.
 Do not select Docker's `host` network: the managed container contract publishes container port 11434 to the address and port in the provider endpoint.
 
-The endpoint must be an explicit private or loopback IP URL ending in `/v1`, reachable from both the applying process and OpenShell.
+Declare the installer under `spec.services`, then select it from the inference provider with `serviceRef`.
+The service endpoint must be an explicit private or loopback IP URL ending in `/v1`, reachable from both the applying process and OpenShell.
 The endpoint has no generated bearer credential or TLS in this mode; restrict access through the host's existing network controls.
-Do not add `service`, `ollamaProxy`, or a provider `credential` to this declaration.
+Do not add an explicit provider endpoint or credential; the referenced installer supplies the connection information after its bounded readiness check.
 The current container contract requests no GPU devices.
 Use a CPU-sized model for this path; GPU acceleration in this managed contract remains **TBD**.
 For an independently operated GPU-enabled Ollama daemon, evaluate the separate [external proxy path](#use-external-ollama-through-a-managed-proxy).
@@ -190,7 +191,7 @@ After an interrupted pull, retain the original YAML and state and explicitly rea
 Destroy removes the owned service and OpenShell registration while retaining model storage and the pre-existing network.
 See [state retention](state.md) before removing any retained data.
 
-The [service contract](../crates/nemoclaw-sdk/src/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/ollama/models.rs), and [recovery evidence](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
+The [service contract](../crates/nemoclaw-sdk/src/services/contract.rs), [Ollama installer](../crates/nemoclaw-sdk/src/services/installers/ollama/service.rs), [model lifecycle](../crates/nemoclaw-sdk/src/services/installers/ollama/models.rs), and [recovery evidence](validation/rust-ollama-recovery-linux-arm64.json) support this procedure.
 The [original live result](validation/rust-ollama-linux-arm64.json) used CPU inference and records the host-network port-publication failure; it does not qualify GPU execution.
 
 ## Authenticate a Managed vLLM Service

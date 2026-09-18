@@ -7,7 +7,7 @@ use crate::{
     docker::Engine,
 };
 
-/// Shared provider and export observations for an explicitly configured engine.
+/// Ollama resource operations for an explicitly configured engine.
 pub struct OllamaBackend {
     pub(super) engine: Engine,
 }

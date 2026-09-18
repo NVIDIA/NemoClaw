@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(target_os = "linux")]
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, config::Document, docker::Engine, managed::Spec,
+    CancellationToken, Deployment,
+    config::{Document, ServiceDefinition},
+    docker::Engine,
+    managed::Spec,
     recipes::huggingface,
 };
 use serde_json::{Value, json};
@@ -75,11 +78,13 @@ async fn exercise(fresh: bool) {
     let directory = explicit("NEMOCLAW_LIVE_MODEL_STATE");
     let deployment = Deployment::new(&directory, &explicit("NEMOCLAW_TEST_BUNDLE"));
     let cancel = CancellationToken::new();
-    let desired = document.spec.inference_providers[0]
-        .service
+    let service_name = document.spec.inference_providers[0]
+        .service_ref
         .as_ref()
         .unwrap();
-    assert_eq!(desired.backend, "vllm");
+    let ServiceDefinition::Vllm(desired) = &document.spec.services[service_name] else {
+        panic!("expected vLLM service");
+    };
     let planned = deployment.plan(&document, &cancel).await.unwrap();
     if fresh {
         assert!(!planned.changes.is_empty());
@@ -219,7 +224,7 @@ async fn exercise(fresh: bool) {
         assert_eq!(retained.get(address), before.get(address));
         assert!(retained.contains_key(address));
     }
-    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied_reply,"recoveredReply":recovered_reply,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
+    let proof = json!({"passed":true,"freshApply":fresh,"model":desired.model,"image":desired.runtime.image,"deployment":document.metadata.uid,"bindings":before,"containerId":observed.container_id,"agentReply":applied_reply,"recoveredReply":recovered_reply,"unchangedApply":true,"exportReapply":true,"receiptUnchanged":true,"noPreparation":true,"watchdogStoppedWithoutRestart":true,"explicitRecoveryPreservedIdentity":true,"destroyedWithStorageRetained":true});
     fs::write(
         directory.join("model-proof.json"),
         serde_json::to_vec_pretty(&proof).unwrap(),

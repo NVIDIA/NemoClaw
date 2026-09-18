@@ -291,7 +291,7 @@ These references support the coverage column; owning guides provide the specific
 [connection-evidence]: ../../crates/nemoclaw-sdk/tests/inference_connection.rs
 [model-evidence]: ../../crates/nemoclaw-sdk/tests/model_selection.rs
 [policy-evidence]: ../../crates/nemoclaw-sdk/tests/network_config.rs
-[credential-evidence]: ../../crates/nemoclaw-sdk/src/inference_auth.rs
+[credential-evidence]: ../../crates/nemoclaw-sdk/src/services/authentication.rs
 [sdk-evidence]: ../../crates/nemoclaw-sdk/src/lib.rs
 [platform-evidence]: ../validation/rust-native-platforms.json
 [ssh-evidence]: ../validation/rust-dual-daemon-linux-arm64.json

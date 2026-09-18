@@ -18,7 +18,7 @@ fn explicit_external_dependencies_preserve_the_resource_graph() {
     legacy["spec"]["sandboxes"][0]["network"]["proxy"] =
         json!({"host":"proxy.internal","port":3128});
     let mut explicit = legacy.clone();
-    explicit["spec"]["inferenceProviders"][0]["ollama"]["network"] =
+    explicit["spec"]["services"]["ollama-server"]["network"] =
         json!({"management":"external","name":"nc-prototype-slice"});
     explicit["spec"]["sandboxes"][0]["network"]["proxy"]["management"] = json!("external");
     let document = parse(&explicit).expect("external dependencies must parse");
@@ -50,7 +50,7 @@ fn unsupported_management_and_creation_fields_are_rejected() {
         json!({"management":"external"}),
     ] {
         let mut value = input();
-        value["spec"]["inferenceProviders"][0]["ollama"]["network"] = network;
+        value["spec"]["services"]["ollama-server"]["network"] = network;
         assert!(parse(&value).is_err());
         assert!(!schema.is_valid(&value));
     }
@@ -66,13 +66,13 @@ fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
     let legacy: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
     let mut explicit = legacy.clone();
-    for path in ["/spec/gateway", "/spec/inferenceProviders/0/service"] {
+    for path in ["/spec/gateway", "/spec/services/qwen"] {
         let resource = explicit.pointer_mut(path).unwrap();
         resource["storage"] = json!({"management":"managed"});
     }
     explicit["spec"]["gateway"]["network"] = json!({"management":"managed"});
-    explicit["spec"]["inferenceProviders"][0]["service"]["management"] = json!("managed");
-    explicit["spec"]["inferenceProviders"][0]["service"]["model"]["management"] = json!("managed");
+    explicit["spec"]["services"]["qwen"]["management"] = json!("managed");
+    explicit["spec"]["services"]["qwen"]["model"]["management"] = json!("managed");
     let document = parse(&explicit).expect("managed declarations must parse");
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(schema.is_valid(&explicit));
@@ -97,9 +97,9 @@ fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
     for path in [
         "/spec/gateway/storage/management",
         "/spec/gateway/network/management",
-        "/spec/inferenceProviders/0/service/management",
-        "/spec/inferenceProviders/0/service/storage/management",
-        "/spec/inferenceProviders/0/service/model/management",
+        "/spec/services/qwen/management",
+        "/spec/services/qwen/storage/management",
+        "/spec/services/qwen/model/management",
     ] {
         let mut invalid = explicit.clone();
         *invalid.pointer_mut(path).unwrap() = json!("external");
@@ -116,10 +116,10 @@ fn managed_dependencies_are_optional_and_do_not_replace_existing_resources() {
 fn ollama_storage_and_model_management_preserve_existing_lifecycle() {
     let legacy = input();
     let mut explicit = legacy.clone();
-    let ollama = &mut explicit["spec"]["inferenceProviders"][0]["ollama"];
+    let ollama = &mut explicit["spec"]["services"]["ollama-server"];
     ollama["management"] = json!("managed");
     ollama["storage"] = json!({"management":"managed"});
-    ollama["model"] = json!({"management":"managed"});
+    ollama["model"]["management"] = json!("managed");
     let document = parse(&explicit).expect("Ollama ownership declarations must parse");
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(schema.is_valid(&explicit));
@@ -131,9 +131,9 @@ fn ollama_storage_and_model_management_preserve_existing_lifecycle() {
         compile(&parse(&legacy).unwrap(), &generations, "test").unwrap()
     );
     for path in [
-        "/spec/inferenceProviders/0/ollama/management",
-        "/spec/inferenceProviders/0/ollama/storage/management",
-        "/spec/inferenceProviders/0/ollama/model/management",
+        "/spec/services/ollama-server/management",
+        "/spec/services/ollama-server/storage/management",
+        "/spec/services/ollama-server/model/management",
     ] {
         let mut invalid = explicit.clone();
         *invalid.pointer_mut(path).unwrap() = json!("external");
@@ -190,8 +190,7 @@ fn remote_network_management_does_not_change_placement_or_publication() {
     let legacy: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/remote-vllm.yaml")).unwrap();
     let mut explicit = legacy.clone();
-    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"] =
-        json!({"management":"managed"});
+    explicit["spec"]["services"]["qwen"]["placement"]["network"] = json!({"management":"managed"});
     let document = parse(&explicit).unwrap();
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(schema.is_valid(&explicit));
@@ -209,8 +208,7 @@ fn remote_network_management_does_not_change_placement_or_publication() {
         nemoclaw_sdk::compile::compile_runtime(&parse(&legacy).unwrap(), &generations, "test")
             .unwrap()
     );
-    explicit["spec"]["inferenceProviders"][0]["service"]["placement"]["network"]["management"] =
-        json!("external");
+    explicit["spec"]["services"]["qwen"]["placement"]["network"]["management"] = json!("external");
     assert!(parse(&explicit).is_err());
     assert!(!schema.is_valid(&explicit));
 }

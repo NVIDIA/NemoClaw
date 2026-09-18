@@ -41,13 +41,10 @@ impl ResourceAdapter {
             )
     }
     fn computed_digest(&self) -> bool {
-        self.definition.kind == "ollama_model"
+        self.definition.computed_digest
     }
     fn observed_running(&self) -> bool {
-        matches!(
-            self.definition.kind,
-            "managed_gateway" | "inference_service"
-        )
+        self.definition.observed_running
     }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state

@@ -28,6 +28,26 @@ fn agrees(validator: &jsonschema::Validator, value: &Value, accepted: bool) {
     );
 }
 
+fn agrees_at(
+    validator: &jsonschema::Validator,
+    value: &Value,
+    accepted: bool,
+    file: &str,
+    path: &str,
+) {
+    assert_eq!(
+        Document::parse(value.to_string().as_bytes()).is_ok(),
+        accepted,
+        "parser: {file} {path}: {value}"
+    );
+    assert_eq!(
+        validator.is_valid(value),
+        accepted,
+        "schema: {file} {path}: {:?}",
+        validator.iter_errors(value).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
@@ -64,8 +84,8 @@ fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     for (parent, key) in [
         ("/spec/gateway", "credential"),
         ("/spec/gateway", "tls"),
-        ("/spec/inferenceProviders/0", "service"),
-        ("/spec/inferenceProviders/0", "ollama"),
+        ("/spec/inferenceProviders/0", "serviceRef"),
+        ("/spec", "services"),
     ] {
         let mut value = original.clone();
         value.pointer_mut(parent).unwrap()[key] = Value::Null;
@@ -90,7 +110,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
             .remove(key);
     }
     for key in ["serving", "memory"] {
-        value["spec"]["inferenceProviders"][0]["service"]
+        value["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -176,14 +196,8 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "managed-ollama.yaml",
-            "/spec/inferenceProviders/0/ollama/image",
+            "/spec/services/ollama-server/runtime/image",
             json!("ollama/ollama:latest"),
-            false,
-        ),
-        (
-            "managed-ollama.yaml",
-            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
-            json!("untagged"),
             false,
         ),
         (
@@ -200,55 +214,55 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/backend",
+            "/spec/services/qwen/kind",
             json!("removed-backend"),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/speculativeTokens",
+            "/spec/services/qwen/serving/speculativeTokens",
             json!(1),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(0),
             true,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(59),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(60),
             true,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3600),
             true,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/serving/startupTimeoutSeconds",
+            "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3601),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
+            "/spec/services/qwen/memory/hostReserveGiB",
             json!(27),
             false,
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/hostReserveGiB",
+            "/spec/services/qwen/memory/hostReserveGiB",
             json!(0),
             true,
         ),
@@ -259,26 +273,20 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
             true,
         ),
         (
-            "spark/vllm.yaml",
-            "/spec/sandboxes/0/runtime/provider",
-            json!("podman"),
-            false,
-        ),
-        (
             "spark/spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/recipe/apiVersion",
+            "/spec/services/qwen/recipe/apiVersion",
             json!("future"),
             false,
         ),
         (
             "spark/spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/memory/gpuMemoryGiB",
+            "/spec/services/qwen/memory/gpuMemoryGiB",
             json!(16),
             false,
         ),
         (
             "spark/spark-inline.yaml",
-            "/spec/inferenceProviders/0/service/recipe/resources/preparedBytes",
+            "/spec/services/qwen/recipe/resources/preparedBytes",
             json!(0),
             false,
         ),
@@ -286,11 +294,11 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         let mut value = input(file);
         let (parent, key) = path.rsplit_once('/').unwrap();
         value.pointer_mut(parent).unwrap()[key] = replacement;
-        agrees(&validator, &value, accepted);
+        agrees_at(&validator, &value, accepted, file, path);
     }
     for field in ["placement", "publication"] {
         let mut value = input("spark/remote-vllm.yaml");
-        value["spec"]["inferenceProviders"][0]["service"]
+        value["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
             .remove(field);
@@ -322,7 +330,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
             (max + 1, false),
         ] {
             let mut value = input("spark/vllm.yaml");
-            let service = &mut value["spec"]["inferenceProviders"][0]["service"];
+            let service = &mut value["spec"]["services"]["qwen"];
             service["memory"]["minAvailableGiB"] = json!(6);
             service["memory"]["freeGateGiB"] = json!(24);
             service[section][field] = json!(number);
@@ -349,13 +357,23 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ),
         (
             "spark/remote-vllm.yaml",
-            "/spec/inferenceProviders/0/service/publication/endpoint",
+            "/spec/services/qwen/publication/endpoint",
             json!("http://10.0.0.8:9999/v1"),
         ),
         (
             "spark/vllm.yaml",
-            "/spec/inferenceProviders/0/service/memory/freeGateGiB",
+            "/spec/services/qwen/memory/freeGateGiB",
             json!(6),
+        ),
+        (
+            "managed-ollama.yaml",
+            "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
+            json!("untagged"),
+        ),
+        (
+            "spark/vllm.yaml",
+            "/spec/sandboxes/0/runtime/provider",
+            json!("podman"),
         ),
     ] {
         let mut value = input(file);

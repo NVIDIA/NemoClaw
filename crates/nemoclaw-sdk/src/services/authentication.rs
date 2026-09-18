@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::{Error, ObservationError, docker::Engine, ollama::ServiceSpec};
+use crate::{Error, ObservationError, docker::Engine, services::installers::ollama::ServiceSpec};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn credential_source_rejects_wrong_owner_endpoint_and_unsupported_image() {
         let fixtures: Vec<serde_json::Value> =
-            serde_json::from_str(include_str!("managed/reference.json")).unwrap();
+            serde_json::from_str(include_str!("../managed/reference.json")).unwrap();
         let mut spec: Box<crate::managed::Spec> =
             serde_json::from_str(fixtures[1]["spec"].as_str().unwrap()).unwrap();
         spec.service.as_mut().unwrap().authentication =

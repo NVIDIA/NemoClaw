@@ -1,17 +1,17 @@
 {
   "provider": {
     "nemoclaw": {
-      "endpoint": "http://127.0.0.1:17671",
-      "ollama_engine": "unix:///var/run/docker.sock"
+      "endpoint": "http://127.0.0.1:17671"
     }
   },
   "resource": {
     "nemoclaw_ollama": {
-      "service": {
+      "ollama-server": {
         "bind_address": "172.20.0.1:11436",
         "depends_on": [
-          "nemoclaw_ollama_storage.models"
+          "nemoclaw_ollama_storage.ollama-server"
         ],
+        "engine": "unix:///var/run/docker.sock",
         "generation": "ollama-generation",
         "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
         "lifecycle": {
@@ -24,18 +24,20 @@
       }
     },
     "nemoclaw_ollama_model": {
-      "inference": {
+      "ollama-server": {
         "endpoint": "http://172.20.0.1:11436/v1",
+        "engine": "unix:///var/run/docker.sock",
         "lifecycle": {
           "prevent_destroy": true
         },
         "model": "qwen3:0.6b",
-        "service_id": "${nemoclaw_ollama.service.id}"
+        "service_id": "${nemoclaw_ollama.ollama-server.id}"
       }
     },
     "nemoclaw_ollama_storage": {
-      "models": {
+      "ollama-server": {
         "bind_address": "172.20.0.1:11436",
+        "engine": "unix:///var/run/docker.sock",
         "generation": "ollama-generation",
         "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
         "lifecycle": {
@@ -51,7 +53,7 @@
         "credential_env": "",
         "depends_on": [
           "nemoclaw_provider_profile.inference_local",
-          "nemoclaw_ollama_model.inference"
+          "nemoclaw_ollama_model.ollama-server"
         ],
         "endpoint": "http://172.20.0.1:11436/v1",
         "generation": "provider-generation",

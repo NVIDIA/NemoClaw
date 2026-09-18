@@ -1,5 +1,5 @@
 {
-  "digest": "a4da1f9c3316b92f3ebfc55173b50b1f4e5890d92779082cb533735b46ab23ea",
+  "digest": "0a7488644a71fe28c756e0fc2cc421f64a6b7f9bc3eec8f67f9302998a54564e",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -19,89 +19,7 @@
         {
           "name": "qwen",
           "provider": "openai",
-          "service": {
-            "backend": "vllm",
-            "image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "memory": {
-              "consecutiveSamples": 5,
-              "freeGateGiB": 12,
-              "hostReserveGiB": 32,
-              "kvCacheGiB": 8,
-              "minAvailableGiB": 8,
-              "minFreeGiB": 3
-            },
-            "model": {
-              "repository": "fixture/model",
-              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "recipe": {
-              "apiVersion": "nemoclaw.nvidia.com/recipe/v1",
-              "compatibility": {
-                "architecture": "arm64",
-                "gpu": "NVIDIA GB10",
-                "imageLabels": {
-                  "org.nemoclaw.recipe.protocol": "v1"
-                },
-                "minDriverMajor": 580,
-                "minHostMemoryGiB": 118
-              },
-              "licenses": [
-                "/opt/recipe/LICENSE"
-              ],
-              "preparation": {
-                "executable": "/opt/recipe/prepare",
-                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-              },
-              "resources": {
-                "gpuMemoryBytes": 91804925952,
-                "preparationMemoryGiB": 20,
-                "preparedBytes": 30064771072,
-                "startupHeadroomGiB": 20
-              },
-              "serving": {
-                "chunkedPrefill": true,
-                "environment": {},
-                "kvCacheDtype": "fp8",
-                "lazyLoading": true,
-                "mambaCacheDtype": "",
-                "modelName": "fixture-model",
-                "preparedEnvironment": {},
-                "reasoningParser": "",
-                "toolParser": ""
-              },
-              "snapshot": {
-                "files": [
-                  {
-                    "name": "config.json",
-                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "size": 1
-                  },
-                  {
-                    "name": "model.safetensors",
-                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "size": 1
-                  }
-                ],
-                "repository": "fixture/model",
-                "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-              },
-              "sourceNotices": [
-                "/opt/recipe/NOTICE"
-              ],
-              "verification": {
-                "executable": "/opt/recipe/verify",
-                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-              }
-            },
-            "serving": {
-              "batchTokens": 1024,
-              "contextTokens": 32768,
-              "maxSequences": 1,
-              "port": 18888,
-              "speculativeTokens": 0,
-              "startupTimeoutSeconds": 1800
-            }
-          }
+          "serviceRef": "qwen"
         }
       ],
       "sandboxes": [
@@ -134,7 +52,96 @@
             "provider": "docker"
           }
         }
-      ]
+      ],
+      "services": {
+        "qwen": {
+          "kind": "vllm",
+          "memory": {
+            "consecutiveSamples": 5,
+            "freeGateGiB": 12,
+            "hostReserveGiB": 32,
+            "kvCacheGiB": 8,
+            "minAvailableGiB": 8,
+            "minFreeGiB": 3
+          },
+          "model": {
+            "repository": "fixture/model",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "recipe": {
+            "apiVersion": "nemoclaw.nvidia.com/recipe/v1",
+            "compatibility": {
+              "architecture": "arm64",
+              "gpu": "NVIDIA GB10",
+              "imageLabels": {
+                "org.nemoclaw.recipe.protocol": "v1"
+              },
+              "minDriverMajor": 580,
+              "minHostMemoryGiB": 118
+            },
+            "licenses": [
+              "/opt/recipe/LICENSE"
+            ],
+            "preparation": {
+              "executable": "/opt/recipe/prepare",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "resources": {
+              "gpuMemoryBytes": 91804925952,
+              "preparationMemoryGiB": 20,
+              "preparedBytes": 30064771072,
+              "startupHeadroomGiB": 20
+            },
+            "serving": {
+              "chunkedPrefill": true,
+              "environment": {},
+              "kvCacheDtype": "fp8",
+              "lazyLoading": true,
+              "mambaCacheDtype": "",
+              "modelName": "fixture-model",
+              "preparedEnvironment": {},
+              "reasoningParser": "",
+              "toolParser": ""
+            },
+            "snapshot": {
+              "files": [
+                {
+                  "name": "config.json",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size": 1
+                },
+                {
+                  "name": "model.safetensors",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size": 1
+                }
+              ],
+              "repository": "fixture/model",
+              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "sourceNotices": [
+              "/opt/recipe/NOTICE"
+            ],
+            "verification": {
+              "executable": "/opt/recipe/verify",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          },
+          "runtime": {
+            "engine": "unix:///var/run/docker.sock",
+            "image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "provider": "docker"
+          },
+          "serving": {
+            "batchTokens": 1024,
+            "contextTokens": 32768,
+            "maxSequences": 1,
+            "port": 18888,
+            "speculativeTokens": 0,
+            "startupTimeoutSeconds": 1800
+          }
+        }
+      }
     }
   },
   "endpoint": "http://172.30.110.1:18888/v1",

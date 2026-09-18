@@ -106,7 +106,7 @@ fn managed_inference_remains_owned_when_the_default_uses_an_external_oracle() {
         .as_str()
         .unwrap()
         .to_owned();
-    value["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
+    value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
     let doc = Document::parse(oracle(value).to_string().as_bytes())
         .expect("managed local model plus external default");
     let runtime = runtime_targets(&doc, &generations()).unwrap();
@@ -144,29 +144,32 @@ fn managed_ollama_keeps_its_model_and_provider_dependency_with_an_external_defau
     let doc = Document::parse(oracle(value).to_string().as_bytes()).unwrap();
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_ollama_model"]["inference"]["model"],
+        graph["resource"]["nemoclaw_ollama_model"]["ollama-server"]["model"],
         model
     );
     let dependencies =
         graph["resource"]["nemoclaw_provider"][format!("inference_{local_name}")]["depends_on"]
             .as_array()
             .unwrap();
-    assert!(dependencies.contains(&json!("nemoclaw_ollama_model.inference")));
+    assert!(dependencies.contains(&json!("nemoclaw_ollama_model.ollama-server")));
     assert!(
         !graph["resource"]["nemoclaw_provider"]["inference_oracle"]["depends_on"]
             .as_array()
             .unwrap()
-            .contains(&json!("nemoclaw_ollama_model.inference"))
+            .contains(&json!("nemoclaw_ollama_model.ollama-server"))
     );
 }
 
 #[test]
-fn multiple_selected_managed_lifecycles_are_rejected_before_resources_are_created() {
+fn multiple_selected_ollama_installers_have_independent_resources_and_dependencies() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
     let mut other = value["spec"]["inferenceProviders"][0].clone();
     other["name"] = json!("other");
-    other["endpoint"] = json!("http://172.20.0.1:11437/v1");
+    other["serviceRef"] = json!("other");
+    let mut other_service = value["spec"]["services"]["ollama-server"].clone();
+    other_service["endpoint"] = json!("http://172.20.0.1:11437/v1");
+    value["spec"]["services"]["other"] = other_service;
     value["spec"]["inferenceProviders"]
         .as_array_mut()
         .unwrap()
@@ -177,12 +180,19 @@ fn multiple_selected_managed_lifecycles_are_rejected_before_resources_are_create
     route["name"] = json!("other");
     route["providerRef"] = json!("other");
     inference["routes"].as_array_mut().unwrap().push(route);
-    assert!(
-        Document::parse(value.to_string().as_bytes())
-            .unwrap_err()
-            .to_string()
-            .contains("at most one provider with managed")
-    );
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = compile(&document, &generations(), "0.1.0").unwrap();
+    for (provider, service) in [("local", "ollama-server"), ("other", "other")] {
+        assert!(graph["resource"]["nemoclaw_ollama"][service].is_object());
+        assert!(graph["resource"]["nemoclaw_ollama_storage"][service].is_object());
+        assert!(graph["resource"]["nemoclaw_ollama_model"][service].is_object());
+        assert!(
+            graph["resource"]["nemoclaw_provider"][format!("inference_{provider}")]["depends_on"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(format!("nemoclaw_ollama_model.{service}")))
+        );
+    }
 }
 
 #[test]
@@ -193,10 +203,13 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         .as_str()
         .unwrap()
         .to_owned();
-    value["spec"]["inferenceProviders"][0]["service"]["authentication"] = json!("bearer");
+    value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
     let mut other = value["spec"]["inferenceProviders"][0].clone();
     other["name"] = json!("other");
-    other["service"]["serving"]["port"] = json!(18999);
+    other["serviceRef"] = json!("other");
+    let mut other_service = value["spec"]["services"]["qwen"].clone();
+    other_service["serving"]["port"] = json!(18999);
+    value["spec"]["services"]["other"] = other_service;
     value["spec"]["inferenceProviders"]
         .as_array_mut()
         .unwrap()
@@ -239,8 +252,8 @@ fn managed_services_have_independent_storage_credentials_and_dependencies() {
         ))));
     }
     // Duplicate bind ports must fail before creating either service.
-    value["spec"]["inferenceProviders"][1]["service"]["serving"]["port"] =
-        value["spec"]["inferenceProviders"][0]["service"]["serving"]["port"].clone();
+    value["spec"]["services"]["other"]["serving"]["port"] =
+        value["spec"]["services"]["qwen"]["serving"]["port"].clone();
     assert!(
         Document::parse(value.to_string().as_bytes())
             .unwrap_err()

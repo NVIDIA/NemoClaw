@@ -173,7 +173,9 @@ impl Engine {
                     "runtime image lacks declared recipe capabilities",
                 ));
             }
-            if labels.get("org.nemoclaw.backend") != Some(&service.backend) {
+            if labels.get("org.nemoclaw.backend").map(String::as_str)
+                != Some(crate::config::constraints::BACKEND)
+            {
                 return Err(Error::Conflict(
                     "image does not contain the pinned Spark backend",
                 ));

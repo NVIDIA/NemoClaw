@@ -44,21 +44,6 @@ impl super::Gateway {
         settings
     }
 }
-impl super::Service {
-    pub(crate) fn runtime_settings(&self) -> Self {
-        // Ownership declarations select the already-implemented lifecycle. Keep
-        // the established process specification and its ownership labels stable.
-        let mut settings = self.clone();
-        settings.management = None;
-        settings.storage = None;
-        settings.model.management = None;
-        if let Some(placement) = &mut settings.placement {
-            placement.network = None;
-        }
-        settings
-    }
-}
-
 /// An existing container network on the selected engine. NemoClaw attaches its container but does not create or delete the network.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]

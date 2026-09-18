@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    config::{Document, schema::input_schema},
+    config::{Document, Service, ServiceDefinition, schema::input_schema},
     hardware::GIB,
 };
 use serde_json::{Value, json};
@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
-    let service = &mut value["spec"]["inferenceProviders"][0]["service"];
+    let service = &mut value["spec"]["services"]["qwen"];
     *service = json!({
-        "backend":"vllm", "authentication":"bearer",
-        "image":format!("nc-vllm-amd64@sha256:{}", "0".repeat(64)),
+        "kind":"vllm", "authentication":"bearer",
+        "runtime":{"provider":"docker","engine":"unix:///var/run/docker.sock","image":format!("nc-vllm-amd64@sha256:{}", "0".repeat(64))},
         "model":{"repository":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4","revision":"0dcd680e5585c791728c83342b311d0a0026dbeb"},
         "hardware":{"architecture":"amd64","minComputeCapability":90,"minGpuMemoryBytes":96000000000_u64,"minDriverMajor":580},
         "container":{"ipc":"host","sharedMemoryGiB":32},
@@ -22,6 +22,13 @@ fn input() -> Value {
     value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
         json!("nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4");
     value
+}
+
+fn service(document: &Document) -> &Service {
+    let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
+        panic!("expected vLLM service");
+    };
+    service
 }
 
 #[test]
@@ -37,7 +44,7 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc
     );
-    let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+    let service = service(&doc);
     let args = service.arguments("/data/model", 96 * GIB).unwrap();
     for pair in [
         [
@@ -65,7 +72,7 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
 fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
     use nemoclaw_sdk::hardware::{Capacity, DedicatedGpu, check_capacity};
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
-    let service = doc.spec.inference_providers[0].service.as_ref().unwrap();
+    let service = service(&doc);
     let capacity = Capacity {
         architecture: "amd64".into(),
         gpu: "NVIDIA fixture GPU".into(),
@@ -117,36 +124,24 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
 fn native_serving_schema_rejects_ambiguous_budgets_and_unsafe_overrides() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for (pointer, value) in [
+        ("/spec/services/qwen/hardware/architecture", json!("arm64")),
+        ("/spec/services/qwen/hardware/minGpuMemoryBytes", json!(0)),
         (
-            "/spec/inferenceProviders/0/service/hardware/architecture",
-            json!("arm64"),
-        ),
-        (
-            "/spec/inferenceProviders/0/service/hardware/minGpuMemoryBytes",
+            "/spec/services/qwen/hardware/minComputeCapability",
             json!(0),
         ),
         (
-            "/spec/inferenceProviders/0/service/hardware/minComputeCapability",
-            json!(0),
-        ),
-        (
-            "/spec/inferenceProviders/0/service/container/ipc",
+            "/spec/services/qwen/container/ipc",
             json!("container:foreign"),
         ),
+        ("/spec/services/qwen/container/sharedMemoryGiB", json!(0)),
+        ("/spec/services/qwen/memory/gpuMemoryUtilization", json!(1)),
         (
-            "/spec/inferenceProviders/0/service/container/sharedMemoryGiB",
-            json!(0),
-        ),
-        (
-            "/spec/inferenceProviders/0/service/memory/gpuMemoryUtilization",
-            json!(1),
-        ),
-        (
-            "/spec/inferenceProviders/0/service/serving/modelName",
+            "/spec/services/qwen/serving/modelName",
             json!("invalid model name"),
         ),
         (
-            "/spec/inferenceProviders/0/service/serving/mambaBackend",
+            "/spec/services/qwen/serving/mambaBackend",
             json!("arbitrary"),
         ),
     ] {
@@ -160,12 +155,12 @@ fn native_serving_schema_rejects_ambiguous_budgets_and_unsafe_overrides() {
     }
     for field in ["gpuMemoryGiB", "kvCacheGiB"] {
         let mut bad = input();
-        bad["spec"]["inferenceProviders"][0]["service"]["memory"][field] = json!(8);
+        bad["spec"]["services"]["qwen"]["memory"][field] = json!(8);
         assert!(Document::parse(bad.to_string().as_bytes()).is_err());
         assert!(!schema.is_valid(&bad));
     }
     let mut bad = input();
-    bad["spec"]["inferenceProviders"][0]["service"]
+    bad["spec"]["services"]["qwen"]
         .as_object_mut()
         .unwrap()
         .remove("hardware");
@@ -202,19 +197,13 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
         "amd64"
     );
     assert!(spec.runtime_service().unwrap().placement.is_none());
-    let service = spec.service.as_ref().unwrap();
-    assert!(service.arguments("/data/model", 80 * GIB).is_err());
+    let runtime_service = spec.service.as_ref().unwrap();
+    assert!(runtime_service.arguments("/data/model", 80 * GIB).is_err());
     assert!(!container.to_string().contains("VLLM_API_KEY"));
     let mut fractional = input();
-    fractional["spec"]["inferenceProviders"][0]["service"]["memory"]["gpuMemoryUtilization"] =
-        json!(0.7555);
+    fractional["spec"]["services"]["qwen"]["memory"]["gpuMemoryUtilization"] = json!(0.7555);
     let doc = Document::parse(fractional.to_string().as_bytes()).unwrap();
-    let args = doc.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap()
-        .arguments("/data/model", 96 * GIB)
-        .unwrap();
+    let args = service(&doc).arguments("/data/model", 96 * GIB).unwrap();
     assert!(
         args.windows(2)
             .any(|p| p == ["--gpu-memory-utilization", "0.7555"])
@@ -224,17 +213,14 @@ fn native_container_contract_and_remote_example_preserve_declared_settings() {
 #[test]
 fn qwen_xml_tools_reach_the_native_server_without_changing_reasoning() {
     let mut value = input();
-    value["spec"]["inferenceProviders"][0]["service"]["serving"]["toolParser"] = json!("qwen3_xml");
+    value["spec"]["services"]["qwen"]["serving"]["toolParser"] = json!("qwen3_xml");
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
         jsonschema::validator_for(&input_schema())
             .unwrap()
             .is_valid(&value)
     );
-    let args = document.spec.inference_providers[0]
-        .service
-        .as_ref()
-        .unwrap()
+    let args = service(&document)
         .arguments("/data/model", 96 * GIB)
         .unwrap();
     assert!(

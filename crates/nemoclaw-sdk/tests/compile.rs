@@ -23,8 +23,10 @@ fn reference_graphs_preserve_addresses_dependencies_and_provider_configuration()
         let path = entry.unwrap().path();
         let input = fs::read(root.join("config").join(path.file_stem().unwrap())).unwrap();
         let document = Document::parse(input.as_slice()).unwrap();
-        let expected: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(compile(&document, &generations, "0.1.0").unwrap(), expected);
+        let expected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let actual = compile(&document, &generations, "0.1.0")
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert_eq!(actual, expected, "{}", path.display());
     }
     let document = Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
     assert!(compile(&document, &BTreeMap::new(), "0.1.0").is_err());

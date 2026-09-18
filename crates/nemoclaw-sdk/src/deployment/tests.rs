@@ -102,7 +102,8 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     let document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
     assert_eq!(document.spec.gateway.management, "managed");
-    assert!(document.spec.inference_providers[0].service.is_none());
+    assert!(document.spec.inference_providers[0].service_ref.is_none());
+    assert!(document.spec.services.is_empty());
     let deployment = Deployment::new(
         &path("NEMOCLAW_TEST_GATEWAY_STATE"),
         &path("NEMOCLAW_TEST_BUNDLE"),
@@ -192,11 +193,10 @@ fn ollama_plan_accounts_for_storage_service_and_model_and_never_recreates_bound_
         Document::parse(include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes())
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
-    let mut expected = allowed(&compile::targets(&document, &record.generations).unwrap());
-    ollama::extend_allowed(&document, &record.generations, &mut expected).unwrap();
+    let expected = allowed(&compile::targets(&document, &record.generations).unwrap());
     assert_eq!(expected.len(), 7);
     let bindings = [(
-        "nemoclaw_ollama_model.inference".into(),
+        "nemoclaw_ollama_model.ollama-server".into(),
         StateBinding {
             id: "engine/container/created/model".into(),
             ..Default::default()

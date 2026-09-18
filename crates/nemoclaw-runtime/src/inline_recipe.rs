@@ -120,13 +120,11 @@ mod tests {
             include_bytes!("../../../examples/spark/spark-inline.yaml").as_slice(),
         )
         .unwrap();
-        let mut recipe = d.spec.inference_providers[0]
-            .service
-            .as_ref()
-            .unwrap()
-            .recipe
-            .clone()
-            .unwrap();
+        let nemoclaw_sdk::config::ServiceDefinition::Vllm(service) = &d.spec.services["qwen"]
+        else {
+            panic!("expected vLLM service");
+        };
+        let mut recipe = service.recipe.clone().unwrap();
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("tool with spaces");
         std::fs::write(&executable, b"#!/bin/sh\ncat\n").unwrap();

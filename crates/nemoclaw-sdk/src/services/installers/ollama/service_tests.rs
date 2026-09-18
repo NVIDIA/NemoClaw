@@ -63,7 +63,7 @@ async fn ollama_reconciles_lost_create_and_refuses_recreation_after_observation_
         established.id
     );
     use crate::backend::Backend;
-    let backend = crate::ollama::OllamaBackend::new(engine.clone());
+    let backend = crate::services::installers::ollama::OllamaBackend::new(engine.clone());
     let row = [
         ("id", established.id.as_str()),
         ("name", spec.name.as_str()),

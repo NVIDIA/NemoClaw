@@ -747,7 +747,7 @@ mod tests {
                     "GAP-V0-INFERENCE-OLLAMA-PROXY-PORT",
                     Boundary::PlanRuntimeQualification,
                     ISSUE_12038,
-                    "V1 parses the selected port in ollamaProxy.endpoint but V0-to-V1 authoring and generated lifecycle qualification are pending",
+                    "V1 parses the selected port in the referenced Ollama proxy service endpoint but V0-to-V1 authoring and generated lifecycle qualification are pending",
                 ),
                 evidence: Evidence::Fixture(FixtureCase::OllamaProxy),
             },
@@ -1192,7 +1192,11 @@ mod tests {
                 value["spec"]["sandboxes"][0]["name"] = json!("Not A DNS Label");
             }
             Mutation::LlamaCppService => {
-                value["spec"]["inferenceProviders"][0]["service"]["backend"] = json!("llamacpp");
+                let service = value["spec"]["inferenceProviders"][0]["serviceRef"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                value["spec"]["services"][service]["kind"] = json!("llamacpp");
             }
             Mutation::ModelRouter => {
                 value["spec"]["modelRouter"] =
@@ -1284,15 +1288,20 @@ mod tests {
         };
         if matches!(case, FixtureCase::OllamaProxy) {
             let mut value: Value = serde_saphyr::from_slice(source).unwrap();
-            let provider = &mut value["spec"]["inferenceProviders"][0];
-            provider.as_object_mut().unwrap().remove("ollama");
-            provider["management"] = json!("external");
-            provider["endpoint"] = json!("http://127.0.0.1:11434/v1");
-            provider["ollamaProxy"] = json!({
-                "engine": "unix:///var/run/docker.sock",
-                "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
+            let service = &mut value["spec"]["services"]["ollama-server"];
+            let model = service["model"]["name"].clone();
+            *service = json!({
+                "kind": "ollamaProxy",
+                "runtime": {
+                    "provider": "docker",
+                    "engine": "unix:///var/run/docker.sock",
+                    "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
+                },
                 "endpoint": "http://172.20.0.1:11435/v1",
-                "model": {"digest": "a".repeat(64)}
+                "upstream": {
+                    "endpoint": "http://127.0.0.1:11434/v1",
+                    "model": {"name": model, "digest": "a".repeat(64)},
+                }
             });
             return serde_saphyr::to_string(&value).unwrap().into_bytes();
         }
@@ -1512,25 +1521,31 @@ mod tests {
                 assert_eq!(agents[0]["tools"]["disclosure"], "progressive");
             }
             FixtureCase::ManagedOllama => {
-                assert!(value["spec"]["inferenceProviders"][0]["ollama"].is_object());
+                let service = value["spec"]["inferenceProviders"][0]["serviceRef"]
+                    .as_str()
+                    .unwrap();
+                assert_eq!(value["spec"]["services"][service]["kind"], "ollama");
             }
             FixtureCase::OllamaProxy => {
+                let service = value["spec"]["inferenceProviders"][0]["serviceRef"]
+                    .as_str()
+                    .unwrap();
                 assert_eq!(
-                    value["spec"]["inferenceProviders"][0]["endpoint"],
+                    value["spec"]["services"][service]["upstream"]["endpoint"],
                     "http://127.0.0.1:11434/v1"
                 );
                 assert_eq!(
-                    value["spec"]["inferenceProviders"][0]["ollamaProxy"]["endpoint"],
+                    value["spec"]["services"][service]["endpoint"],
                     "http://172.20.0.1:11435/v1"
                 );
             }
             FixtureCase::ManagedVllm => {
+                let service = value["spec"]["inferenceProviders"][0]["serviceRef"]
+                    .as_str()
+                    .unwrap();
+                assert_eq!(value["spec"]["services"][service]["kind"], "vllm");
                 assert_eq!(
-                    value["spec"]["inferenceProviders"][0]["service"]["backend"],
-                    "vllm"
-                );
-                assert_eq!(
-                    value["spec"]["inferenceProviders"][0]["service"]["hardware"]["minComputeCapability"],
+                    value["spec"]["services"][service]["hardware"]["minComputeCapability"],
                     90
                 );
             }

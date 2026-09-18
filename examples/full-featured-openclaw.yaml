@@ -39,19 +39,17 @@ spec:
       management: managed
     storage:
       management: managed
-  inferenceProviders:
-    - name: nemotron
-      management: managed
-      provider: openai
-      api: openai-completions
-      service:
+  services:
+    nemotron:
+        kind: vllm
         management: managed
-        backend: vllm
         authentication: bearer
-        # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
-        image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
-        placement:
+        runtime:
+          provider: docker
           engine: ssh://gpu-box
+        # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
+          image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        placement:
           networkCidr: 172.30.119.0/24
           network:
             management: managed
@@ -85,6 +83,12 @@ spec:
           startupTimeoutSeconds: 1800
         memory:
           gpuMemoryUtilization: 0.75
+  inferenceProviders:
+    - name: nemotron
+      management: managed
+      provider: openai
+      api: openai-completions
+      serviceRef: nemotron
   integrations:
     search:
       kind: webSearch

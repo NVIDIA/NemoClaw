@@ -46,10 +46,10 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "tls_ca_env",
         "tls_certificate_env",
         "tls_key_env",
-        "ollama_engine",
         "destroy",
     ] {
         assert!(schema.block.attributes.contains_key(name));
     }
+    assert!(!schema.block.attributes.contains_key("ollama_engine"));
     assert!(diagnostics.errors.is_empty());
 }

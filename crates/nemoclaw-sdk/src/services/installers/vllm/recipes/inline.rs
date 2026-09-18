@@ -160,7 +160,6 @@ impl InlineRecipe {
     pub fn validate(&self, service: &Service) -> Result<(), ConfigError> {
         let bad = || ConfigError::new("invalid inline recipe contract or incompatible service");
         if self.api_version != l::API_VERSION
-            || service.backend != crate::config::constraints::BACKEND
             || !l::ARCHITECTURES.contains(&self.compatibility.architecture.as_str())
             || self.compatibility.gpu.is_empty()
             || !(1..=l::DRIVER_MAX).contains(&self.compatibility.min_driver_major)
