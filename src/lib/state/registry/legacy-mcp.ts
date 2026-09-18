@@ -10,6 +10,18 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Normal serialization rewrites every sandbox, so optional caches must defer globally. */
+export function hasLegacyMcpRegistryProjection(): boolean {
+  const document = readConfigFile<unknown>(REGISTRY_FILE, {});
+  return (
+    isObjectRecord(document) &&
+    isObjectRecord(document.sandboxes) &&
+    Object.values(document.sandboxes).some(
+      (sandbox) => isObjectRecord(sandbox) && isObjectRecord(sandbox.mcp),
+    )
+  );
+}
+
 /** Read deprecated ownership evidence without admitting it to runtime registry state. */
 export function readLegacyMcpRegistryProjection(
   sandboxName: string,

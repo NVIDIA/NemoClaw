@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   updateSandbox: vi.fn(),
   inspectLegacy: vi.fn(),
   inspectSource: vi.fn(),
+  inspectPolicyOnly: vi.fn(),
   inspectSources: vi.fn(),
   joinEntries: vi.fn((_sandbox: unknown, entries: unknown) => entries),
   removeLegacy: vi.fn(),
@@ -82,10 +83,11 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
   detachProvider: mocks.detachProvider,
   waitForDetachedMcpCredential: mocks.waitForDetached,
 }));
-vi.mock("./mcp-bridge-source", () => ({
+vi.mock("./mcp-bridge-source", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-source")>()),
   inspectLegacyBridgeState: mocks.inspectLegacy,
   inspectSourceBridgeState: mocks.inspectSource,
-  inspectPolicyOnlyMcpEntry: vi.fn(),
+  inspectPolicyOnlyMcpEntry: mocks.inspectPolicyOnly,
   inspectAgentMcpSources: mocks.inspectSources,
   removeLegacyAgentMcpEntry: mocks.removeLegacy,
   joinMcpEntriesToOpenShell: mocks.joinEntries,
@@ -123,6 +125,7 @@ describe("explicit MCP migration", () => {
     mocks.getAdapter.mockReturnValue("openclaw-config");
     mocks.updateSandbox.mockReturnValue(true);
     mocks.readConfig.mockReturnValue({});
+    mocks.inspectPolicyOnly.mockResolvedValue(undefined);
     mocks.writeConfig.mockImplementation((_path: string, document: unknown) => {
       mocks.readConfig.mockReturnValue(structuredClone(document));
     });
@@ -475,6 +478,10 @@ describe("explicit MCP migration", () => {
       () => mocks.inspectSources.mockResolvedValueOnce({ native: {}, legacy: { github: entry } }),
     ],
     [
+      "reappears as a native registration",
+      () => mocks.inspectSources.mockResolvedValueOnce({ native: { github: entry }, legacy: {} }),
+    ],
+    [
       "inspection fails",
       () => mocks.inspectSources.mockRejectedValueOnce(new Error("inspection unavailable")),
     ],
@@ -534,6 +541,54 @@ describe("explicit MCP migration", () => {
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
     expect(legacy).toEqual({ github: entry });
+  });
+
+  it("finishes owned cleanup when a registry write fails after source removal", async () => {
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry } } } },
+    });
+    mocks.inspectSources.mockResolvedValue({ native: {}, legacy: {} });
+    mocks.removeLegacy.mockImplementationOnce(async () => {
+      mocks.inspectSource.mockReturnValue({ bridges: {}, sources: { native: {}, legacy: {} } });
+    });
+    mocks.writeConfig.mockImplementationOnce(() => {
+      throw new Error("registry disk failure");
+    });
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow("registry disk failure");
+    expect(mocks.removePolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    mocks.inspectPolicyOnly.mockResolvedValueOnce({ ...entry, source: "policy" });
+    mocks.inspectProvider.mockResolvedValueOnce({
+      exists: true,
+      id: entry.providerId,
+      resourceVersion: 1,
+      type: "generic",
+      credentialKeys: entry.env,
+    });
+    mocks.detachProvider.mockResolvedValueOnce("detached");
+    await expect(removeMcpBridge("alpha", "github")).resolves.toBeUndefined();
+    expect(mocks.readConfig()).toEqual({ sandboxes: { alpha: {} } });
+    expect(mocks.removeLegacy).toHaveBeenCalledOnce();
+    expect(mocks.removePolicy).toHaveBeenCalledOnce();
+    expect(mocks.detachProvider).toHaveBeenCalledOnce();
+    expect(mocks.waitForDetached).toHaveBeenCalledOnce();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+  });
+
+  it("preserves a registry-only row when the policy's recorded provider identity changed", async () => {
+    mocks.readConfig.mockReturnValue({
+      sandboxes: { alpha: { mcp: { bridges: { github: entry } } } },
+    });
+    mocks.inspectSource.mockReturnValue({ bridges: {}, sources: { native: {}, legacy: {} } });
+    mocks.inspectPolicyOnly.mockResolvedValueOnce({
+      ...entry,
+      source: "policy",
+      providerId: "replacement",
+    });
+    await expect(removeMcpBridge("alpha", "github")).rejects.toThrow("no longer matches");
+    expect(mocks.writeConfig).not.toHaveBeenCalled();
+    expect(mocks.removePolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
   });
 
   it("rejects legacy removal before mutation when another registry-only row remains", async () => {

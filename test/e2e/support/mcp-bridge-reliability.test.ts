@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -14,6 +15,7 @@ import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.
 import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
+  captureRejectedOpenClawCredentialAliasState,
   confirmHermesMcpRegistrationAfterRestartSettlement,
   isHermesMcpAddPostProbeNotReady,
   isHermesMcpStatusAwaitingRestartSettlement,
@@ -29,6 +31,55 @@ import {
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+
+describe("rejected OpenClaw credential alias state", () => {
+  it.each([false, true])(
+    "observes all mutation surfaces on the selected gateway (residual policy: %s)",
+    async (residualPolicy) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "non-default-mcp-gateway");
+      try {
+        const ok = { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+        const nemoclaw = vi.fn().mockResolvedValue({ ...ok, stdout: '{"bridges":[]}' });
+        const command = vi.fn().mockResolvedValue(ok);
+        const openshell = vi.fn().mockImplementation(async (_args, options) => {
+          expect(options.env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+          return {
+            ...ok,
+            stdout: residualPolicy ? buildMcpBridgePolicyKey("credential-alias") : "",
+          };
+        });
+        const execShell = vi.fn().mockResolvedValue({ ...ok, stdout: "absent\n" });
+        const result = await captureRejectedOpenClawCredentialAliasState(
+          {
+            nemoclaw,
+            command,
+            openshellCommandPath: "/fixture/openshell",
+          } as unknown as HostCliClient,
+          { openshell, execShell } as unknown as SandboxClient,
+          { sandboxName: "alpha", mcpUrl: "https://example.test/mcp" },
+        );
+
+        expect(result).toEqual({
+          adapterAbsent: true,
+          policyAbsent: !residualPolicy,
+          providerAbsent: true,
+          sourceAbsent: true,
+        });
+        expect(openshell).toHaveBeenCalledWith(
+          ["policy", "get", "--full", "alpha"],
+          expect.objectContaining({
+            env: expect.objectContaining({ OPENSHELL_GATEWAY: "non-default-mcp-gateway" }),
+          }),
+        );
+        expect(nemoclaw.mock.calls[0]?.[1].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+        expect(command.mock.calls[0]?.[2].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+        expect(execShell.mock.calls[0]?.[2].env.OPENSHELL_GATEWAY).toBe("non-default-mcp-gateway");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+});
 
 describe("OpenClaw denied-tool target", () => {
   it.each([undefined, "", "relative/path"])(

@@ -13,7 +13,7 @@ import {
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
-import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-migration";
+import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
   detachProvider,
   getMcpProviderInspectionRuntimeSelection,
@@ -99,9 +99,9 @@ export async function removeMcpBridge(
       await assertAgentMcpTeardownRuntimeCapability(sandboxName, legacyAdapter, runtimeSelection);
       await removeLegacyAgentMcpEntry(sandbox, legacyEntry, runtimeSelection);
       const remaining = await inspectAgentMcpSources(sandbox, runtimeSelection);
-      if (remaining.legacy[server]) {
+      if (remaining.legacy[server] || remaining.native[server]) {
         throw new McpBridgeError(
-          `Legacy MCP server '${server}' remains in agent configuration. Registry ownership, policy, and provider state were preserved.`,
+          `MCP server '${server}' remains in agent configuration. Registry ownership, policy, and provider state were preserved.`,
           2,
         );
       }
@@ -120,6 +120,48 @@ export async function removeMcpBridge(
           agent.mcpCapability.adapter,
           runtimeSelection,
         )) ?? undefined;
+    }
+    // A failed registry write may leave ownership after the agent entry is gone.
+    // Reconcile that exact row on retry, without treating it as runtime state.
+    if (!legacyEntry && !observed.sources.native[server]) {
+      const legacyProjection = readLegacyMcpRegistryProjection(sandboxName);
+      const committedEntry = legacyProjection
+        ? readCommittedLegacyRegistryEntries(
+            sandboxName,
+            agent.name,
+            getBridgeAdapter(agent),
+            legacyProjection,
+          )[server]
+        : undefined;
+      if (legacyProjection && committedEntry) {
+        if (
+          entry &&
+          (!sameMcpRegistration(entry, committedEntry) ||
+            entry.providerName !== committedEntry.providerName ||
+            entry.providerId !== committedEntry.providerId)
+        ) {
+          throw new McpBridgeError(
+            `Legacy MCP server '${server}' no longer matches its live policy and provider. Ownership and resources were preserved.`,
+            2,
+          );
+        }
+        await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+        await assertAgentMcpTeardownRuntimeCapability(
+          sandboxName,
+          getBridgeAdapter(agent),
+          runtimeSelection,
+        );
+        const remaining = await inspectAgentMcpSources(sandbox, runtimeSelection);
+        if (remaining.legacy[server] || remaining.native[server]) {
+          throw new McpBridgeError(
+            `MCP server '${server}' reappeared before cleanup. Ownership and resources were preserved.`,
+            2,
+          );
+        }
+        removeLegacyMcpRegistryEntry(sandboxName, server, legacyProjection);
+        entry = committedEntry;
+        removedLegacySource = true;
+      }
     }
     if (!entry) {
       if (!options.force) {

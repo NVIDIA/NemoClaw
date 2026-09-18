@@ -21,7 +21,11 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  sandboxAccessEnv,
+  trustedSandboxShellScript,
+} from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
@@ -85,7 +89,7 @@ export async function captureRejectedOpenClawCredentialAliasState(
     providerName,
     policyName: buildMcpBridgePolicyName(server),
   };
-  const commandOptions = { env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 };
+  const commandOptions = { env: sandboxAccessEnv(), timeoutMs: 60_000 };
   const source = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
     ...commandOptions,
     artifactName: "mcp-negative-ambiguous-credential-alias-list",
