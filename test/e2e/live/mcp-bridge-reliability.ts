@@ -1,16 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildHermesMcpStatusCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
+import { expect } from "vitest";
+import { MCP_MUTATION_TIMEOUT_MS, type McpAdapter } from "./mcp-bridge-cleanup.ts";
+import { applyMcpHostPolicyEdit } from "./mcp-bridge-sandbox.ts";
+import {
+  buildHermesMcpStatusCommand,
+  buildOpenClawMcpInspectCommand,
+} from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { buildMcpCredentialRevisionObservationCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-provider";
 import type { McpAttachedCredentialRevision } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness";
-import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
+import type {
+  McpBridgeStatus,
+  McpSourceEntry,
+} from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
+import {
+  buildMcpBridgePolicyKey,
+  buildMcpBridgePolicyName,
+} from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import { buildMcpBridgeProviderName } from "../../../src/lib/actions/sandbox/mcp-bridge-validation";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  sandboxAccessEnv,
+  trustedSandboxShellScript,
+} from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
@@ -22,6 +40,77 @@ import {
 } from "./mcp-bridge-hermes-http.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
+
+export async function addBridgeAndReadStatus(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  options: {
+    sandboxName: string;
+    mcpUrl: string;
+    expectedAdapter: McpAdapter;
+    artifactPrefix: string;
+    credential?: string;
+    serverName?: string;
+    credentialEnvName?: string;
+    applyHostPolicyEdit?: boolean;
+  },
+): Promise<string> {
+  await (options.applyHostPolicyEdit === false
+    ? Promise.resolve()
+    : applyMcpHostPolicyEdit(sandbox, options));
+  const credential = options.credential ?? MCP_BRIDGE_TEST_CREDENTIALS.host;
+  const serverName = options.serverName ?? "fake";
+  const credentialEnvName = options.credentialEnvName ?? "FAKE_MCP_SECRET";
+  const addArgs = [
+    options.sandboxName,
+    "mcp",
+    "add",
+    serverName,
+    "--url",
+    options.mcpUrl,
+    "--env",
+    credentialEnvName,
+    "--deny-tool",
+    MCP_BRIDGE_DENIED_TOOL_SELECTOR,
+  ];
+  const add = await host.nemoclaw(addArgs, {
+    artifactName: `${options.artifactPrefix}-mcp-add-fake-server`,
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      [credentialEnvName]: credential,
+    },
+    redactionValues: [credential],
+    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
+  });
+  assertExitZero(add, `${options.artifactPrefix} mcp add fake server`);
+  const status = await host.nemoclaw([options.sandboxName, "mcp", "status", serverName, "--json"], {
+    artifactName: `${options.artifactPrefix}-mcp-status-json`,
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      [credentialEnvName]: credential,
+    },
+    redactionValues: [credential],
+    timeoutMs: 60_000,
+  });
+  assertExitZero(status, `${options.artifactPrefix} mcp status --json`);
+  const statusJson = JSON.parse(status.stdout) as McpBridgeStatus;
+  expect(statusJson.support).toMatchObject({
+    adapter: options.expectedAdapter,
+  });
+  expect(statusJson).toMatchObject({
+    server: serverName,
+    url: options.mcpUrl,
+    env: { names: [credentialEnvName], ready: true },
+    provider: { present: true, state: "configured", attached: true },
+    policy: { name: `mcp-bridge-${serverName}`, present: true, state: "configured" },
+    adapter: { registered: true },
+  });
+  expect(statusJson.warnings).toEqual([]);
+  expect(status.stdout).not.toContain(credential);
+  expect(statusJson.provider.name).toBe(`${options.sandboxName}-mcp-${serverName}`);
+
+  return statusJson.provider.name!;
+}
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
@@ -57,11 +146,62 @@ export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
   toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
 };
 
+/** Capture every mutation surface after an ambiguous OpenClaw credential alias is rejected. */
+export async function captureRejectedOpenClawCredentialAliasState(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  options: { sandboxName: string; mcpUrl: string },
+) {
+  const server = "credential-alias";
+  const providerName = buildMcpBridgeProviderName(options.sandboxName, server);
+  const entry: McpSourceEntry = {
+    server,
+    agent: "openclaw",
+    adapter: "openclaw-config",
+    url: options.mcpUrl,
+    env: ["ALIAS_MCP_SECRET"],
+    providerName,
+    policyName: buildMcpBridgePolicyName(server),
+  };
+  const commandOptions = { env: sandboxAccessEnv(), timeoutMs: 60_000 };
+  const source = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
+    ...commandOptions,
+    artifactName: "mcp-negative-ambiguous-credential-alias-list",
+  });
+  const providers = await host.command(
+    host.openshellCommandPath,
+    ["sandbox", "provider", "list", options.sandboxName],
+    {
+      ...commandOptions,
+      artifactName: "mcp-negative-ambiguous-credential-alias-provider-list",
+    },
+  );
+  const policy = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
+    ...commandOptions,
+    artifactName: "mcp-negative-ambiguous-credential-alias-policy",
+  });
+  const adapter = await sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(["set -eu", buildOpenClawMcpInspectCommand(entry, true)].join("\n")),
+    { ...commandOptions, artifactName: "mcp-negative-ambiguous-credential-alias-adapter" },
+  );
+  const bridges = JSON.parse(source.stdout) as { bridges: McpBridgeStatus[] };
+  return {
+    adapterAbsent: adapter.exitCode === 0 && /(?:^|\n)absent(?:\n|$)/u.test(resultText(adapter)),
+    policyAbsent:
+      policy.exitCode === 0 && !resultText(policy).includes(buildMcpBridgePolicyKey(server)),
+    providerAbsent: providers.exitCode === 0 && !resultText(providers).includes(providerName),
+    sourceAbsent:
+      source.exitCode === 0 && !bridges.bridges.some((candidate) => candidate.server === server),
+  };
+}
+
 export async function runDeniedMcpToolCall(
   host: HostCliClient,
   options: {
     agent: "openclaw" | "hermes" | "langchain-deepagents-code";
     artifactName: string;
+    credentialEnvName?: string;
     deniedTool?: string;
     mcpUrl?: string;
     sandbox: SandboxClient;
@@ -115,10 +255,11 @@ export async function runDeniedMcpToolCall(
     payload,
   ];
   const deniedToolName = options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME;
+  const credentialEnvName = options.credentialEnvName ?? "FAKE_MCP_SECRET";
   const command =
     options.agent === "openclaw"
       ? [
-          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny FAKE_MCP_SECRET ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
+          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny ${shellQuote(credentialEnvName)} ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
           MCP_PROVIDER_REWRITE_PROBE_SOURCE,
           "NEMOCLAW_MCP_DENIED_TOOL_PROBE",
         ].join("\n")
