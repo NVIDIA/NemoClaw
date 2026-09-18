@@ -17,6 +17,7 @@ function createRecoveryPrompt(answers: string[]) {
   const exitError = Object.assign(new Error("onboard exit"), { exitCode: 0 });
   const helpers = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt,
     validateNvidiaApiKeyValue: () => null,
     getTransportRecoveryMessage: () => "  Transport failed.",
@@ -102,6 +103,7 @@ describe("validation recovery credential prompt", () => {
     }) as never);
     const helpers = createValidationRecoveryPromptHelpers({
       isNonInteractive: () => true,
+      isSecretPromptAvailable: () => true,
       prompt,
       validateNvidiaApiKeyValue: () => null,
       getTransportRecoveryMessage: () => "  Transport failed.",
@@ -116,6 +118,37 @@ describe("validation recovery credential prompt", () => {
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when secure credential input is unavailable (#12079)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const prompt = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitError = new Error("process exit");
+    const exit = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw exitError;
+    }) as never);
+    const helpers = createValidationRecoveryPromptHelpers({
+      isNonInteractive: () => false,
+      isSecretPromptAvailable: () => false,
+      prompt,
+      validateNvidiaApiKeyValue: () => null,
+      getTransportRecoveryMessage: () => "  Transport failed.",
+      exitOnboardFromPrompt(): never {
+        throw new Error("unexpected interactive exit");
+      },
+    });
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).rejects.toBe(exitError);
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(error).toHaveBeenCalledWith(
+      "  Secure credential recovery requires interactive terminal input and error output.",
+    );
   });
 
   it("returns to provider selection when the re-entry prompt receives back (#9557)", async () => {

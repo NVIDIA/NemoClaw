@@ -6,6 +6,7 @@ import type { ProbeRecovery } from "../validation-recovery";
 
 export interface ValidationRecoveryPromptDeps {
   isNonInteractive(): boolean;
+  isSecretPromptAvailable?(): boolean;
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
   validateNvidiaApiKeyValue(key: string, credentialEnv: string | null): string | null;
   getTransportRecoveryMessage(failure: any): string;
@@ -89,6 +90,16 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "credential" && credentialEnv) {
+      // Piped input cannot echo terminal keystrokes. The unsafe fallback is an
+      // interactive stdin paired with redirected stderr.
+      const secretPromptAvailable =
+        deps.isSecretPromptAvailable?.() ?? (!process.stdin.isTTY || Boolean(process.stderr.isTTY));
+      if (!secretPromptAvailable) {
+        console.error(
+          "  Secure credential recovery requires interactive terminal input and error output.",
+        );
+        process.exit(1);
+      }
       console.log(`  ${label} authorization failed.`);
       console.log(
         "  Choose retry to enter the API key securely, back to change the provider or model, or exit to stop onboarding.",

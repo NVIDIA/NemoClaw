@@ -353,6 +353,7 @@ function makeRemoteModelValidatorDeps(
 function makeInteractiveValidationRecovery() {
   return createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt: async () => "",
     validateNvidiaApiKeyValue: () => null,
     getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
@@ -912,6 +913,7 @@ async function runCredentialRetryScenario(scenario: CredentialRetryScenario) {
   };
   const recovery = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt,
     validateNvidiaApiKeyValue: (value, credentialEnv) =>
       credentialEnv === "NVIDIA_INFERENCE_API_KEY" && !value.startsWith("nvapi-")
