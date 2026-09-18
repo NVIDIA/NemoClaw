@@ -89,6 +89,13 @@ import {
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
+function recordedOpenShellGatewayStateDir(
+  resolveStateDir: () => string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() ? resolveStateDir() : null;
+}
+
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -3077,7 +3084,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
       { plannedMessagingState, hermesToolGateways },
       hermesApiPortReservationScope.effectivePort,
-      { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+      {
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        openshellGatewayStateDir: recordedOpenShellGatewayStateDir(getDockerDriverGatewayStateDir),
+      },
       {
         initialSandboxPolicy,
         compatibilityPolicyPath,
