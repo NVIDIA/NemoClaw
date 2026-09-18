@@ -207,6 +207,7 @@ async function rebuildSandboxUnlocked(
     targetConfig,
     recreateOptions: stagedRecreateOptions,
     messagingPlan,
+    recheckMessagingConflicts,
     baseImagePreflight,
     liveState,
     recoveryManifest: validatedRecoveryManifest,
@@ -722,6 +723,7 @@ async function rebuildSandboxUnlocked(
           sandboxName,
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
+          recheckMessagingConflicts,
           backupManifest: recoveryBackup,
           mcpEntries,
           ...(recreateJournal.runtimeSelection
@@ -802,6 +804,7 @@ async function rebuildSandboxUnlocked(
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
+        recheckMessagingConflicts,
         staleRecovery,
         recreateJournal,
         backupManifest: backup.backupManifest,
@@ -1050,6 +1053,7 @@ async function rebuildSandboxUnlocked(
         sandboxName,
         targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
+        recheckMessagingConflicts,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,

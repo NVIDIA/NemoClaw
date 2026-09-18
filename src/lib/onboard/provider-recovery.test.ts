@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellInferenceRouteResult } from "../adapters/openshell/inference-route";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
@@ -24,6 +25,11 @@ const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function routeObserver(result: OpenShellInferenceRouteResult) {
+  const observeInferenceRoute = vi.fn(() => result);
+  return { inferenceRouteObserver: { observeInferenceRoute }, observeInferenceRoute };
+}
 
 describe("persisted provider selection", () => {
   it.each([
@@ -217,7 +223,10 @@ describe("sandbox recovery authority", () => {
 describe("provider recovery persisted routing state", () => {
   function helpers() {
     return createProviderRecoveryHelpers({
-      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      inferenceRouteObserver: routeObserver({
+        ok: false,
+        error: { kind: "schema", reason: "partial_route", message: "partial" },
+      }).inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
   }
@@ -364,12 +373,15 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", gatewayPort: 19_090, gatewayName: "nemoclaw-19090" }],
     });
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "nvidia-prod", model: "selected-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
 
@@ -377,10 +389,9 @@ describe("provider recovery persisted routing state", () => {
       provider: "nvidia-prod",
       model: "selected-model",
     });
-    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      { ignoreError: true, timeout: undefined },
-    );
+    expect(observed.observeInferenceRoute).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+    });
   });
 
   it("reads the current selected gateway when rebuilding an empty registry (#10671)", () => {
@@ -389,12 +400,15 @@ describe("provider recovery persisted routing state", () => {
       sandboxes: [],
     });
     let selectedGatewayName = "nemoclaw";
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "nvidia-prod", model: "selected-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => selectedGatewayName,
     });
 
@@ -404,10 +418,9 @@ describe("provider recovery persisted routing state", () => {
       provider: "nvidia-prod",
       model: "selected-model",
     });
-    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      { ignoreError: true, timeout: undefined },
-    );
+    expect(observed.observeInferenceRoute).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+    });
   });
 
   it("prefers the selected sandbox registry endpoint over session state", () => {
@@ -565,7 +578,10 @@ describe("provider recovery persisted routing state", () => {
     );
     const warn = vi.fn();
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      inferenceRouteObserver: routeObserver({
+        ok: false,
+        error: { kind: "schema", reason: "partial_route", message: "partial" },
+      }).inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
       warn,
     });
@@ -611,17 +627,20 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", provider: "compatible-endpoint" }],
     });
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: compatible-endpoint\n  Model: gateway-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "compatible-endpoint", model: "gateway-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
 
     expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();
-    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(observed.observeInferenceRoute).not.toHaveBeenCalled();
   });
 
   it("reports every other recorded endpoint for the same global provider", () => {

@@ -95,6 +95,10 @@ export interface RebuildPostRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   mcpRuntimeSelection?: McpRebuildPreparation["runtimeSelection"];
+  recheckMessagingConflicts?: (
+    runtimeSelection: McpRebuildPreparation["runtimeSelection"],
+    onConflict: RebuildBail,
+  ) => Promise<void>;
   restoreSucceeded: boolean;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
@@ -587,7 +591,7 @@ export async function runRebuildPostRestorePhase(
     }
     if (messagingHostForwardUnverified) {
       console.log(
-        `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
+        `    Messaging webhook forward was not verified \u2014 resolve the forwarding error, then run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to finish recovery`,
       );
     }
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
@@ -614,6 +618,15 @@ export async function runRebuildPostRestorePhase(
     (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified)
   ) {
     bail(`Hermes post-restore verification failed for '${sandboxName}'.`);
+    return;
+  }
+  if (messagingHostForwardUnverified) {
+    if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+    console.error(
+      `  Messaging forwarding for '${sandboxName}' must be verified before rebuild completion.`,
+    );
+    await input.recheckMessagingConflicts?.(mcpRuntimeSelection, bail);
+    bail(`Messaging webhook forwarding remained unverified for '${sandboxName}'.`);
     return;
   }
   if (preparedBackupRecovery && !postRestoreComplete) {
