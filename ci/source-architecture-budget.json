@@ -24,7 +24,7 @@
       "src/lib/credentials/store.ts": 45,
       "src/lib/inference/config.ts": 28,
       "src/lib/messaging/channels/index.ts": 24,
-      "src/lib/onboard/gateway-binding.ts": 52,
+      "src/lib/onboard/gateway-binding.ts": 51,
       "src/lib/runner.ts": 83,
       "src/lib/sandbox-name-contract.ts": 21,
       "src/lib/security/redact.ts": 51,

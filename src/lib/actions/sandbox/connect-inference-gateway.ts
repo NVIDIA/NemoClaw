@@ -6,10 +6,6 @@ import {
   GatewayRouteConflictError,
   isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
-import {
-  createCliOpenShellInferenceRouteObserver,
-  type CaptureOpenShellInferenceRoute,
-} from "../../adapters/openshell/inference-route-cli";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import type { SandboxEntry } from "../../state/registry";
@@ -68,17 +64,6 @@ export function buildGatewayInferenceSetArgs(
     args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
   }
   return args;
-}
-
-export async function observeGatewayInferenceRoute(
-  capture: CaptureOpenShellInferenceRoute,
-  gatewayName: string,
-  timeoutMs: number,
-) {
-  return await createCliOpenShellInferenceRouteObserver(capture).observeInferenceRoute({
-    target: { kind: "named", gatewayName },
-    timeoutMs,
-  });
 }
 
 export function assertSandboxGatewayRouteCompatible(

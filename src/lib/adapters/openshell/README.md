@@ -32,7 +32,7 @@ The bridge has no top-level await, so the supported Node runtime can load its
 emitted `.mjs` from CommonJS. Compiled package tests cover both consumers with an
 import-only SDK fixture; SDK installation and gateway qualification remain separate.
 
-The read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
+The SDK read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
 not-found response returns `null`. Other failures use the existing sandbox error categories and
 fixed messages. There is no CLI fallback after an SDK failure. Resource versions stay decimal
 strings so uint64 values cannot lose precision.
