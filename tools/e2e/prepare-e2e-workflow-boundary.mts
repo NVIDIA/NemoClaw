@@ -224,8 +224,16 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} must check out the repository before prepare-e2e`);
     }
     const authIndex = jobSteps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-    if (authIndex >= 0 && prepareIndex <= authIndex) {
-      errors.push(`${jobName} must authenticate to Docker Hub before prepare-e2e`);
+    const preparesBeforeAuth = jobName === "managed-image-multiarch-startup";
+    if (
+      authIndex >= 0 &&
+      (preparesBeforeAuth ? prepareIndex >= authIndex : prepareIndex <= authIndex)
+    ) {
+      errors.push(
+        preparesBeforeAuth
+          ? `${jobName} must prepare the workspace before Docker Hub authentication`
+          : `${jobName} must authenticate to Docker Hub before prepare-e2e`,
+      );
     }
   }
 

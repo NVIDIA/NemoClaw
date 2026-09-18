@@ -1686,29 +1686,34 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
     const checkoutIndex = checkoutIndexes[0] ?? -1;
-    const protectedCacheDownloadIndex =
+    const protectedArtifactStep =
       jobName === "managed-image-protected-runtime"
-        ? workflowSteps.findIndex(
-            (step) => step.name === "Download exact protected runtime build cache",
-          )
-        : -1;
+        ? "Download exact protected runtime build cache"
+        : jobName === "managed-image-multiarch-startup"
+          ? "Restore exact-commit CLI artifact"
+          : null;
+    const protectedArtifactIndex = workflowSteps.findIndex(
+      (step) => step.name === protectedArtifactStep,
+    );
     const authIndex = workflowSteps.indexOf(auth);
     const cleanupIndex = workflowSteps.indexOf(cleanup);
     const expectedAuthIndex =
       jobName === "hermes-gpu-startup"
         ? checkoutIndex + 3
-        : jobName === "managed-image-protected-runtime"
-          ? protectedCacheDownloadIndex + 1
+        : protectedArtifactStep
+          ? protectedArtifactIndex + 1
           : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
-      (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      (protectedArtifactStep && protectedArtifactIndex < 0) ||
       authIndex !== expectedAuthIndex
     ) {
       errors.push(
         jobName === "managed-image-protected-runtime"
           ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
-          : `${jobName} Docker Hub auth must run immediately after checkout`,
+          : jobName === "managed-image-multiarch-startup"
+            ? `${jobName} Docker Hub auth must run immediately after CLI artifact restoration`
+            : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {

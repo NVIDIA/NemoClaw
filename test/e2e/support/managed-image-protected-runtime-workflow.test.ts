@@ -50,6 +50,10 @@ function namedMultiarchStep(value: WorkflowRecord, name: string): Record<string,
 }
 
 describe("protected managed-image runtime workflow", () => {
+  it("accepts protected artifact ordering across the complete workflow boundary", () => {
+    expect(validateE2eWorkflow(workflow())).toEqual([]);
+  });
+
   it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
@@ -173,6 +177,9 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(candidate)).toContain(
       "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+    expect(validateE2eWorkflow(candidate)).toContain(
+      "managed-image-multiarch-startup Docker Hub auth must run immediately after CLI artifact restoration",
     );
   });
 
