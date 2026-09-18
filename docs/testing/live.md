@@ -107,7 +107,7 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
 ```
 
 It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
-Explicit recovery must preserve resource identities and the snapshot completion record.
+Explicit recovery must preserve resource identities and the model manifest.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
 
