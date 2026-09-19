@@ -10,6 +10,25 @@ export function createHermesCredentialEnvReconciliationRuntime(
   runOpenshell: MessagingOpenShellRunner,
   revalidateSandboxIdentity: (operation: string) => void,
 ) {
+  const runSandboxLifecycle = (
+    sandboxName: string,
+    action: "stop" | "start",
+    revalidate: (operation: string) => void,
+  ) => {
+    revalidate(`${action === "stop" ? "stopping" : "starting"} Hermes sandbox '${sandboxName}'`);
+    const result = runOpenshell(["sandbox", action, sandboxName], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: 210000,
+    });
+    revalidate(`confirming Hermes sandbox '${sandboxName}' after OpenShell ${action}`);
+    return {
+      status: typeof result.status === "number" ? result.status : 1,
+      stdout: typeof result.stdout === "string" ? result.stdout : "",
+      stderr: typeof result.stderr === "string" ? result.stderr : "",
+    };
+  };
+
   return {
     reconcileCredentialEnv: (plan: SandboxMessagingPlan, revalidate: (operation: string) => void) =>
       MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
@@ -21,14 +40,9 @@ export function createHermesCredentialEnvReconciliationRuntime(
         },
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
-      revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = await processRecovery.executeSandboxExecCommand(
-        sandboxName,
-        "hermes gateway restart",
-        210000,
-      );
-      revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
-      return result;
+      const stopped = runSandboxLifecycle(sandboxName, "stop", revalidate);
+      if (stopped.status !== 0) return stopped;
+      return runSandboxLifecycle(sandboxName, "start", revalidate);
     },
     waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);

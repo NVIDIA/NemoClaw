@@ -925,7 +925,9 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
 /**
  * Reconcile credentials rendered by an older managed Hermes image before
  * onboarding reports success. A changed env file is not effective until the
- * native Hermes gateway restarts and passes its health probe.
+ * OpenShell restarts the sandbox and the native Hermes gateway passes its
+ * health probe. Hermes' in-container restart fallback stays in the foreground
+ * when no service manager is present, so OpenShell must own this lifecycle.
  */
 export async function reconcileCreatedHermesCredentialEnvironment(
   input: {
@@ -950,7 +952,7 @@ export async function reconcileCreatedHermesCredentialEnvironment(
     const restart = await deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
     if (!restart || restart.status !== 0) {
       throw new Error(
-        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
+        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the OpenShell sandbox restart failed.`,
       );
     }
     if (!(await deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity))) {
