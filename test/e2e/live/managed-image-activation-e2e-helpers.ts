@@ -442,37 +442,50 @@ export async function preclean(
   });
 }
 
-async function verifyExactCleanup(
-  host: HostCliClient,
-  sandbox: SandboxClient,
+type ExactCleanupOptions = {
+  attempts?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+};
+
+export async function verifyExactCleanup(
+  host: Pick<HostCliClient, "command">,
+  sandbox: Pick<SandboxClient, "list">,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  options: ExactCleanupOptions = {},
 ): Promise<void> {
+  const attempts = options.attempts ?? 60;
+  const intervalMs = options.intervalMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const deadline = performance.now() + timeoutMs;
+  const remainingMs = () => Math.max(0, Math.ceil(deadline - performance.now()));
+  const probeTimeoutMs = () => Math.max(1, Math.min(30_000, remainingMs()));
   const settled = await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
-    deadlineMs: 60_000,
-    delayMs: 1_000,
+    attempts,
+    deadlineMs: timeoutMs,
+    now: () => performance.now(),
+    delayMs: (attempt) => (attempt >= attempts ? 0 : Math.min(intervalMs, remainingMs())),
     probe: async (_attempt, artifactName) => {
       const openshellList = await sandbox.list({
         artifactName: `${artifactName}-openshell-list`,
         env,
-        timeoutMs: 30_000,
+        timeoutMs: probeTimeoutMs(),
       });
+      assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
       const containers = await host.command(
         "docker",
         ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
         {
           artifactName: `${artifactName}-docker-inventory`,
           env,
-          timeoutMs: 30_000,
+          timeoutMs: probeTimeoutMs(),
         },
       );
       return { containers, openshellList };
     },
-    terminal: ({ containers, openshellList }) => {
-      if (openshellList.exitCode !== 0) {
-        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
-      }
+    terminal: ({ containers }) => {
       if (containers.exitCode !== 0) {
         return `inspect Docker inventory after managed activation destroy failed: ${resultText(containers)}`;
       }
@@ -482,7 +495,6 @@ async function verifyExactCleanup(
       !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
   });
   const { containers, openshellList } = settled.value;
-  assertExitZero(openshellList, "list OpenShell sandboxes after managed activation destroy");
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
   assertExitZero(containers, "inspect Docker inventory after managed activation destroy");
   expect(containers.stdout.trim(), resultText(containers)).toBe("");

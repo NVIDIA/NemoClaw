@@ -286,10 +286,23 @@ function resolveAgentHealthProbeUrl(
   );
 }
 
-const AGENT_BINARY_OBSERVATION_ATTEMPTS = 31;
+const AGENT_BINARY_OBSERVATION_MIN_SECONDS = 30;
+const AGENT_BINARY_OBSERVATION_MAX_SECONDS = 300;
 const AGENT_BINARY_OBSERVATION_DELAY_SECONDS = 1;
 
-/** Retry only an unobservable read-only exec while a newly Ready sandbox settles. */
+function agentBinaryObservationAttempts(agent: AgentDefinition): number {
+  const declaredTimeout = agent.healthProbe?.timeout_seconds;
+  const observationSeconds =
+    typeof declaredTimeout === "number" && Number.isFinite(declaredTimeout)
+      ? Math.min(
+          AGENT_BINARY_OBSERVATION_MAX_SECONDS,
+          Math.max(AGENT_BINARY_OBSERVATION_MIN_SECONDS, Math.ceil(declaredTimeout)),
+        )
+      : AGENT_BINARY_OBSERVATION_MIN_SECONDS;
+  return observationSeconds + 1;
+}
+
+/** Retry only an unobservable read-only exec for the bounded agent readiness window. */
 async function waitForAgentBinaryObservation(
   sandboxName: string,
   agent: AgentDefinition,
@@ -297,12 +310,11 @@ async function waitForAgentBinaryObservation(
   wait: (seconds: number) => void,
   gatewayName?: string,
 ): Promise<Awaited<ReturnType<typeof verifyAgentBinaryAvailable>>> {
+  const attempts = agentBinaryObservationAttempts(agent);
   let result = await verifyAgentBinaryAvailable(sandboxName, agent, executor, gatewayName);
   for (
     let attempt = 1;
-    !result.available &&
-    result.reason === "unobservable" &&
-    attempt < AGENT_BINARY_OBSERVATION_ATTEMPTS;
+    !result.available && result.reason === "unobservable" && attempt < attempts;
     attempt += 1
   ) {
     wait(AGENT_BINARY_OBSERVATION_DELAY_SECONDS);

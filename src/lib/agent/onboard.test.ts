@@ -398,6 +398,41 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 
+  it("honors the declared gateway readiness window while sandbox exec settles", async () => {
+    const observations = [...Array<null>(90).fill(null), "NEMOCLAW_AGENT_BINARY_CHECK:ok", "ok"];
+    const runCaptureOpenshell = vi.fn<LegacyCapture>(() => observations.shift() ?? null);
+    const sleepSeconds = vi.fn();
+    const { context } = createAgentSetupContext(runCaptureOpenshell, { sleepSeconds });
+
+    await handleAgentSetup(
+      "hermes-cold-start",
+      "model-x",
+      "provider-x",
+      makeAgent({
+        name: "hermes",
+        displayName: "Hermes Agent",
+        binary_path: "/usr/local/bin/hermes",
+        healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+      }),
+      false,
+      null,
+      context,
+    );
+
+    expect(
+      runCaptureOpenshell.mock.calls.filter(([args]) =>
+        String(args.at(-1)).includes("NEMOCLAW_AGENT_BINARY_CHECK"),
+      ),
+    ).toHaveLength(91);
+    expect(sleepSeconds).toHaveBeenCalledTimes(90);
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "hermes-cold-start",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
   it("writes non-default agent configuration through noninteractive sandbox exec", async () => {
     const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context, runBuffered } = createAgentSetupContext(runCaptureOpenshell);
