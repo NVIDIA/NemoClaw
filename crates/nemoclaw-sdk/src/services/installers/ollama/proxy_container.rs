@@ -123,6 +123,13 @@ impl ProxySpec {
             .map_err(|_|Error::State("invalid proxy container"))
     }
 
+    fn storage_labels(&self) -> HashMap<String, String> {
+        [
+            (OWNER_LABEL.into(), self.owner.clone()),
+            (GENERATION_LABEL.into(), self.generation.clone()),
+        ]
+        .into()
+    }
     fn verify_volume(&self, volume: &Volume) -> Result<(), Error> {
         if volume.name != self.volume()
             || volume.driver != "local"
@@ -133,7 +140,7 @@ impl ProxySpec {
                 "Ollama proxy persistent volume configuration is incomplete or changed",
             ));
         }
-        for (key, value) in self.labels()? {
+        for (key, value) in self.storage_labels() {
             if volume.labels.get(&key) != Some(&value) {
                 return Err(ObservationError::BindingMismatch.into());
             }
@@ -267,7 +274,7 @@ impl Engine {
             .create_volume(VolumeCreateRequest {
                 name: Some(spec.volume()),
                 driver: Some("local".into()),
-                labels: Some(spec.labels()?),
+                labels: Some(spec.storage_labels()),
                 ..Default::default()
             })
             .await
@@ -386,7 +393,7 @@ impl Engine {
                     .create_volume(VolumeCreateRequest {
                         name: Some(spec.volume()),
                         driver: Some("local".into()),
-                        labels: Some(spec.labels()?),
+                        labels: Some(spec.storage_labels()),
                         ..Default::default()
                     })
                     .await

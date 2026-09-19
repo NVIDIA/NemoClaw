@@ -146,3 +146,58 @@ async fn proxy_reconciles_lost_create_and_refuses_recreation_after_observation_f
     assert_eq!(state.creates, 2);
     assert_eq!(state.starts, 3);
 }
+
+#[tokio::test]
+async fn proxy_compute_changes_preserve_bound_credential_storage() {
+    let mut spec = ProxySpec {
+        settings: ProxySettings {
+            upstream: "http://127.0.0.1:11434/v1".into(),
+            endpoint: "http://127.0.0.1:11435/v1".into(),
+            model: "fixture:latest".into(),
+            digest: "a".repeat(64),
+        },
+        image_pull_policy: None,
+        name: "nc-0123456789abcdef-ollama-proxy-fixture".into(),
+        owner: "302ff5e1-088d-42ce-959f-4ff4c3570c13".into(),
+        generation: "b".repeat(32),
+        image: format!("proxy@sha256:{}", "a".repeat(64)),
+        bind_address: "127.0.0.1:11435".into(),
+    };
+    let volume = json!({"Name":spec.volume(),"Labels":spec.labels().unwrap(),"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/auth/_data"});
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(
+            request.method, "GET",
+            "credential volume must not be recreated"
+        );
+        let response = if request.path == "/info" {
+            json!({"ID":"engine"})
+        } else {
+            volume.clone()
+        };
+        Some((200, serde_json::to_vec(&response).unwrap()))
+    })
+    .await;
+    let engine = Engine::connect(&fixture.endpoint).unwrap();
+    let binding = engine
+        .observe_ollama_proxy_storage(&spec, "")
+        .await
+        .unwrap()
+        .unwrap();
+    spec.image = format!("proxy@sha256:{}", "c".repeat(64));
+    spec.bind_address = "127.0.0.1:11436".into();
+    spec.settings.endpoint = "http://127.0.0.1:11436/v1".into();
+    assert_eq!(
+        engine
+            .ensure_ollama_proxy_storage(&spec, &binding)
+            .await
+            .unwrap(),
+        binding
+    );
+    spec.generation = "d".repeat(32);
+    assert!(
+        engine
+            .ensure_ollama_proxy_storage(&spec, &binding)
+            .await
+            .is_err()
+    );
+}
