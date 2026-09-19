@@ -59,11 +59,12 @@ stateDiagram-v2
 
 The startup deadline applies while the backend is loading; download and preparation have separate limits.
 A failed readiness check does not prove that the container was never created.
-The SDK retains its identity so recovery can restart the verified resource instead of allocating another one.
+The SDK retains provider state and persistent storage so recovery can reconcile the service without discarding data.
+The Docker provider may restart or replace disposable compute during explicit apply.
 
 After a protective stop, Docker does not automatically restart inference.
 An immediate restart could repeat the same memory demand before the operator changes the condition that caused shutdown.
-Explicit apply rechecks capacity and retained identities before recovery.
+Explicit apply verifies retained storage and reconciles compute; the hosted runtime rechecks startup capacity before serving.
 
 The [watchdog diagnostic correction](https://github.com/NVIDIA/NemoClaw/commit/35199ef56d) shows why the reason for a stop also matters.
 A memory parser incorrectly assumed that Linux `MemAvailable` must exceed `MemFree`.
@@ -147,9 +148,11 @@ Runtime image compatibility is bound to the backend, not to a model revision lab
 The served model name follows the repository, and model storage identity includes both repository and revision.
 
 The model resolver discovers a checksummed inference snapshot.
-Plan may read remote metadata but cannot download weights into runtime storage or prepare a model.
+The default service plan does not read model metadata, download weights, or prepare a model.
+The runtime resolves and validates the snapshot during startup.
 Apply retains resumable downloads and one model manifest containing expected files and their verification metadata.
-Subsequent observation uses that manifest; [retained model files](../models.md#retained-model-files) describes recovery and format compatibility.
+Runtime preparation and recovery use that manifest; [retained model files](../models.md#retained-model-files) describes format compatibility.
+Orchestration consumes the runtime's current status instead of repeating its artifact verification.
 
 Authentication, transport, partial inventories and changed artifacts are errors, never resource absence.
 

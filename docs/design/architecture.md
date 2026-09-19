@@ -40,7 +40,9 @@ flowchart TD
     CLI[CLI arguments and output] --> SDK[SDK deployment orchestration]
     App[Application] --> SDK
     SDK -->|compile and check saved plans| Tofu[OpenTofu child process]
-    Tofu -->|provider protocol| Provider[Provider process]
+    Tofu -->|provider protocol| Provider[NemoClaw provider]
+    Tofu -->|compute lifecycle| DockerProvider[Docker provider]
+    DockerProvider --> Docker[Docker API]
     Provider --> Backend[Shared SDK backend operations]
     SDK -->|validation, export, and active probes| Backend
     Backend --> OpenShell[OpenShell API]
@@ -51,7 +53,8 @@ flowchart TD
 The shared backend code is compiled into its callers; it is not another server.
 The provider translates the OpenTofu protocol into those operations.
 The SDK also checks proposed changes against its deployment contract before asking OpenTofu to execute a saved plan.
-For example, an undeclared resource or an unverified replacement stops apply even if OpenTofu can express that change.
+For example, an undeclared resource or changed durable storage binding stops apply even if OpenTofu can express that change.
+The Docker provider may recreate inference and proxy containers and service-owned networks; their physical identities are not recovery invariants.
 
 The [public SDK lifecycle commit](https://github.com/NVIDIA/NemoClaw/commit/bd45fa3297) tested SDK apply followed by CLI export and destroy.
 That mixed-client test established that recovery belongs below the CLI boundary.
@@ -62,7 +65,8 @@ The current implementation is in [Deployment](../../crates/nemoclaw-sdk/src/depl
 Desired configuration answers “what should exist?”
 A durable binding answers “which existing resource did this deployment establish?”
 Keeping both matters when a process replacement is requested but the old process still exists.
-Deletion must verify the old bound specification, even though the new YAML describes its replacement.
+Durable resources retain their verified bindings.
+Disposable compute uses the Docker provider's state and reconciliation instead of a second composite identity.
 
 The local state directory retains these records:
 
@@ -70,7 +74,7 @@ The local state directory retains these records:
 |---|---|---|
 | Deployment UID and generation tokens | Deployment ownership and creation identity | Matching a resource name alone cannot authorize adoption. |
 | Intent document and digest | Configuration selected for an operation | An interrupted graph mutation rejects different intent until reconciled. |
-| OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check must not erase a created container. |
+| OpenTofu state and saved resource specifications | Established physical IDs and configurations | A failed readiness check retains state; explicit recovery may replace disposable compute. |
 | Operation flags and saved-plan digest | Apply or destroy progress | Recovery can verify intent and resume the remaining resource operations. |
 
 An observation has three outcomes, with different consequences:
@@ -155,14 +159,15 @@ There are no shell hooks or arbitrary argument fields.
 
 ## What the Implementation Has Confirmed
 
-The CLI bundle contains the CLI, OpenTofu, and one provider executable in a known mirror path.
+The CLI bundle contains the CLI, OpenTofu, and the NemoClaw and Docker provider executables in a verified filesystem mirror.
 Source-derived provider versions prevent stale installations from being reused after a build.
 
 The public SDK does not embed OpenTofu or expose its raw graph as a user configuration mechanism.
 
 Refresh and export share typed readers.
 Observations use the owning OpenShell, Docker, and model APIs.
-The relevant observations are resource identities, configuration, policy, and complete model inventories.
+The relevant orchestration observations are provider resource identities, configuration, policy, and application status.
+Model inventories and preparation verification belong to the hosted runtime.
 
 A host inventory collector would not replace the owning APIs for these checks.
 Capacity uses observations from the selected execution host; credential references, intent, and OpenTofu state remain client-side.
@@ -179,7 +184,8 @@ Inference storage retains both the exact model snapshot and prepared data.
 
 Configuration and readiness are separate.
 A process can exit immediately after start while retaining valid identity and storage.
-Managed `running` is computed and becomes unknown during create or an explicit restart, so OpenTofu does not taint a valid resource merely because startup failed.
+Service containers are created without provider health waiting; the SDK consumes application readiness after infrastructure state is recorded.
+An application readiness failure does not roll back persistent data.
 
 The [runtime lifecycle](runtime.md#why-the-watchdog-lives-with-inference) explains loading deadlines and protective shutdown.
 Destroy cannot infer ownership from missing local state or delete a whole workspace with an unverified cascading operation.
@@ -213,9 +219,9 @@ Managed Ollama uses the same service-installer boundary and retained-storage mod
 Package-specific model download, runtime arguments, and bounded readiness checks stay in the Ollama installer.
 Deployment orchestration consumes only the installer plan and the resolved provider connection.
 
-Destroy retains the volume resource and its data, then removes the verified container after dependent OpenShell resources.
+Destroy retains the volume resource and its data, then removes the provider-managed container and service-owned network after dependent OpenShell resources.
 The Ollama installer verifies the retained storage relationship without deleting model bytes.
-A missing container is confirmed only after checking the bound engine and retained storage identity.
+Retained storage verifies the selected engine and data identity independently of disposable container state.
 
 A lost deletion response leaves state for explicit reconciliation.
 The fixture also checks volume replacement and engine failure before any deletion, and reapply after destroy keeps model data without another pull.

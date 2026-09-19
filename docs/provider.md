@@ -3,31 +3,33 @@
 
 # Understand the OpenTofu Provider
 
-The native bundle includes the production NemoClaw OpenTofu provider.
-The SDK compiles desired-state YAML into a resource graph and runs bundled OpenTofu, which invokes the provider's backend operations.
+The native bundle includes the NemoClaw and Docker OpenTofu providers.
+The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
+Docker manages disposable service compute; NemoClaw manages OpenShell operations, gateway infrastructure, and retained data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
-The SDK retains desired intent, validates plans, coordinates runtime stages, and checks ownership and durable identity.
-The provider adapts resource operations to shared backend contracts.
+The SDK retains desired intent, validates plans, coordinates runtime stages, and checks application readiness.
+The NemoClaw provider verifies durable data and credential identity; the Docker provider reconciles its native resource state.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
 OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
 The SDK then checks the saved plan against its ownership and recovery rules before authorizing changes.
-A runtime replacement requires its established process identity and a matching, unchanged storage binding in the refreshed plan.
+Inference and proxy containers may be recreated or replaced while their independent storage bindings remain unchanged.
+Managed gateways retain their stronger process and credential identity checks.
 The refreshed gateway running state determines whether the OpenShell stage can be planned or must wait for gateway creation or recovery.
 
-The [provider implementation](../crates/nemoclaw-provider/src/provider.rs) currently defines these resource groups:
+The generated graphs use these resource groups:
 
-| Group | Resource kinds |
+| Owner | Resources |
 |---|---|
-| OpenShell deployment | `workspace`, `provider`, `provider_profile`, `route`, `sandbox` |
-| Managed gateway | `managed_gateway`, `gateway_storage` |
-| Managed vLLM | `inference_service`, `inference_storage` |
-| Managed Ollama | `ollama_service`, `ollama_service_storage` |
-| External Ollama with managed proxy | `ollama_proxy`, `ollama_proxy_storage`, `ollama_external_model` |
+| NemoClaw provider | OpenShell workspace, provider, profile, route, and sandbox |
+| NemoClaw provider | Managed gateway and gateway storage |
+| NemoClaw provider | Retained inference, Ollama, and proxy storage; external Ollama model observation |
+| Docker provider | Inference and proxy containers, service-owned networks, and acquired images |
+| Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
 The existence of these resources does not establish a supported standalone HCL workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
@@ -40,7 +42,8 @@ Compatibility requires the pinned OpenShell version and exactly one initialized 
 Missing metadata, authentication failures, and transport failures stop the observation.
 The read is bounded to 30 seconds and does not modify the gateway.
 
-Every deployment resource has a blocking precondition on the compatibility result.
+NemoClaw deployment resources and translated proxy containers have a blocking precondition on the compatibility result.
+Docker image and network resources use their provider dependencies; the SDK also checks compatibility before applying the deployment graph.
 The earlier runtime graph omits this data source so managed gateway creation can finish before the deployment graph queries it.
 Unknown data-source inputs defer the read until their dependencies resolve.
 
@@ -51,64 +54,47 @@ Observed data never becomes a durable resource binding, and teardown omits the c
 [Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) cover incompatible and incomplete observations, unchanged state after failures, and deferred reads.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) cover a gateway change between plan and apply and subsequent recovery and teardown.
 
-## Hardware Validation
+## Runtime Capacity and Readiness
 
-The provider validates known managed resource specifications through the SDK during OpenTofu configuration validation, without contacting an execution host.
-Invalid hardware profiles, architecture selections, and memory settings produce errors attached to the resource's `spec` attribute.
-The specification remains serialized; diagnostics identify the failed hardware requirement within it.
+Configuration validation checks hardware profiles, architecture selections, and memory settings without contacting an execution host.
+The default service graph does not invoke the SSH host-capacity collector, resolve model registries, or inspect model-file inventories during planning.
+A successful plan therefore does not establish that a model will fit or load.
 
-During planning, managed vLLM and Ollama resources use the SDK's collectors to check hardware compatibility and total-memory budgets on their selected execution host.
-An incompatible host or failed observation stops planning without changing resources or replacing retained bindings.
-Unknown configuration values defer dependent checks until OpenTofu resolves them.
-Numeric profile and dedicated-hardware requirement mismatches report required and observed values; raw host output and credentials are omitted.
-
-Saved-plan application repeats provider planning, and the runtime backend also checks capacity before creating or starting a stopped service.
-For bound services, planning also checks retained model manifests and files and their remaining disk requirements.
-Missing model metadata defers artifact resolution and download-space checks to apply.
-Immediately before runtime apply, the SDK reobserves service identities, startup memory, artifacts, and disk space, including on unchanged apply.
-Provider planning permits replacements while the old process still holds its memory; the backend checks startup headroom again before starting the replacement.
-Available memory can change after a plan; the resident memory guard remains active after startup.
-Destroy planning does not require available GPU capacity.
-
-[Provider validation tests](../crates/nemoclaw-provider/tests/validation.rs), [host observation fixtures](../crates/nemoclaw-sdk/src/managed/planning_tests.rs), and [OpenTofu protocol tests](../crates/nemoclaw-e2e/tests/provider_protocol.rs) cover these boundaries without live GPU resources.
+The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
+Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
+The SDK waits for a current application status from the provider's container ID; it does not repeat model-file verification to reinterpret a ready result.
+See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
 
 ## Combined Service Capacity
 
-The runtime graph groups managed vLLM and Ollama services by execution engine and reads one `nemoclaw_service_capacity` data source per group.
-The source takes the engine and compiled service specifications and reports `required_bytes`, `observed_bytes`, and `compatible`.
-It reuses the SDK's combined-budget accounting: unified memory includes the largest host reserve once; dedicated GPU budgets use observed VRAM, including utilization-based allocations.
-Services sharing an engine must use the same memory architecture.
-Each service process has a blocking precondition that reports required and observed bytes when the group exceeds total capacity.
+The optional `nemoclaw_service_capacity` data source remains available for explicit capacity observation.
+It reports required and observed bytes and compatibility using the selected execution host's measurements.
+The SDK's default service graph does not use it as an admission gate.
+Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
+Operators must choose budgets appropriate for the shared host.
 
-Validation runs offline, unknown inputs defer observation, and each host read is bounded to 30 seconds.
-A failed or incomplete observation stops planning without changing resource bindings.
-Planning checks total capacity so running processes do not count twice or prevent replacement planning.
-The SDK rechecks combined startup budgets and total capacity immediately before runtime apply because saved plans can cache data-source results.
-Capacity observations do not become durable resource bindings, and teardown omits these checks.
+## Network and Image Reconciliation
 
-[Accounting tests](../crates/nemoclaw-sdk/src/services/capacity/tests.rs) cover shared reserves, running allocations, mixed installers, and dedicated GPU utilization.
-[Production provider fixtures](../crates/nemoclaw-e2e/tests/service_capacity.rs) cover overcommit, deferred reads, unchanged state after observation failures, and cleanup without capacity observation.
-See [fixture prerequisites and commands](testing/fixtures.md#opentofu-and-bundle-lifecycle).
+The Docker provider creates, refreshes, replaces, and removes disposable service containers and their private networks.
+These resources use native provider IDs; labels are diagnostic metadata rather than a second compute-ownership mechanism.
+A missing service container may be recreated during explicit apply.
+Missing or substituted bound storage remains an error.
+Managed gateway networking retains its application-specific storage and namespace contract.
 
-## Network and Image Validation
+The Docker provider acquires pinned service images and keeps downloaded images on destroy.
+The `Never` policy uses its local image data source; a missing local image fails that observation.
+This does not lock the image against concurrent removal before container creation; see the [policy limits](usage.md#control-container-image-downloads).
+See [image acquisition policies](usage.md#control-container-image-downloads) for supported modes.
+Plan does not pull images, and container creation does not establish application health or model compatibility.
 
-During planning, managed gateway, vLLM, and Ollama resources check existing network ownership and configuration through the SDK.
-Resources that create a network also check for overlapping subnets when that network is absent.
-A service's absent shared gateway network is deferred because a dependency can create it during the same apply; the runtime backend still requires it before creating the service.
-
-Planning inspects locally available runtime images for Linux OS, architecture compatibility, and required service labels without pulling images.
-A missing image stops planning when the effective `imagePullPolicy` is `Never`; `IfNotPresent` and `Always` allow acquisition during apply.
-An incompatible local image or failed network or image observation stops planning.
-These checks use the selected execution engine and repeat during saved-plan application; image acquisition and network creation retain their own checks immediately before use.
-
-[SDK planning fixtures](../crates/nemoclaw-sdk/src/managed/planning_tests.rs) cover gateway and local and remote service checks.
-The [production provider protocol fixture](../crates/nemoclaw-e2e/tests/provider_protocol.rs) verifies that changed gateway prerequisites stop saved-plan application without engine mutations.
-See [integration-test instructions](testing/fixtures.md#opentofu-and-bundle-lifecycle) for prerequisites and commands.
+Provider reconciliation checks the attributes refreshed by that provider; it does not guarantee detection of every out-of-band Docker configuration change.
+The deployment lock excludes other NemoClaw operations using the same state directory, not concurrent Docker administrators.
 
 ## Packaging and Qualification
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
-The bundle uses a source-derived provider version to prevent stale provider reuse.
+The NemoClaw provider uses a source-derived version to prevent stale reuse.
+The Docker provider has a fixed release version and checksum-pinned native archives, with its upstream license retained in the bundle.
 
 [Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](testing/fixtures.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.

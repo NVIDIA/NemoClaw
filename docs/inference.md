@@ -71,7 +71,8 @@ Declare multiple named Ollama or vLLM services with independent retained storage
 Providers reference a service by name with `serviceRef`; multiple providers can share the same service.
 vLLM supports separate generated credentials through `spec.services.<name>.authentication: bearer`.
 Services on the same engine require distinct publication addresses and the same managed network CIDR.
-Plan checks their combined GPU budgets and startup memory; the runtime rechecks available memory before starting inference.
+Each runtime checks available memory before starting inference and retains resident protection.
+Plan does not reserve shared GPU capacity or sum live startup demand; choose service budgets for the host's combined workload.
 An existing GPU process alone does not reject startup when measured capacity is sufficient.
 The installer performs one bounded readiness check after installation. It does not add service start, stop, restart, recovery, or continuous-monitoring operations.
 Multiple sandboxes can share any selected provider.
@@ -221,8 +222,9 @@ curl --fail --silent --show-error https://registry.ollama.ai/v2/library/qwen3/ma
 sha256sum ollama-model-manifest.json
 ```
 
-Without a cached snapshot, plan resolves the manifest and parameter metadata and rejects a tag whose manifest differs from `model.digest`.
-It checks hardware compatibility, remaining disk, declared GPU/host budgets, and combined budgets of vLLM and Ollama services sharing the engine.
+During startup, the hosted runtime resolves uncached manifest and parameter metadata and rejects a tag whose manifest differs from `model.digest`.
+It checks hardware compatibility and declared GPU/host budgets.
+Plan does not query the model registry or run the SSH host collector.
 The Ollama weight-size check is a lower bound: all snapshot bytes plus 2 GiB must fit the declared GPU budget.
 Plan does not load the model or establish that its context and native KV cache will fit.
 
@@ -238,7 +240,8 @@ Context and concurrency use the common `serving.contextTokens` and `serving.maxS
 A dedicated-memory profile can use the common `gpuMemoryUtilization` setting with an explicit minimum GPU memory requirement.
 
 Use the ordinary [plan/apply/export workflow](usage.md) with the adapted complete example.
-A failed startup retains the container identity, model volume, and status for inspection; correct the failure and explicitly reapply.
+A failed startup retains provider state, the model volume, and status for inspection; correct the failure and explicitly reapply.
+Recovery may replace the container while reusing that volume.
 Destroy removes owned runtime resources and retains the model volume.
 Verified cached snapshots can be reused without querying a subsequently changed registry tag.
 There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
@@ -250,7 +253,7 @@ Live image builds, GPU inference, tools, and agent responses with this new adapt
 
 Set `authentication: bearer` under `spec.services.<name>` to generate a private key for a managed vLLM service.
 Omission preserves the existing unauthenticated serving behavior.
-Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest; older images lack the required authentication capability and are rejected before creation.
+Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest; a container created from an incompatible image will not satisfy application readiness.
 Do not supply `inferenceProviders[].credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/data/inference-key` under its persistent writer lock and reuses it after restart.
@@ -270,9 +273,9 @@ Changing an existing service to enable authentication follows the normal runtime
 
 ## Use External Ollama through a Managed Proxy
 
-Use this mode with a managed local Docker gateway, with Ollama and the route's model already installed on that same Linux host.
-Set `gateway.management: managed` and select `runtime.provider: docker` for every sandbox; the proxy inherits `gateway.engine`.
-External gateways, Podman gateways, and an independently selected proxy engine are not accepted.
+Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
+With a managed Docker gateway, the proxy inherits `gateway.engine`.
+With an external gateway, declare the proxy service's `engine` as an explicit local Docker Unix socket and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completions`.
@@ -312,9 +315,8 @@ The proxy uses the host network and checks that the daemon has no listener on a 
 Do not declare `endpoint` or `credential` on this provider; the referenced service supplies its connection and generated credential.
 The service declaration manages only the proxy; its upstream daemon and model remain external.
 
-This deliberately removes the former external-gateway proxy topology and the per-service `runtime` wrapper.
-For an existing deployment using either form, retain its original bundle and state for recovery or teardown; editing input YAML does not migrate saved intent.
-Create a new deployment with a fresh UID and state directory for the managed-gateway topology.
+The former per-service `runtime` wrapper remains unsupported.
+Use [fresh state for the provider transition](state.md#provider-managed-service-compute); editing input YAML does not migrate an established deployment.
 
 The proxy generates a private bearer key in its owned credential volume and reuses it after restart or recreation.
 NemoClaw reads that key through the verified container identity when registering the OpenShell provider.

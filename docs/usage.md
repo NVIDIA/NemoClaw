@@ -145,33 +145,31 @@ The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
 The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `placement.engine`.
 Images still require immutable SHA-256 references.
 
-| Policy | Before container creation or restart |
+| Policy | Managed inference and proxy images |
 |---|---|
-| `Always` | Contact the registry even when the image is cached; a failed pull fails apply |
-| `IfNotPresent` | Use the cached image, or pull it when absent |
-| `Never` | Use the cached image; fail when it is absent |
+| `IfNotPresent` (default) | The Docker provider ensures the pinned image is available and pulls it when absent |
+| `Never` | The Docker provider reads the local image; a missing image fails that observation |
+| `Always` | Rejected for services; choose pinned acquisition or local-only use |
 
-Omission preserves existing behavior: `IfNotPresent` for the gateway and Ollama proxy; `Never` for Ollama and vLLM services.
-Locally built images can use `Never` without requiring a registry copy.
-For a managed service, add this field beside its `image` setting:
+The local image read and container creation are separate operations.
+If another actor removes the image between them, the Docker provider can attempt acquisition during container creation; `Never` is not a network-isolation guarantee.
+
+For locally built images without a registry copy, load the pinned image into the selected engine and set:
 
 ```yaml
-imagePullPolicy: IfNotPresent
+imagePullPolicy: Never
 ```
 
-The gateway policy also applies to its credential initializer container.
-Changing the policy does not replace or restart a running container; apply records the policy for its next creation or restart.
-Export preserves the setting.
-Downloaded images stay in the selected engine's image store and survive destroy.
+Managed gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
+Service acquisition does not promise a registry request on every restart or layer-by-layer progress.
+Export preserves the declared setting.
+Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
 
-Plan never pulls images and does not establish registry availability.
-Image compatibility checks still run during apply.
-If pulling fails, retain the state directory, restore registry access, and reapply the same configuration.
-With `Never`, load the pinned image into the selected engine before reapplying.
-
+Plan never pulls images and does not establish registry availability or application compatibility.
+If acquisition fails, retain the state directory, restore image availability, and reapply.
+Switching between managed acquisition and local-only lookup changes image resource declarations; review its plan.
 This setting does not control model downloads or sandbox images acquired by OpenShell.
 The pinned OpenShell API has no per-sandbox pull-policy field; external gateways and sandboxes reject this YAML field.
-Registry credential configuration is unchanged: NemoClaw does not supply credentials to the image-pull request.
 
 ## Resource Ownership
 
@@ -191,8 +189,9 @@ Only `gateway.management` selects a lifecycle mode.
 Every declared service is installed, even without an inference provider referring to it.
 Every selected inference provider has a deployment-owned OpenShell registration; destroy removes that registration without deleting an external server.
 Managed model and credential storage survive destroy.
-Ownership checks still verify the deployment UID, generation, durable resource identity, and configuration before mutation.
-No configuration form authorizes adoption of an existing unbound resource.
+Durable data and credential checks verify deployment ownership, generation, and the established storage/engine identity.
+Disposable service compute follows Docker-provider state and may be recreated or replaced during apply.
+This does not authorize migration or adoption of an existing unbound persistent volume.
 
 The former optional `management` annotations and ownership-only `storage`/`network` objects are rejected.
 For a new deployment, omit those fields and use a fresh UID and state directory.
@@ -247,13 +246,13 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes the immutable native provider profile binding; use a separate deployment |
 | Sandbox image, harness, API, OpenClaw tuning, agent/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
-| Managed vLLM process image or serving specification | May replace the process only after checking retained storage and the established engine/resource identities; review the plan and [model constraints](models.md) |
+| Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound runtime engine | Cannot retarget the existing state; create a separate deployment |
 | Remove a resource or change management mode so its binding disappears | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-The [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs) reject ordinary removal/replacement.
-The [runtime stage](../crates/nemoclaw-sdk/src/deployment/runtime.rs) enforces the narrower managed-process replacement path.
+The [plan checks](../crates/nemoclaw-sdk/src/deployment/plan.rs) retain removal/replacement restrictions for durable and OpenShell resources.
+Disposable Docker compute uses ordinary provider reconciliation within the declared deployment graph.
 A model change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
 
 ### Verify an Unchanged Reapply
@@ -285,8 +284,9 @@ There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
 If the error says an unfinished apply has different intent, use the exact configuration from that unfinished operation before attempting a new change.
-If readiness fails after resource creation, established identities remain recorded.
-Authentication, transport, incomplete observations, ownership drift, or changed durable identity stop planning; they never authorize recreation.
+If readiness fails after resource creation, provider state and persistent data remain recorded.
+A later explicit apply may replace or recreate disposable service compute.
+Authentication, transport, and incomplete observations remain failures; missing or changed bound storage never authorizes its automatic recreation.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.
 It preserves references and desired settings, not model weights, histories, native settings, or agent files.
@@ -295,15 +295,16 @@ Shell redirection can leave an empty file on failure; check the exit status befo
 When a managed service is stopped, plan observes the stopped resource without starting it.
 An explicit apply runs the install operation again and performs one bounded readiness check.
 The installer contract has no separate recovery operation and does not create an automatic restart loop.
-Export checks the established runtime identity and configuration without running another readiness or model-inventory check.
-Destroy verifies the container and storage without requiring model inventory because it retains all model data.
+Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
+Destroy uses provider compute state and separately verified persistent storage; it does not inspect model inventories.
 
 ## Destroy
 
 Destroy removes all bound sandboxes, provider registrations and profiles, and managed process containers.
 **Sandbox files and conversation history are deleted.** Back up native agent data separately when needed.
-The workspace, model downloads, prepared data, gateway database and keys, bridge, stopped initializer, images, and local deployment state remain.
-Retained resources stay tracked.
+The workspace, model downloads, prepared data, gateway database and keys, gateway bridge, stopped initializer, images, and local deployment state remain.
+Service-owned networks are removed with disposable compute.
+Persistent resources stay tracked; retained image bytes do not require retained image-resource bindings.
 
 Preview deletion, then destroy only the deployment bound to this state directory:
 

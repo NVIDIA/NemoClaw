@@ -71,7 +71,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
   cargo test -p nemoclaw-e2e --test spark spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
-The first plan must create four runtime resources and defer OpenShell registration until the gateway exists.
+The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
 Apply must create those resources plus the provider profile, provider registration, sandbox, and workspace.
 A second plan and apply must report no changes.
 The test checks readiness without requesting a model response and leaves workloads running.
@@ -80,7 +80,7 @@ After failure, retain state for [explicit recovery](../usage.md#updates-and-reco
 
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace only `nemoclaw_inference_service.inference_qwen`.
+The test compares the input with exported configuration, then requires plan and apply to replace `docker_container.inference_service_inference_qwen` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](fixtures.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
@@ -107,7 +107,7 @@ NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
 ```
 
 It checks initial apply, a separately requested agent reply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
-Explicit recovery must preserve resource identities and the model manifest.
+Explicit recovery must preserve durable storage bindings and the model manifest; the Docker provider may replace inference compute.
 Successful completion destroys workloads and retains storage.
 Assertions report failures through the test runner; the test writes no separate report.
 
@@ -145,4 +145,5 @@ The existing `fabric_live` test also accepts an external gateway with a managed 
 The live test requests an agent reply separately from apply.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
-The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the live rootless Podman run, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
+The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the earlier custom-controller path, including live rootless Podman, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.
+They do not qualify the current Docker-provider path on GPU hardware.

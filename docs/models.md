@@ -86,16 +86,18 @@ Interrupted downloads retain partial files for explicit apply to resume.
 If a file was renamed before its manifest update was saved, apply verifies its checksum again without downloading it.
 There are no separate per-file verification records or completion files.
 
-Unchanged apply and export check the manifest and file metadata without fetching the inventory or weights again.
+The hosted runtime checks the manifest and file metadata during preparation and recovery without refetching verified weights.
 These size and timestamp checks reuse earlier verification; they do not rehash all model data.
-A missing or changed verified file stops the operation without downloading a replacement or rewriting its manifest entry.
+A missing or changed verified file stops runtime preparation without silently replacing an established artifact.
+SDK plan and export do not inspect model-file inventories; apply consumes the runtime's current readiness result.
 
 The model and recipe metadata formats require a matching CLI/provider bundle and runtime image built from this checkout.
 Use a fresh deployment for these formats; older model manifests without a version and recipe `complete.json` files are not migrated automatically.
 Keep the original bundle, runtime image, and state for existing deployments; do not delete metadata to bypass a format error.
 
 Model changes replace the inference process while preserving its storage volume and previous snapshots.
-Failed observation stops planning; failed startup retains the established container and model data.
+Failed provider observation stops planning; failed startup retains model data and provider state.
+Explicit recovery may recreate the container using that retained data.
 A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-runtime).
 
 For models requiring preparation or patches, keep `kind: vllm` and declare an [inline recipe](recipes.md).
@@ -104,7 +106,8 @@ There are no built-in model-specific backends.
 
 ## Choose a Hardware Profile
 
-Named profiles check the GPU family, CPU architecture, driver, and memory on the selected execution host.
+The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
+Configuration parsing validates the profile declaration without collecting host measurements.
 They do not choose a model, runtime image, or GPU count.
 Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
 The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
@@ -138,7 +141,7 @@ memory:
 ```
 
 Every named profile requires an observed compute capability that meets its catalog minimum, including 12.1 for `dgx-spark`.
-Compute capability is queried independently of GPU memory counters on both local and SSH hosts.
+The runtime queries compute capability independently of GPU memory counters on its execution host.
 Missing, unsupported, or malformed compute capability stops the operation.
 
 The profile's memory architecture determines capacity accounting:
@@ -199,7 +202,7 @@ docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{jso
 
 Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) and the service name in the container name.
 Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
-This name/label check helps select diagnostics; it does not replace the SDK's generation and durable-identity checks or authorize manual mutation.
+This name/label check helps select diagnostics; it does not authorize manual mutation or adoption of persistent data.
 
 ```sh
 diagnostic_dir=$(mktemp -d)
@@ -244,7 +247,7 @@ Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inf
 `hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
 Omit `gpuMemoryGiB` and `kvCacheGiB` in this mode; nonzero fixed budgets are rejected.
-The SDK checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against the observed total and free GPU memory.
+The hosted runtime checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against observed total and free GPU memory.
 Host RAM is measured separately: the default 32 GiB reserve plus 20 GiB startup headroom must be available, and the resident host-memory watchdog remains active.
 A running service's allocation does not count as missing startup headroom during refresh.
 

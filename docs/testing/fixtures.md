@@ -3,8 +3,8 @@
 
 # Run Integration Tests
 
-These tests use local protocol fixtures and temporary state.
-They do not provision live deployments.
+Most tests here use local protocol fixtures and temporary state.
+The Docker-provider tests explicitly identified below also create isolated local containers, networks, and volumes.
 Complete the [build prerequisites](../build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
@@ -47,7 +47,7 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
 
 These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
 
-The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and production provider).
+The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI, OpenTofu, and both production providers).
 They use only the local gRPC fixture:
 
 ```sh
@@ -74,10 +74,7 @@ cargo test -p nemoclaw-sdk services::installers::ollama
 cargo test -p nemoclaw-sdk --test service_references --test multiple_providers
 ```
 
-On Linux, the `ollama_proxy` E2E target also parses the live fixture's configuration in the ordinary test suite, without Docker or environment configuration.
-Its separate ignored test requires an explicit `NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE` already loaded in local Docker and exercises only the proxy backend against a simulated upstream inventory.
-It creates its own proxy container and credential volume, checks key retention and read-only upstream access, and removes those owned resources on success.
-It does not qualify managed gateway or sandbox deployment, CLI export, actual Ollama execution, or inference.
+The [Docker-provider lifecycle fixture](#docker-provider-lifecycle) checks the managed proxy through the SDK and its production provider graph.
 
 Authenticated OpenShell, stalled exec streams, and launch compatibility run in the default workspace suite.
 `agent_compatibility` checks passive launch mode, caller identity, harness selection, and default policy restrictions without frozen launch snapshots.
@@ -127,11 +124,36 @@ The fixture checks that the supervisor runs independently of the CLI; it does no
 
 The `remote_service` E2E fixture exercises the bundled CLI/provider boundary with an isolated Docker-over-SSH simulator and OpenShell fixture.
 Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
-It checks read-only planning, missing/low capacity, failed startup recovery, no-op, export/reapply, failed observation and daemon retargeting without recreation, and retained storage on destroy.
+It checks read-only planning without host-capacity collection, failed startup recovery, missing-container replacement, no-op, export/reapply, and failed observation or daemon retargeting without lost bindings.
+Destroy removes disposable containers and service networks while retaining storage.
 
 Native CI runs these isolated fixtures on Unix, including managed OpenClaw, Hermes, Pi, and bearer-credential lifecycles.
-Its readiness and artifact manifests are simulated; it does not download or serve a model.
-Plan and apply reject missing or changed model artifacts; export checks configuration without repeating artifact or credential readiness checks.
+Its runtime status and Docker responses are simulated; it does not download or serve a model.
+Runtime readiness reports startup failures; the SDK does not inspect model artifacts or registry manifests.
+Export checks configuration without repeating credential readiness checks.
+
+## Docker Provider Lifecycle
+
+On Linux with local Docker, provide a verified bundle and two different, already loaded digest-pinned images containing the Ollama proxy executable.
+Run from the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
+NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
+  cargo test -p nemoclaw-e2e --test docker_provider_proxy -- --ignored
+```
+
+This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
+It checks SDK apply, export/reapply, failed readiness, image changes and container replacement with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes.
+OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
+
+The SDK's ignored `cpu_runtime_provider_reconciles_compute_and_retains_data` test exercises the production Ollama and vLLM resource graphs through real Docker and OpenTofu.
+It requires `NEMOCLAW_TEST_BUNDLE` and explicit `NEMOCLAW_TEST_RUNTIME_IMAGE_OLLAMA` and `NEMOCLAW_TEST_RUNTIME_IMAGE_VLLM` digest references to loaded CPU fixture images.
+Those images must provide Python 3 and `/usr/local/bin/nemoclaw-runtime`, which writes a fresh ready status to `/data/status.json` and stays running until stopped.
+Run it with `cargo test -p nemoclaw-sdk cpu_runtime_provider_reconciles_compute_and_retains_data -- --ignored`.
+It adapts host placement and GPU-sized limits for CPU execution and checks replacement, network recreation, and a retained data sentinel.
+It does not qualify GPU execution, model preparation, inference, or the runtime's hardware checks.
 
 ## Inference API Fixtures
 

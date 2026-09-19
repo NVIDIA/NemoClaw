@@ -17,7 +17,8 @@ Publication currently requires a private IPv4 address, the service's port and `/
 It uses private HTTP; enable [managed bearer authentication](inference.md#authenticate-a-managed-vllm-service) with `authentication: bearer` on the service.
 Omission preserves unauthenticated serving.
 
-The remote host must satisfy its service's hardware contract and have Docker, Python 3 and `nvidia-smi`.
+The remote host must satisfy its service's hardware contract and provide Docker with NVIDIA container GPU access.
+The runtime image performs hardware and memory observation inside the container; normal deployment does not require the SDK's Python SSH capacity collector.
 The existing example uses Linux ARM64 DGX Spark; [the Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
 Managed volume observation uses that daemon's reported data root, including a non-default root; it never substitutes the client host's storage path.
@@ -33,14 +34,16 @@ nemoclaw plan --state-dir .local/remote examples/spark/remote-vllm.yaml
 nemoclaw apply --state-dir .local/remote examples/spark/remote-vllm.yaml
 ```
 
-Apply creates retained model storage and the inference network/container on the SSH target, checks preparation output manifests and readiness there, then configures the sandbox's OpenShell route.
-Plan reads remote capacity and resource state without creating runtime resources.
+Apply creates retained model storage and provider-managed inference compute on the SSH target, waits for application readiness, then configures the sandbox's OpenShell route.
+Plan reads provider resource state without collecting host capacity or model inventories.
+Hardware, startup memory, and preparation failures are reported by the runtime during apply.
 Changing a bound engine endpoint requires migration and is rejected.
 
-Failed observations never authorize recreation.
-Destroy retains model data and network.
+Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
+Destroy retains model data and credentials and removes the service-owned network.
 
-The bundled fixture lifecycle and a live two-daemon DGX Spark test are qualified.
+The earlier custom-controller lifecycle was qualified by a live two-daemon DGX Spark test.
+That retained result does not qualify the current Docker-provider path on GPU hardware.
 The live test used a second Docker daemon in a network namespace, SSH control, rootless Podman sandboxes, and actual OpenClaw replies through OpenShell.
 See [the recorded test results](validation/rust-dual-daemon-linux-arm64.json).
 
