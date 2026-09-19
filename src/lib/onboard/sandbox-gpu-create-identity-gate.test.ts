@@ -608,6 +608,9 @@ describe("created sandbox identity gate", () => {
       expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
       expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
       await options.onPoll?.();
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+      await options.onPoll?.();
       expect(options.readyCheck?.()).toBe(true);
       events.push("create-complete");
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
@@ -617,14 +620,20 @@ describe("created sandbox identity gate", () => {
     const failTransientSelectorRead = (): never => {
       throw new Error("Command failed with status 1");
     };
-    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      !args.includes("--selector")
-        ? "alpha Ready"
-        : ++selectorAttempts === 1
-          ? failTransientSelectorRead()
+    const observeSelector = (): string =>
+      ++selectorAttempts === 1
+        ? failTransientSelectorRead()
+        : selectorAttempts === 2
+          ? sandboxListJson(
+              "alpha-sandbox-id",
+              { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+              { resource_version: null },
+            )
           : sandboxListJson("alpha-sandbox-id", {
               [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
-            }),
+            });
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      !args.includes("--selector") ? "alpha Ready" : observeSelector(),
     );
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({

@@ -639,6 +639,10 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
+    const retryableCreateIdentityDiagnostic = (diagnostic: string): boolean =>
+      diagnostic === "selector-execution-timeout" ||
+      diagnostic === "selector-execution-nonzero" ||
+      diagnostic === "selector-execution-resource-unavailable";
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
       if (!createdSandboxVerified) {
@@ -652,11 +656,7 @@ export function createSandboxGpuCreateAttemptRunner(
           SANDBOX_READY_PROBE_TIMEOUT_MS,
         );
         if (observation.state === "invalid") {
-          if (
-            observation.diagnostic === "selector-execution-timeout" ||
-            observation.diagnostic === "selector-execution-nonzero" ||
-            observation.diagnostic === "selector-execution-resource-unavailable"
-          ) {
+          if (retryableCreateIdentityDiagnostic(observation.diagnostic)) {
             // The create client can temporarily hold OpenShell's read path
             // while it builds or publishes the sandbox. Identity remains
             // unavailable, so no mutation is authorized; retry on the next
@@ -672,7 +672,8 @@ export function createSandboxGpuCreateAttemptRunner(
           throw new Error("OpenShell create-attempt identity changed during initial cutover.");
         }
         readyCheckCreatedSandboxId = observation.sandboxId;
-        const sandboxId = settleCreatedIdentity();
+        if (observation.state === "pending") return;
+        const sandboxId = observation.sandboxId;
         waitForCreatedSandboxPublication(sandboxId);
         await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce, route, input);
         createdSandboxVerified = true;
@@ -716,6 +717,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
               if (observation.state === "invalid") {
+                if (retryableCreateIdentityDiagnostic(observation.diagnostic)) return false;
                 return failReadyCheckCreatedIdentity(observation.diagnostic);
               }
               if (observation.sandboxId === null) {
