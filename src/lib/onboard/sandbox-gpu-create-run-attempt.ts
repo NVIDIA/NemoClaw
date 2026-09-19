@@ -664,6 +664,18 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
+    const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
+      revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
+      requireCompatibilityLifecycleCommand("stop", input.sandboxName, deps);
+      revalidatePostCreateEffect(`confirm stopped compatibility sandbox '${input.sandboxName}'`);
+      await runtimePatch.ensureApplied();
+      await runtimePatch.exitOnPatchError();
+      return runtimePatch.replacementRuntimeId?.() ?? null;
+    };
+    const publishVerifiedCompatibilityCutover = async (): Promise<void> => {
+      revalidatePostCreateEffect(`publish replacement runtime for sandbox '${input.sandboxName}'`);
+      requireCompatibilityLifecycleCommand("start", input.sandboxName, deps);
+    };
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
       if (!createdSandboxVerified) {
@@ -708,22 +720,8 @@ export function createSandboxGpuCreateAttemptRunner(
           createAttemptNonce,
           route,
           input,
-          async () => {
-            revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-            requireCompatibilityLifecycleCommand("stop", input.sandboxName, deps);
-            revalidatePostCreateEffect(
-              `confirm stopped compatibility sandbox '${input.sandboxName}'`,
-            );
-            await runtimePatch.ensureApplied();
-            await runtimePatch.exitOnPatchError();
-            return runtimePatch.replacementRuntimeId?.() ?? null;
-          },
-          async () => {
-            revalidatePostCreateEffect(
-              `publish replacement runtime for sandbox '${input.sandboxName}'`,
-            );
-            requireCompatibilityLifecycleCommand("start", input.sandboxName, deps);
-          },
+          applyVerifiedCompatibilityCutover,
+          publishVerifiedCompatibilityCutover,
         );
         createdSandboxVerified = true;
       }
@@ -950,7 +948,14 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       waitForCreatedSandboxPublication(sandboxId);
-      await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
+      await verifyCreatedSandboxBeforeEffects(
+        sandboxId,
+        createAttemptNonce!,
+        route,
+        input,
+        compatibility ? applyVerifiedCompatibilityCutover : undefined,
+        compatibility ? publishVerifiedCompatibilityCutover : undefined,
+      );
       createdSandboxVerified = true;
     }
     if (deferPostCreateEffects) {

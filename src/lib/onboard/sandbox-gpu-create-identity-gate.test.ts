@@ -577,7 +577,7 @@ describe("created sandbox identity gate", () => {
     expect(deps.sleep).not.toHaveBeenCalled();
   });
 
-  it("applies a compatibility cutover after exact identity verification and before create returns (#11905)", async () => {
+  it("applies a compatibility cutover when the Ready create client exits first (#11905)", async () => {
     const events: string[] = [];
     let nonce = "";
     let replacementRuntimeId: string | null = null;
@@ -610,8 +610,6 @@ describe("created sandbox identity gate", () => {
       await options.onPoll?.();
       expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
       expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
-      await options.onPoll?.();
-      expect(options.readyCheck?.()).toBe(true);
       events.push("create-complete");
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
@@ -643,8 +641,8 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
     });
+    expect(events.indexOf("create-complete")).toBeLessThan(events.indexOf("verify-created"));
     expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
-    expect(events.indexOf("compatibility-cutover")).toBeLessThan(events.indexOf("create-complete"));
   });
 
   it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {
