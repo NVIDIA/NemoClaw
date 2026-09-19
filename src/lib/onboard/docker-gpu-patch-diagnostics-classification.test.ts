@@ -147,6 +147,21 @@ describe("Docker GPU patch diagnostics", () => {
     expect(flat).toContain("patched_create_option=--gpus all");
   });
 
+  it("classifies a failed startup-command recreation without GPU failure wording (#12080)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 127 }, "alpha   Error   1m ago"),
+      buildDockerGpuMode("startup-command"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("Startup-command replacement container exited with code 127");
+    expect(result.headline).not.toMatch(/GPU/);
+    expect(result.summaryLines.join("\n")).toContain(
+      "patched_create_option=persistent sandbox startup command",
+    );
+    expect(result.headline).toContain("persistent sandbox startup command");
+  });
+
   it("explains exit code 127 when container logs prove the managed startup command is missing (#7996)", () => {
     const result = classifyDockerGpuPatchFailure(
       failureSnapshot("Error", { Status: "restarting", ExitCode: 127 }, "alpha   Error   1m ago"),

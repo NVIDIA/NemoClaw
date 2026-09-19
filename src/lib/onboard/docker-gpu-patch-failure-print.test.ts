@@ -212,4 +212,29 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
     expect(stderr).not.toContain("openshell sandbox delete");
     expect(stderr).not.toContain("docker rm -f");
   });
+
+  it("does not use GPU failure wording when the selected operation is the startup-command restart patch (#12080)", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => ""),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        oldContainerId: "old-container-id",
+        newContainerId: "new-container-id",
+        backupContainerName: null,
+        selectedMode: buildDockerGpuMode("startup-command"),
+        rolledBack: true,
+      },
+    });
+
+    expect(stderr).toContain("Docker startup-command patch failed.");
+    expect(stderr).not.toMatch(/Docker GPU patch [a-z]/i);
+    expect(stderr).not.toContain("Patched GPU container");
+    expect(stderr).not.toContain("--no-gpu");
+    expect(stderr).not.toContain("NEMOCLAW_SANDBOX_GPU");
+    expect(stderr).not.toContain("NEMOCLAW_DOCKER_GPU_PATCH");
+    expect(stderr).toContain("patched_create_option=persistent sandbox startup command");
+    expect(stderr).toContain("pre-patch sandbox container was restored and started");
+    expect(stderr).toContain("Rebuild the sandbox image");
+  });
 });
