@@ -37,6 +37,7 @@ import { selectDefaultOllamaModel } from "../inference/local";
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
 import type { GatewayObservationSnapshot, GatewayReadinessProjection } from "../readiness/gateway";
 import type { SystemReadinessReport } from "../readiness/types";
+import * as platformQualification from "../readiness/platform-qualification";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
   assertOnboardGatewayReadiness,
@@ -478,6 +479,181 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(optOutExit).not.toHaveBeenCalled();
   });
 
+  it("admits a host collection slower than the reuse window (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const observedAt = "2026-08-31T12:00:00.000Z";
+    const projectedAt = new Date(Date.parse(observedAt) + 45_000);
+
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      observedAt,
+      now: () => projectedAt,
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(report.provenance.observedAt).toBe(observedAt);
+  });
+
+  it("uses collection completion as provenance when no start is supplied (#10670)", () => {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      collectedAt,
+      now: () => new Date("2026-08-31T12:00:01.000Z"),
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.provenance.observedAt).toBe(collectedAt);
+  });
+
+  function slowMetadataAdmission(reuseDelay: number) {
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    let currentTime = Date.parse(collectedAt) + reuseDelay;
+    vi.spyOn(platformQualification, "collectPlatformIdentity").mockImplementation(() => {
+      currentTime += 45_000;
+      return {};
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const admit = () =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => new Date(currentTime),
+        presentAdvisories: false,
+        exitProcess: exit,
+      });
+    return { admit, exit };
+  }
+
+  it("excludes slow metadata collection from host reuse age (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(0);
+    expect(admit().evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale caller facts even after slow metadata collection (#10670)", () => {
+    const { admit, exit } = slowMetadataAdmission(45_000);
+    expect(admit).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("charges a delay between host collection and the gate (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const gatedAt = new Date(Date.parse(collectedAt) + 45_000);
+
+    expect(() =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => gatedAt,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 45000ms old against a 30000ms window",
+    );
+  });
+
+  it.each([
+    ["an invalid observation start", "not-a-timestamp", "2026-08-31T12:00:00.000Z"],
+    ["an invalid collection completion", "2026-08-31T11:59:30.000Z", "not-a-timestamp"],
+    [
+      "a clock step backward during collection",
+      "2026-08-31T12:00:30.000Z",
+      "2026-08-31T12:00:00.000Z",
+    ],
+  ])("rejects %s at host admission (#10670)", (_case, observedAt, collectedAt) => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt,
+        collectedAt,
+        now: () => new Date("2026-08-31T12:00:00.000Z"),
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(error.mock.calls.map(([line]) => line).join("\n")).toContain(
+      "Host collection timestamps are invalid or out of order.",
+    );
+  });
+
+  it("names the host evidence behind an unconfirmed capability list (#10670)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const collapsed: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "inconclusive",
+      exitCode: 3,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-31T12:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.probe.inconclusive",
+          severity: "warning",
+          summary: "Host observations could not be collected safely.",
+        },
+      ],
+      evidence: [
+        {
+          id: "host.probe.stale",
+          summary:
+            "Host observations exceeded their safe reuse window: 41234ms old against a 30000ms window.",
+        },
+      ],
+    };
+
+    expect(() =>
+      assertOnboardSystemReadiness(collapsed, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: true,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("could not confirm required capabilities: host.docker.available");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 41234ms old against a 30000ms window",
+    );
+  });
+
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
     "allows Podman only when the portable profile is explicit",
     () => {
@@ -546,6 +722,38 @@ describe("report-backed runtime readiness (#7411)", () => {
 });
 
 describe("runFatalOnboardRuntimePreflight", () => {
+  it("does not charge fresh onboarding for its host and GPU probes (#10670)", () => {
+    const startedAt = Date.parse("2026-08-31T12:00:00.000Z");
+    let currentTime = startedAt;
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+
+    const result = runFatalOnboardRuntimePreflight(
+      { noGpu: true },
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        assessHost: () => {
+          currentTime += 10_000;
+          return hostWithRuntime("docker");
+        },
+        detectGpu: () => {
+          currentTime += 35_000;
+          return null;
+        },
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+        exitProcess: exit,
+      },
+    );
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(result.readinessReport.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(result.readinessReport.provenance.observedAt).toBe(new Date(startedAt).toISOString());
+  });
+
   it.each([
     ["the CLI disable flag", { sandboxGpu: "disable" as const }, {}],
     ["the environment CPU-only mode", {}, { NEMOCLAW_SANDBOX_GPU: "0" }],
