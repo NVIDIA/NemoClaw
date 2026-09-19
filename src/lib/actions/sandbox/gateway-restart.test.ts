@@ -3,7 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
-import { classifyGatewayRestartFailure } from "./gateway-restart";
+import {
+  classifyGatewayRestartFailure,
+  createHermesSandboxIdentityRevalidator,
+  restartHermesSandboxThroughOpenShell,
+} from "./gateway-restart";
 import { restartSandboxGateway } from "./process-recovery";
 
 afterEach(() => vi.restoreAllMocks());
@@ -139,6 +143,52 @@ describe("restartSandboxGateway native lifecycle", () => {
       failureLayer: "container identity changed",
       detail: "Sandbox 'hermes-box' identity changed during Hermes restart.",
     });
+    expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("refuses a same-name Hermes replacement before start or health recovery", async () => {
+    silenceConsole();
+    const expectedFingerprint = "a".repeat(64);
+    const replacementFingerprint = "b".repeat(64);
+    const entry = {
+      name: "hermes-box",
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: expectedFingerprint,
+    };
+    const inspectLiveIdentity = vi
+      .fn<() => string>()
+      .mockReturnValueOnce(expectedFingerprint)
+      .mockReturnValue(replacementFingerprint);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const revalidate = createHermesSandboxIdentityRevalidator({
+      sandboxName: entry.name,
+      getSandbox: () => entry,
+      inspectLiveIdentity: () => inspectLiveIdentity(),
+    });
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => entry,
+      restartHermesSandbox: vi.fn(async (sandboxName: string) =>
+        restartHermesSandboxThroughOpenShell(sandboxName, runOpenshell, revalidate),
+      ),
+    });
+
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toEqual({
+      ok: false,
+      failureLayer: "container identity changed",
+      detail:
+        "Sandbox 'hermes-box' live identity changed before confirming Hermes sandbox 'hermes-box' after OpenShell stop.",
+    });
+    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "stop", "hermes-box"],
+      expect.any(Object),
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "start", "hermes-box"],
+      expect.any(Object),
+    );
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
   });
 

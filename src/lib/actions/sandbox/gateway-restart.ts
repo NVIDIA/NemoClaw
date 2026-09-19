@@ -3,10 +3,33 @@
 
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
+import { createHermesSandboxIdentityRevalidator } from "./runtime/hermes-sandbox-lifecycle";
 
-export { restartHermesSandboxThroughOpenShell } from "./runtime/hermes-sandbox-lifecycle";
+export {
+  createHermesSandboxIdentityRevalidator,
+  restartHermesSandboxThroughOpenShell,
+} from "./runtime/hermes-sandbox-lifecycle";
+
+export function createCliHermesSandboxIdentityRevalidator(input: {
+  readonly sandboxName: string;
+  readonly getSandbox: Parameters<typeof createHermesSandboxIdentityRevalidator>[0]["getSandbox"];
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+}): (operation: string) => void {
+  return createHermesSandboxIdentityRevalidator({
+    sandboxName: input.sandboxName,
+    getSandbox: input.getSandbox,
+    inspectLiveIdentity: (sandboxName, gatewayName) =>
+      inspectOpenShellSandboxIdentityFingerprint({
+        sandboxName,
+        gatewayName,
+        runtimeSelection: input.runtimeSelection,
+      }),
+  });
+}
 
 export type GatewayRestartCommandResult = {
   status: number;

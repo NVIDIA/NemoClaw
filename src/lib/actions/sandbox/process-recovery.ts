@@ -79,6 +79,7 @@ import {
   MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
   parseManagedGatewayControlCompletion,
   printGatewayRestartFailure,
+  createCliHermesSandboxIdentityRevalidator,
   restartHermesSandboxThroughOpenShell,
   type RestartSandboxGatewayOptions as BaseRestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
@@ -1848,19 +1849,11 @@ export async function restartSandboxGateway(
             runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
         restartHermesSandbox: async (name) => {
-          const expected = registry.getSandbox(name);
-          const revalidate = () => {
-            const current = registry.getSandbox(name);
-            if (
-              !expected ||
-              !current ||
-              current.name !== expected.name ||
-              current.agent !== expected.agent ||
-              current.lifecycleGeneration !== expected.lifecycleGeneration
-            ) {
-              throw new Error(`Sandbox '${name}' identity changed during Hermes restart.`);
-            }
-          };
+          const revalidate = createCliHermesSandboxIdentityRevalidator({
+            sandboxName: name,
+            getSandbox: registry.getSandbox,
+            runtimeSelection,
+          });
           return restartHermesSandboxThroughOpenShell(
             name,
             (args, options = {}) =>
