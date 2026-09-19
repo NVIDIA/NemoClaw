@@ -23,6 +23,7 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
@@ -35,6 +36,29 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+
+describe("managed startup hold release", () => {
+  it("retries a transient exact-container release failure before retained recovery", () => {
+    const release = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("release unavailable");
+      })
+      .mockImplementationOnce(() => undefined);
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds persistent release failures", () => {
+    const release = vi.fn(() => {
+      throw new Error("release unavailable");
+    });
+
+    expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
+    expect(release).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;

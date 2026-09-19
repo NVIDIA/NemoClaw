@@ -1012,6 +1012,22 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
   return registration;
 }
 
+const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
+
+/** Retry the exact-container hold release before entering retained recovery. */
+export function releaseManagedStartupHoldWithRetry(release: () => void): void {
+  let failure: unknown;
+  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      release();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -3033,6 +3049,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   if (!managedWorkloadRuntime.runtimeProvider) {
                     throw new Error("Managed startup launch has no selected runtime provider.");
                   }
+                  const managedStartupRuntimeProvider = managedWorkloadRuntime.runtimeProvider;
                   console.log("  Applying managed startup profile to the verified sandbox...");
                   let managedStartupTransaction: ReturnType<
                     typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
@@ -3040,7 +3057,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   try {
                     managedStartupTransaction =
                       managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
-                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        runtimeProvider: managedStartupRuntimeProvider,
                         sandboxName,
                         sandboxId: identity.sandboxId,
                         bootstrapIdentity: managedBootstrapIdentity,
@@ -3060,7 +3077,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     console.log("  Committing managed startup shared state...");
                     const sharedState =
                       managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
-                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+                        runtimeProvider: managedStartupRuntimeProvider,
                         sandboxName,
                         sandboxId: identity.sandboxId,
                         transaction: managedStartupTransaction,
@@ -3079,13 +3096,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     }
                     console.log("  ✓ Committed managed startup shared state");
                     try {
-                      managedWorkloadOnboard.releaseProviderManagedStartupHold({
-                        runtimeProvider: managedWorkloadRuntime.runtimeProvider,
-                        sandboxName,
-                        sandboxId: identity.sandboxId,
-                        transaction: managedStartupTransaction,
-                        profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
-                      });
+                      releaseManagedStartupHoldWithRetry(() =>
+                        managedWorkloadOnboard.releaseProviderManagedStartupHold({
+                          runtimeProvider: managedStartupRuntimeProvider,
+                          sandboxName,
+                          sandboxId: identity.sandboxId,
+                          transaction: managedStartupTransaction,
+                          profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+                        }),
+                      );
                     } catch (error) {
                       console.error(
                         `  Managed startup hold release failed after commit: ${
