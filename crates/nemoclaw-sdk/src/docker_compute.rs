@@ -489,3 +489,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "docker_compute_live_tests.rs"]
+mod live_tests;
