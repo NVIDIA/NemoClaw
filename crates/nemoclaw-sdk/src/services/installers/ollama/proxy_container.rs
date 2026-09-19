@@ -16,16 +16,14 @@ use std::{collections::HashMap, net::SocketAddr, time::Duration};
 const SPEC_LABEL: &str = "nemoclaw.nvidia.com/ollama-spec";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
-pub struct ServiceSpec {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proxy: Option<ProxySettings>,
+pub struct ProxySpec {
+    pub settings: ProxySettings,
     pub name: String,
     pub owner: String,
     pub generation: String,
     pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
-    pub network: String,
     pub bind_address: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,45 +35,27 @@ pub struct ProxySettings {
     pub digest: String,
 }
 #[derive(Clone, Debug)]
-pub struct Service {
-    pub spec: ServiceSpec,
+pub struct ProxyObservation {
     pub id: String,
     pub running: bool,
 }
-impl ServiceSpec {
+impl ProxySpec {
     pub fn volume(&self) -> String {
-        format!(
-            "{}-{}",
-            self.name,
-            if self.proxy.is_some() {
-                "auth"
-            } else {
-                "models"
-            }
-        )
+        format!("{}-auth", self.name)
     }
     pub fn validate(&self) -> Result<(), Error> {
         let bind = self
             .bind_address
             .parse::<SocketAddr>()
-            .map_err(|_| Error::Conflict("invalid Ollama binding"))?;
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-ollama(-proxy)?$")
+            .map_err(|_| Error::Conflict("invalid Ollama proxy binding"))?;
+        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-ollama-proxy-[a-z][a-z0-9-]*$")
             .unwrap()
             .is_match(&self.name)
             || self.owner.is_empty()
             || self.generation.is_empty()
-            || !(if self.proxy.is_some() {
-                regex::Regex::new(crate::config::constraints::IMAGE)
-                    .unwrap()
-                    .is_match(&self.image)
-            } else {
-                regex::Regex::new(r"^ollama/ollama@sha256:[a-f0-9]{64}$")
-                    .unwrap()
-                    .is_match(&self.image)
-            })
-            || !regex::Regex::new(r"^[a-z0-9][a-z0-9_-]*$")
+            || !regex::Regex::new(crate::config::constraints::IMAGE)
                 .unwrap()
-                .is_match(&self.network)
+                .is_match(&self.image)
             || bind.port() == 0
             || !(bind.ip().is_loopback()
                 || match bind.ip() {
@@ -84,15 +64,14 @@ impl ServiceSpec {
                 })
         {
             return Err(Error::Conflict(
-                "Ollama requires owned, pinned configuration and a private bind address",
+                "Ollama proxy requires owned, pinned configuration and a private bind address",
             ));
         }
-        if let Some(proxy) = &self.proxy {
+        {
+            let proxy = &self.settings;
             let upstream = url::Url::parse(&proxy.upstream)
                 .map_err(|_| Error::Conflict("invalid proxy upstream"))?;
-            if self.network != "host"
-                || !self.name.ends_with("-ollama-proxy")
-                || proxy.endpoint != format!("http://{}/v1", self.bind_address)
+            if proxy.endpoint != format!("http://{}/v1", self.bind_address)
                 || upstream.scheme() != "http"
                 || upstream.path() != "/v1"
                 || upstream.port().is_none()
@@ -123,7 +102,7 @@ impl ServiceSpec {
         let mut identity = self.clone();
         identity.image_pull_policy = None;
         let bytes = serde_json::to_vec(&identity)
-            .map_err(|_| Error::State("cannot encode Ollama specification"))?;
+            .map_err(|_| Error::State("cannot encode Ollama proxy specification"))?;
         let digest = Sha256::digest(bytes)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -136,19 +115,14 @@ impl ServiceSpec {
         .into())
     }
     fn container(&self) -> Result<ContainerCreateBody, Error> {
-        let bind = self
-            .bind_address
-            .parse::<SocketAddr>()
-            .map_err(|_| Error::Conflict("invalid Ollama binding"))?;
-        if let Some(proxy) = &self.proxy {
-            return serde_json::from_value(json!({"Image":self.image,"Labels":self.labels()?,"Entrypoint":["python3","/opt/nemoclaw/ollama_proxy.py"],"Cmd":[],
-                "Env":[format!("NEMOCLAW_OLLAMA_PROXY={}",serde_json::to_string(proxy).expect("typed proxy"))],
-                "HostConfig":{"NetworkMode":"host","Mounts":[{"Type":"volume","Source":self.volume(),"Target":"/data"}],
-                    "CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no"},"Memory":268435456,"MemorySwap":268435456}}))
-                .map_err(|_|Error::State("invalid proxy container"));
-        }
-        serde_json::from_value(json!({"Image":self.image,"Labels":self.labels()?,"Entrypoint":["/bin/ollama"],"Cmd":["serve"],"HostConfig":{"NetworkMode":self.network,"Mounts":[{"Type":"volume","Source":self.volume(),"Target":"/root/.ollama"}],"PortBindings":{"11434/tcp":[{"HostIp":bind.ip().to_string(),"HostPort":bind.port().to_string()}]},"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"]}})).map_err(|_|Error::State("invalid compiled Ollama container"))
+        let proxy = &self.settings;
+        serde_json::from_value(json!({"Image":self.image,"Labels":self.labels()?,"Entrypoint":["python3","/opt/nemoclaw/ollama_proxy.py"],"Cmd":[],
+            "Env":[format!("NEMOCLAW_OLLAMA_PROXY={}",serde_json::to_string(proxy).expect("typed proxy"))],
+            "HostConfig":{"NetworkMode":"host","Mounts":[{"Type":"volume","Source":self.volume(),"Target":"/data"}],
+                "CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no"},"Memory":268435456,"MemorySwap":268435456}}))
+            .map_err(|_|Error::State("invalid proxy container"))
     }
+
     fn verify_volume(&self, volume: &Volume) -> Result<(), Error> {
         if volume.name != self.volume()
             || volume.driver != "local"
@@ -156,7 +130,7 @@ impl ServiceSpec {
             || volume.created_at.as_ref().is_none_or(String::is_empty)
         {
             return Err(Error::Conflict(
-                "Ollama persistent volume configuration is incomplete or changed",
+                "Ollama proxy persistent volume configuration is incomplete or changed",
             ));
         }
         for (key, value) in self.labels()? {
@@ -208,10 +182,10 @@ impl ServiceSpec {
                 != expected.port_bindings.as_ref().filter(|m| !m.is_empty())
         {
             return Err(Error::Conflict(
-                "Ollama container configuration drift requires inspection",
+                "Ollama proxy container configuration drift requires inspection",
             ));
         }
-        if self.proxy.is_some() {
+        {
             let expected_env = launch.env.unwrap_or_default();
             let observed_env: Vec<_> = config
                 .env
@@ -241,25 +215,22 @@ impl ServiceSpec {
             .ok_or(ObservationError::Incomplete)?;
         if mounts.len() != 1
             || mounts[0].name.as_deref() != Some(&self.volume())
-            || mounts[0].destination.as_deref()
-                != Some(if self.proxy.is_some() {
-                    "/data"
-                } else {
-                    "/root/.ollama"
-                })
+            || mounts[0].destination.as_deref() != Some("/data")
             || mounts[0].rw != Some(true)
             || mounts[0].typ.as_deref() != Some("volume")
         {
-            return Err(Error::Conflict("Ollama persistent storage binding drifted"));
+            return Err(Error::Conflict(
+                "Ollama proxy persistent storage binding drifted",
+            ));
         }
         Ok(running)
     }
 }
 impl Engine {
     /// Observe storage independently of whether its service is running or present.
-    pub async fn observe_ollama_storage(
+    pub async fn observe_ollama_proxy_storage(
         &self,
-        spec: &ServiceSpec,
+        spec: &ProxySpec,
         id: &str,
     ) -> Result<Option<String>, Error> {
         spec.validate()?;
@@ -267,7 +238,7 @@ impl Engine {
         let Some(volume) = self.volume(&spec.volume()).await? else {
             if !id.is_empty() {
                 return Err(Error::Conflict(
-                    "bound Ollama storage is absent; recreation forbidden",
+                    "bound Ollama proxy storage is absent; recreation forbidden",
                 ));
             }
             return Ok(None);
@@ -284,12 +255,12 @@ impl Engine {
         }
         Ok(Some(physical))
     }
-    pub async fn ensure_ollama_storage(
+    pub async fn ensure_ollama_proxy_storage(
         &self,
-        spec: &ServiceSpec,
+        spec: &ProxySpec,
         id: &str,
     ) -> Result<String, Error> {
-        if let Some(id) = self.observe_ollama_storage(spec, id).await? {
+        if let Some(id) = self.observe_ollama_proxy_storage(spec, id).await? {
             return Ok(id);
         }
         self.api
@@ -301,20 +272,20 @@ impl Engine {
             })
             .await
             .map_err(|error| remote(&error))?;
-        self.observe_ollama_storage(spec, id)
+        self.observe_ollama_proxy_storage(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete.into())
     }
-    pub async fn observe_ollama_removal(
+    pub async fn observe_ollama_proxy_removal(
         &self,
-        spec: &ServiceSpec,
+        spec: &ProxySpec,
         id: &str,
-    ) -> Result<Option<Service>, Error> {
+    ) -> Result<Option<ProxyObservation>, Error> {
         let parts: Vec<_> = id.split('/').collect();
         if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
             return Err(ObservationError::Incomplete.into());
         }
-        self.observe_ollama_storage(
+        self.observe_ollama_proxy_storage(
             spec,
             &format!("{}/{}/{}", parts[0], spec.volume(), parts[2]),
         )
@@ -322,10 +293,10 @@ impl Engine {
         if self.container(&spec.name).await?.is_none() {
             return Ok(None);
         }
-        self.observe_ollama(spec, id).await
+        self.observe_ollama_proxy(spec, id).await
     }
-    pub async fn remove_ollama(&self, spec: &ServiceSpec, id: &str) -> Result<(), Error> {
-        if let Some(service) = self.observe_ollama_removal(spec, id).await? {
+    pub async fn remove_ollama_proxy(&self, spec: &ProxySpec, id: &str) -> Result<(), Error> {
+        if let Some(service) = self.observe_ollama_proxy_removal(spec, id).await? {
             let container = service
                 .id
                 .split('/')
@@ -345,11 +316,11 @@ impl Engine {
         }
         Ok(())
     }
-    pub async fn observe_ollama(
+    pub async fn observe_ollama_proxy(
         &self,
-        spec: &ServiceSpec,
+        spec: &ProxySpec,
         id: &str,
-    ) -> Result<Option<Service>, Error> {
+    ) -> Result<Option<ProxyObservation>, Error> {
         spec.validate()?;
         let work = async {
             let info = self.info().await?;
@@ -362,13 +333,13 @@ impl Engine {
                 }
                 if !id.is_empty() {
                     return Err(Error::Conflict(
-                        "bound Ollama is absent; automatic recreation is forbidden",
+                        "bound Ollama proxy is absent; automatic recreation is forbidden",
                     ));
                 }
                 return Ok(None);
             };
             let volume = volume.ok_or(Error::Conflict(
-                "Ollama storage observation failed; absence is unconfirmed",
+                "Ollama proxy storage observation failed; absence is unconfirmed",
             ))?;
             let running = spec.verify(&container, &volume)?;
             let physical = format!(
@@ -380,8 +351,7 @@ impl Engine {
             if !id.is_empty() && id != physical {
                 return Err(ObservationError::BindingMismatch.into());
             }
-            Ok(Some(Service {
-                spec: spec.clone(),
+            Ok(Some(ProxyObservation {
                 id: physical,
                 running,
             }))
@@ -390,49 +360,12 @@ impl Engine {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
-    pub async fn bound_ollama(&self, id: &str, endpoint: &str) -> Result<Service, Error> {
-        let parts: Vec<_> = id.split('/').collect();
-        if parts.len() != 3 || parts.iter().any(|s| s.is_empty()) {
-            return Err(Error::Conflict("invalid Ollama physical binding"));
-        }
-        let container = self
-            .container(parts[1])
-            .await?
-            .ok_or(Error::Conflict("bound Ollama container is unobservable"))?;
-        let config = container.config.ok_or(ObservationError::Incomplete)?;
-        let labels = config.labels.ok_or(ObservationError::Incomplete)?;
-        let host = container.host_config.ok_or(ObservationError::Incomplete)?;
-        super::Models::new(endpoint)?;
-        let bind = endpoint
-            .strip_prefix("http://")
-            .and_then(|v| v.strip_suffix("/v1"))
-            .ok_or(ObservationError::Incomplete)?;
-        let spec = ServiceSpec {
-            proxy: None,
-            image_pull_policy: None,
-            name: container
-                .name
-                .ok_or(ObservationError::Incomplete)?
-                .trim_start_matches('/')
-                .into(),
-            owner: labels
-                .get(OWNER_LABEL)
-                .ok_or(ObservationError::Incomplete)?
-                .clone(),
-            generation: labels
-                .get(GENERATION_LABEL)
-                .ok_or(ObservationError::Incomplete)?
-                .clone(),
-            image: config.image.ok_or(ObservationError::Incomplete)?,
-            network: host.network_mode.ok_or(ObservationError::Incomplete)?,
-            bind_address: bind.into(),
-        };
-        self.observe_ollama(&spec, id)
-            .await?
-            .ok_or(Error::Conflict("bound Ollama parent is absent"))
-    }
-    pub async fn ensure_ollama(&self, spec: &ServiceSpec, id: &str) -> Result<Service, Error> {
-        let observed = match self.observe_ollama(spec, id).await {
+    pub async fn ensure_ollama_proxy(
+        &self,
+        spec: &ProxySpec,
+        id: &str,
+    ) -> Result<ProxyObservation, Error> {
+        let observed = match self.observe_ollama_proxy(spec, id).await {
             Err(Error::PartialRuntime) if id.is_empty() => None,
             other => other?,
         };
@@ -443,7 +376,7 @@ impl Engine {
         if observed.is_none() {
             if !id.is_empty() {
                 return Err(Error::Conflict(
-                    "bound Ollama unavailable; recreation forbidden",
+                    "bound Ollama proxy unavailable; recreation forbidden",
                 ));
             }
             self.acquire_image(&spec.image, spec.image_pull_policy.unwrap_or_default())
@@ -466,7 +399,7 @@ impl Engine {
             spec.verify_volume(&volume)?;
             if self.container(&spec.name).await?.is_some() {
                 return Err(Error::Conflict(
-                    "Ollama appeared during create; reapply to reconcile",
+                    "Ollama proxy appeared during create; reapply to reconcile",
                 ));
             }
             self.api
@@ -481,7 +414,7 @@ impl Engine {
                 .map_err(|error| remote(&error))?;
         }
         let observed = self
-            .observe_ollama(spec, id)
+            .observe_ollama_proxy(spec, id)
             .await?
             .ok_or(ObservationError::Incomplete)?;
         if !observed.running {
@@ -495,11 +428,11 @@ impl Engine {
                 .await
                 .map_err(|error| remote(&error))?;
         }
-        self.observe_ollama(spec, &observed.id)
+        self.observe_ollama_proxy(spec, &observed.id)
             .await?
             .ok_or(ObservationError::Incomplete.into())
     }
 }
 #[cfg(all(test, unix))]
-#[path = "service_tests.rs"]
+#[path = "proxy_container_tests.rs"]
 mod tests;

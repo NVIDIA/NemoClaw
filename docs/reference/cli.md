@@ -53,7 +53,6 @@ Credential values are not written to desired state, output, diagnostics, or depl
 |---|---|---|
 | `--state-dir DIR` | All commands | Deployment state directory for lifecycle commands; defaults to `.nemoclaw`; accepted but unused by generation-only onboarding |
 | `--bundle DIR` | All commands | Explicit verified bundle for lifecycle commands; defaults to the bundle containing the CLI; accepted but unused by generation-only onboarding |
-| `--bundle-dir DIR` | All commands | Alias for `--bundle` |
 | `--verbose`, `-v` | All commands | Report completed-step timings and outcomes on stderr |
 | `--generate-only` | `onboard` | Save YAML and stop before resolving credentials, planning, or applying |
 | `--output FILE`, `-o FILE` | `onboard`, `export` | Write YAML to a file; onboarding defaults to `deployment.yaml` |
@@ -91,8 +90,8 @@ When stderr is a terminal, commands show deployment phases, OpenTofu resource op
 Readiness waits report elapsed time every 10 seconds; resource updates follow OpenTofu's event stream.
 Durations below one second use milliseconds; longer durations use seconds.
 Resource durations use OpenTofu event timestamps when available, falling back to its whole-second elapsed field.
-Docker image pulls and Ollama model pulls also show download phases and per-layer byte counts when available.
-A known, nonzero layer total enables a percentage; it is not a percentage for the entire image or model.
+Docker image pulls also show download phases and per-layer byte counts when available.
+A known, nonzero layer total enables a percentage; it is not a percentage for the entire image.
 Download updates can be dropped if progress reporting is unavailable or slow; the command result still determines success.
 Progress messages do not establish successful inference.
 Redirected stderr contains errors only unless `--verbose` enables progress output.

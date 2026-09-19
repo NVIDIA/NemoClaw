@@ -525,3 +525,18 @@ fn exiting_review_does_not_save_and_failed_write_preserves_target() {
     assert!(!failed.status.success());
     assert!(!missing_target.exists());
 }
+
+#[test]
+fn removed_bundle_dir_flag_is_a_usage_error() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .args(["export", "--bundle-dir"])
+        .arg(root.path())
+        .arg("--state-dir")
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!state.exists());
+}

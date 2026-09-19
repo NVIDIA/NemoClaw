@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::{Error, ObservationError, docker::Engine, services::installers::ollama::ServiceSpec};
+use crate::{Error, ObservationError, docker::Engine, services::installers::ollama::ProxySpec};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Source {
     OllamaProxy {
         engine: String,
-        spec: Box<ServiceSpec>,
+        spec: Box<ProxySpec>,
     },
     ManagedService {
         spec: Box<crate::managed::Spec>,
@@ -32,7 +32,7 @@ impl Source {
                     && Engine::validate_endpoint(engine).is_ok()
                     && spec.validate().is_ok()
                     && spec.owner == owner
-                    && spec.proxy.as_ref().is_some_and(|p| p.endpoint == endpoint) => {}
+                    && spec.settings.endpoint == endpoint => {}
             Self::ManagedService { spec }
                 if spec.validate().is_ok()
                     && spec.owner == owner
@@ -69,7 +69,7 @@ impl Source {
                 Self::OllamaProxy { engine, spec } => {
                     let engine = Engine::connect(engine)?;
                     let observed = engine
-                        .observe_ollama(spec, "")
+                        .observe_ollama_proxy(spec, "")
                         .await?
                         .ok_or(Error::Conflict("credential source is absent"))?;
                     let id = observed

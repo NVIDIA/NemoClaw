@@ -212,3 +212,38 @@ fn image_pushes_follow_image_inputs_without_skipping_pull_request_checks() {
     assert!(workflow["on"]["pull_request"].get("paths").is_none());
     assert!(workflow["on"].get("workflow_dispatch").is_some());
 }
+
+#[test]
+fn lifecycle_workflow_selects_existing_test_targets() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    let mut available = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(root.join("crates")).unwrap() {
+        let tests = entry.unwrap().path().join("tests");
+        if !tests.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(tests).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                available.insert(path.file_stem().unwrap().to_str().unwrap().to_owned());
+            }
+        }
+    }
+    for script in workflow["jobs"]["native"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|step| step["run"].as_str())
+    {
+        let words: Vec<_> = script.split_whitespace().collect();
+        for pair in words.windows(2).filter(|pair| pair[0].ends_with("--test")) {
+            let name = pair[1].trim_end_matches(')');
+            assert!(
+                available.contains(name),
+                "CI selects missing test target: {name}"
+            );
+        }
+    }
+}

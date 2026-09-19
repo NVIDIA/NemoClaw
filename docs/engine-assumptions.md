@@ -21,7 +21,7 @@ A distinct daemon ID does not establish a distinct physical GPU or memory pool.
 | SDK `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, validation, readiness, and export. |
 | Provider `provider.rs`; SDK `services/registry.rs` and `services/installers/ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. The SDK and provider must select the same daemon. |
 | SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
-| SDK `managed/storage.rs`, `managed/observation.rs`, and `services/installers/ollama/service.rs` | Docker bindings combine daemon identity with resource identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Names and labels on another daemon cannot authorize adoption or deletion. |
+| SDK `managed/storage.rs`, `managed/observation.rs`, and `services/installers/ollama/proxy_container.rs` | Docker bindings combine daemon identity with resource identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Names and labels on another daemon cannot authorize adoption or deletion. |
 | SDK `openshell/transport.rs`, `state/`, and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
 A changed bound endpoint is rejected; there is no target migration or lost-state adoption command.

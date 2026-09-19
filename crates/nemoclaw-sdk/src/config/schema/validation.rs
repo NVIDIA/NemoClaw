@@ -173,7 +173,7 @@ pub(super) fn constrain(root: &mut Value) {
     property(
         &mut defs["PolicyLandlock"],
         "compatibility",
-        json!({"enum": ["best_effort", "hard_requirement", "strict"]}),
+        json!({"enum": ["best_effort", "hard_requirement"]}),
     );
     for (field, choices) in [
         ("protocol", json!(n::POLICY_PROTOCOLS)),

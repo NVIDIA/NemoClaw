@@ -22,7 +22,7 @@ fn input() -> Value {
 }
 #[test]
 fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
-    let gens: Generations = ["workspace", "provider", "sandbox", "ollama"]
+    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let mut value = input();
@@ -77,7 +77,7 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
         "http://172.20.0.1:11435/v1"
     );
     assert!(doc.credential_names().is_empty());
-    let gens: Generations = ["workspace", "provider", "sandbox", "ollama"]
+    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
         .map(|k| (k.into(), "a".repeat(32)))
         .into();
     let graph = compile(&doc, &gens, "0.1.0").unwrap();
@@ -130,7 +130,7 @@ fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
                 .unwrap()
                 .is_valid(&value)
         );
-        let gens: Generations = ["workspace", "provider", "sandbox", "ollama"]
+        let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
             .map(|k| (k.into(), "a".repeat(32)))
             .into();
         let graph = compile(&doc, &gens, "0.1.0").unwrap();
@@ -142,4 +142,39 @@ fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
                 .is_empty()
         );
     }
+}
+
+#[test]
+fn named_proxies_have_distinct_containers_storage_and_credentials() {
+    let mut value = input();
+    let mut second = value["spec"]["services"]["ollama-auth"].clone();
+    second["endpoint"] = json!("http://172.20.0.1:11436/v1");
+    value["spec"]["services"]["second"] = second;
+    let mut provider = value["spec"]["inferenceProviders"][0].clone();
+    provider["name"] = json!("second");
+    provider["serviceRef"] = json!("second");
+    value["spec"]["inferenceProviders"]
+        .as_array_mut()
+        .unwrap()
+        .push(provider);
+    let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+    let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let graph = compile(&doc, &gens, "0.1.0").unwrap();
+    for kind in ["nemoclaw_ollama_proxy", "nemoclaw_ollama_proxy_storage"] {
+        assert_ne!(
+            graph["resource"][kind]["ollama-auth"]["name"],
+            graph["resource"][kind]["second"]["name"]
+        );
+    }
+    let first = serde_json::to_value(&doc).unwrap();
+    let mut changed = first;
+    changed["spec"]["inferenceProviders"][0]["serviceRef"] = json!("second");
+    let doc = Document::parse(changed.to_string().as_bytes()).unwrap();
+    let other = compile(&doc, &gens, "0.1.0").unwrap();
+    assert_ne!(
+        graph["resource"]["nemoclaw_provider"]["inference_local"]["credential_source"],
+        other["resource"]["nemoclaw_provider"]["inference_local"]["credential_source"]
+    );
 }

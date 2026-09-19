@@ -69,3 +69,18 @@ fn service_references_reject_missing_names_and_legacy_inline_installers() {
     provider["service"] = inline;
     assert!(Document::parse(legacy.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn removed_ollama_backends_cannot_resolve_saved_resource_rows() {
+    let connections = nemoclaw_sdk::docker::Connections::default();
+    let registry = nemoclaw_sdk::services::BackendRegistry::new(&connections);
+    for kind in ["ollama", "ollama_storage", "ollama_model"] {
+        assert!(!nemoclaw_sdk::services::installers::ollama::ProxyBackend::supports(kind));
+        assert!(
+            registry
+                .resolve(kind, &Default::default())
+                .unwrap()
+                .is_none()
+        );
+    }
+}

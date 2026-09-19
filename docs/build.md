@@ -117,12 +117,16 @@ Run [image checks](testing.md#image-source-checks) before changing or using an i
 
 ## Build a Runtime Image
 
-Runtime image builds require Linux, Docker, and Buildx.
+Runtime image builds require Linux, Buildx, and a Docker daemon using the containerd image store.
+Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`.
+The builder checks this requirement before downloading sources or compiling the supervisor.
+Docker's classic image store is unsupported; use a daemon configured with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) before retrying.
+The builder does not change Docker configuration.
 The artifact manifest must set `platform` to `linux_arm64` or `linux_amd64`; omission is rejected.
 The build host must match that platform, which selects both the supervisor's Rust compilation target and the image platform.
 The builder rejects a mismatched host before building the supervisor or loading an image.
 The artifact manifest selects its Dockerfile, local inputs, immutable source downloads, image name, and reproducible timestamp.
-It downloads pinned sources and dependencies, builds locally, and loads the image into the selected local Docker daemon.
+It downloads pinned sources and dependencies, builds locally, and loads the image into the selected Docker daemon.
 
 It does not launch inference or publish an image.
 
@@ -156,9 +160,10 @@ This build exports `.build/qwen38/runtime.tar` and loads `nc-prototype-qwen38:sp
 Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
-Use the immutable OCI manifest digest in the build output for `spec.services.<name>.image`.
+The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
+Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
-If the selected daemon is remote, load the archive into that daemon before apply; a local image is not available there automatically.
+If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
 
 ## Retained Sources and Compatibility
 

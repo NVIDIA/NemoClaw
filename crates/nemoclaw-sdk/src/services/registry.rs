@@ -390,9 +390,9 @@ impl InferenceCapability for ServiceDefinition {
     ) -> Result<Option<String>, crate::Error> {
         match self {
             ServiceDefinition::Ollama(_) => Ok(None),
-            ServiceDefinition::OllamaProxy(service) => {
-                service.credential_source(document, generations).map(Some)
-            }
+            ServiceDefinition::OllamaProxy(service) => service
+                .credential_source(document, name, generations)
+                .map(Some),
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
@@ -605,7 +605,7 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
                 kinds.insert(installers::ollama::SERVICE_KIND);
             }
             ServiceDefinition::OllamaProxy(_) => {
-                kinds.insert("ollama");
+                kinds.insert(installers::ollama::proxy::PROXY);
             }
             ServiceDefinition::Vllm(_) => {
                 kinds.insert(installers::vllm::SERVICE_KIND);
@@ -862,7 +862,7 @@ impl<'a> BackendRegistry<'a> {
                 crate::managed::ManagedBackend::new(engine),
             ))));
         }
-        if installers::ollama::OllamaBackend::supports(kind) {
+        if installers::ollama::ProxyBackend::supports(kind) {
             let endpoint = row
                 .get("engine")
                 .filter(|endpoint| !endpoint.is_empty())
@@ -872,7 +872,7 @@ impl<'a> BackendRegistry<'a> {
                 .resolve(endpoint)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
             return Ok(Some(RegisteredBackend(Box::new(
-                installers::ollama::OllamaBackend::new(engine),
+                installers::ollama::ProxyBackend::new(engine),
             ))));
         }
         Ok(None)

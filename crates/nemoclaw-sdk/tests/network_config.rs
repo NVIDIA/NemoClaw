@@ -275,3 +275,33 @@ async fn plan_and_apply_reject_a_blocked_runtime_before_opening_bundle_or_state(
     );
     assert!(!state.exists());
 }
+
+#[test]
+fn landlock_uses_runtime_spellings_without_main_branch_aliases() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for spelling in ["best_effort", "hard_requirement", "strict"] {
+        let mut value = input();
+        value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]["landlock"]["compatibility"] =
+            json!(spelling);
+        if spelling == "strict" {
+            assert!(
+                parse(&value).is_err(),
+                "removed alias must not be translated"
+            );
+            assert!(!validator.is_valid(&value));
+        } else {
+            assert!(validator.is_valid(&value));
+            let document = parse(&value).unwrap();
+            assert_eq!(
+                document.spec.sandboxes[0]
+                    .network
+                    .policy_proto()
+                    .unwrap()
+                    .landlock
+                    .unwrap()
+                    .compatibility,
+                spelling
+            );
+        }
+    }
+}

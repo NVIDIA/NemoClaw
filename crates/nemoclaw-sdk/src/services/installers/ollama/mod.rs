@@ -18,12 +18,12 @@ pub mod hardware_capacity;
 pub mod model_source;
 #[doc(hidden)]
 pub mod policy;
+mod proxy_container;
 mod registry;
-mod service;
-pub use service::{ProxySettings, ServiceSpec};
+pub use proxy_container::{ProxySettings, ProxySpec};
 mod backend;
 pub(crate) mod proxy;
-pub use backend::OllamaBackend;
+pub use backend::ProxyBackend;
 
 use crate::managed::{Process, Spec, Storage};
 use crate::{
@@ -553,9 +553,10 @@ impl OllamaProxy {
     pub(crate) fn credential_source(
         &self,
         document: &Document,
+        name: &str,
         generations: &Generations,
     ) -> Result<String, Error> {
-        let mut spec = proxy::specification(document, self, generations)?;
+        let mut spec = proxy::specification(document, name, self, generations)?;
         spec.image_pull_policy = None;
         Ok(crate::services::authentication::Source::OllamaProxy {
             engine: document.spec.gateway.engine.clone(),
