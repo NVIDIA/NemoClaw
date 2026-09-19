@@ -19,11 +19,7 @@ import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
 import { interactiveWorkloadSource } from "./run-installed-native-console-agent.mts";
 import type { NativeOptions } from "./native-options.mts";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
-import {
-  buildNativeWorkers,
-  renderFactory,
-  staticWorkerSource,
-} from "../distribution/build-native-workers.mts";
+import { renderFactory, staticWorkerSource } from "../distribution/build-native-workers.mts";
 import { probeSource } from "./run-installed-native-turn.mts";
 import { gatewaySource } from "./run-installed-native-web-ui.mts";
 import {
@@ -48,59 +44,6 @@ test("prebuilt OpenClaw factories materialize the exported workers as valid Java
       timeout: 10_000,
     });
     assert.equal(parsed.status, 0, parsed.stderr);
-  }
-});
-
-test("compiled OpenClaw invocation runs its linked API without resolving the installed entry again", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-openclaw-worker-"));
-  const fixture = path.join(root, "api.mjs");
-  const output = path.join(root, "compiled");
-  fs.writeFileSync(
-    fixture,
-    `
-export function registerPrebuiltPlugins() {}
-export function runOpenClaw(argv) {
-  if (!process.execArgv.includes("--preserve-symlinks-main")) throw new Error("Worker entry traverses denied ancestors");
-  if (process.execArgv.includes("--preserve-symlinks")) throw new Error("Dependency resolution changed");
-  process.stdout.write(argv[2] === "--version" ? "2026.7.1" : JSON.stringify({payloads:[{text:"CHAT_OK"}]}));
-}
-`,
-  );
-  try {
-    await buildNativeWorkers(fileURLToPath(new URL("./", import.meta.url)), output, fixture);
-    fs.unlinkSync(fixture);
-    const result = path.join(root, "result.json");
-    const invocation = spawnSync(
-      process.execPath,
-      ["--preserve-symlinks-main", path.join(output, "native-runtime.cjs")],
-      {
-        env: {
-          ...process.env,
-          NEMOCLAW_WORKER_ROOT: output,
-          NEMOCLAW_WORKER_MODE: "openclaw-turn",
-          NEMOCLAW_MXC_OPENCLAW_ENTRY: path.join(root, "absent-installed-entry.cjs"),
-          NEMOCLAW_MXC_HOME: path.join(root, "home"),
-          NEMOCLAW_MXC_RESULT: result,
-          NEMOCLAW_MXC_MOCK_PORT: "0",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-      },
-    );
-    assert.equal(invocation.error, undefined);
-    assert.equal(invocation.status, 0, invocation.stderr);
-    assert.deepEqual(JSON.parse(fs.readFileSync(result, "utf8")), {
-      executionMode: "embedded-worker",
-      version: "2026.7.1",
-      versionExitCode: 0,
-      versionError: "",
-      chatExitCode: 0,
-      chatError: "",
-      exactReply: true,
-      reply: "CHAT_OK",
-    });
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

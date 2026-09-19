@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildNativeWorkers } from "../../packaging/windows/distribution/build-native-workers.mts";
 
 const owner = path.resolve("packaging/windows/installer/prepare-finished-host.py");
 const python = process.platform === "win32" ? "python" : "python3";
@@ -32,6 +33,59 @@ spec.loader.exec_module(host)
 root = pathlib.Path(sys.argv[2])
 host.verify_openshell_build(root, root, "a" * 40, "123", "1")
 `;
+
+it("compiled OpenClaw invocation runs its linked API without resolving the installed entry again", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-openclaw-worker-"));
+  const fixture = path.join(root, "api.mjs");
+  const output = path.join(root, "compiled");
+  fs.writeFileSync(
+    fixture,
+    `
+export function registerPrebuiltPlugins() {}
+export function runOpenClaw(argv) {
+  if (!process.execArgv.includes("--preserve-symlinks-main")) throw new Error("Worker entry traverses denied ancestors");
+  if (process.execArgv.includes("--preserve-symlinks")) throw new Error("Dependency resolution changed");
+  process.stdout.write(argv[2] === "--version" ? "2026.7.1" : JSON.stringify({payloads:[{text:"CHAT_OK"}]}));
+}
+`,
+  );
+  try {
+    await buildNativeWorkers(path.resolve("packaging/windows/runtime"), output, fixture);
+    fs.unlinkSync(fixture);
+    const result = path.join(root, "result.json");
+    const invocation = spawnSync(
+      process.execPath,
+      ["--preserve-symlinks-main", path.join(output, "native-runtime.cjs")],
+      {
+        env: {
+          ...process.env,
+          NEMOCLAW_WORKER_ROOT: output,
+          NEMOCLAW_WORKER_MODE: "openclaw-turn",
+          NEMOCLAW_MXC_OPENCLAW_ENTRY: path.join(root, "absent-installed-entry.cjs"),
+          NEMOCLAW_MXC_HOME: path.join(root, "home"),
+          NEMOCLAW_MXC_RESULT: result,
+          NEMOCLAW_MXC_MOCK_PORT: "0",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+    expect(invocation.error).toBeUndefined();
+    expect(invocation.status, invocation.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(result, "utf8"))).toEqual({
+      executionMode: "embedded-worker",
+      version: "2026.7.1",
+      versionExitCode: 0,
+      versionError: "",
+      chatExitCode: 0,
+      chatError: "",
+      exactReply: true,
+      reply: "CHAT_OK",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("current OpenShell installer build evidence", () => {
   let root: string;
