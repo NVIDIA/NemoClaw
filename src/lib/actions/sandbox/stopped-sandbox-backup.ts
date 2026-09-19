@@ -300,6 +300,14 @@ export function returnSandboxContainerToStopped(
   if (!engine) return false;
   if (started.startedThroughOpenShell) {
     deps.stopThroughOpenShell(started.sandboxName, started.gatewayName, engine.mutationTimeoutMs);
+    // OpenShell can fail or time out after starting the owned container. If
+    // the provider still reports it running, stop that same validated
+    // container directly before deciding whether cleanup succeeded.
+    if (deps.inspectStatus(engine, started.containerName) !== "exited") {
+      deps.stopContainer(engine, started.containerName);
+    } else {
+      return true;
+    }
   } else {
     deps.stopContainer(engine, started.containerName);
   }

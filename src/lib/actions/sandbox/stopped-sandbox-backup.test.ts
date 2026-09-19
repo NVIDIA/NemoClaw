@@ -459,24 +459,48 @@ describe("returnSandboxContainerToStopped", () => {
   it("accepts an uncertain OpenShell stop when the container is already exited", () => {
     const engine = lifecycleEngine("podman");
     const stopThroughOpenShell = vi.fn().mockReturnValue(false);
+    const stopContainer = vi.fn();
     expect(
       returnSandboxContainerToStopped(started, {
         resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
         stopThroughOpenShell,
+        stopContainer,
         inspectStatus: vi.fn().mockReturnValue("exited"),
       }),
     ).toBe(true);
+    expect(stopContainer).not.toHaveBeenCalled();
   });
 
-  it("reports failure when the container is still running after stop", () => {
+  it("stops the owned container directly when an uncertain OpenShell stop leaves it running", () => {
     const engine = lifecycleEngine("podman");
+    const stopThroughOpenShell = vi.fn().mockReturnValue(false);
+    const stopContainer = vi.fn().mockReturnValue(true);
+    const inspectStatus = vi.fn().mockReturnValueOnce("running").mockReturnValueOnce("exited");
+    expect(
+      returnSandboxContainerToStopped(started, {
+        resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
+        stopThroughOpenShell,
+        stopContainer,
+        inspectStatus,
+      }),
+    ).toBe(true);
+    expect(stopThroughOpenShell).toHaveBeenCalledWith("my-sb", "nemoclaw", 30_000);
+    expect(stopContainer).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
+    expect(inspectStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports failure when both cleanup paths leave the container running", () => {
+    const engine = lifecycleEngine("podman");
+    const stopContainer = vi.fn().mockReturnValue(false);
     expect(
       returnSandboxContainerToStopped(started, {
         resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
         stopThroughOpenShell: vi.fn().mockReturnValue(true),
+        stopContainer,
         inspectStatus: vi.fn().mockReturnValue("running"),
       }),
     ).toBe(false);
+    expect(stopContainer).toHaveBeenCalledWith(engine, "openshell-my-sb-abc123");
   });
 });
 
