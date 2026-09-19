@@ -7,6 +7,7 @@ import * as registry from "../state/registry";
 export function serviceDeps() {
   return {
     listSandboxes: () => registry.listSandboxes(),
+    getSandbox: (name: string) => registry.getSandbox(name),
   };
 }
 

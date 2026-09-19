@@ -63,14 +63,17 @@ describe("small CLI helper coverage", () => {
     });
     expect(startCalls).toEqual([{ sandboxName: "alpha" }]);
 
-    const stopCalls: Array<{ sandboxName?: string }> = [];
+    const stopCalls: Array<{ sandboxName?: string; cleanupOllamaModels?: boolean }> = [];
     runStopCommand({
       listSandboxes: () => ({ defaultSandbox: null }),
+      getSandbox: () => null,
+      loadPersistedOllamaHost: () => null,
+      loadPendingOllamaModelCleanup: () => [],
       stopAll: (options) => {
         stopCalls.push(options);
       },
     });
-    expect(stopCalls).toEqual([{}]);
+    expect(stopCalls).toEqual([{ sandboxName: undefined, cleanupOllamaModels: false }]);
   });
 
   it("reads version fallback files", () => {
