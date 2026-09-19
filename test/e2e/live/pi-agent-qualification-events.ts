@@ -49,18 +49,6 @@ export interface PiInferenceEvidence {
   readonly route: string;
 }
 
-export function selectPiQualificationCatalog(
-  environment: NodeJS.ProcessEnv,
-  catalogPath: string,
-): NodeJS.ProcessEnv {
-  // The Pi fixture owns a receipt-bound catalog path, so it must not inherit the workflow catalog.
-  return {
-    ...environment,
-    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
-    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
-  };
-}
-
 export function buildPiReadTask(
   sandboxName: string,
   workdir: string,
