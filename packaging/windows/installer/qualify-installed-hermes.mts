@@ -11,6 +11,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { signalObserverStop } from "./observer-stop.mts";
 import {
   acceptanceProcessesStopped,
   captureOwned,
@@ -553,7 +554,6 @@ async function main() {
     output,
     `observer-stop-${randomBytes(32).toString("hex")}.sentinel`,
   );
-  assert.equal(fs.existsSync(observerStopSentinel), false);
   const environment = childEnvironment(process.env);
   delete environment.GITHUB_ACTIONS;
   const observerEnvironment = { ...environment, GITHUB_ACTIONS: "true" };
@@ -1275,7 +1275,7 @@ async function main() {
     if (browser) await browser.close().catch(() => cleanupErrors.push("automation browser"));
     if (observer && guardianClosed && observerClosed) {
       try {
-        fs.writeFileSync(observerStopSentinel, "", { flag: "wx" });
+        signalObserverStop(observerStopSentinel);
         assert.equal(await bounded(guardianClosed, 130_000), 0);
         assert.equal(await bounded(observerClosed, 5000), 0);
         fs.unlinkSync(observerStopSentinel);

@@ -157,9 +157,9 @@ export function staticWorkerSource(mode: string, input: string, assets: Map<stri
       "openclaw-invoke.cjs",
       [
         'const { workerData } = require("node:worker_threads");',
-        'const { createRequire } = require("node:module");',
+        'import { runPackagedOpenClaw } from "native-openclaw-api";',
         "process.argv = [process.execPath, workerData.entry, ...workerData.args];",
-        "Promise.resolve(createRequire(workerData.entry)(workerData.entry).runOpenClaw(process.argv)).catch((error) => { console.error(error instanceof Error ? error.stack ?? error.message : String(error)); process.exit(1); });",
+        "Promise.resolve(runPackagedOpenClaw(process.argv)).catch((error) => { console.error(error instanceof Error ? error.stack ?? error.message : String(error)); process.exit(1); });",
         "",
       ].join("\n"),
     );
@@ -310,10 +310,21 @@ export async function buildNativeWorkers(
   });
   const python = path.join(output, "python-build-inputs");
   fs.mkdirSync(python);
-  for (const [name, content] of assets)
-    fs.writeFileSync(path.join(name.endsWith(".py") ? python : output, name), content, {
-      flag: "wx",
-    });
+  for (const [name, content] of assets) {
+    if (name === "openclaw-invoke.cjs") {
+      await build({
+        ...common,
+        format: "cjs",
+        stdin: { contents: content, sourcefile: name, resolveDir: runtimeSource },
+        outfile: path.join(output, name),
+        plugins,
+      });
+    } else {
+      fs.writeFileSync(path.join(name.endsWith(".py") ? python : output, name), content, {
+        flag: "wx",
+      });
+    }
+  }
   fs.copyFileSync(
     path.join(runtimeSource, "native-inference-manifest.json"),
     path.join(output, "native-inference-manifest.json"),

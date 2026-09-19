@@ -305,7 +305,7 @@ const workerSource = [
   '});',
 ].join("\n");
 const run = async (args, timeout = 210000) => {
-  const worker = new Worker(workerSource, { eval: true, env, execArgv: [], resourceLimits: { stackSizeMb: 64 }, stderr: true, stdout: true, workerData: { args, entry } });
+  const worker = new Worker(workerSource, { eval: true, env, execArgv: ["--preserve-symlinks-main"], resourceLimits: { stackSizeMb: 64 }, stderr: true, stdout: true, workerData: { args, entry } });
   let stdout = "";
   let stderr = "";
   worker.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });

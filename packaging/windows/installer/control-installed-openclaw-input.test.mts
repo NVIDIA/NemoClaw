@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { signalObserverStop } from "./observer-stop.mts";
 
 async function heldSentinelControl(reader: string, contents: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "installed-observer-input-"));
@@ -18,6 +19,7 @@ async function heldSentinelControl(reader: string, contents: string) {
     `$ErrorActionPreference='Stop'
 $stopSentinelPath = '${sentinel.replaceAll("'", "''")}'
 ${reader}
+if (Test-OwnedStopSentinel) { throw 'Stop arrived before discovery.' }
 [Console]::Out.WriteLine('before-sentinel'); [Console]::Out.Flush()
 [Console]::Out.WriteLine('discovery-entered'); [Console]::Out.Flush()
 while (-not (Test-OwnedStopSentinel)) {
@@ -44,7 +46,7 @@ while (-not (Test-OwnedStopSentinel)) {
     stderr = "",
     discoveryBeforeSignal = false,
     signalFailure: unknown;
-  let signalTimer: ReturnType<typeof setTimeout> | undefined;
+  let signalSent = false;
   let rejectDeadline: ((error: Error) => void) | undefined;
   const deadlineExpired = new Promise<never>((_, reject) => {
     rejectDeadline = reject;
@@ -54,23 +56,29 @@ while (-not (Test-OwnedStopSentinel)) {
     clearTimeout(deadline);
     deadline = setTimeout(() => {
       child.kill();
-      rejectDeadline!(new Error(`Sentinel control timed out.\n${stdout}${stderr}`));
+      const sentinelState = fs.statSync(sentinel, { throwIfNoEntry: false });
+      rejectDeadline!(
+        new Error(
+          `Sentinel control timed out (signal=${signalSent}, bytes=${sentinelState?.size ?? "absent"}).\n${stdout}${stderr}`,
+        ),
+      );
     }, milliseconds);
   };
   armDeadline(60_000);
   child.stdout.on("data", (chunk: Buffer) => {
     stdout += chunk.toString("utf8");
-    if (stdout.includes("discovery-entered") && !signalTimer) {
-      armDeadline(15_000);
-      signalTimer = setTimeout(() => {
-        discoveryBeforeSignal = stdout.includes("discovery-entered") && !fs.existsSync(sentinel);
-        try {
-          fs.writeFileSync(sentinel, contents, { flag: "wx" });
-        } catch (error) {
-          signalFailure = error;
-          child.kill();
-        }
-      }, 1000);
+    if (stdout.includes("discovery-entered") && !signalSent) {
+      discoveryBeforeSignal = !fs.existsSync(sentinel);
+      try {
+        if (contents === "") signalObserverStop(sentinel);
+        else fs.writeFileSync(sentinel, contents, { flag: "wx" });
+        signalSent = true;
+        // Measure Stop after publication, not while the parent is publishing it.
+        armDeadline(15_000);
+      } catch (error) {
+        signalFailure = error;
+        child.kill();
+      }
     }
   });
   child.stderr.on("data", (chunk: Buffer) => {
@@ -86,7 +94,6 @@ while (-not (Test-OwnedStopSentinel)) {
     return { code, stdout, stderr, discoveryBeforeSignal };
   } finally {
     clearTimeout(deadline);
-    clearTimeout(signalTimer);
     if (child.exitCode === null) {
       child.stdout.destroy();
       child.stderr.destroy();
@@ -134,5 +141,21 @@ test("installed observers receive private runner-owned controls", () => {
     assert.match(source, /NEMOCLAW_OBSERVER_CONTROLLER_PID: String\(process\.pid\)/u);
     assert.match(source, /NEMOCLAW_OBSERVER_STOP_SENTINEL: observerStopSentinel/u);
     assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/u);
+  }
+});
+
+test("Stop exclusively creates an empty file and refuses existing paths", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "observer-stop-"));
+  const sentinel = path.join(root, "stop.sentinel");
+  try {
+    signalObserverStop(sentinel);
+    assert.equal(fs.statSync(sentinel).size, 0);
+    assert.throws(() => signalObserverStop(sentinel), { code: "EEXIST" });
+    fs.writeFileSync(sentinel, "retain");
+    assert.throws(() => signalObserverStop(sentinel), { code: "EEXIST" });
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "retain");
+    assert.throws(() => signalObserverStop(root));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

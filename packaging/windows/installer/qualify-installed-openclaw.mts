@@ -10,6 +10,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { signalObserverStop } from "./observer-stop.mts";
 import { captureOwned, qualificationEnvironment } from "./qualify-finished-package.mts";
 import { sampleInstalledIdle } from "../tests/performance/installed-idle.mts";
 import { sanitizeNativeDiagnostic } from "../runtime/native-session-diagnostics.mts";
@@ -387,7 +388,6 @@ async function main() {
     output,
     `observer-stop-${randomBytes(32).toString("hex")}.sentinel`,
   );
-  assert.equal(fs.existsSync(observerStopSentinel), false);
   const environment = childEnvironment(process.env);
   const launcher = path.join(install, "bin", "NemoClaw.exe");
   const ps = path.join(
@@ -908,7 +908,7 @@ async function main() {
       }
     if (observer && agentClosed && observerClosed) {
       try {
-        fs.writeFileSync(observerStopSentinel, "", { flag: "wx" });
+        signalObserverStop(observerStopSentinel);
         assert.equal(await boundedClose(agentClosed, 130_000), 0);
         assert.equal(await boundedClose(observerClosed, 5000), 0);
         fs.unlinkSync(observerStopSentinel);
