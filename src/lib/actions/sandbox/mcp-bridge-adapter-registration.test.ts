@@ -386,6 +386,45 @@ describe("Hermes MCP reload finality", () => {
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
   });
 
+  it("shares one bounded deadline across committed and absent reconciliation", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(11_001);
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "config mismatch" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: '{"ok":true,"state":"absent"}\n',
+        stderr: "",
+      });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "absent",
+    });
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[1] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "639", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 664_999 });
+    expect(639_000 + 25_000).toBeLessThanOrEqual(664_999);
+    now.mockRestore();
+  });
+
+  it("returns unknown without a second probe when the finality deadline is exhausted", () => {
+    const now = vi
+      .spyOn(performance, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(676_001);
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 2,
+      stdout: "",
+      stderr: "reconciliation timed out",
+    });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    now.mockRestore();
+  });
+
   it("returns unknown when neither helper observation proves finality", () => {
     mocks.runOpenshellProviderCommand.mockReturnValue({
       status: 2,

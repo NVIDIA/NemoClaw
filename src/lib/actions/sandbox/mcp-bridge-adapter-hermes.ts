@@ -32,8 +32,9 @@ const HERMES_MCP_LIFECYCLE_NOT_READY =
 // apply reload and rollback reload. Preserve the mutation's complete 620s
 // remote bound, then reserve time for the read-only stability proof.
 const HERMES_MCP_RECONCILE_TIMEOUT_SECONDS = HERMES_MCP_EXEC_TIMEOUT_SECONDS + 30;
+const HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS = 25_000;
 const HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS =
-  (HERMES_MCP_RECONCILE_TIMEOUT_SECONDS + 25) * 1_000;
+  HERMES_MCP_RECONCILE_TIMEOUT_SECONDS * 1_000 + HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS;
 const HERMES_RELOAD_RELAY_LOSS = `Error: x code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"`;
 
 export class HermesMcpReloadRelayLossError extends McpBridgeError {
@@ -147,6 +148,8 @@ function inspectHermesMcpReconcileState(
   credentialRevision: McpAttachedCredentialRevision,
   expectedState: "committed" | "absent",
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  timeoutSeconds = HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
+  transportTimeoutMs = HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS,
 ): HermesMcpReloadFinalityInspection {
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
@@ -154,13 +157,13 @@ function inspectHermesMcpReconcileState(
       buildHermesMcpExecArgs(
         sandboxName,
         buildHermesMcpReconcileCommand(entry, credentialRevision, expectedState),
-        HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
+        timeoutSeconds,
       ),
       {
         ignoreError: true,
         runtimeSelection,
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS,
+        timeout: transportTimeoutMs,
       },
     );
   } catch (error) {
@@ -195,6 +198,7 @@ export function inspectHermesMcpReloadFinality(
   credentialRevision: McpAttachedCredentialRevision,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): HermesMcpReloadFinalityInspection {
+  const startedAtMs = performance.now();
   const committed = inspectHermesMcpReconcileState(
     sandboxName,
     entry,
@@ -203,12 +207,29 @@ export function inspectHermesMcpReloadFinality(
     runtimeSelection,
   );
   if (committed.state === "committed") return committed;
+  const remainingTransportMs = Math.max(
+    0,
+    HERMES_MCP_RECONCILE_TRANSPORT_TIMEOUT_MS -
+      Math.ceil(Math.max(0, performance.now() - startedAtMs)),
+  );
+  const remainingRemoteSeconds = Math.min(
+    HERMES_MCP_RECONCILE_TIMEOUT_SECONDS,
+    Math.floor((remainingTransportMs - HERMES_MCP_RECONCILE_TRANSPORT_MARGIN_MS) / 1_000),
+  );
+  if (remainingRemoteSeconds <= 0) {
+    return {
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    };
+  }
   const absent = inspectHermesMcpReconcileState(
     sandboxName,
     entry,
     credentialRevision,
     "absent",
     runtimeSelection,
+    remainingRemoteSeconds,
+    remainingTransportMs,
   );
   if (absent.state === "absent") return absent;
   return {
