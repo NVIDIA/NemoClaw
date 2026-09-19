@@ -77,6 +77,11 @@ describe("base-image dependency contracts", () => {
       ),
     ) as { runs?: { steps?: Step[] } };
     const steps = action.runs?.steps ?? [];
+    const setupBuildx =
+      steps.find((candidate) => candidate.name === "Set up Docker Buildx") ??
+      (() => {
+        throw new Error("Base-image platform action is missing the Buildx setup");
+      })();
     const localBuild =
       steps.find((candidate) => candidate.name === "Build Deep Agents Code platform candidate") ??
       (() => {
@@ -110,6 +115,7 @@ describe("base-image dependency contracts", () => {
     const publishIndex = steps.indexOf(publish);
     const exportIndex = steps.findIndex((candidate) => candidate.name === "Export platform digest");
 
+    expect(setupBuildx.with).toMatchObject({ version: "v0.37.1" });
     expect(localBuild.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
     expect(localBuild.with).toMatchObject({
       platforms: "${{ inputs.platform }}",
@@ -129,9 +135,6 @@ describe("base-image dependency contracts", () => {
     });
     expect(validate.run).toContain("scripts/checks/validate-dcode-runtime-contract.mts");
     expect(validate.run).toContain("test -x /usr/bin/dos2unix");
-    expect(publish.run).toContain('"oci-layout://${OCI_LAYOUT}@${DIGEST}"');
-    expect(publish.run).toContain('--tag "${IMAGE}@${DIGEST}"');
-    expect(publish.run).toContain('if [ "$published_digest" != "$DIGEST" ]');
     expect(registryBuild?.if).toBe("${{ inputs.agent != 'langchain-deepagents-code' }}");
     expect(
       JSON.stringify(steps.slice(0, validateIndex)),
@@ -143,6 +146,67 @@ describe("base-image dependency contracts", () => {
       validateIndex < publishIndex,
       publishIndex < exportIndex,
     ]).toEqual([true, true, true, true]);
+
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-publish-"));
+    const dockerPath = path.join(temporaryRoot, "docker");
+    const argumentsPath = path.join(temporaryRoot, "arguments");
+    const outputPath = path.join(temporaryRoot, "github-output");
+    const ociLayout = path.join(temporaryRoot, "candidate-oci");
+    const digest = `sha256:${"a".repeat(64)}`;
+    const image = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
+    fs.writeFileSync(
+      dockerPath,
+      `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" > "$FAKE_DOCKER_ARGUMENTS"
+metadata=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --metadata-file)
+      shift
+      metadata="$1"
+      ;;
+  esac
+  shift
+done
+test -n "$metadata"
+printf '{"containerimage.descriptor":{"digest":"%s"}}\\n' "$FAKE_PUBLISHED_DIGEST" > "$metadata"
+`,
+      { mode: 0o755 },
+    );
+    try {
+      const result = spawnSync("bash", ["-c", publish.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ARCH: "amd64",
+          DIGEST: digest,
+          FAKE_DOCKER_ARGUMENTS: argumentsPath,
+          FAKE_PUBLISHED_DIGEST: digest,
+          GITHUB_OUTPUT: outputPath,
+          IMAGE: image,
+          OCI_LAYOUT: ociLayout,
+          PATH: `${temporaryRoot}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: temporaryRoot,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.readFileSync(argumentsPath, "utf8").trim().split("\n")).toEqual([
+        "buildx",
+        "imagetools",
+        "create",
+        "--prefer-index=false",
+        "--tag",
+        `${image}@${digest}`,
+        "--metadata-file",
+        path.join(temporaryRoot, "dcode-base-amd64-publication.json"),
+        `oci-layout://${ociLayout}@${digest}`,
+      ]);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe(`digest=${digest}\n`);
+    } finally {
+      fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    }
   });
 
   it.each([
