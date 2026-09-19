@@ -11,7 +11,10 @@ import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxObserverFromRunner,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
-import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
+import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  resolveCreatedOpenShellSandboxId,
+} from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import {
@@ -493,6 +496,38 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   if (input.createRoute === "compatibility") return true;
   if (checkpoint?.exactFinalHandoffCommitStarted === true) return true;
   return input.managedBootstrapCreateFinished;
+}
+
+/**
+ * Keep the initial compatibility cutover bound to the nonce-selected sandbox.
+ *
+ * OpenShell may report the just-created runtime Error before the compatibility
+ * envelope is installed. That lifecycle state is the reason for the cutover,
+ * not authority to select a different sandbox. During this one reversible
+ * window, revalidate the exact create-attempt identity instead of requiring a
+ * Ready/NotReady lifecycle state. Final publication remains behind the durable
+ * handoff acknowledgement and the ordinary lifecycle revalidation above.
+ */
+export function revalidateCreatedSandboxIdentityDuringCreate(input: {
+  readonly expectedIdentity: string;
+  readonly compatibilityReconciliation: {
+    readonly resolveSandboxId: () => string;
+  } | null;
+  readonly fingerprintSandboxId: (sandboxId: string) => string;
+  readonly revalidateLifecycle: () => void;
+}): void {
+  if (!input.compatibilityReconciliation) {
+    input.revalidateLifecycle();
+    return;
+  }
+  const observedIdentity = input.fingerprintSandboxId(
+    input.compatibilityReconciliation.resolveSandboxId(),
+  );
+  if (observedIdentity !== input.expectedIdentity) {
+    throw new Error(
+      "OpenShell create-attempt identity changed during initial compatibility reconciliation.",
+    );
+  }
 }
 
 /** Upgrade legacy compatibility recovery only from exact Docker runtime authority. */
@@ -2636,6 +2671,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
+    let activeCompatibilityCreateAuthority: { readonly createAttemptNonce: string } | null = null;
     const allowNotReadyAfterFinalHandoff = (): boolean =>
       allowsNotReadyCreatedSandboxRevalidation({
         managedBootstrapCreateFinished,
@@ -2654,15 +2690,32 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       expectedIdentity: string,
       _operation: string,
     ): void => {
-      sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-        { sandboxName, gatewayName: GATEWAY_NAME },
-        {
-          lifecycleGeneration: createdSandboxLifecycle.generation,
-          lifecycleLiveIdentityFingerprint: expectedIdentity,
-        },
-        getSandboxRecreateObservation,
-        { allowNotReadyWithMatchingIdentity: allowNotReadyDuringCreate() },
-      );
+      const compatibilityAuthority = activeCompatibilityCreateAuthority;
+      revalidateCreatedSandboxIdentityDuringCreate({
+        expectedIdentity,
+        fingerprintSandboxId: sandboxRecreateTransaction.fingerprintSandboxRecreateValue,
+        compatibilityReconciliation: compatibilityAuthority
+          ? {
+              resolveSandboxId: () =>
+                resolveCreatedOpenShellSandboxId({
+                  sandboxName,
+                  gatewayName: GATEWAY_NAME,
+                  createAttemptNonce: compatibilityAuthority.createAttemptNonce,
+                  runCaptureOpenshell,
+                }),
+            }
+          : null,
+        revalidateLifecycle: () =>
+          sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+            { sandboxName, gatewayName: GATEWAY_NAME },
+            {
+              lifecycleGeneration: createdSandboxLifecycle.generation,
+              lifecycleLiveIdentityFingerprint: expectedIdentity,
+            },
+            getSandboxRecreateObservation,
+            { allowNotReadyWithMatchingIdentity: allowNotReadyDuringCreate() },
+          ),
+      });
     };
     const requireVerifiedCreateBoundary = (): NonNullable<typeof verifiedCreateBoundary> => {
       if (!verifiedCreateBoundary) {
@@ -3091,7 +3144,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects) => {
                 managedBootstrapCreateFinished = false;
                 managedBootstrapCreateRoute = identity.route;
-                await verifyCreatedSandbox(identity, beforeEffects);
+                const createAttemptNonce = identity.createAttemptNonce;
+                if (identity.route === "compatibility") {
+                  if (!createAttemptNonce) {
+                    throw new Error(
+                      "Compatibility reconciliation has no exact create-attempt authority.",
+                    );
+                  }
+                  activeCompatibilityCreateAuthority = { createAttemptNonce };
+                } else {
+                  activeCompatibilityCreateAuthority = null;
+                }
+                try {
+                  await verifyCreatedSandbox(identity, beforeEffects);
+                } finally {
+                  activeCompatibilityCreateAuthority = null;
+                }
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
                 revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation),
