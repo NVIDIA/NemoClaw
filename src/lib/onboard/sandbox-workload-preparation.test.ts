@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import { LEAF_PEM, tmpDir, writeCa } from "./__test-helpers__/corporate-ca-fixtures";
+import { CorporateCaValidationError } from "./corporate-ca-types";
 import {
   ManagedImageCatalogError,
   ManagedImageCatalogUnavailableError,
@@ -735,6 +737,62 @@ describe("sandbox workload preparation", () => {
         { resolveCatalog },
       ),
     ).rejects.toThrow("managed image catalog 'v0.0.97' failed validation");
+  });
+
+  it("names NEMOCLAW_CORPORATE_CA_BUNDLE when catalog resolution rejects the CA (#12059)", async () => {
+    const bundle = writeCa(tmpDir(), LEAF_PEM);
+
+    await expect(
+      prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: bundle },
+      }),
+    ).rejects.toMatchObject({
+      name: "SandboxWorkloadPreparationError",
+      message: expect.stringMatching(
+        /NEMOCLAW_CORPORATE_CA_BUNDLE was rejected:.*not a CA \(basicConstraints CA:TRUE required\)/u,
+      ),
+    });
+  });
+
+  it("does not describe a rejected corporate CA as managed-image catalog validation (#12059)", async () => {
+    try {
+      await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: writeCa(tmpDir(), LEAF_PEM) },
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(SandboxWorkloadPreparationError);
+      expect((error as Error).message).not.toContain("failed validation");
+      expect((error as Error).message).not.toContain("managed image catalog");
+    }
+  });
+
+  it("surfaces a corporate CA rejection from the catalog resolver (#12059)", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(input("openclaw"), {
+        resolveCatalog: async () => {
+          throw new CorporateCaValidationError(
+            "corporate CA bundle contains a certificate that is not a CA",
+          );
+        },
+      }),
+    ).rejects.toThrow("NEMOCLAW_CORPORATE_CA_BUNDLE was rejected");
+  });
+
+  it("still selects the managed image when a valid corporate CA is configured (#12059)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: writeCa(tmpDir()) },
+      },
+      { resolveCatalog },
+    );
+
+    expect(prepared.source.kind).toBe("managed-image");
+    expect(resolveCatalog).toHaveBeenCalledOnce();
   });
 
   it("rejects an invalid release before preferred-policy catalog fallback (#7744)", async () => {

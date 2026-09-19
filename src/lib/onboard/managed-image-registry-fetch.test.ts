@@ -159,9 +159,34 @@ describe("managed image registry transport", () => {
           "proxy TLS": options.proxyTls,
         } as const
       )[scenario]!;
-      expect((tls as { ca?: readonly string[] }).ca).toContain(PEM);
+      const ca = (tls as { ca?: readonly string[] }).ca;
+      expect(ca).toContain(PEM);
+      expect(ca?.some((entry) => entry !== PEM && entry.includes("BEGIN CERTIFICATE"))).toBe(true);
     },
   );
+
+  it("constructs a registry session after adding a validated corporate CA (#12059)", async () => {
+    const targetPort = await listen(
+      createServer((_request, response) => {
+        response.end("direct-with-ca");
+      }),
+    );
+    const session = createManagedImageRegistryFetchSession({
+      environment: { NEMOCLAW_CORPORATE_CA_IMPORT: "0" },
+      corporateCaOverride: {
+        pem: PEM,
+        sourceEnv: "fixture",
+        sourcePath: "/fixture/corporate-ca.pem",
+      },
+    });
+
+    try {
+      const response = await session.fetchImpl(`http://127.0.0.1:${targetPort}/health`);
+      expect(await response.text()).toBe("direct-with-ca");
+    } finally {
+      await session.close();
+    }
+  });
 
   it("gives lowercase proxy variables precedence and rejects unsupported proxy URLs", () => {
     expect(

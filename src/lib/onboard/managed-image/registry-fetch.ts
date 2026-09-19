@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { rootCertificates } from "node:tls";
+import tls from "node:tls";
 
 import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
 
@@ -51,6 +51,22 @@ function proxyUrl(value: string | undefined, name: string): string {
   return parsed.href;
 }
 
+/**
+ * Host CAs that Node would use for this process, plus the validated corporate
+ * CA. Setting `ca` replaces the default store, so the extra PEM must be added
+ * to that list rather than used alone.
+ */
+function registryTrustStore(corporateCaPem: string): readonly string[] {
+  const tlsWithDefaults = tls as typeof tls & {
+    getCACertificates?: () => readonly string[];
+  };
+  const defaults =
+    typeof tlsWithDefaults.getCACertificates === "function"
+      ? tlsWithDefaults.getCACertificates()
+      : tls.rootCertificates;
+  return [...defaults, corporateCaPem];
+}
+
 function normalizedRegistryProxyEnvironment(
   environment: NodeJS.ProcessEnv,
 ): Record<string, string> {
@@ -84,7 +100,7 @@ export function resolveManagedImageRegistryDispatcherOptions(
       : options.corporateCaOverride;
   if (corporateCa === null) return { httpProxy, httpsProxy, noProxy };
 
-  const ca = [...rootCertificates, corporateCa.pem];
+  const ca = registryTrustStore(corporateCa.pem);
   return {
     httpProxy,
     httpsProxy,
