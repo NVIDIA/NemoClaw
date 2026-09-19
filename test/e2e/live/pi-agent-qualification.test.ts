@@ -36,6 +36,7 @@ import {
   qualifyPiReadTask,
   readPiQualificationReceipt,
 } from "./pi-agent-qualification-events.ts";
+import { createPiQualificationEnvironment } from "../support/pi-agent-qualification-env.ts";
 
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-super-120b-a12b";
@@ -301,8 +302,8 @@ test(
       pi: receipt.contract,
     });
     const guard = createDockerBuildGuard();
-    const env = {
-      ...inference.env({
+    const env = createPiQualificationEnvironment(
+      inference.env({
         ...guard.env,
         [CANDIDATE_AGENT_FEATURE_ENV]: "1",
         [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receipt.path,
@@ -313,11 +314,8 @@ test(
         OPENSHELL_DRIVERS: "docker",
         OPENSHELL_GATEWAY: GATEWAY,
       }),
-      // The Pi fixture owns this receipt-bound catalog; override the workflow catalog
-      // after inference.env() has normalized its caller-provided environment.
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
-    };
+      catalogPath,
+    );
     cleanup.trackDisposable("remove Pi Docker build guard", guard.dispose);
     cleanup.trackGateway(host, GATEWAY, { env, timeoutMs: 60_000 });
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
