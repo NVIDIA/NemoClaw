@@ -415,6 +415,19 @@ export async function restartSandboxGatewayWithDeps(
   }
   const nativeCommand =
     "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json";
+  if (agentName === "hermes") {
+    const boundaryCheck = await deps.executeSandboxExecCommand(
+      sandboxName,
+      "hermes gateway --help",
+      210000,
+    );
+    if (!boundaryCheck || boundaryCheck.status !== 0) {
+      const classified = classifyGatewayRestartFailure(boundaryCheck);
+      const detail = classified.detail || "Hermes gateway secret-boundary preflight failed";
+      printGatewayRestartFailure(sandboxName, classified.layer, detail);
+      return { ok: false, failureLayer: classified.layer, detail };
+    }
+  }
   const restartResult =
     agentName === "hermes"
       ? await deps.restartHermesSandbox(sandboxName)

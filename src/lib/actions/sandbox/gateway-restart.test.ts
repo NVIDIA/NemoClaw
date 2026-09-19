@@ -96,7 +96,11 @@ describe("restartSandboxGateway native lifecycle", () => {
 
     expect(result).toMatchObject({ ok: true });
     expect(deps.restartHermesSandbox).toHaveBeenCalledExactlyOnceWith("hermes-box");
-    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
+    expect(deps.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
+      "hermes-box",
+      "hermes gateway --help",
+      210000,
+    );
   });
 
   it("reports a failed Hermes OpenShell lifecycle before gateway health", async () => {
@@ -130,7 +134,7 @@ describe("restartSandboxGateway native lifecycle", () => {
     const deps = baseDeps({
       getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
       getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
-      restartHermesSandbox: execute,
+      executeSandboxExecCommand: execute,
     });
 
     const result = await restartSandboxGateway("hermes-box", { quiet: true, deps });
@@ -141,7 +145,8 @@ describe("restartSandboxGateway native lifecycle", () => {
       detail: "[SECURITY] restart refused\nSECRET_BOUNDARY_REFUSED",
     });
     expect(execute).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith("hermes-box");
+    expect(execute).toHaveBeenCalledWith("hermes-box", "hermes gateway --help", 210000);
+    expect(deps.restartHermesSandbox).not.toHaveBeenCalled();
   });
 
   it("reports the native OpenClaw restart failure without an authorization verdict", async () => {
