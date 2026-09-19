@@ -322,36 +322,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "runs the exact OpenClaw compile-to-installed-startup graph without secrets for %s (#8178)",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "runs Node 22 and Node 24 controller checks before expensive Windows builds",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "uses exact same-run caches with producer manifests instead of runnable artifacts for $caseName",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "reauthorizes main, workflow, PR, organization and both dispatch principals for $caseName",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "bootstraps through the exact same commit and isolates every secret to protected jobs",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
-      "test": "publishes runnable bytes only after full acceptance and migration succeed",
-      "category": "security"
-    },
-    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
