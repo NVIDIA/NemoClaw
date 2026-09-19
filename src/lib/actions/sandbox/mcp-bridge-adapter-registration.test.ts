@@ -258,6 +258,7 @@ describe("OpenClaw MCP adapter registration", () => {
 
     expect(mocks.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
       quiet: true,
+      openClawRestartMode: "replacement",
     });
   });
 

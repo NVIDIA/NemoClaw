@@ -23,7 +23,6 @@ import type {
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
-import { hasZeroDockerExitStatus } from "./docker-command-result";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { isDockerDesktopWslRuntime } from "./docker-gpu-sandbox-create-plan";
@@ -141,11 +140,10 @@ function recoverInstalledReplacementSupervisor(
       suppressOutput: true,
       timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
     } as const;
-    const stopped = deps.runOpenshell(["sandbox", "stop", sandboxName], commandOptions);
-    if (!hasZeroDockerExitStatus(stopped)) return false;
-    // A start command may return nonzero after applying the mutation when its
-    // own Ready wait expires. The subsequent identity-bound reconnect waiter
-    // resolves that ambiguity without accepting this command result as proof.
+    // Either command may return nonzero after applying its mutation, and an
+    // Error-phase row can reject stop before start repairs the stale phase. The
+    // subsequent identity-bound reconnect waiter is the only acceptance proof.
+    deps.runOpenshell(["sandbox", "stop", sandboxName], commandOptions);
     deps.runOpenshell(["sandbox", "start", sandboxName], commandOptions);
     return true;
   } catch {

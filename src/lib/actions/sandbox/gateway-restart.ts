@@ -12,6 +12,8 @@ export type GatewayRestartCommandResult = {
   stderr: string;
 };
 
+export type OpenClawGatewayRestartMode = "safe-request" | "replacement";
+
 export const MANAGED_CONTROL_IDENTITY_CHANGED_MARKER = "MANAGED_CONTROL_IDENTITY_CHANGED";
 
 export type ManagedGatewayControlCompletion = {
@@ -120,6 +122,7 @@ export type GatewayRestartDeps = {
 export type RestartSandboxGatewayOptions = {
   quiet?: boolean;
   deps?: Partial<GatewayRestartDeps>;
+  openClawRestartMode?: OpenClawGatewayRestartMode;
 };
 
 export function sandboxAgentName(
@@ -366,9 +369,11 @@ export async function restartSandboxGatewayWithDeps(
   {
     quiet = false,
     deps,
+    openClawRestartMode = "safe-request",
   }: {
     quiet?: boolean;
     deps: GatewayRestartDeps;
+    openClawRestartMode?: OpenClawGatewayRestartMode;
   },
 ): Promise<GatewayRestartResult> {
   const agent = deps.getSessionAgent(sandboxName);
@@ -425,7 +430,7 @@ export async function restartSandboxGatewayWithDeps(
   }
   const nativeCommand =
     agentName === "openclaw"
-      ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
+      ? `env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart${openClawRestartMode === "replacement" ? "" : " --safe --skip-deferral"} --json`
       : `${agentName} gateway restart`;
   const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
   if (!restartResult) {

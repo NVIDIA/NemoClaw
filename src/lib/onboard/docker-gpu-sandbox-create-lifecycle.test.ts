@@ -483,6 +483,46 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
+  it("attempts the bounded start after a stale Error row rejects stop (#11905)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    deps.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args.includes("{{json .State}}")
+        ? JSON.stringify({ Running: true, Status: "running" })
+        : `/${result.originalName}\n`,
+    );
+    deps.runOpenshell.mockReturnValue({ status: 1 });
+    const waitForSupervisor = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: { ...deps, dockerLogs: vi.fn(() => "OpenShell Sandbox Supervisor success\n") },
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup: vi.fn(),
+        onPatchFailureExit: vi.fn(),
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+  });
+
   it("does not reconcile a stale row without exact replacement supervisor evidence (#11905)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
