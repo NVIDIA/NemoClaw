@@ -6,7 +6,6 @@
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -834,103 +833,6 @@ process.exit(0);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
-  it("records an unreadable nested directory as a permission failure (#12069)", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unreadable-dir-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
-      const existingDirs = ["workspace"];
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(path.join(openclawDir, "workspace", "visible"), { recursive: true });
-      fs.writeFileSync(path.join(openclawDir, "workspace", "visible", "note.txt"), "ok\n");
-
-      const openshell = writeFakeOpenshell(binDir);
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const cmd = process.argv[process.argv.length - 1] || "";
-const existingDirs = ${JSON.stringify(existingDirs)};
-if (cmd.includes("[ -d ")) {
-  process.stdout.write(existingDirs.join("\\n") + "\\n");
-  process.exit(0);
-}
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.exit(2);
-}
-if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(
-    encodePreBackupAuditRows(["u\t/sandbox/.openclaw/workspace/restricted\t"]),
-  )});
-  process.exit(0);
-}
-if (cmd.includes("-cf -")) {
-  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (r.stdout) fs.writeSync(1, r.stdout);
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeOpenClawRegistry("alpha");
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
-
-      const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success).toBe(false);
-      expect(backup.failedDirs).toEqual(["workspace/restricted"]);
-      expect(backup.failedDirReasons).toEqual({
-        "workspace/restricted": "permission denied",
-      });
-      expect(backup.backedUpDirs).toEqual(["workspace"]);
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
-
-  it.skipIf(process.platform === "win32")(
-    "emits the unreadable directory from the pre-backup find walk (#12069)",
-    () => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unreadable-find-"));
-      try {
-        const workspace = path.join(fixture, "workspace");
-        const restricted = path.join(workspace, "restricted");
-        fs.mkdirSync(path.join(workspace, "visible"), { recursive: true });
-        fs.mkdirSync(path.join(restricted, "secret"), { recursive: true });
-        fs.writeFileSync(path.join(workspace, "visible", "note.txt"), "ok\n");
-        fs.chmodSync(restricted, 0);
-        const result = spawnSync(
-          "bash",
-          ["-lc", sandboxState.buildPreBackupAuditFindCommand(workspace)],
-          {
-            encoding: "buffer",
-          },
-        );
-        const output = (result.stdout ?? Buffer.alloc(0)).toString("binary");
-        expect(output).toContain(`u\0${restricted}\0\0`);
-      } finally {
-        try {
-          fs.chmodSync(path.join(fixture, "workspace", "restricted"), 0o700);
-        } catch {
-          /* restore so cleanup can remove the fixture */
-        }
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    },
-  );
 
   it("accepts built-in and custom OpenClaw peer links during the pre-backup audit", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-"));

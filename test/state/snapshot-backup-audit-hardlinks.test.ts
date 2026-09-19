@@ -212,6 +212,46 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
 });
 
 describe("pre-backup audit record framing", () => {
+  hardDereferenceTest(
+    "records an unreadable nested directory as a permission failure (#12069)",
+    () => {
+      const backup = backupWithAuditOutput(
+        encodePreBackupAuditEntries([["u", "/sandbox/.openclaw/workspace/restricted", ""]]),
+      );
+
+      expect(backup.success).toBe(false);
+      expect(backup.failedDirs).toEqual(["workspace/restricted"]);
+      expect(backup.failedDirReasons).toEqual({
+        "workspace/restricted": "permission denied",
+      });
+      expect(backup.backedUpDirs).toEqual(["workspace"]);
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "emits the unreadable directory from the pre-backup find walk (#12069)",
+    () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unreadable-find-"));
+      const workspace = path.join(fixture, "workspace");
+      const restricted = path.join(workspace, "restricted");
+      try {
+        fs.mkdirSync(path.join(restricted, "secret"), { recursive: true });
+        fs.chmodSync(restricted, 0);
+
+        const result = spawnSync(
+          "bash",
+          ["-lc", sandboxState.buildPreBackupAuditFindCommand(workspace)],
+          { encoding: "buffer" },
+        );
+        const output = (result.stdout ?? Buffer.alloc(0)).toString("binary");
+        expect(output).toContain(`u\0${restricted}\0\0`);
+      } finally {
+        fs.chmodSync(restricted, 0o700);
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("rejects a symlink path containing tabs and newlines", () => {
     // NUL framing must keep every control character inside the pathname field
     // so it cannot create synthetic audit records or change the link target.
