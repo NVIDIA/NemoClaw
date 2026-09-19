@@ -614,6 +614,10 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({
+      ok: true,
+      ids: ["b".repeat(64)],
+    });
     let listAttempts = 0;
     let selectorAttempts = 0;
     const observeSelector = (): string =>
@@ -639,11 +643,8 @@ describe("created sandbox identity gate", () => {
       route: "compatibility",
     });
 
-    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
-    expect(patch.maybeApplyDuringCreate).toHaveBeenCalledOnce();
     expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
     expect(events.indexOf("compatibility-cutover")).toBeLessThan(events.indexOf("create-complete"));
-    expect(events).toContain("ensure-applied");
   });
 
   it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {

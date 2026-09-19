@@ -670,6 +670,12 @@ export function createSandboxGpuCreateAttemptRunner(
         readyCheckCreatedSandboxId = observation.sandboxId;
         if (observation.state === "pending") return;
         const sandboxId = observation.sandboxId;
+        const containers = queryOpenShellDockerSandboxContainers(input.sandboxName);
+        if (!containers.ok || containers.ids.length !== 1) return;
+        const runtimeId = containers.ids[0];
+        const verifyExactRuntime =
+          deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
+        if (!runtimeId || !verifyExactRuntime(input.sandboxName, runtimeId, true)) return;
         waitForCreatedSandboxPublication(sandboxId);
         await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce, route, input);
         createdSandboxVerified = true;
