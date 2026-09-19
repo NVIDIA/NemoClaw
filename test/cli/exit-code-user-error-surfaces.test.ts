@@ -94,7 +94,7 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       path.join(binDir, "docker"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = info ]; then echo "Server Version: 24.0.0"; exit 0; fi',
+        'if [ "$1" = info ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
         'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",
       ].join("\n"),

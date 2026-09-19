@@ -191,7 +191,9 @@ function createDoctorHarness(
   const captureHostCommandSpy = vi
     .spyOn(doctorHostCommand, "captureHostCommand")
     .mockImplementation((command: unknown) => {
-      if (command === "docker") return { status: 0, stdout: "25.0.0\n", stderr: "" };
+      if (command === "docker") {
+        return { status: 0, stdout: JSON.stringify({ ServerVersion: "25.0.0" }), stderr: "" };
+      }
       if (command === "curl") {
         return { status: 0, stdout: JSON.stringify({ models: [{ name: "m" }] }), stderr: "" };
       }

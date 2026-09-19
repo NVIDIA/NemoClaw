@@ -4,6 +4,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSandboxMock = vi.fn();
+const dockerRunMock = vi.fn((_args: readonly string[], _options?: Record<string, unknown>) => ({
+  status: 0,
+  stderr: "",
+  stdout: '{"ServerVersion":"29.0.0"}',
+}));
+
+vi.mock("../../adapters/docker/run", () => ({
+  dockerCapture: vi.fn(() => ""),
+  dockerRun: (args: readonly string[], options?: Record<string, unknown>) =>
+    dockerRunMock(args, options),
+}));
 
 vi.mock("../../state/registry", () => ({
   getSandbox: (...args: unknown[]) => getSandboxMock(...args),
@@ -24,6 +35,7 @@ import {
   classifyObservedSandboxContainerFailure,
   type GatewayFailureRunners,
   isDockerRuntimeDown,
+  probeDockerDaemonReachability,
 } from "./gateway-failure-classifier";
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
@@ -144,6 +156,75 @@ describe("classifyObservedSandboxContainerFailure", () => {
 });
 
 describe("isDockerRuntimeDown", () => {
+  beforeEach(() => {
+    getSandboxMock.mockReset();
+    dockerRunMock.mockReset();
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: '{"ServerVersion":"29.0.0"}',
+    });
+  });
+
+  it("rejects Docker client output when the daemon request fails (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 1,
+      stderr: "Cannot connect to the Docker daemon",
+      stdout: "Client: Docker Engine - Community",
+    });
+
+    expect(probeDockerDaemonReachability()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
+  it("treats absent Docker stdout as an unreachable daemon (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 1,
+      stderr: "Cannot start Docker",
+      stdout: null as unknown as string,
+    });
+
+    expect(probeDockerDaemonReachability()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
+  it("accepts Docker info only when the daemon request succeeds (#11715)", () => {
+    expect(probeDockerDaemonReachability()).toBe(true);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(false);
+    expect(dockerRunMock).toHaveBeenCalledWith(["info", "--format", "{{json .}}"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: 3000,
+    });
+  });
+
+  it("rejects a successful Docker info response without server evidence (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: '{"ServerVersion":"","ServerErrors":["daemon unavailable"]}',
+    });
+
+    expect(probeDockerDaemonReachability()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
+  it("rejects malformed output from the JSON-formatted Docker info request (#11715)", () => {
+    dockerRunMock.mockReturnValue({
+      status: 0,
+      stderr: "",
+      stdout: "unexpected",
+    });
+
+    expect(probeDockerDaemonReachability()).toBe(false);
+    getSandboxMock.mockReturnValue({ openshellDriver: "docker" });
+    expect(isDockerRuntimeDown("alpha")).toBe(true);
+  });
+
   it("does not invoke Docker for a native Podman sandbox", () => {
     getSandboxMock.mockReturnValue({ openshellDriver: " PODMAN " });
     const dockerInfo = vi.fn(() => false);

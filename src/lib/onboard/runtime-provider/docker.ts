@@ -16,7 +16,10 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "../../actions/sandbox/gateway-failure-classifier";
-import { parseDockerDaemonObservation } from "../../domain/docker-host";
+import {
+  isDockerInfoResultReachable,
+  parseDockerDaemonObservation,
+} from "../../domain/docker-host";
 import { cliName } from "../branding";
 import {
   findLabeledSandboxContainers,
@@ -298,7 +301,7 @@ function oneLine(value = ""): string {
 function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProviderDoctorCheck {
   const result = deps.captureHostCommand("docker", ["info", "--format", "{{json .}}"], 8000);
   const observation = parseDockerDaemonObservation(result.stdout);
-  const reachable = result.status === 0 && observation.reachable;
+  const reachable = isDockerInfoResultReachable(result);
   return {
     group: "Host",
     label: "Docker daemon",
