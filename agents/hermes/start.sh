@@ -1980,15 +1980,16 @@ start_socat_forwarder() {
       if [ -z "$owner_role" ] \
         || ! hermes_tracked_role_is_current \
           "$owner_role" "$owner_pid" "$owner_user" "$internal_port"; then
-        if [ "$owner_role" = dashboard ] \
-          && adopted_owner_pid="$(hermes_find_reparented_role_listener_pid \
+        if [ "$owner_role" = dashboard ]; then
+          if adopted_owner_pid="$(hermes_find_reparented_role_listener_pid \
             "$owner_role" "$owner_user" "$internal_port" "$owner_pid")" \
-          && adopted_owner_identity="$(hermes_process_role_identity \
-            "$owner_role" "$adopted_owner_pid" "$owner_user" "$internal_port")"; then
-          owner_pid="$adopted_owner_pid"
-          hermes_set_role_identity "$owner_role" "$adopted_owner_identity"
-          DASHBOARD_PID="$owner_pid"
-          echo "[gateway] ${label} service handed off to verified listener owner pid ${owner_pid}" >&2
+            && adopted_owner_identity="$(hermes_process_role_identity \
+              "$owner_role" "$adopted_owner_pid" "$owner_user" "$internal_port")"; then
+            owner_pid="$adopted_owner_pid"
+            hermes_set_role_identity "$owner_role" "$adopted_owner_identity"
+            DASHBOARD_PID="$owner_pid"
+            echo "[gateway] ${label} service handed off to verified listener owner pid ${owner_pid}" >&2
+          fi
         else
           echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
           return 1

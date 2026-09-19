@@ -46,12 +46,14 @@ function runListenerOwnerSelection(matchingPids: number[], previousPid = 101) {
   );
 }
 
-function runDashboardHandoff() {
+function runDashboardHandoff(delayed = false) {
   return runHermesBashHarness(
     [
       extractShellFunction(source, "start_socat_forwarder"),
       "hermes_tracked_role_is_current() { return 1; }",
-      "hermes_find_reparented_role_listener_pid() { printf 202; }",
+      delayed
+        ? 'hermes_find_reparented_role_listener_pid() { if [ ! -e "$HANDOFF_ATTEMPT" ]; then : >"$HANDOFF_ATTEMPT"; return 1; fi; printf 202; }'
+        : "hermes_find_reparented_role_listener_pid() { printf 202; }",
       [
         "hermes_process_role_identity() {",
         '  [ "$1:$2:$3:$4" = "dashboard:202:current:19119" ] || return 1',
@@ -74,6 +76,7 @@ function runDashboardHandoff() {
       "gateway_control_pid_owns_tcp_listener() { return 0; }",
       "hermes_stop_tracked_role() { return 0; }",
       "hermes_fatal_unproven_child() { return 1; }",
+      "sleep() { :; }",
       "INTERNAL_PORT=18642",
       "DASHBOARD_INTERNAL_PORT=19119",
       "DASHBOARD_PID=101",
@@ -91,7 +94,10 @@ function runDashboardHandoff() {
       fs.writeFileSync(path.join(binDir, "socat"), "#!/usr/bin/env bash\nexec sleep 30\n", {
         mode: 0o700,
       });
-      return { PATH: `${binDir}:${process.env.PATH ?? ""}` };
+      return {
+        HANDOFF_ATTEMPT: path.join(tmpDir, "handoff-attempt"),
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      };
     },
   );
 }
@@ -118,6 +124,14 @@ describe("Hermes dashboard listener handoff", () => {
     expect(run.status, run.stderr).toBe(0);
     expect(run.stdout).toContain("dashboard-pid=202");
     expect(run.stdout).toContain("dashboard-identity=identity-202");
+    expect(run.stderr).toContain("dashboard service handed off to verified listener owner pid 202");
+  });
+
+  it("waits for the verified listener child after its launcher exits (#11905)", () => {
+    const run = runDashboardHandoff(true);
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain("dashboard-pid=202");
     expect(run.stderr).toContain("dashboard service handed off to verified listener owner pid 202");
   });
 });
