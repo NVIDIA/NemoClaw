@@ -40,6 +40,8 @@ Before NemoClaw accepts or reuses the runner, the recorded launch arguments and 
 A missing or changed value causes a configuration drift error instead of runner reuse.
 It then creates the runner, sends one validation request for the selected model, and confirms that Ollama loaded the selected model.
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
+Port `11434` must be free on `127.0.0.1` and on the Portable host-gateway listener IP before inference create.
+Stop a host Ollama service or leftover Portable Ollama container on those published addresses first.
 
 If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoclaw <name> connect --probe-only` to resume only the exact receipt-owned runner.
 Ordinary `connect` also resumes it when the recorded inference route is unavailable.
