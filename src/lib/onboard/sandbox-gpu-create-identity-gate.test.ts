@@ -616,12 +616,11 @@ describe("created sandbox identity gate", () => {
     const deps = createGpuFlowDeps();
     let listAttempts = 0;
     let selectorAttempts = 0;
-    const failTransientSelectorRead = (): never => {
-      throw new Error("Command failed with status 1");
-    };
     const observeSelector = (): string =>
       ++selectorAttempts === 1
-        ? failTransientSelectorRead()
+        ? sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: "f".repeat(62),
+          })
         : selectorAttempts === 2
           ? sandboxListJson(
               "alpha-sandbox-id",

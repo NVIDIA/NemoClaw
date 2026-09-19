@@ -639,10 +639,6 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
-    const retryableCreateIdentityDiagnostic = (diagnostic: string): boolean =>
-      diagnostic === "selector-execution-timeout" ||
-      diagnostic === "selector-execution-nonzero" ||
-      diagnostic === "selector-execution-resource-unavailable";
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
       if (!createdSandboxVerified) {
@@ -662,16 +658,10 @@ export function createSandboxGpuCreateAttemptRunner(
           SANDBOX_READY_PROBE_TIMEOUT_MS,
         );
         if (observation.state === "invalid") {
-          if (retryableCreateIdentityDiagnostic(observation.diagnostic)) {
-            // The create client can temporarily hold OpenShell's read path
-            // while it builds or publishes the sandbox. Identity remains
-            // unavailable, so no mutation is authorized; retry on the next
-            // bounded create poll.
-            return;
-          }
-          throw new Error(
-            `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${observation.diagnostic}.`,
-          );
+          // During creation OpenShell can publish the row before its selector
+          // and metadata views settle. No invalid observation authorizes a
+          // mutation; retry until one strict nonce-owned row is available.
+          return;
         }
         if (observation.sandboxId === null) return;
         if (readyCheckCreatedSandboxId && observation.sandboxId !== readyCheckCreatedSandboxId) {
@@ -723,7 +713,6 @@ export function createSandboxGpuCreateAttemptRunner(
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
               if (observation.state === "invalid") {
-                if (retryableCreateIdentityDiagnostic(observation.diagnostic)) return false;
                 return failReadyCheckCreatedIdentity(observation.diagnostic);
               }
               if (observation.sandboxId === null) {
