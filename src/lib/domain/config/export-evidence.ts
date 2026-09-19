@@ -50,6 +50,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "credentialEnv",
   "dashboardPort",
   "dashboardRemoteBindPrepared",
+  "dcodeAutoApprovalMode",
   "endpointUrl",
   "fromDockerfile",
   "gatewayName",
@@ -73,7 +74,6 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "name",
   "nimContainer",
   "observabilityEnabled",
-  "openclawImagePluginInstalls",
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",
@@ -277,6 +277,7 @@ const ExportInferenceSchema = Type.Union([
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
       serving: NemoClawManagedVllmServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
     },
     { additionalProperties: false },
   ),
@@ -287,9 +288,7 @@ const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
   tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
-  additionalAgents: Type.Optional(
-    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
-  ),
+  additionalAgents: Type.Optional(Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1 })),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -314,12 +313,26 @@ export const ExportSourceValuesSchema = Type.Refine(
       agent: Type.Literal("hermes"),
       interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
     }),
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("langchain-deepagents-code"),
+      interfaces: Type.Optional(Type.Never()),
+    }),
   ]),
-  (value) =>
-    value.agent === "openclaw" ||
-    (value.execution === undefined &&
-      value.tools === undefined &&
-      value.additionalAgents === undefined),
+  (value) => {
+    if (value.agent === "openclaw") return true;
+    if (
+      value.execution !== undefined ||
+      value.tools !== undefined ||
+      value.additionalAgents !== undefined ||
+      value.observability !== undefined
+    )
+      return false;
+    return (
+      value.agent === "hermes" ||
+      (value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined)
+    );
+  },
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

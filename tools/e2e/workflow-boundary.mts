@@ -26,10 +26,6 @@ import {
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
-  type OpenClawPluginRuntimeExdevWorkflow,
-  validateOpenClawPluginRuntimeExdevWorkflow,
-} from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
-import {
   type OpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
@@ -207,10 +203,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable-identity",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
-const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
-  "device-auth-health",
-  "model-router-provider-routed-inference",
-]);
+const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set(["model-router-provider-routed-inference"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "external-gateway-health",
   "staging-brev-launchable",
@@ -774,13 +767,8 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
-  ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
-  ["test/helpers/openshell-components.ts", ["mcp-bridge", "openclaw-plugin-runtime-exdev"]],
+  ["test/helpers/openshell-components.ts", ["mcp-bridge"]],
   ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
-  [
-    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-    ["openclaw-plugin-runtime-exdev"],
-  ],
 ]);
 
 export function focusedE2eJobsForChangedFiles(
@@ -1704,6 +1692,10 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
             (step) => step.name === "Download exact protected runtime build cache",
           )
         : -1;
+    const sharedBoundaryBuildIndex =
+      jobName === "managed-image-multiarch-startup"
+        ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
+        : -1;
     const authIndex = workflowSteps.indexOf(auth);
     const cleanupIndex = workflowSteps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -1711,16 +1703,21 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         ? checkoutIndex + 3
         : jobName === "managed-image-protected-runtime"
           ? protectedCacheDownloadIndex + 1
-          : checkoutIndex + 1;
+          : jobName === "managed-image-multiarch-startup"
+            ? sharedBoundaryBuildIndex + 1
+            : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
       (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      (jobName === "managed-image-multiarch-startup" && sharedBoundaryBuildIndex < 0) ||
       authIndex !== expectedAuthIndex
     ) {
       errors.push(
         jobName === "managed-image-protected-runtime"
           ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
-          : `${jobName} Docker Hub auth must run immediately after checkout`,
+          : jobName === "managed-image-multiarch-startup"
+            ? `${jobName} Docker Hub auth must run immediately after the shared boundary build`
+            : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -2780,11 +2777,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateManagedImageMultiarchWorkflow(workflow));
   errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
-    ...validateOpenClawPluginRuntimeExdevWorkflow(
-      workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
-    ),
-  );
-  errors.push(
     ...validateOpenShellGatewayAuthContractWorkflow(
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
     ),
@@ -2904,8 +2896,16 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
-  if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
-    errors.push("live job must depend on base-image-publication and generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live job must depend on base-image-publication, generate-matrix, and package-openshell-sdk",
+    );
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");
@@ -3197,6 +3197,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors,
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
   );
   requireUploadPathContains(
     errors,

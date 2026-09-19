@@ -23,6 +23,7 @@ CREDENTIAL_BOUNDARY_CHECK="${REPO}/test/e2e/e2e-cloud-experimental/checks/08-dee
 SHELL_ROUND_ONE="/sandbox/.nemoclaw-e2e-autorun-shell-1"
 WRITE_ROUND="/sandbox/.nemoclaw-e2e-autorun-write"
 SHELL_ROUND_THREE="/sandbox/.nemoclaw-e2e-autorun-shell-3"
+EXPORT_BASELINE_RECOVERY_ARMED=0
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -39,6 +40,7 @@ info() {
 
 rebuild_named_sandbox() {
   local mode="$1"
+  local observability_flag="${2:-}"
   local attempt output status prior_timeout_output retry_delay_seconds
   prior_timeout_output=""
   retry_delay_seconds="${NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS:-3}"
@@ -46,7 +48,13 @@ rebuild_named_sandbox() {
     || fail "rebuild retry delay must be a non-negative integer"
 
   for attempt in 1 2; do
-    if output="$("$CLI" "$SANDBOX_NAME" rebuild --yes --dcode-auto-approval "$mode" 2>&1)"; then
+    local -a rebuild_args=(
+      "$SANDBOX_NAME" rebuild --yes --dcode-auto-approval "$mode"
+    )
+    if [ -n "$observability_flag" ]; then
+      rebuild_args+=("$observability_flag")
+    fi
+    if output="$("$CLI" "${rebuild_args[@]}" 2>&1)"; then
       printf '%s\n' "$output"
       return 0
     else
@@ -77,6 +85,23 @@ is_positive_integer() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+export_baseline_registry_state() {
+  SANDBOX_NAME="$SANDBOX_NAME" node - <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const registry = JSON.parse(
+  fs.readFileSync(path.join(process.env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+);
+const entry = registry.sandboxes?.[process.env.SANDBOX_NAME];
+if (!entry || entry.agent !== "langchain-deepagents-code" ||
+    !["disabled", "thread-opt-in"].includes(entry.dcodeAutoApprovalMode) ||
+    typeof entry.observabilityEnabled !== "boolean") process.exit(1);
+process.stdout.write(
+  `${entry.dcodeAutoApprovalMode}:${entry.observabilityEnabled ? "enabled" : "disabled"}`,
+);
+NODE
 }
 
 is_default_auto_approval_denial() {
@@ -288,6 +313,30 @@ cleanup_probe_files() {
     >/dev/null 2>&1 || true
 }
 
+restore_export_baseline_on_exit() {
+  local original_status=$?
+  local recovery_output recovery_status
+  trap - EXIT
+  cleanup_probe_files
+  recovery_status=0
+  if [ "$EXPORT_BASELINE_RECOVERY_ARMED" -eq 1 ]; then
+    info "Restoring the disabled export baseline after an interrupted thread-opt-in check" >&2
+    if ! recovery_output="$(rebuild_named_sandbox disabled --no-observability)"; then
+      printf '%s: FAIL: export baseline recovery rebuild failed: %s\n' \
+        "$PREFIX" "$recovery_output" >&2
+      recovery_status=1
+    elif [ "$(export_baseline_registry_state)" != "disabled:disabled" ]; then
+      printf '%s: FAIL: export baseline recovery did not restore retained approval and observability state\n' \
+        "$PREFIX" >&2
+      recovery_status=1
+    fi
+  fi
+  if [ "$original_status" -ne 0 ]; then
+    exit "$original_status"
+  fi
+  exit "$recovery_status"
+}
+
 main() {
   [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
   [ -x "$CLI" ] || fail "NemoClaw CLI is not executable at $CLI"
@@ -305,7 +354,7 @@ main() {
   is_positive_integer "$TUI_TIMEOUT" \
     || fail "DEEPAGENTS_AUTORUN_TIMEOUT must be a positive integer"
 
-  trap cleanup_probe_files EXIT
+  trap restore_export_baseline_on_exit EXIT
   cleanup_probe_files
 
   assert_capability_projection disabled
@@ -317,6 +366,7 @@ main() {
   info "Enabling thread-opt-in through the named sandbox rebuild interface"
   rebuild_output="$(rebuild_named_sandbox thread-opt-in)" \
     || fail "named sandbox rebuild could not enable thread-opt-in: $rebuild_output"
+  EXPORT_BASELINE_RECOVERY_ARMED=1
 
   assert_capability_projection thread-opt-in
   assert_status_mode thread-opt-in
@@ -339,13 +389,16 @@ main() {
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
   info "Disabling thread-opt-in through the named sandbox rebuild interface"
-  rebuild_output="$(rebuild_named_sandbox disabled)" \
-    || fail "named sandbox rebuild could not disable thread-opt-in: $rebuild_output"
+  rebuild_output="$(rebuild_named_sandbox disabled --no-observability)" \
+    || fail "named sandbox rebuild could not restore the export baseline: $rebuild_output"
 
   assert_capability_projection disabled
   assert_status_mode disabled
   assert_default_denial_ignores_ambient_override
-  pass "named sandbox rebuild restores trusted default denial"
+  [ "$(export_baseline_registry_state)" = "disabled:disabled" ] \
+    || fail "named sandbox rebuild did not restore retained approval and observability state"
+  EXPORT_BASELINE_RECOVERY_ARMED=0
+  pass "named sandbox rebuild restores the disabled export baseline"
 
   printf '%s: 6 passed, 0 failed\n' "$PREFIX"
 }

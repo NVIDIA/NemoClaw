@@ -436,6 +436,7 @@ const {
 const {
   createFinalOnboardFlowPhases,
   finalizationHandlerDeps,
+  restartNativeGatewayForInitialSetup,
   runFinalOnboardFlowSlice,
 }: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
@@ -872,7 +873,7 @@ const {
   readInferenceRouteState,
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
-} = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
+} = inferenceRouteHelpers.createCliInferenceRouteHelpers(captureOpenshell);
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
@@ -1331,7 +1332,7 @@ const {
   gatewayName: () => GATEWAY_NAME,
   gatewayPort: () => GATEWAY_PORT,
   getGatewayPortListenerRawScan,
-  getInstalledOpenshellVersion,
+  ...{ getDockerDriverGatewayEnv, getInstalledOpenshellVersion },
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });
@@ -1393,7 +1394,7 @@ const gatewayStart = createGatewayStart({
   isGatewayHttpReady,
   isLinuxDockerDriverGatewayEnabled,
   selectNamedGatewayForReuseIfNeeded,
-  startDockerDriverGateway: dockerDriverGatewayStart.startDockerDriverGateway,
+  ...dockerDriverGatewayStart,
   step,
 });
 
@@ -1582,7 +1583,7 @@ const {
   readRecordedEndpointUrl,
   readRecordedInferenceRoute,
   readRecordedProviderEndpoints,
-} = providerRecovery.createProviderRecoveryHelpers({
+} = providerRecovery.createCliProviderRecoveryHelpers({
   captureOpenshell,
   selectedGatewayName: () => GATEWAY_NAME,
   warn: (message) => console.warn(message),
@@ -2448,19 +2449,18 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
-
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
-
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
+  restartNativeGateway: restartNativeGatewayForInitialSetup,
+  shouldRestartNativeGateway: isRoutedInferenceProvider,
 });
 const {
   buildChain,
@@ -2476,9 +2476,7 @@ const {
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
-  runOpenshell,
   runCaptureOpenshell,
-  openshellArgv,
   runCapture,
   cliName,
   agentProductName,
@@ -2916,7 +2914,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           note,
           startRecordedStep,
-          startGateway,
+          ...gatewayStart,
           recordStepComplete,
           exitProcess: (code) => process.exit(code),
         },
@@ -3081,11 +3079,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentSupportsWebSearch,
             agentSupportsWebSearchProvider,
             ...{ note, cliName },
-            ...{
-              loadSession: onboardSession.loadSession,
-              updateSession: onboardSession.updateSession,
-              compareAndSwapSession: onboardSession.compareAndSwapSession,
-            },
+            loadSession: onboardSession.loadSession,
+            updateSession: onboardSession.updateSession,
+            compareAndSwapSession: onboardSession.compareAndSwapSession,
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
@@ -3146,6 +3142,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
             finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
+            reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>

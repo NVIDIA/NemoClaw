@@ -134,6 +134,18 @@ describe("agents/hermes/start.sh port bootstrap", () => {
     });
     expect(invalid.status).toBe(1);
     expect(invalid.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
+
+    const leadingZeroDashboard = runHermesDashboardPortBootstrap({
+      NEMOCLAW_DASHBOARD_PORT: "018789",
+    });
+    expect(leadingZeroDashboard.status).toBe(1);
+    expect(leadingZeroDashboard.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
+
+    const leadingZeroApi = runHermesDashboardPortBootstrap({
+      NEMOCLAW_HERMES_API_PORT: "08642",
+    });
+    expect(leadingZeroApi.status).toBe(1);
+    expect(leadingZeroApi.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
   });
 
   it("keeps the dashboard isolated and makes the in-browser TUI opt-in", () => {

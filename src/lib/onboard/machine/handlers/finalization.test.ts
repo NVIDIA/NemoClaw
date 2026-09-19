@@ -79,7 +79,7 @@ function createDeps(
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
-    dashboard: vi.fn(),
+    dashboard: vi.fn(async () => undefined),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
     createExternalComponentActivationProof: vi.fn(() => activationProof),
@@ -318,6 +318,30 @@ describe("finalization handlers", () => {
       metadata: { state: "post_verify" },
     });
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  it("waits for dashboard completion before reporting readiness", async () => {
+    let resolveDashboard!: () => void;
+    const dashboardPending = new Promise<void>((resolve) => {
+      resolveDashboard = resolve;
+    });
+    const printDashboard = vi.fn(() => dashboardPending);
+    const { deps, calls } = createDeps({ printDashboard });
+    const settled = vi.fn();
+
+    const pending = handlePostVerifyState(baseOptions(deps));
+    void pending.then(settled);
+    await vi.waitFor(() => expect(printDashboard).toHaveBeenCalledOnce());
+
+    expect(calls.reportReadiness).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+
+    resolveDashboard();
+    const result = await pending;
+
+    expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(result.stateResult).toMatchObject({ type: "complete" });
   });
 
   it("uses strict Portable settlement instead of ordinary pairing settlement (#9207)", async () => {
@@ -737,6 +761,9 @@ describe("secret-boundary refusal during finalization", () => {
   ])(
     "pauses $phase before successful handoff on a recovery refusal (#11758)",
     async ({ phase, run }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => null,
+      } as never);
       vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
         checkAndRecoverSandboxProcesses: vi.fn(async () => ({
           checked: true,
@@ -747,6 +774,7 @@ describe("secret-boundary refusal during finalization", () => {
           secretBoundaryReason: "unexpected-marker" as const,
         })),
         waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
       });
       const { deps, calls } = createDeps({
         checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,

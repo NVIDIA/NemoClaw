@@ -32,6 +32,7 @@ export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as 
 export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
+export type RuntimeProviderFinalSandboxLiveness = "openshell-and-docker" | "openshell-only";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
@@ -584,6 +585,8 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 type RuntimeProviderGatewaySurfaceBase = {
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
+  /** Evidence source that authorizes final shared-gateway cleanup. */
+  readonly finalSandboxLiveness: RuntimeProviderFinalSandboxLiveness;
   /** Project provider-owned gateway behavior without changing host state. */
   observeHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,

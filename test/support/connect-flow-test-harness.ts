@@ -42,6 +42,7 @@ export type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;
+  waitForStartedHermesGatewayProcessSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
@@ -129,6 +130,7 @@ export type ConnectHarnessOptions = {
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
   };
+  gatewayProcessSettlement?: boolean | null;
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   portableReceiptDisposition?:
     | { kind: "absent" }
@@ -169,6 +171,7 @@ export type ConnectHarnessOptions = {
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
   portablePairingSettlementResult?: PortablePairingSettlementResult;
+  useRealProcessRecovery?: boolean;
 };
 
 function throwSttyFailure(): never {
@@ -467,6 +470,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    if (request.command.join(" ").includes("/health")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
     if (request.command.join(" ").includes("/v1/chat/completions")) {
       return {
         outcome: { kind: "completed", exitCode: 0 },
@@ -591,9 +601,26 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   });
   vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({ isStale: false });
   vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
-  const checkAndRecoverSpy = vi
-    .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
-    .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  const realCheckAndRecoverSandboxProcesses = processRecovery.checkAndRecoverSandboxProcesses;
+  const checkAndRecoverSpy = vi.spyOn(processRecovery, "checkAndRecoverSandboxProcesses");
+  if (options.useRealProcessRecovery) {
+    checkAndRecoverSpy.mockImplementation(((sandboxName: string, recoveryOptions: object = {}) =>
+      realCheckAndRecoverSandboxProcesses(sandboxName, {
+        ...recoveryOptions,
+        withLifecycleLock: async (_name: string, operation: () => unknown) => operation(),
+      })) as never);
+  } else {
+    checkAndRecoverSpy.mockReturnValue(
+      options.processCheck ?? { checked: true, wasRunning: true, recovered: false },
+    );
+  }
+  const waitForStartedHermesGatewayProcessSpy = vi
+    .spyOn(processRecovery, "waitForStartedHermesGatewayProcess")
+    .mockResolvedValue(
+      Object.hasOwn(options, "gatewayProcessSettlement")
+        ? (options.gatewayProcessSettlement ?? null)
+        : true,
+    );
   const forwardAdapterObserveSpy = vi.fn(async ({ forwards }) =>
     forwards.map((forward: object) => ({ state: "owned" as const, forward })),
   );
@@ -746,6 +773,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
     checkAndRecoverSpy,
+    waitForStartedHermesGatewayProcessSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,

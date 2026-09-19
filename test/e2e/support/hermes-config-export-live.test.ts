@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   exec: vi.fn(),
   execShell: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
+  asExportedConfig: vi.fn(),
   writeJson: vi.fn(),
 }));
 
@@ -26,8 +26,8 @@ vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
   cliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
 }));
 
-vi.mock("../../../src/lib/config/schema.ts", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
+vi.mock("../../support/config-export-document.ts", () => ({
+  asExportedConfig: mocks.asExportedConfig,
 }));
 
 import {
@@ -51,7 +51,7 @@ beforeEach(() => {
     },
   });
   mocks.readSandboxPolicy.mockReturnValue({ ok: false });
-  mocks.validateNemoClawConfig.mockReturnValue({
+  mocks.asExportedConfig.mockReturnValue({
     spec: {
       inferenceProviders: [
         {
@@ -61,10 +61,11 @@ beforeEach(() => {
       ],
       sandboxes: [
         {
-          agents: [{ type: "hermes" }],
+          agents: [{ name: "primary" }],
+          harness: { kind: "hermes" },
           name: "hermes",
           network: { policy: { explicit: null } },
-          runtime: { image: { ref: IMAGE_REF } },
+          runtime: { provider: "docker" },
         },
       ],
     },
@@ -177,7 +178,7 @@ describe("Hermes config export live evidence", () => {
       }),
     );
     expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.validateNemoClawConfig).not.toHaveBeenCalled();
+    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
   });
 
   it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
@@ -212,9 +213,9 @@ describe("Hermes interface runtime evidence", () => {
   ])(
     "checks API allocation $apiPort with the dashboard disabled (#11433)",
     async ({ apiPort, interfaces }) => {
-      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = interfaces;
-      mocks.validateNemoClawConfig.mockReturnValue(document);
+      const document = mocks.asExportedConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].harness.interfaces = interfaces;
+      mocks.asExportedConfig.mockReturnValue(document);
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
         return { exitCode: 0, stderr: "", stdout: "" };
@@ -240,12 +241,12 @@ describe("Hermes interface runtime evidence", () => {
   ])(
     "requires the expected dashboard process and internal listener %s %s (#11433)",
     async (processOutput, status, expected) => {
-      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
-      document.spec.sandboxes[0].agents[0].interfaces = {
+      const document = mocks.asExportedConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].harness.interfaces = {
         dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
         api: { port: 8643 },
       };
-      mocks.validateNemoClawConfig.mockReturnValue(document);
+      mocks.asExportedConfig.mockReturnValue(document);
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
         return { exitCode: 0, stderr: "", stdout: "" };

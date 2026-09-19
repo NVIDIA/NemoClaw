@@ -17,7 +17,11 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import { type RebuildSandboxEntry, resolveSandboxGatewayName } from "./rebuild-flow-helpers";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { inspectAgentMcpSources, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
+import {
+  assertNoLegacyMcpSources,
+  inspectAgentMcpSources,
+  joinMcpEntriesToOpenShell,
+} from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
@@ -36,6 +40,7 @@ export async function observeMcpStateForRebuild(
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
   const sources = await inspectAgentMcpSources(sandbox, sourceRuntime);
+  assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };
   const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const entries = Object.values(

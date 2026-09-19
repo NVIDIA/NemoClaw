@@ -769,6 +769,7 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-and-docker",
       ownsHostReadiness: false,
       observeHostRuntime: projectGatewayHostRuntime,
       prepareHostRuntime: projectGatewayHostRuntime,
@@ -914,6 +915,7 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: true,
+      finalSandboxLiveness: "openshell-and-docker",
       ownsHostReadiness: false,
       observeHostRuntime: () => {
         throw new Error("The Kubernetes provider does not launch a host-managed gateway.");

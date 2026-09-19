@@ -37,7 +37,7 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
-| `agents.list` | Runtime; OpenClaw hot-reloads on config change | Prefer agent or NemoClaw commands that keep host and sandbox state aligned |
+| `agents.list` | Runtime after gateway restart; generated OpenClaw configuration disables hot reload | Prefer agent or NemoClaw commands that keep host and sandbox state aligned, then run `$$nemoclaw <name> gateway restart` |
 | `openclaw.json` keys | Mixed; supported config and inference updates apply at runtime, while image, policy, web search, and channel changes can require rebuild | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and integrity hash change together |
 
 For a new or pristine OpenClaw workspace, `NEMOCLAW_MINIMAL_BOOTSTRAP=1` avoids roughly 3,000 tokens of per-turn project-context overhead by skipping the default template seed. It does not delete existing workspace files.

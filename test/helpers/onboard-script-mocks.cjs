@@ -1364,17 +1364,6 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   }
 }
 
-function mockFreshOpenClawPluginDiscovery() {
-  const pluginRestore = require(
-    path.resolve(__dirname, "../../src/lib/state/openclaw-plugin-restore.ts"),
-  );
-  pluginRestore.discoverFreshOpenClawImagePluginInstalls = () => ({
-    ok: true,
-    extensionDirs: [],
-    pluginInstalls: [],
-  });
-}
-
 function mockManagedImageCatalog() {
   const catalog = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
@@ -1584,7 +1573,6 @@ module.exports = {
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
-  mockFreshOpenClawPluginDiscovery,
   createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,

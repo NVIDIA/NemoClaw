@@ -12,7 +12,6 @@ import YAML from "yaml";
 import {
   PREPARE_E2E_ACTION,
   PREPARE_COMPILED_ARTIFACT_ACTION,
-  PREPARE_E2E_STEP,
   validatePrepareE2eAction,
   validatePrepareE2eInvocations,
 } from "../../../tools/e2e/prepare-e2e-workflow-boundary.mts";
@@ -177,13 +176,6 @@ describe("prepare-e2e workflow boundary", () => {
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
-    const orderedPrepareIndex = orderedJob.steps!.findIndex(
-      (step) => step.name === PREPARE_E2E_STEP,
-    );
-    const [orderedPrepare] = orderedJob.steps!.splice(orderedPrepareIndex, 1);
-    orderedJob.steps!.unshift(orderedPrepare);
-
     expect(validatePrepareE2eInvocations(workflow)).toEqual(
       expect.arrayContaining([
         "generate-matrix prepare-e2e must own the only default CLI build",
@@ -197,8 +189,6 @@ describe("prepare-e2e workflow boundary", () => {
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "cloud-onboard must not load prepare-e2e from the target checkout",
         "cloud-onboard must use prepare-e2e exactly once",
-        "openclaw-plugin-runtime-exdev must check out the repository before prepare-e2e",
-        "openclaw-plugin-runtime-exdev must authenticate to Docker Hub before prepare-e2e",
       ]),
     );
   });

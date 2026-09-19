@@ -19,7 +19,8 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       session.steps[stepName].status = "skipped";
       return session;
     }),
-    openclawReady: vi.fn(() => false),
+    openclawReady: vi.fn(async () => false),
+    controlPlaneReady: vi.fn(async () => true),
     skippedMessage: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
@@ -40,6 +41,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
+      waitForSandboxControlPlaneReady: calls.controlPlaneReady,
       skippedStepMessage: calls.skippedMessage,
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
@@ -126,11 +128,15 @@ describe("handleAgentSetupState", () => {
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
 
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
     expect(calls.skippedMessage).toHaveBeenCalledWith("openclaw", "my-assistant");
+    expect(calls.controlPlaneReady).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.controlPlaneReady.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.configureOpenclaw.mock.invocationCallOrder[0],
+    );
     expect(calls.recordSkip).toHaveBeenCalledWith("openclaw", {
       reason: "resume",
       sandboxName: "my-assistant",
@@ -170,8 +176,51 @@ describe("handleAgentSetupState", () => {
     });
   });
 
+  it("does not configure a resumed OpenClaw sandbox before its exec relay converges", async () => {
+    const { deps, calls } = createDeps({
+      isOpenclawReady: vi.fn(async () => true),
+      waitForSandboxControlPlaneReady: vi.fn(async () => false),
+    });
+
+    await expect(handleAgentSetupState({ ...baseOptions(deps), resume: true })).rejects.toThrow(
+      "Sandbox 'my-assistant' did not re-register with OpenShell before OpenClaw resume configuration.",
+    );
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("waits for resumed OpenClaw readiness before choosing setup", async () => {
+    let resolveReadiness!: (ready: boolean) => void;
+    const readiness = new Promise<boolean>((resolve) => {
+      resolveReadiness = resolve;
+    });
+    const isOpenclawReady = vi.fn(() => readiness);
+    const { deps, calls } = createDeps({ isOpenclawReady });
+
+    const pending = handleAgentSetupState({ ...baseOptions(deps), resume: true });
+    await vi.waitFor(() => expect(isOpenclawReady).toHaveBeenCalledWith("my-assistant"));
+
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+
+    resolveReadiness(false);
+    await pending;
+
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.startStep).toHaveBeenCalledWith("openclaw", {
+      sandboxName: "my-assistant",
+      provider: "provider",
+      model: "model",
+    });
+    expect(calls.setupOpenclaw).toHaveBeenCalledOnce();
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
   it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
-    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(async () => true) });
     const revalidateSandboxIdentity = vi.fn();
 
     await handleAgentSetupState({
@@ -212,7 +261,7 @@ describe("handleAgentSetupState", () => {
       },
     );
     const { deps, calls } = createDeps({
-      isOpenclawReady: vi.fn(() => true),
+      isOpenclawReady: vi.fn(async () => true),
       configureOpenclawSandbox,
     });
     const revalidationSteps = new Map([
