@@ -270,6 +270,59 @@ pub(crate) fn verify_container(
     Ok(())
 }
 impl Engine {
+    /// Observe application readiness through the Docker provider's current ID.
+    /// Persistent storage validation is separate from disposable compute identity.
+    pub async fn observe_service(
+        &self,
+        spec: &Spec,
+        id: &str,
+    ) -> Result<Option<RuntimeObservation>, Error> {
+        spec.validate_runtime()?;
+        if spec.process.is_none() || id.is_empty() {
+            return Err(Error::State(
+                "service readiness requires a provider container identity",
+            ));
+        }
+        if self.endpoint() != spec.engine() {
+            return Err(Error::Conflict(
+                "service engine differs from its explicit specification",
+            ));
+        }
+        let work = async {
+            let Some(container) = self.container(id).await? else {
+                return Ok(None);
+            };
+            let container_id = container
+                .id
+                .filter(|value| !value.is_empty())
+                .ok_or(ObservationError::Incomplete)?;
+            if container_id != id
+                || container
+                    .name
+                    .as_deref()
+                    .map(|name| name.trim_start_matches('/'))
+                    != Some(spec.name.as_str())
+            {
+                return Err(ObservationError::BindingMismatch.into());
+            }
+            let state = container.state.ok_or(ObservationError::Incomplete)?;
+            Ok(Some(RuntimeObservation {
+                spec: spec.clone(),
+                id: container_id.clone(),
+                container_id,
+                data_path: "/data".into(),
+                running: state.running.ok_or(ObservationError::Incomplete)?,
+                started_at: state
+                    .started_at
+                    .filter(|value| !value.is_empty())
+                    .ok_or(ObservationError::Incomplete)?,
+            }))
+        };
+        tokio::time::timeout(Duration::from_secs(20), work)
+            .await
+            .map_err(|_| ObservationError::Transport)?
+    }
+
     pub async fn observe_runtime(
         &self,
         spec: &Spec,

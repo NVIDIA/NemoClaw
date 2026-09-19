@@ -24,6 +24,100 @@ fn reference() -> (Spec, Value, Value, Value) {
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
     (spec, container, volume, network)
 }
+
+#[tokio::test]
+async fn service_readiness_observes_only_the_provider_container_identity() {
+    let (spec, _, _, _) = reference();
+    let state = Arc::new(Mutex::new((
+        200,
+        json!({"Id":"current-container","Name":format!("/{}",spec.name),
+            "State":{"Running":true,"StartedAt":"2026-09-14T00:00:00Z"}}),
+    )));
+    let shared = state.clone();
+    let fixture = Fixture::start(move |request| {
+        assert_eq!(request.method, "GET", "readiness must never mutate Docker");
+        assert!(
+            matches!(
+                request.path.as_str(),
+                "/containers/current-container/json" | "/containers/replacement-container/json"
+            ),
+            "readiness must not collect unrelated host, image, network, or storage state: {}",
+            request.path
+        );
+        let (status, response) = &*shared.lock().unwrap();
+        Some((*status, serde_json::to_vec(response).unwrap()))
+    })
+    .await;
+    let engine = fixture.engine_for(spec.engine());
+    let observed = engine
+        .observe_service(&spec, "current-container")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.id, "current-container");
+    assert_eq!(observed.container_id, "current-container");
+    assert_eq!(observed.data_path, "/data");
+    assert!(observed.running);
+    assert_eq!(observed.started_at, "2026-09-14T00:00:00Z");
+
+    *state.lock().unwrap() = (404, json!({"message":"absent"}));
+    assert!(
+        engine
+            .observe_service(&spec, "current-container")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // A later explicit provider apply may replace disposable compute. Readiness
+    // accepts the newly recorded ID without requiring an earlier physical ID.
+    *state.lock().unwrap() = (
+        200,
+        json!({"Id":"replacement-container","Name":format!("/{}",spec.name),
+        "State":{"Running":false,"StartedAt":"2026-09-15T00:00:00Z"}}),
+    );
+    let replacement = engine
+        .observe_service(&spec, "replacement-container")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replacement.id, "replacement-container");
+    assert!(!replacement.running);
+    assert!(
+        engine
+            .observe_service(&spec, "current-container")
+            .await
+            .is_err(),
+        "an inspect response must match the requested provider ID"
+    );
+    state.lock().unwrap().1["Name"] = json!("/other-service");
+    assert!(
+        engine
+            .observe_service(&spec, "replacement-container")
+            .await
+            .is_err()
+    );
+    state.lock().unwrap().1["Name"] = json!(format!("/{}", spec.name));
+    for incomplete in [
+        json!({"Running":true}),
+        json!({"StartedAt":"2026-09-15T00:00:00Z"}),
+    ] {
+        state.lock().unwrap().1["State"] = incomplete;
+        assert!(
+            engine
+                .observe_service(&spec, "replacement-container")
+                .await
+                .is_err()
+        );
+    }
+    *state.lock().unwrap() = (503, json!({"message":"unavailable"}));
+    assert!(
+        engine
+            .observe_service(&spec, "replacement-container")
+            .await
+            .is_err()
+    );
+    assert!(engine.observe_service(&spec, "").await.is_err());
+}
 #[tokio::test]
 async fn runtime_observation_preserves_identity_and_fails_closed_on_drift_or_partial_results() {
     let (spec, container, volume, network) = reference();
