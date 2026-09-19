@@ -1014,7 +1014,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `compatibility` | string | Yes | — | best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"` or `"strict"`. |
+| `compatibility` | string | Yes | — | best_effort or hard_requirement. Constraints: `"best_effort"` or `"hard_requirement"`. |
 
 ## PolicyMatcher
 

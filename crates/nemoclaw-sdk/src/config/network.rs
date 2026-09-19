@@ -4,6 +4,7 @@
 // schemas/network-policy.schema.json and src/lib/config/model.ts (Apache-2.0).
 // 2026-09-15: represented the export fields as strict Rust types, added explicit
 // preset selection, and delegated policy semantics to pinned openshell-policy.
+// 2026-09-19: removed the main-branch Landlock spelling translation.
 use super::{ConfigError, Network};
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};
@@ -75,7 +76,7 @@ pub struct PolicyFilesystem {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyLandlock {
-    /// best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement.
+    /// best_effort or hard_requirement.
     pub compatibility: String,
 }
 
@@ -397,18 +398,10 @@ impl ExplicitPolicy {
                 endpoint.validate()?;
             }
         }
-        let mut input = serde_json::to_value(self)
+        let input = serde_json::to_value(self)
             .map_err(|_| ConfigError::new("cannot encode sandbox policy"))?;
-        // Main's exported schema spells strict enforcement differently from the pinned runtime.
-        if input
-            .pointer("/landlock/compatibility")
-            .and_then(|v| v.as_str())
-            == Some("strict")
-        {
-            input["landlock"]["compatibility"] = serde_json::json!("hard_requirement");
-        }
         if self.landlock.as_ref().is_some_and(|l| {
-            !["strict", "best_effort", "hard_requirement"].contains(&l.compatibility.as_str())
+            !["best_effort", "hard_requirement"].contains(&l.compatibility.as_str())
         }) {
             return Err(ConfigError::new("unsupported Landlock compatibility"));
         }

@@ -2180,11 +2180,10 @@
       "description": "Landlock compatibility; hard_requirement refuses unavailable enforcement.",
       "properties": {
         "compatibility": {
-          "description": "best_effort or hard_requirement. The main-branch spelling strict maps to hard_requirement.",
+          "description": "best_effort or hard_requirement.",
           "enum": [
             "best_effort",
-            "hard_requirement",
-            "strict"
+            "hard_requirement"
           ],
           "type": "string"
         }
