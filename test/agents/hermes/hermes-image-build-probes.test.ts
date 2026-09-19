@@ -441,8 +441,8 @@ describe("Hermes image build probes", () => {
     },
   );
 
-  // source-shape-contract: security -- Every executed probe must match the reviewed source digest
-  it("binds every image build probe pin to its source digest", () => {
+  // source-shape-contract: security -- The final image must bind the image-build probes and cron restore controller to their reviewed source digests
+  it("binds the image build probes and cron restore controller to their source digests", () => {
     const imageDockerfile = fs.readFileSync(
       path.join(import.meta.dirname, "../../../agents/hermes/Dockerfile"),
       "utf8",
@@ -452,8 +452,15 @@ describe("Hermes image build probes", () => {
     );
     const digest = createHash("sha256").update(imageBuildProbes).digest("hex");
     const digestBinding = `ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${digest}`;
+    const cronRestoreControl = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/cron-restore-control.py"),
+    );
+    const cronRestoreDigest = createHash("sha256").update(cronRestoreControl).digest("hex");
 
     expect(imageDockerfile).toContain(digestBinding);
+    expect(imageDockerfile).toContain(
+      `ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=${cronRestoreDigest}`,
+    );
     expect(
       Array.from(
         imageDockerfile.matchAll(
