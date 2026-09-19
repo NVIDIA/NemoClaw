@@ -61,9 +61,7 @@ export function isLocalToolDisclosureRoute(provider: string | null | undefined):
 }
 
 /** Local Ollama/vLLM routes default to direct; cloud and llama.cpp keep progressive. */
-export function defaultToolDisclosureForRoute(
-  provider: string | null | undefined,
-): ToolDisclosure {
+export function defaultToolDisclosureForRoute(provider: string | null | undefined): ToolDisclosure {
   return isLocalToolDisclosureRoute(provider) ? "direct" : DEFAULT_TOOL_DISCLOSURE;
 }
 
@@ -114,8 +112,7 @@ export function resolveSandboxToolDisclosure(input: {
   const routeDefault = defaultToolDisclosureForRoute(input.provider);
   // Fresh sessions store progressive before a provider is known. Do not let
   // that placeholder override the local-route default.
-  const sessionChoice =
-    session && session !== DEFAULT_TOOL_DISCLOSURE ? session : undefined;
+  const sessionChoice = session && session !== DEFAULT_TOOL_DISCLOSURE ? session : undefined;
 
   // Reusing a live sandbox must keep the behavior already baked into it.
   if (input.sandboxExists && !input.recreate) {
