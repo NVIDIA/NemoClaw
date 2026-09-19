@@ -147,6 +147,37 @@ describe("destroySandbox managed vLLM retirement", () => {
     expect(harness.pendingVllmRetirement.sandboxName).toBe("alpha");
   });
 
+  it("preserves the registry row when pending retirement cannot be recorded", async () => {
+    const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);
+    harness.recordPendingVllmRetirementSpy.mockImplementation(() => {
+      throw new Error("retirement record write failed");
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      'process.exit unexpectedly called with "1"',
+    );
+
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.pendingVllmRetirement.sandboxName).toBeNull();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("registry entry was preserved"),
+    );
+  });
+
+  it("continues when a failed retirement write left a readable matching record", async () => {
+    const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);
+    harness.recordPendingVllmRetirementSpy.mockImplementation((sandboxName: unknown) => {
+      harness.pendingVllmRetirement.sandboxName = String(sandboxName);
+      throw new Error("retirement record fsync failed");
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retireHostLocalVllmRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.pendingVllmRetirement.sandboxName).toBeNull();
+  });
+
   it("warns and leaves the managed vLLM container in place when its ownership cannot be proven", async () => {
     const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);
     harness.retireHostLocalVllmRuntimeSpy.mockReturnValue({

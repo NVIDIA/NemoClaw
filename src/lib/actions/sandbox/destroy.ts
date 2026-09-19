@@ -21,7 +21,10 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import {
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
+  readPendingHostLocalVllmRetirement,
+} from "../../inference/local-model-profile/cleanup";
 import {
   isLocalOllamaRouteOwner,
   loadPersistedOllamaHost,
@@ -1066,6 +1069,12 @@ async function destroySandboxUnlocked(
       defaultDestroyWarn(
         `Could not record the pending managed vLLM retirement for '${sandboxName}': ${redactDestroyError(error)}. A destroy retry cannot retire the container if this retirement does not complete.`,
       );
+      if (readPendingHostLocalVllmRetirement() !== sandboxName) {
+        console.error(
+          "  The sandbox registry entry was preserved so exact managed vLLM retirement can be retried.",
+        );
+        requestSandboxDestroyExit(1);
+      }
     }
   }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
