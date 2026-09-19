@@ -66,6 +66,20 @@ The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64
 CI's protocol and lifecycle fixtures do not establish local Docker, Podman, GPU, or real model availability on those platforms.
 Report build results separately from runtime test results.
 
+## Runtime Image Loading
+
+On a native Linux host, complete the [runtime image build prerequisites](../build.md#build-a-runtime-image).
+This test builds a uniquely named scratch image without downloading a base image, exports an OCI archive, loads it, and checks access by the exported digest.
+It removes its image tag afterward; Docker's build cache remains.
+Run from the repository root:
+
+```sh
+NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
+```
+
+A failure reports the build, load, or identity check that failed; correct the Docker configuration and rerun.
+It does not start containers, run inference, or publish an image.
+
 ## Runtime Boundaries
 
 Runtime separation has focused checks:

@@ -33,7 +33,6 @@ Export writes YAML to standard output, or to a file with `--output exported.yaml
 `--bundle DIR` selects an explicit private bundle; otherwise the CLI uses the parent of its executable's `bin` directory.
 
 Keep the selected bundle unchanged while an operation runs.
-`--bundle-dir` is an alias for `--bundle`.
 Export and destroy accept no YAML.
 Errors go to stderr with a nonzero exit code.
 
