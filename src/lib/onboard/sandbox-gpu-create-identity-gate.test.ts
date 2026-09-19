@@ -585,10 +585,13 @@ describe("created sandbox identity gate", () => {
     input.gpuRoutePlan = "compatibility-only";
     input.initialGpuRoute = "compatibility";
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
-    input.verifyCreatedSandboxBeforeEffects = vi.fn(async (_identity, beforeEffects) => {
-      events.push("verify-created");
-      await beforeEffects?.();
-    });
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(
+      async (_identity, beforeEffects, afterEffects) => {
+        events.push("verify-created");
+        await beforeEffects?.();
+        await afterEffects?.();
+      },
+    );
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) =>
       events.push(`revalidate:${operation}`),
     );
@@ -637,11 +640,9 @@ describe("created sandbox identity gate", () => {
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       !args.includes("--selector") ? observeList() : observeSelector(),
     );
-
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
     });
-
     expect(events.indexOf("verify-created")).toBeLessThan(events.indexOf("compatibility-cutover"));
     expect(events.indexOf("compatibility-cutover")).toBeLessThan(events.indexOf("create-complete"));
   });

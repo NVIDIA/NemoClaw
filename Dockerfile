@@ -560,15 +560,10 @@ ADD --chmod=0444 --checksum=sha256:ee38f17f533fd500610685a483ae2f413c26f4eb33a51
 ADD --chmod=0444 --checksum=sha256:a4919ab5a32aff4fd6c119c9f187f0dd4b4c490d30c4c4fdaf7c5ff6f38d93f4 https://registry.npmjs.org/zod-to-json-schema/-/zod-to-json-schema-3.25.2.tgz /zod-to-json-schema-3.25.2.tgz
 
 FROM scratch AS openclaw-managed-messaging-npm-common-archives
-# hadolint ignore=DL3067
 COPY --from=openclaw-managed-messaging-npm-common-archives-1 / /
-# hadolint ignore=DL3067
 COPY --from=openclaw-managed-messaging-npm-common-archives-2 / /
-# hadolint ignore=DL3067
 COPY --from=openclaw-managed-messaging-npm-common-archives-3 / /
-# hadolint ignore=DL3067
 COPY --from=openclaw-managed-messaging-npm-common-archives-4 / /
-# hadolint ignore=DL3067
 COPY --from=openclaw-managed-messaging-npm-common-archives-5 / /
 
 # hadolint ignore=DL3006
@@ -736,7 +731,6 @@ ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=
 
 # Preserve existing parent metadata while creating one final-image layer.
-# hadolint ignore=DL3067
 COPY --from=openclaw-dependency-payload / /
 COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
 # Standardize a lagging published base from immutable SHA-256- and SRI-bound bytes.
@@ -873,7 +867,6 @@ RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then
 
 # Copy the grouped plugin and blueprint payload after runtime dependency
 # installation so source-only changes do not invalidate that cache boundary.
-# hadolint ignore=DL3067
 COPY --from=openclaw-plugin-payload / /
 
 # Copy built plugin and blueprint into the sandbox
@@ -895,7 +888,6 @@ RUN test -f /usr/local/bin/node \
 # the committed lock, seeds resolver metadata, and re-packs every archive offline
 # before this root-owned immutable cache enters the final image.
 COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
-# hadolint ignore=DL3067
 COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
@@ -1634,7 +1626,6 @@ ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
-# hadolint ignore=DL3064
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
 ARG NEMOCLAW_REASONING_EFFORT=
@@ -1712,7 +1703,6 @@ ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 # NEMOCLAW_MESSAGING_PLAN_B64 intentionally remains ARG-only: Docker exposes it
 # to build RUN processes without retaining the full plan in the final image env.
 # Direct ARG interpolation into inline source is a code injection vector (C-2).
-# hadolint ignore=DL3064
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
@@ -1777,7 +1767,6 @@ WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
     && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
     && chmod 644 /sandbox/.bashrc /sandbox/.profile
-# hadolint ignore=DL3066
 USER sandbox
 
 # Write openclaw.json with gateway config but WITHOUT the real auth token.
@@ -1903,7 +1892,6 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
 # Keep the reviewed cache root-owned and immutable. Add messaging source after
 # the core install so channel-only changes invalidate only this plugin layer;
 # messaging intentionally stays out of openclaw-runtime-payload.
-# hadolint ignore=DL3066
 USER root
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
@@ -1915,7 +1903,6 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 # when the env plan is absent.
 # hadolint ignore=DL3059
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
-# hadolint ignore=DL3066
 USER sandbox
 
 # Copy the immutable reviewed cache into sandbox-owned temporary storage because
@@ -1954,7 +1941,6 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     trap - EXIT; \
     test ! -e "$install_cache"
 
-# hadolint ignore=DL3066
 USER root
 
 # Copy the full candidate runtime payload after the stable offline plugin
@@ -1964,7 +1950,6 @@ USER root
 # needs to read these files to install Node runtime preloads under /tmp.
 # Channel runtime preloads are authored as TypeScript and compiled in the
 # runtime-preload-builder stage before being flattened by filename for --require.
-# hadolint ignore=DL3067
 COPY --from=openclaw-runtime-payload / /
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
@@ -2043,7 +2028,6 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type f -exec chmod 644 {} +
 
-# hadolint ignore=DL3066
 USER sandbox
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
@@ -2124,7 +2108,7 @@ os.chmod(path, 0o600)"
 # user, so runtime migration cannot rely on root privileges inside the pod.
 # Doing this in the image build guarantees new PR images have only the unified
 # .openclaw layout even when sandbox-base:latest has not been rebuilt yet.
-# hadolint ignore=DL3002,DL3066
+# hadolint ignore=DL3002
 USER root
 # hadolint ignore=DL4006
 RUN set -eu; \
@@ -2490,7 +2474,6 @@ RUN check_metadata() { \
 # accepting the OpenClaw gateway cmdline fallback.  A numeric PID or
 # OpenClaw-looking argv alone is insufficient because either can belong to a
 # recycled process.
-# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \

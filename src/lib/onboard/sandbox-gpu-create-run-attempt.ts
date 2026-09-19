@@ -229,6 +229,7 @@ async function verifyCreatedSandboxBeforeEffects(
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
   beforeEffects?: () => unknown | Promise<unknown>,
+  afterEffects?: () => void | Promise<void>,
 ): Promise<void> {
   if (!input.verifyCreatedSandboxBeforeEffects) return;
   await input.verifyCreatedSandboxBeforeEffects(
@@ -239,7 +240,27 @@ async function verifyCreatedSandboxBeforeEffects(
       route,
     },
     beforeEffects,
+    afterEffects,
   );
+}
+
+function requireCompatibilityLifecycleCommand(
+  action: "start" | "stop",
+  sandboxName: string,
+  deps: SandboxGpuCreateFlowDeps,
+): void {
+  const result = deps.runOpenshell(["sandbox", action, sandboxName], {
+    ignoreError: true,
+    killProcessTreeOnTimeout: true,
+    killSignal: "SIGKILL",
+    suppressOutput: true,
+    timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+  });
+  if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
+    throw new Error(
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.`,
+    );
+  }
 }
 
 function resolveCreateAttemptNonce(
@@ -673,6 +694,7 @@ export function createSandboxGpuCreateAttemptRunner(
         }
         readyCheckCreatedSandboxId = observation.sandboxId;
         if (observation.state === "pending") return;
+        if (!sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName)) return;
         const sandboxId = observation.sandboxId;
         const containers = queryOpenShellDockerSandboxContainers(input.sandboxName);
         if (!containers.ok || containers.ids.length !== 1) return;
@@ -688,9 +710,19 @@ export function createSandboxGpuCreateAttemptRunner(
           input,
           async () => {
             revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
+            requireCompatibilityLifecycleCommand("stop", input.sandboxName, deps);
+            revalidatePostCreateEffect(
+              `confirm stopped compatibility sandbox '${input.sandboxName}'`,
+            );
             await runtimePatch.ensureApplied();
             await runtimePatch.exitOnPatchError();
             return runtimePatch.replacementRuntimeId?.() ?? null;
+          },
+          async () => {
+            revalidatePostCreateEffect(
+              `publish replacement runtime for sandbox '${input.sandboxName}'`,
+            );
+            requireCompatibilityLifecycleCommand("start", input.sandboxName, deps);
           },
         );
         createdSandboxVerified = true;

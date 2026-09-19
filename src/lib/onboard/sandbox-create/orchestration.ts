@@ -1030,6 +1030,7 @@ export async function runSandboxCreateWithIdentityVerification<
     verifyCreatedSandbox: (
       created: Created,
       beforeEffects?: () => unknown | Promise<unknown>,
+      afterEffects?: () => void | Promise<void>,
     ) => Promise<string>,
   ) => Promise<Result>;
   readonly captureCreatedSandboxIdentity: (created: Created) => string;
@@ -1119,6 +1120,7 @@ export async function runSandboxCreateWithIdentityVerification<
   const verifyCreatedSandbox = async (
     created: Created,
     beforeEffects?: () => unknown | Promise<unknown>,
+    afterEffects?: () => void | Promise<void>,
   ): Promise<string> => {
     observedCreatedSandbox = created;
     try {
@@ -1164,6 +1166,7 @@ export async function runSandboxCreateWithIdentityVerification<
         evidence,
         beforeEffectsResult,
       );
+      await afterEffects?.();
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `confirming verified effects for sandbox '${input.sandboxName}'`,
@@ -3014,6 +3017,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     identity.route === "compatibility" ? String(beforeEffectsResult ?? "") : null;
                   if (
                     identity.route === "compatibility" &&
+                    beforeEffectsResult !== undefined &&
                     !/^[a-f0-9]{64}$/u.test(expectedContainerId ?? "")
                   ) {
                     throw new Error(
@@ -3141,7 +3145,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               restoreBackupPath,
               terminalAgent: agentDefs.isTerminalAgent(agent),
               managedImage: preparedSandboxWorkload.source.kind === "managed-image",
-              verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects) => {
+              verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects, afterEffects) => {
                 managedBootstrapCreateFinished = false;
                 managedBootstrapCreateRoute = identity.route;
                 const createAttemptNonce = identity.createAttemptNonce;
@@ -3156,7 +3160,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   activeCompatibilityCreateAuthority = null;
                 }
                 try {
-                  await verifyCreatedSandbox(identity, beforeEffects);
+                  await verifyCreatedSandbox(identity, beforeEffects, afterEffects);
                 } finally {
                   activeCompatibilityCreateAuthority = null;
                 }

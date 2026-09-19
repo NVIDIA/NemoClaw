@@ -228,6 +228,7 @@ export interface SandboxGpuCreateFlowInput {
   verifyCreatedSandboxBeforeEffects?: (
     identity: CreatedSandboxIdentity,
     beforeEffects?: () => unknown | Promise<unknown>,
+    afterEffects?: () => void | Promise<void>,
   ) => void | Promise<void>;
   /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
