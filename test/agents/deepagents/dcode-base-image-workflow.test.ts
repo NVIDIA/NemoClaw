@@ -28,12 +28,12 @@ type CandidateScenario = {
   configArch?: string;
   configSizeAdjustment?: number;
   inspectArch?: string;
-  inspectIdentity?: "config" | "workload";
   inspectId?: string;
   layerSizeAdjustment?: number;
   mutateLayer?: (layerPath: string, root: string) => void;
   sourceDigest?: string;
   sourceMalformed?: boolean;
+  savedConfigDigest?: string;
   sourceSizeAdjustment?: number;
   workloadArch?: string;
   workloadMediaType?: string;
@@ -265,8 +265,6 @@ describe("base-image dependency contracts", () => {
     );
     expect(JSON.stringify(localBuild)).not.toContain("push=true");
     expect(JSON.stringify(localBuild)).not.toContain("cache-to");
-    expect(identity.run).toContain('[ "$local_image_id" != "$config_digest" ]');
-    expect(identity.run).toContain('[ "$local_image_id" != "$workload_digest" ]');
     expect(identity.run).toContain("one provenance-wrapped source index");
     expect(validate.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
     expect(validate.env).toEqual({
@@ -371,7 +369,7 @@ printf '{"containerimage.descriptor":{"digest":"%s","mediaType":"%s"}}\\n' "$FAK
 
   it.each([
     ["a complete amd64 source index", "amd64", {}, 0, ""],
-    ["a complete arm64 source index", "arm64", { inspectIdentity: "workload" }, 0, ""],
+    ["a complete arm64 source index", "arm64", {}, 0, ""],
     [
       "malformed source index JSON",
       "amd64",
@@ -484,11 +482,18 @@ printf '{"containerimage.descriptor":{"digest":"%s","mediaType":"%s"}}\\n' "$FAK
       "config platform does not match the build",
     ],
     [
-      "a loaded image with another config digest",
+      "a loaded image with a non-immutable ID",
       "amd64",
-      { inspectId: `sha256:${"d".repeat(64)}` },
+      { inspectId: "mutable-id" },
       1,
       "Docker candidate does not match its OCI layout",
+    ],
+    [
+      "a loaded image receipt with another config digest",
+      "amd64",
+      { savedConfigDigest: `sha256:${"d".repeat(64)}` },
+      1,
+      "loaded Deep Agents Code image config differs from the validated candidate",
     ],
     [
       "a loaded image reporting another architecture",
@@ -521,21 +526,43 @@ printf '{"containerimage.descriptor":{"digest":"%s","mediaType":"%s"}}\\n' "$FAK
       const outputPath = path.join(temporaryRoot, "github-output");
       const ociLayout = path.join(temporaryRoot, "extracted-source");
       const validationLayout = path.join(temporaryRoot, "validation-layout");
-      const expectedImageId =
-        (scenario as CandidateScenario).inspectId ??
-        ((scenario as CandidateScenario).inspectIdentity === "workload"
-          ? fixture.workloadDigest
-          : fixture.configDigest);
+      const validationImageName = `nemoclaw-dcode-base-candidate-${arch}:latest`;
+      const expectedImageId = (scenario as CandidateScenario).inspectId ?? fixture.configDigest;
+      const savedImageRoot = path.join(temporaryRoot, "saved-image");
+      const savedArchive = path.join(temporaryRoot, "saved-image.tar");
+      fs.mkdirSync(savedImageRoot);
+      fs.writeFileSync(
+        path.join(savedImageRoot, "manifest.json"),
+        JSON.stringify([
+          {
+            Config: `blobs/sha256/${(
+              (scenario as CandidateScenario).savedConfigDigest ?? fixture.configDigest
+            ).slice("sha256:".length)}`,
+            Layers: [`blobs/sha256/${fixture.layerDigest.slice("sha256:".length)}`],
+            RepoTags: [validationImageName],
+          },
+        ]),
+        "utf8",
+      );
+      const savedImage = spawnSync(
+        "tar",
+        ["-cf", savedArchive, "-C", savedImageRoot, "manifest.json"],
+        { encoding: "utf8" },
+      );
+      expect(savedImage.status, savedImage.stderr).toBe(0);
       fs.writeFileSync(
         dockerPath,
         `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$FAKE_DOCKER_ARGUMENTS"
-case "$1" in
-  load)
+case "$1 \${2:-}" in
+  "load ")
     cat > "$FAKE_DOCKER_ARCHIVE"
     ;;
-  image)
+  "image save")
+    cat "$FAKE_DOCKER_SAVE_ARCHIVE"
+    ;;
+  "image inspect")
     printf '%s linux %s\\n' "$FAKE_IMAGE_ID" "$FAKE_IMAGE_ARCH"
     ;;
   *)
@@ -553,6 +580,7 @@ esac
             ARCH: arch,
             FAKE_DOCKER_ARCHIVE: loadedArchive,
             FAKE_DOCKER_ARGUMENTS: argumentsPath,
+            FAKE_DOCKER_SAVE_ARCHIVE: savedArchive,
             FAKE_IMAGE_ARCH: (scenario as CandidateScenario).inspectArch ?? arch,
             FAKE_IMAGE_ID: expectedImageId,
             GITHUB_OUTPUT: outputPath,
@@ -573,33 +601,29 @@ esac
                 encoding: "utf8",
               });
               expect(unpack.status, unpack.stderr).toBe(0);
-              const loadedIndex = JSON.parse(
-                fs.readFileSync(path.join(loadedLayout, "index.json"), "utf8"),
-              );
-              expect(loadedIndex).toEqual({
-                manifests: [
-                  {
-                    ...fixture.workloadDescriptor,
-                    annotations: {
-                      "io.containerd.image.name": `docker.io/library/nemoclaw-dcode-base-candidate-${arch}:latest`,
-                      "org.opencontainers.image.ref.name": "latest",
-                    },
-                  },
-                ],
-                mediaType: "application/vnd.oci.image.index.v1+json",
-                schemaVersion: 2,
-              });
+              expect(
+                JSON.parse(fs.readFileSync(path.join(loadedLayout, "manifest.json"), "utf8")),
+              ).toEqual([
+                {
+                  Config: `blobs/sha256/${fixture.configDigest.slice("sha256:".length)}`,
+                  Layers: [`blobs/sha256/${fixture.layerDigest.slice("sha256:".length)}`],
+                  RepoTags: [validationImageName],
+                },
+              ]);
               expect(fs.readdirSync(path.join(loadedLayout, "blobs", "sha256")).sort()).toEqual(
-                [fixture.configDigest, fixture.layerDigest, fixture.workloadDigest]
+                [fixture.configDigest, fixture.layerDigest]
                   .map((digest) => digest.slice("sha256:".length))
                   .sort(),
               );
+              expect(fs.existsSync(path.join(loadedLayout, "index.json"))).toBe(false);
+              expect(fs.existsSync(path.join(loadedLayout, "oci-layout"))).toBe(false);
               expect(fs.readFileSync(outputPath, "utf8")).toBe(
                 `digest=${fixture.sourceDigest}\nreference=${expectedImageId}\n`,
               );
               expect(fs.readFileSync(argumentsPath, "utf8").trim().split("\n")).toEqual([
                 "load",
-                `image inspect --format {{.Id}} {{.Os}} {{.Architecture}} docker.io/library/nemoclaw-dcode-base-candidate-${arch}:latest`,
+                `image save ${validationImageName}`,
+                `image inspect --format {{.Id}} {{.Os}} {{.Architecture}} ${validationImageName}`,
               ]);
             })()
           : undefined;

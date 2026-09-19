@@ -259,38 +259,7 @@ runs:
           exit 1
         fi
         install -d -m 0700 "$VALIDATION_LAYOUT/blobs/sha256"
-        printf '{"imageLayoutVersion":"1.0.0"}\n' > "$VALIDATION_LAYOUT/oci-layout"
-        validation_image_name="docker.io/library/nemoclaw-dcode-base-candidate-${ARCH}:latest"
-        validation_descriptor="$(
-          jq -cn \
-            --arg image_name "$validation_image_name" \
-            --argjson workload "$workload_descriptor" '
-              $workload + {
-                annotations: (($workload.annotations // {}) + {
-                  "io.containerd.image.name": $image_name,
-                  "org.opencontainers.image.ref.name": "latest"
-                })
-              }
-            '
-        )"
-        jq -cn --argjson workload "$validation_descriptor" '
-          {
-            schemaVersion: 2,
-            mediaType: "application/vnd.oci.image.index.v1+json",
-            manifests: [$workload]
-          }
-        ' > "$VALIDATION_LAYOUT/index.json"
-        if ! jq -e --argjson workload "$validation_descriptor" '
-          .schemaVersion == 2
-          and .mediaType == "application/vnd.oci.image.index.v1+json"
-          and .manifests == [$workload]
-        ' "$VALIDATION_LAYOUT/index.json" >/dev/null; then
-          echo "ERROR: Deep Agents Code local validation index does not match the workload." >&2
-          exit 1
-        fi
-        cp -Pl -- \
-          "$workload_manifest" \
-          "$VALIDATION_LAYOUT/blobs/sha256/${workload_digest#sha256:}"
+        validation_image_name="nemoclaw-dcode-base-candidate-${ARCH}:latest"
 
         link_runtime_blob() {
           local descriptor="$1"
@@ -323,9 +292,18 @@ runs:
         config_descriptor="$(jq -cer '.config' "$workload_manifest")"
         config_digest="$(jq -r '.digest' <<<"$config_descriptor")"
         link_runtime_blob "$config_descriptor"
+        layer_paths='[]'
         mapfile -t layer_descriptors < <(jq -cer '.layers[]' "$workload_manifest")
         for layer_descriptor in "${layer_descriptors[@]}"; do
           link_runtime_blob "$layer_descriptor"
+          layer_digest="$(jq -r '.digest' <<<"$layer_descriptor")"
+          layer_path="blobs/sha256/${layer_digest#sha256:}"
+          layer_paths="$(
+            jq -cn \
+              --argjson paths "$layer_paths" \
+              --arg path "$layer_path" \
+              '$paths + [$path]'
+          )"
         done
         config_blob="$OCI_LAYOUT/blobs/sha256/${config_digest#sha256:}"
         if ! jq -e --arg arch "$ARCH" \
@@ -335,14 +313,58 @@ runs:
           exit 1
         fi
 
-        tar --create --file=- --directory "$VALIDATION_LAYOUT" . | docker load >/dev/null
+        config_path="blobs/sha256/${config_digest#sha256:}"
+        jq -cn \
+          --arg config "$config_path" \
+          --arg tag "$validation_image_name" \
+          --argjson layers "$layer_paths" \
+          '[{Config: $config, RepoTags: [$tag], Layers: $layers}]' \
+          > "$VALIDATION_LAYOUT/manifest.json"
+        if ! jq -e \
+          --arg config "$config_path" \
+          --arg tag "$validation_image_name" \
+          --argjson layers "$layer_paths" '
+            type == "array"
+            and length == 1
+            and .[0] == {Config: $config, RepoTags: [$tag], Layers: $layers}
+          ' "$VALIDATION_LAYOUT/manifest.json" >/dev/null; then
+          echo "ERROR: Deep Agents Code Docker-save manifest does not match the workload." >&2
+          exit 1
+        fi
+
+        tar --create --file=- --directory "$VALIDATION_LAYOUT" manifest.json blobs \
+          | docker load >/dev/null
+        loaded_manifest="$(
+          docker image save "$validation_image_name" \
+            | tar --extract --to-stdout --file=- manifest.json
+        )"
+        loaded_config_path="$(
+          jq -er --arg tag "$validation_image_name" '
+            if type == "array"
+              and length == 1
+              and (.[0].RepoTags | type == "array" and index($tag) != null)
+              and (.[0].Config | type == "string")
+            then .[0].Config
+            else error("invalid Docker-save receipt")
+            end
+          ' <<<"$loaded_manifest"
+        )"
+        if [[ ! "$loaded_config_path" =~ ^([0-9a-f]{64}[.]json|blobs/sha256/[0-9a-f]{64})$ ]]; then
+          echo "ERROR: loaded Deep Agents Code image returned an invalid config receipt." >&2
+          exit 1
+        fi
+        loaded_config_name="${loaded_config_path##*/}"
+        loaded_config_digest="sha256:${loaded_config_name%.json}"
+        if [ "$loaded_config_digest" != "$config_digest" ]; then
+          echo "ERROR: loaded Deep Agents Code image config differs from the validated candidate." >&2
+          exit 1
+        fi
         read -r local_image_id local_os local_arch < <(
           docker image inspect \
             --format '{{.Id}} {{.Os}} {{.Architecture}}' \
             "$validation_image_name"
         )
-        if { [ "$local_image_id" != "$config_digest" ] && \
-          [ "$local_image_id" != "$workload_digest" ]; } || \
+        if [[ ! "$local_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || \
           [ "$local_os" != "linux" ] || [ "$local_arch" != "$ARCH" ]; then
           echo "ERROR: Deep Agents Code Docker candidate does not match its OCI layout." >&2
           exit 1
