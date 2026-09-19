@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{
-    super::vllm::{MemoryArchitecture, ServiceHardware},
-    ManagedOllama,
-};
+use super::{super::vllm::MemoryArchitecture, ManagedOllama};
 use crate::{
     Error,
-    hardware::{Capacity, GIB},
+    hardware::{Capacity, GIB, at_least},
 };
 
 pub(crate) fn check_capacity(
@@ -41,27 +38,31 @@ pub fn check_memory(
             .as_ref()
             .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
         let budget = budget(service, capacity)?;
-        if budget > gpu.total || (starting && budget > gpu.free) {
-            return Err(Error::Conflict(
-                "insufficient dedicated GPU memory for the Ollama serving budget",
-            ));
+        at_least("GPU total memory (bytes)", budget, gpu.total)?;
+        if starting {
+            at_least("GPU free memory (bytes)", budget, gpu.free)?;
         }
-        if capacity.total < reserve || (starting && capacity.available < reserve + 20 * GIB) {
-            return Err(Error::Conflict(
-                "insufficient host memory reserve and Ollama startup headroom",
-            ));
+        at_least("host total memory (bytes)", reserve, capacity.total)?;
+        if starting {
+            at_least(
+                "host available memory (bytes)",
+                reserve + 20 * GIB,
+                capacity.available,
+            )?;
         }
     } else {
         let budget = service.gpu_bytes()?;
-        if budget + reserve > capacity.total {
-            return Err(Error::Conflict(
-                "Ollama GPU budget leaves less than the declared host memory reserve",
-            ));
-        }
-        if starting && capacity.available < budget + 20 * GIB {
-            return Err(Error::Conflict(
-                "insufficient Ollama startup memory headroom; service was not started",
-            ));
+        at_least(
+            "host total memory (bytes)",
+            budget + reserve,
+            capacity.total,
+        )?;
+        if starting {
+            at_least(
+                "host available memory (bytes)",
+                budget + 20 * GIB,
+                capacity.available,
+            )?;
         }
     }
     Ok(())
@@ -99,32 +100,8 @@ fn check_compatibility(service: &ManagedOllama, capacity: &Capacity) -> Result<(
     if !(10..=999).contains(&capacity.compute_capability) {
         return Err(Error::State("GPU compute capability is unobservable"));
     }
-    if let Some(ServiceHardware::Profile { profile, .. }) = &service.hardware
-        && (!profile.matches_gpu(&capacity.gpu)
-            || capacity.compute_capability < profile.compute_capability()
-            || capacity.architecture != service.architecture()?
-            || capacity.driver_major < 580
-            || capacity.total < profile.min_host_memory_bytes())
-    {
-        return Err(Error::Conflict(
-            "execution host does not satisfy the declared Ollama hardware profile",
-        ));
-    }
-    if let Some(required) = service.dedicated_hardware() {
-        let gpu = capacity
-            .gpu_memory
-            .as_ref()
-            .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-        if capacity.architecture != required.architecture
-            || capacity.driver_major < required.min_driver_major
-            || capacity.compute_capability < required.min_compute_capability
-            || gpu.total < required.min_gpu_memory_bytes
-            || gpu.free > gpu.total
-        {
-            return Err(Error::Conflict(
-                "execution host does not satisfy dedicated Ollama GPU requirements",
-            ));
-        }
+    if let Some(hardware) = &service.hardware {
+        hardware.check_compatibility(capacity)?;
     }
     Ok(())
 }

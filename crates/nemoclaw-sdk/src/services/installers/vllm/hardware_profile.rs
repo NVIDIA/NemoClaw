@@ -84,9 +84,9 @@ impl HardwareProfile {
         }
     }
 
-    pub(crate) fn matches_gpu(self, observed: &str) -> bool {
-        let family = match self {
-            Self::DgxSpark => return observed == "NVIDIA GB10",
+    pub(crate) fn gpu_family(self) -> &'static str {
+        match self {
+            Self::DgxSpark => "NVIDIA GB10",
             Self::DgxStation | Self::Gb300 => "GB300",
             Self::Gb200 => "GB200",
             Self::Gh200 => "GH200",
@@ -105,12 +105,18 @@ impl HardwareProfile {
             Self::Rtx3090 => "GeForce RTX 3090",
             Self::Rtx4090 => "GeForce RTX 4090",
             Self::Rtx5090 => "GeForce RTX 5090",
-        };
+        }
+    }
+
+    pub(crate) fn matches_gpu(self, observed: &str) -> bool {
+        if self == Self::DgxSpark {
+            return observed == self.gpu_family();
+        }
         let name = observed
             .strip_prefix("NVIDIA ")
             .or_else(|| observed.strip_prefix("Tesla "))
             .unwrap_or(observed);
-        name.strip_prefix(family)
+        name.strip_prefix(self.gpu_family())
             .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with([' ', '-']))
     }
 }

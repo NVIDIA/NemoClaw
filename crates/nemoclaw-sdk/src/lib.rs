@@ -70,20 +70,24 @@ pub enum ObservationError {
     BindingMismatch,
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
+    Hardware(crate::hardware::HardwareDiagnostic),
 }
 
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Backend(message) => message,
-            Self::Authentication => "observation authentication failed",
-            Self::Permission => "observation permission denied",
-            Self::Transport => "observation transport failed",
-            Self::Query => "observation query failed",
-            Self::Extension => "observation extension failed",
-            Self::Incomplete => "observation is incomplete",
-            Self::BindingMismatch => "observed ownership, generation, or durable identity changed",
-        })
+        match self {
+            Self::Hardware(diagnostic) => diagnostic.fmt(f),
+            Self::Backend(message) => f.write_str(message),
+            Self::Authentication => f.write_str("observation authentication failed"),
+            Self::Permission => f.write_str("observation permission denied"),
+            Self::Transport => f.write_str("observation transport failed"),
+            Self::Query => f.write_str("observation query failed"),
+            Self::Extension => f.write_str("observation extension failed"),
+            Self::Incomplete => f.write_str("observation is incomplete"),
+            Self::BindingMismatch => {
+                f.write_str("observed ownership, generation, or durable identity changed")
+            }
+        }
     }
 }
 

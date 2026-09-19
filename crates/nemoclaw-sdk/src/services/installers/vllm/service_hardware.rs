@@ -27,6 +27,69 @@ pub enum ServiceHardware {
 }
 
 impl ServiceHardware {
+    pub(crate) fn check_compatibility(
+        &self,
+        capacity: &crate::hardware::Capacity,
+    ) -> Result<(), crate::Error> {
+        use crate::hardware::{GIB, HardwareDiagnostic, architecture, at_least};
+        architecture(self.architecture()?, &capacity.architecture)?;
+        let (compute, driver, memory) = match self {
+            Self::Dedicated(required) => (
+                required.min_compute_capability,
+                required.min_driver_major,
+                Some(required.min_gpu_memory_bytes),
+            ),
+            Self::Profile {
+                profile,
+                min_gpu_memory_bytes,
+                ..
+            } => {
+                if !profile.matches_gpu(&capacity.gpu) {
+                    return Err(
+                        crate::ObservationError::Hardware(HardwareDiagnostic::Mismatch {
+                            field: "hardware.profile",
+                            required: profile.gpu_family(),
+                            observed: "different GPU family",
+                        })
+                        .into(),
+                    );
+                }
+                at_least(
+                    "host total memory (bytes)",
+                    profile.min_host_memory_bytes(),
+                    capacity.total,
+                )?;
+                (
+                    profile.compute_capability(),
+                    580,
+                    (profile.memory_architecture() == MemoryArchitecture::Dedicated)
+                        .then_some(min_gpu_memory_bytes.unwrap_or(4 * GIB)),
+                )
+            }
+        };
+        at_least(
+            "hardware.minComputeCapability",
+            compute.into(),
+            capacity.compute_capability.into(),
+        )?;
+        at_least(
+            "hardware.minDriverMajor",
+            driver.into(),
+            capacity.driver_major.into(),
+        )?;
+        if let Some(required) = memory {
+            let gpu = capacity
+                .gpu_memory
+                .as_ref()
+                .ok_or(crate::Error::State("dedicated GPU memory is unobservable"))?;
+            if gpu.free > gpu.total {
+                return Err(crate::Error::State("GPU free memory exceeds total memory"));
+            }
+            at_least("hardware.minGpuMemoryBytes", required, gpu.total)?;
+        }
+        Ok(())
+    }
+
     pub fn architecture(&self) -> Result<&str, ConfigError> {
         match self {
             Self::Dedicated(hardware) => Ok(&hardware.architecture),

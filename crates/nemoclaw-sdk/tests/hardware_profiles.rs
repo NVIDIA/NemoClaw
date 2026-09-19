@@ -18,6 +18,77 @@ fn input(hardware: Value) -> Value {
 }
 
 #[test]
+fn hardware_failures_report_the_requirement_and_observation() {
+    let value = input(json!({"profile":"h100", "architecture":"amd64"}));
+    let doc = Document::parse(value.to_string().as_bytes()).unwrap();
+    let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
+        panic!("expected vllm")
+    };
+    let capacity = Capacity {
+        architecture: "amd64".into(),
+        gpu: "NVIDIA H100 80GB HBM3".into(),
+        driver_major: 610,
+        compute_capability: 90,
+        total: 512 * GIB,
+        available: 400 * GIB,
+        disk_free: 500 * GIB,
+        gpu_memory: Some(GpuMemory {
+            total: 80 * GIB,
+            free: 70 * GIB,
+        }),
+        ..Default::default()
+    };
+    let mut old_driver = capacity.clone();
+    old_driver.driver_major = 570;
+    let error = check_capacity(service, &old_driver, true, 0, 0).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "hardware.minDriverMajor requires at least 580; observed 570"
+    );
+    let mut ollama_document: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama-gpu.yaml")).unwrap();
+    ollama_document["spec"]["services"]["qwen"]["hardware"] =
+        json!({"profile":"h100", "architecture":"amd64"});
+    let ollama_document = Document::parse(ollama_document.to_string().as_bytes()).unwrap();
+    let ServiceDefinition::Ollama(ollama) = &ollama_document.spec.services["qwen"] else {
+        panic!("expected Ollama")
+    };
+    let ollama_error = nemoclaw_sdk::services::installers::ollama::hardware_capacity::check_memory(
+        ollama,
+        &old_driver,
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(ollama_error.to_string(), error.to_string());
+    let mut old_compute = capacity.clone();
+    old_compute.compute_capability = 89;
+    assert_eq!(
+        check_capacity(service, &old_compute, true, 0, 0)
+            .unwrap_err()
+            .to_string(),
+        "hardware.minComputeCapability requires at least 90; observed 89"
+    );
+    let mut wrong_architecture = capacity.clone();
+    wrong_architecture.architecture = "arm64".into();
+    assert_eq!(
+        check_capacity(service, &wrong_architecture, true, 0, 0)
+            .unwrap_err()
+            .to_string(),
+        "hardware.architecture requires amd64; observed arm64"
+    );
+    let mut low_memory = capacity;
+    low_memory.gpu_memory.as_mut().unwrap().free = GIB;
+    let detail = check_capacity(service, &low_memory, true, 0, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        detail.contains("GPU free memory (bytes) requires at least"),
+        "{detail}"
+    );
+    assert!(detail.contains(&format!("observed {GIB}")), "{detail}");
+}
+
+#[test]
 fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for (profile, gpu, cc, fixed_architecture) in [
