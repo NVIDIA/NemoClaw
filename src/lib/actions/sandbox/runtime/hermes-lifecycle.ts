@@ -5,7 +5,39 @@ import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier"
 import type { MessagingOpenShellRunner } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import * as processRecovery from "../process-recovery";
-import { restartHermesSandboxThroughOpenShell } from "./hermes-sandbox-lifecycle";
+import { withSandboxLifecycleLock } from "../lifecycle/lock";
+import {
+  createHermesSandboxIdentityRevalidator,
+  restartHermesSandboxThroughOpenShell,
+} from "./hermes-sandbox-lifecycle";
+
+export function createRegisteredHermesSandboxIdentityRevalidator(input: {
+  readonly sandboxName: string;
+  readonly getSandbox: Parameters<typeof createHermesSandboxIdentityRevalidator>[0]["getSandbox"];
+  readonly observeSandbox: (
+    sandboxName: string,
+    gatewayName: string,
+  ) => { readonly liveIdentityFingerprint: string | null };
+}): (operation: string) => void {
+  return createHermesSandboxIdentityRevalidator({
+    sandboxName: input.sandboxName,
+    getSandbox: input.getSandbox,
+    inspectLiveIdentity: (sandboxName, gatewayName) => {
+      const fingerprint = input.observeSandbox(sandboxName, gatewayName).liveIdentityFingerprint;
+      if (typeof fingerprint !== "string") {
+        throw new Error(`Sandbox '${sandboxName}' has no verifiable live identity.`);
+      }
+      return fingerprint;
+    },
+  });
+}
+
+export async function withHermesCredentialEnvReconciliationLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return await withSandboxLifecycleLock(sandboxName, operation);
+}
 
 export function createHermesCredentialEnvReconciliationRuntime(
   runOpenshell: MessagingOpenShellRunner,

@@ -4,7 +4,11 @@
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
-import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
+import {
+  createHermesCredentialEnvReconciliationRuntime,
+  createRegisteredHermesSandboxIdentityRevalidator,
+  withHermesCredentialEnvReconciliationLock,
+} from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import {
@@ -3291,17 +3295,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             return registration;
           },
           () =>
-            reconcileCreatedHermesCredentialEnvironment(
-              {
+            withHermesCredentialEnvReconciliationLock(sandboxName, () => {
+              const revalidateRegisteredSandbox = createRegisteredHermesSandboxIdentityRevalidator({
                 sandboxName,
-                plan: plannedMessagingState?.plan ?? null,
-              },
-              createHermesCredentialEnvReconciliationRuntime(
-                (args, options) => runOpenshell([...args], options),
-                (operation) => revalidateSandboxIdentity(true, operation),
-              ),
-              () => recordPostCreateRecovery("onboarding finalization"),
-            ),
+                getSandbox: registry.getSandbox,
+                observeSandbox: getSandboxRecreateObservation,
+              });
+              return reconcileCreatedHermesCredentialEnvironment(
+                {
+                  sandboxName,
+                  plan: plannedMessagingState?.plan ?? null,
+                },
+                createHermesCredentialEnvReconciliationRuntime(
+                  (args, options) => runOpenshell([...args], options),
+                  revalidateRegisteredSandbox,
+                ),
+                () => recordPostCreateRecovery("onboarding finalization"),
+              );
+            }),
         );
       } finally {
         cleanupInitialCreateSource();
