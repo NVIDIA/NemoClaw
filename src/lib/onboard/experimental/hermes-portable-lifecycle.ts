@@ -675,6 +675,14 @@ class IncompleteOpenShellIdentityError extends Error {
   }
 }
 
+/** The receipt-bound gateway could not answer an identity observation. */
+export class HermesPortableGatewayUnavailableError extends Error {
+  constructor() {
+    super("Hermes portable lifecycle cannot prove the selected gateway reachable");
+    this.name = "HermesPortableGatewayUnavailableError";
+  }
+}
+
 function defaultSleep(milliseconds: number): void {
   if (milliseconds > 0) Atomics.wait(SLEEP_BUFFER, 0, 0, milliseconds);
 }
@@ -873,7 +881,7 @@ function observeOpenShellIdentity(
     ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
     COMMAND_TIMEOUT_MS,
   );
-  if (gateway.status !== 0 || gateway.error) fail("cannot prove the selected gateway reachable");
+  if (gateway.status !== 0 || gateway.error) throw new HermesPortableGatewayUnavailableError();
   const listed = observeOpenShellSandboxIdentity(receipt.sandboxName, {
     status: gateway.status,
     stdout: commandOutput(gateway.stdout, "sandbox list output"),

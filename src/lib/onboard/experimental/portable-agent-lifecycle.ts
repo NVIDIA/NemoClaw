@@ -11,6 +11,7 @@ import {
   assertHermesPortableSandboxLifecycleAuthority,
   buildHermesPortableOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv,
+  HermesPortableGatewayUnavailableError,
   recoverHermesPortableSandboxLifecycle,
   requalifyHermesPortableSandboxAuthority,
   retainRequalifiedOperatingAuthority,
@@ -39,6 +40,13 @@ import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 export { defaultPortableDemoStateDir };
+
+/** Whether Hermes lifecycle failed only because its exact gateway was unavailable. */
+export function isHermesPortableGatewayUnavailableError(
+  error: unknown,
+): error is HermesPortableGatewayUnavailableError {
+  return error instanceof HermesPortableGatewayUnavailableError;
+}
 
 /** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
 export function hermesPortableLifecycleLockOptions(

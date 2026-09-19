@@ -27,7 +27,9 @@ import {
   getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
+  getPersistedSandboxTargetRuntimeSelection,
   getSandboxTargetGatewayName,
+  isKnownSandboxTargetCurrent,
 } from "./gateway-target";
 
 const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
@@ -79,6 +81,7 @@ import {
   defaultPortableDemoStateDir,
   hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
+  isHermesPortableGatewayUnavailableError,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
   qualifyHermesPortableOperatingCommandAuthority,
@@ -231,13 +234,14 @@ export async function recoverPortableDemoSandboxLifecycleForConnect(
   currentnessTiming?: HermesPortableCurrentnessTiming,
   inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
 ): Promise<PortableDemoLifecycleRecoveryResult> {
+  let retainedCommandAuthority = commandAuthority;
   const capture = (args: readonly string[], timeoutMs: number) => {
-    commandAuthority?.assertTransactionCurrent();
+    retainedCommandAuthority?.assertTransactionCurrent();
     try {
-      const result = commandAuthority
+      const result = retainedCommandAuthority
         ? captureResolvedOpenshell([...args], {
-            env: commandAuthority.env,
-            openshellBinary: commandAuthority.executablePath,
+            env: retainedCommandAuthority.env,
+            openshellBinary: retainedCommandAuthority.executablePath,
             replaceEnv: true,
             ignoreError: true,
             includeStreams: true,
@@ -255,12 +259,12 @@ export async function recoverPortableDemoSandboxLifecycleForConnect(
         error: result.error,
       };
     } finally {
-      commandAuthority?.assertTransactionCurrent();
+      retainedCommandAuthority?.assertTransactionCurrent();
     }
   };
-  commandAuthority?.assertCurrent();
-  try {
-    return await recoverPortableAgentSandboxLifecycle(
+  const recoverPortableLifecycle = () => {
+    const activeCommandAuthority = retainedCommandAuthority;
+    return recoverPortableAgentSandboxLifecycle(
       sandboxName,
       {
         agent: sandbox?.agent,
@@ -276,13 +280,13 @@ export async function recoverPortableDemoSandboxLifecycleForConnect(
                 compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
             }
           : {}),
-        openshellBinary: commandAuthority?.executablePath ?? getOpenshellBinary(),
-        ...(commandAuthority
+        openshellBinary: activeCommandAuthority?.executablePath ?? getOpenshellBinary(),
+        ...(activeCommandAuthority
           ? {
-              env: commandAuthority.env,
+              env: activeCommandAuthority.env,
               assertOpenShellExecutableAuthority: () => {
-                commandAuthority.assertCurrent();
-                return commandAuthority.executablePath;
+                activeCommandAuthority.assertCurrent();
+                return activeCommandAuthority.executablePath;
               },
             }
           : {}),
@@ -293,8 +297,46 @@ export async function recoverPortableDemoSandboxLifecycleForConnect(
         ...(inspectionTiming ? { inspectionTiming } : {}),
       },
     );
+  };
+  retainedCommandAuthority?.assertCurrent();
+  try {
+    try {
+      return await recoverPortableLifecycle();
+    } catch (error) {
+      if (!isHermesPortableGatewayUnavailableError(error) || sandbox?.agent !== "hermes") {
+        throw error;
+      }
+
+      const expectedRegistryEntry = structuredClone(sandbox);
+      const gatewayAuthority =
+        retainedCommandAuthority ?? qualifyHermesPortableOperatingCommandAuthority(sandboxName);
+      retainedCommandAuthority = gatewayAuthority;
+      const assertExactTargetCurrent = () => {
+        gatewayAuthority.assertCurrent();
+        const current = getKnownSandboxTarget(sandboxName);
+        if (
+          !current ||
+          !isKnownSandboxTargetCurrent(sandboxName, expectedRegistryEntry) ||
+          getPersistedSandboxTargetGatewayName(current) !== gatewayName
+        ) {
+          throw new Error("Hermes portable registry authority changed during gateway recovery");
+        }
+      };
+
+      assertExactTargetCurrent();
+      const gatewayRecovery = await recoverNamedGatewayRuntime({
+        authorizeExactTargetTransportRecovery: true,
+        gatewayName,
+        runtimeSelection: getPersistedSandboxTargetRuntimeSelection(expectedRegistryEntry),
+      });
+      assertExactTargetCurrent();
+      if (!gatewayRecovery.recovered || gatewayRecovery.after.state !== "healthy_named") {
+        throw new Error("Hermes portable receipt-bound gateway could not be recovered");
+      }
+      return await recoverPortableLifecycle();
+    }
   } finally {
-    commandAuthority?.assertCurrent();
+    retainedCommandAuthority?.assertCurrent();
   }
 }
 

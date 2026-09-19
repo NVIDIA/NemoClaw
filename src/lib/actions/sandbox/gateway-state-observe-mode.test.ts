@@ -7,7 +7,9 @@ import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
+import { HermesPortableGatewayUnavailableError } from "../../onboard/experimental/hermes-portable-lifecycle";
 import * as registry from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry/types";
 import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as gatewaySelect from "./gateway-select";
 import {
@@ -282,5 +284,132 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       ),
     ).rejects.toThrow("transaction authority changed");
     expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers the exact receipt-bound gateway once before retrying Hermes lifecycle", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+    } satisfies SandboxEntry;
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry,
+      gatewayPort: 8090,
+      registryFile: "/test/sandboxes.json",
+    });
+    const recoverLifecycle = vi
+      .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
+      .mockRejectedValueOnce(new HermesPortableGatewayUnavailableError())
+      .mockResolvedValueOnce({ kind: "recovered" });
+    const recoverGateway = vi
+      .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+      .mockResolvedValue({
+        recovered: true,
+        attempted: true,
+        via: "start",
+        after: { state: "healthy_named" },
+      } as never);
+    const assertCurrent = vi.fn();
+    const assertTransactionCurrent = vi.fn();
+
+    await expect(
+      recoverPortableDemoSandboxLifecycleForConnect("alpha", entry, "nemoclaw-8090", {
+        assertCurrent,
+        assertTransactionCurrent,
+        receipt: {} as never,
+        env: { HOME: "/home/test" },
+        executablePath: "/usr/bin/openshell",
+      }),
+    ).resolves.toEqual({ kind: "recovered" });
+
+    expect(recoverLifecycle).toHaveBeenCalledTimes(2);
+    expect(recoverGateway).toHaveBeenCalledWith({
+      authorizeExactTargetTransportRecovery: true,
+      gatewayName: "nemoclaw-8090",
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+    });
+    expect(assertCurrent).toHaveBeenCalledTimes(4);
+    expect(assertTransactionCurrent).not.toHaveBeenCalled();
+  });
+
+  it("does not retry Hermes lifecycle when exact gateway recovery is unproved", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+    } satisfies SandboxEntry;
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry,
+      gatewayPort: 8090,
+      registryFile: "/test/sandboxes.json",
+    });
+    const recoverLifecycle = vi
+      .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
+      .mockRejectedValueOnce(new HermesPortableGatewayUnavailableError());
+    vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      after: { state: "observation_failed" },
+    } as never);
+
+    await expect(
+      recoverPortableDemoSandboxLifecycleForConnect("alpha", entry, "nemoclaw-8090", {
+        assertCurrent: vi.fn(),
+        assertTransactionCurrent: vi.fn(),
+        receipt: {} as never,
+        env: { HOME: "/home/test" },
+        executablePath: "/usr/bin/openshell",
+      }),
+    ).rejects.toThrow("receipt-bound gateway could not be recovered");
+    expect(recoverLifecycle).toHaveBeenCalledOnce();
+  });
+
+  it("rejects registry drift after receipt-bound gateway recovery", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+    } satisfies SandboxEntry;
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry,
+      gatewayPort: 8090,
+      registryFile: "/test/sandboxes.json",
+    });
+    const recoverLifecycle = vi
+      .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
+      .mockRejectedValueOnce(new HermesPortableGatewayUnavailableError());
+    vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(async () => {
+      vi.mocked(crossPortRegistry.findSandboxAcrossGatewayRoots).mockReturnValue({
+        entry: { ...entry, lifecycleGeneration: "generation-2" },
+        gatewayPort: 8090,
+        registryFile: "/test/sandboxes.json",
+      });
+      return {
+        recovered: true,
+        attempted: true,
+        via: "start",
+        after: { state: "healthy_named" },
+      } as never;
+    });
+
+    await expect(
+      recoverPortableDemoSandboxLifecycleForConnect("alpha", entry, "nemoclaw-8090", {
+        assertCurrent: vi.fn(),
+        assertTransactionCurrent: vi.fn(),
+        receipt: {} as never,
+        env: { HOME: "/home/test" },
+        executablePath: "/usr/bin/openshell",
+      }),
+    ).rejects.toThrow("registry authority changed during gateway recovery");
+    expect(recoverLifecycle).toHaveBeenCalledOnce();
   });
 });
