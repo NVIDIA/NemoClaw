@@ -110,3 +110,19 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
     assert!(!schema.block.attributes.contains_key("ollama_engine"));
     assert!(diagnostics.errors.is_empty());
 }
+
+#[test]
+fn gateway_storage_exports_its_verified_mountpoint() {
+    let mut diagnostics = Diagnostics::default();
+    let resources = NemoClawProvider::default()
+        .get_resources(&mut diagnostics)
+        .unwrap();
+    let schema = resources["gateway_storage"]
+        .schema(&mut diagnostics)
+        .unwrap();
+    assert!(matches!(
+        schema.block.attributes["data_path"].constraint,
+        tf_provider::schema::AttributeConstraint::Computed
+    ));
+    assert!(diagnostics.errors.is_empty());
+}

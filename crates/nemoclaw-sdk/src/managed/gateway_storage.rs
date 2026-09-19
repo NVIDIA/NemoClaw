@@ -83,6 +83,17 @@ impl Engine {
         id: &str,
         create: bool,
     ) -> Result<Option<String>, Error> {
+        Ok(self
+            .gateway_storage_binding(spec, id, create)
+            .await?
+            .map(|(id, _)| id))
+    }
+    pub(crate) async fn gateway_storage_binding(
+        &self,
+        spec: &Spec,
+        id: &str,
+        create: bool,
+    ) -> Result<Option<(String, String)>, Error> {
         spec.validate()?;
         if spec.kind != GATEWAY_KIND
             || !matches!(spec.layout, 0 | 1)
@@ -189,7 +200,7 @@ impl Engine {
                 self.ensure_image(spec).await?;
             }
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if created && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -207,7 +218,7 @@ impl Engine {
             .await?;
         if config.is_none() && create && id.is_empty() {
             self.initialize_gateway(spec, data_path).await?;
-            return Box::pin(self.gateway_storage(spec, id, false)).await;
+            return Box::pin(self.gateway_storage_binding(spec, id, false)).await;
         }
         if config.is_none() && id.is_empty() {
             return Err(Error::PartialRuntime);
@@ -246,7 +257,7 @@ impl Engine {
         if !id.is_empty() && id != actual {
             return Err(ObservationError::BindingMismatch.into());
         }
-        Ok(Some(actual))
+        Ok(Some((actual, volume.mountpoint)))
     }
     async fn credential_key(
         &self,

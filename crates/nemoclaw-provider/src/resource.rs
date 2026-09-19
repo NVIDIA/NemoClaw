@@ -47,6 +47,9 @@ impl ResourceAdapter {
     fn observed_running(&self) -> bool {
         self.definition.observed_running
     }
+    fn observed_data_path(&self) -> bool {
+        self.definition.kind == "gateway_storage"
+    }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
@@ -125,7 +128,8 @@ impl ResourceAdapter {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
                 Value::Unknown | Value::Null
                     if (k == "running" && self.observed_running())
-                        || (k == "digest" && self.computed_digest()) =>
+                        || (k == "digest" && self.computed_digest())
+                        || (k == "data_path" && self.observed_data_path()) =>
                 {
                     Ok((k.clone(), String::new()))
                 }
@@ -145,6 +149,7 @@ impl ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.computed_digest().then_some("digest"))
+            .chain(self.observed_data_path().then_some("data_path"))
         {
             if observed
                 .get(field)
@@ -230,6 +235,7 @@ impl Resource for ResourceAdapter {
             .copied()
             .chain(["id"])
             .chain(self.computed_digest().then_some("digest"))
+            .chain(self.observed_data_path().then_some("data_path"))
             .map(|name| {
                 (
                     name.into(),
@@ -238,6 +244,7 @@ impl Resource for ResourceAdapter {
                         constraint: if name == "id"
                             || (name == "digest" && self.computed_digest())
                             || (name == "running" && self.observed_running())
+                            || (name == "data_path" && self.observed_data_path())
                         {
                             AttributeConstraint::Computed
                         } else if self.optional(name) {
@@ -302,6 +309,9 @@ impl Resource for ResourceAdapter {
         proposed.insert("id".into(), Value::Unknown);
         if self.computed_digest() {
             proposed.insert("digest".into(), Value::Unknown);
+        }
+        if self.observed_data_path() {
+            proposed.insert("data_path".into(), Value::Unknown);
         }
         if self.observed_running() {
             proposed.insert("running".into(), Value::Unknown);

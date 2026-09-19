@@ -46,6 +46,12 @@ pub fn plan_update(
     {
         proposed.insert("id".into(), id.clone());
     }
+    if definition.kind == "gateway_storage" {
+        proposed.insert(
+            "data_path".into(),
+            prior.get("data_path").cloned().unwrap_or(Value::Unknown),
+        );
+    }
     if definition.observed_running {
         match prior.get("running") {
             Some(Value::Value(value)) if value == "false" => {

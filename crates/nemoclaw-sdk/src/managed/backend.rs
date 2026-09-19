@@ -60,7 +60,13 @@ impl ManagedBackend {
             let spec = configured_specification(kind, row)?;
             let engine = &self.engine;
             if kind == GATEWAY_STORAGE_KIND {
-                engine.gateway_storage(&spec, id, apply).await?
+                engine
+                    .gateway_storage_binding(&spec, id, apply)
+                    .await?
+                    .map(|(id, path)| {
+                        result.insert("data_path".into(), path);
+                        id
+                    })
             } else {
                 let observed = if apply {
                     Some(engine.ensure_gateway(&spec, id).await?)
