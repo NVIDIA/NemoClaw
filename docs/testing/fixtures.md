@@ -63,6 +63,11 @@ cargo test -p nemoclaw-sdk services::installers::ollama
 cargo test -p nemoclaw-sdk --test service_references --test multiple_providers
 ```
 
+On Linux, the `ollama_proxy` E2E target also parses the live fixture's configuration in the ordinary test suite, without Docker or environment configuration.
+Its separate ignored test requires an explicit `NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE` already loaded in local Docker and exercises only the proxy backend against a simulated upstream inventory.
+It creates its own proxy container and credential volume, checks key retention and read-only upstream access, and removes those owned resources on success.
+It does not qualify managed gateway or sandbox deployment, CLI export, actual Ollama execution, or inference.
+
 Authenticated OpenShell, stalled exec streams, and launch compatibility run in the default workspace suite.
 `agent_compatibility` checks the ten Fabric launch contracts against retained fixtures.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.

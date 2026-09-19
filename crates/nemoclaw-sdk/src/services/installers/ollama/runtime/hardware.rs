@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::{
+use crate::{
     CancellationToken, Error,
     hardware::Capacity,
     services::installers::ollama::{ManagedOllama, hardware_capacity},
@@ -9,7 +9,7 @@ use nemoclaw_sdk::{
 use std::time::Duration;
 
 pub(crate) fn memory() -> Result<Capacity, Error> {
-    nemoclaw_sdk::hardware::linux::memory()
+    crate::hardware::linux::memory()
 }
 
 pub(crate) async fn before_start(
@@ -17,7 +17,7 @@ pub(crate) async fn before_start(
     cancel: &CancellationToken,
 ) -> Result<Capacity, Error> {
     let mut capacity = memory()?;
-    let gpu = nemoclaw_sdk::hardware::nvidia::populate(&mut capacity);
+    let gpu = crate::hardware::nvidia::populate(&mut capacity);
     tokio::select! {
         () = cancel.cancelled() => return Err(Error::Cancelled),
         result = tokio::time::timeout(Duration::from_secs(30), gpu) => {

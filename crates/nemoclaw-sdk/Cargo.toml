@@ -31,7 +31,7 @@ ipnet.workspace = true
 openshell-core.workspace = true
 openshell-policy.workspace = true
 tonic.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "fs"] }
 tempfile.workspace = true
 getrandom.workspace = true
 process-wrap.workspace = true
@@ -44,7 +44,7 @@ interprocess = { version = "2.4.4", features = ["tokio"] }
 time.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix.workspace = true
+rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(unix)'.dependencies]
 hyper = { version = "1", features = ["client", "http1"] }

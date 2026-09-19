@@ -7,7 +7,7 @@
 The pinned OpenShell Podman supervisor currently has a [TLS initialization bug](https://github.com/NVIDIA/OpenShell/issues/3427) that blocks provider traffic.
 Use an existing Docker gateway with `runtime.provider: docker` to exercise SSH inference while that Podman issue remains open.
 Declare the service under `spec.services.<name>` and select it from an inference provider with `serviceRef`.
-Its `runtime.engine` selects the SSH Docker endpoint; `placement` selects its private Docker network.
+Its `placement.engine` selects the SSH Docker endpoint, and the rest of `placement` selects its private Docker network.
 Its `publication` declares the private host address and inference URL that OpenShell can reach.
 Existing `providerRef` routes remain unchanged.
 No engine registry or per-sandbox placement override is required.

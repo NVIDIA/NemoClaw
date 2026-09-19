@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Ollama installer implementation.
 mod config;
+#[cfg(target_os = "linux")]
+pub(in crate::services) mod runtime;
 pub use config::{
     ExternalOllama, ExternalOllamaModel, ManagedOllama, OllamaMemory, OllamaModel, OllamaProxy,
     OllamaServing,
@@ -29,7 +31,7 @@ use crate::{
     backend::Backend,
     compile::{Generations, Target},
     config::Document,
-    services::contract::{InstallPlan, Installer, RemovePlan, validate_runtime},
+    services::contract::{InstallPlan, Installer, RemovePlan, validate_image},
     state::StateBinding,
 };
 use std::{collections::BTreeMap, net::IpAddr, sync::LazyLock, time::Duration};
@@ -58,7 +60,12 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
         .iter_mut()
         .find(|variant| variant["properties"]["kind"]["const"] == "ollama")
         .expect("Ollama service variant");
-    service["required"] = serde_json::json!(["kind", "hardware", "runtime", "model"]);
+    service["required"] = serde_json::json!(["kind", "hardware", "image", "model"]);
+    crate::config::schema::validation::property(
+        service,
+        "image",
+        serde_json::json!({"pattern":crate::config::constraints::IMAGE}),
+    );
     service["dependentRequired"] =
         serde_json::json!({"placement":["publication"],"publication":["placement"]});
     service["allOf"] = serde_json::json!([
@@ -69,6 +76,17 @@ pub(crate) fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Va
              crate::config::schema::validation::at("memory/gpuMemoryGiB",serde_json::json!({"const":0}),false)
          ]}}
     ]);
+    let proxy = defs["ServiceDefinition"]["oneOf"]
+        .as_array_mut()
+        .expect("tagged service variants")
+        .iter_mut()
+        .find(|variant| variant["properties"]["kind"]["const"] == "ollamaProxy")
+        .expect("Ollama proxy service variant");
+    crate::config::schema::validation::property(
+        proxy,
+        "image",
+        serde_json::json!({"pattern":crate::config::constraints::IMAGE}),
+    );
     for (name, field, minimum, maximum, default) in [
         ("OllamaServing", "port", 1024, 65535, 18888),
         ("OllamaServing", "contextTokens", 8192, 65536, 32768),
@@ -115,15 +133,19 @@ fn private(ip: IpAddr) -> bool {
 impl ManagedOllama {
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_runtime(&self.runtime)?;
+        validate_image(&self.image)?;
         require(
             self.placement.is_some() == self.publication.is_some(),
             "Ollama placement and publication must be declared together",
         )?;
         if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
             require(
-                self.runtime.engine.starts_with("ssh://"),
+                placement.engine.starts_with("ssh://"),
                 "explicit Ollama placement requires SSH Docker",
+            )?;
+            require(
+                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
+                "invalid Ollama engine",
             )?;
             let network: ipnet::Ipv4Net = placement
                 .network_cidr
@@ -148,11 +170,6 @@ impl ManagedOllama {
                     && endpoint.port() == Some(self.serving.port as u16)
                     && endpoint.path() == "/v1",
                 "Ollama publication must match its private bind address, serving port and /v1 path",
-            )?;
-        } else {
-            require(
-                self.runtime.engine.starts_with("unix:///"),
-                "local Ollama requires a Unix Docker socket",
             )?;
         }
         let hardware = self
@@ -226,7 +243,7 @@ impl ManagedOllama {
 impl OllamaProxy {
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
-        validate_runtime(&self.runtime)?;
+        validate_image(&self.image)?;
         crate::config::validate_endpoint(&self.endpoint, false)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
@@ -234,8 +251,7 @@ impl OllamaProxy {
         let endpoint = Url::parse(&self.endpoint)
             .map_err(|_| crate::config::ConfigError::new("invalid proxy endpoint"))?;
         require(
-            self.runtime.engine.starts_with("unix:///")
-                && upstream.scheme() == "http"
+            upstream.scheme() == "http"
                 && upstream.path() == "/v1"
                 && upstream.port().is_some()
                 && upstream.host().is_some_and(|host| match host {
@@ -272,7 +288,7 @@ pub(crate) fn configured_service(spec: &Spec) -> Result<ManagedOllama, Error> {
         return Err(Error::Conflict("runtime configuration is not Ollama"));
     };
     service.validate()?;
-    Ok(service)
+    Ok(*service)
 }
 
 fn managed_targets(
@@ -285,7 +301,7 @@ fn managed_targets(
         .get(SERVICE_KIND)
         .filter(|value| !value.is_empty())
         .ok_or(Error::State("missing Ollama service generation"))?;
-    let runtime = crate::services::ServiceDefinition::Ollama(service.runtime_settings());
+    let runtime = crate::services::ServiceDefinition::Ollama(Box::new(service.runtime_settings()));
     let network_cidr = service
         .placement
         .as_ref()
@@ -297,8 +313,13 @@ fn managed_targets(
         |publication| Ok(publication.bind_address.clone()),
     )?;
     let process = Process {
-        engine: service.runtime.engine.clone(),
-        image: service.runtime.image.clone(),
+        engine: service
+            .placement
+            .as_ref()
+            .map_or(document.spec.gateway.engine.clone(), |placement| {
+                placement.engine.clone()
+            }),
+        image: service.image.clone(),
         network_cidr,
         create_network: service.placement.is_some(),
         architecture: service.architecture()?.into(),
@@ -326,7 +347,7 @@ fn managed_targets(
     };
     let spec = Spec {
         layout: 0,
-        compute_driver: service.runtime.provider.clone(),
+        compute_driver: "docker".into(),
         kind: SERVICE_KIND.into(),
         name: format!("{}-ollama-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -351,7 +372,7 @@ fn managed_targets(
     ] {
         let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
         if kind == SERVICE_KIND
-            && let Some(policy) = service.runtime.image_pull_policy
+            && let Some(policy) = service.image_pull_policy
         {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }
@@ -538,7 +559,7 @@ impl OllamaProxy {
         let mut spec = proxy::specification(document, name, self, generations)?;
         spec.image_pull_policy = None;
         Ok(crate::services::authentication::Source::OllamaProxy {
-            engine: self.runtime.engine.clone(),
+            engine: document.spec.gateway.engine.clone(),
             spec: Box::new(spec),
         }
         .json()?)

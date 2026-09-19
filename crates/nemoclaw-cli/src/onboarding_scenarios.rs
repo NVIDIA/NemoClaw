@@ -596,11 +596,7 @@ impl DesiredState {
         let model = service["model"]["name"].clone();
         *service = json!({
             "kind": "ollamaProxy",
-            "runtime": {
-                "provider": "docker",
-                "engine": "unix:///var/run/docker.sock",
-                "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
-            },
+            "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
             "endpoint": "http://172.20.0.1:11435/v1",
             "upstream": {
                 "endpoint": "http://127.0.0.1:11434/v1",

@@ -3,7 +3,7 @@
 
 //! Bounded load-only startup and resident-model checks.
 
-use nemoclaw_sdk::{
+use crate::{
     Error,
     services::installers::ollama::{ManagedOllama, Models},
 };

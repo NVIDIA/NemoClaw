@@ -118,9 +118,9 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     );
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
+    nemoclaw_e2e::assert_same_deployment_state(
+        &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        &state,
     );
     assert!(
         fixture

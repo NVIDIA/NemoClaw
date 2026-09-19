@@ -161,7 +161,7 @@ Its Dockerfile applies pinned patches and retains original and modified sources.
 Use [the inline recipe guide](recipes.md) to declare preparation and serving requirements.
 
 The builder exports an OCI archive, loads it, and verifies access by its exported digest and target platform.
-Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.runtime.image`.
+Use the immutable image reference printed as `Runtime image loaded: NAME@sha256:DIGEST` for `spec.services.<name>.image`.
 Do not substitute a mutable tag or a digest copied from another build.
 If deployment uses a different Docker daemon, load the archive into that daemon before apply; images are not transferred automatically.
 

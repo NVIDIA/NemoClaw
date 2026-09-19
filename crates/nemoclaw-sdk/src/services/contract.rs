@@ -3,49 +3,16 @@
 
 //! Package-independent service installer input and output.
 
-use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 static IMAGE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(crate::config::constraints::IMAGE).unwrap());
 
-pub(super) fn validate_runtime(runtime: &ServiceRuntime) -> Result<(), crate::config::ConfigError> {
+pub(super) fn validate_image(image: &str) -> Result<(), crate::config::ConfigError> {
     crate::config::validation::require(
-        runtime.provider == "docker"
-            && !runtime
-                .engine
-                .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-            && crate::docker::Engine::validate_endpoint(&runtime.engine).is_ok(),
-        "managed service requires Docker and an explicit engine",
-    )?;
-    crate::config::validation::require(
-        IMAGE.is_match(&runtime.image),
+        IMAGE.is_match(image),
         "service image must be pinned by a SHA-256 digest",
     )
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
-/// Container runner and immutable image used by a managed service installer.
-pub struct ServiceRuntime {
-    #[serde(rename = "provider")]
-    /// Supported container runner. The initial service contract uses Docker.
-    pub provider: String,
-    #[serde(rename = "engine")]
-    /// Explicit Docker endpoint used to install, observe, and remove the service.
-    pub engine: String,
-    #[serde(rename = "image")]
-    /// Immutable image reference used by the package installer.
-    pub image: String,
-    /// Image acquisition before container creation. The selected installer defines the omitted default.
-    #[serde(
-        rename = "imagePullPolicy",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(default, with = "crate::config::ImagePullPolicy")]
-    pub image_pull_policy: Option<crate::config::ImagePullPolicy>,
 }
 
 /// OpenTofu stage that executes an installer plan.

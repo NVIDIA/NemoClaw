@@ -4,9 +4,8 @@ use super::super::vllm::{
     DedicatedHardware, MemoryArchitecture, ServiceContainer, ServiceHardware, ServicePlacement,
     ServicePublication,
 };
-use crate::{
-    config::{ConfigError, InferenceApi, InferenceProvider, constraints, validate_endpoint},
-    services::ServiceRuntime,
+use crate::config::{
+    ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider, constraints, validate_endpoint,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +22,16 @@ pub struct ManagedOllama {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]
     pub container: Option<ServiceContainer>,
-    /// Docker runner and pinned NemoClaw Ollama runtime image.
-    pub runtime: ServiceRuntime,
+    /// Immutable runtime image containing Ollama and the NemoClaw supervisor.
+    pub image: String,
+    /// Image acquisition before container creation. Omission means Never.
+    #[serde(
+        rename = "imagePullPolicy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "ImagePullPolicy")]
+    pub image_pull_policy: Option<ImagePullPolicy>,
     /// Optional remote Docker placement. Requires publication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServicePlacement")]
@@ -143,7 +150,7 @@ impl ManagedOllama {
 
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
-        settings.runtime.image_pull_policy = None;
+        settings.image_pull_policy = None;
         settings
     }
 
@@ -200,8 +207,16 @@ impl ManagedOllama {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
 pub struct OllamaProxy {
-    /// Docker runner and immutable NemoClaw proxy image. The external daemon runs on this same Linux host.
-    pub runtime: ServiceRuntime,
+    /// Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host.
+    pub image: String,
+    /// Image acquisition before container creation. Omission means IfNotPresent.
+    #[serde(
+        rename = "imagePullPolicy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "ImagePullPolicy")]
+    pub image_pull_policy: Option<ImagePullPolicy>,
     /// Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.
     pub endpoint: String,
     /// External loopback-only daemon and already-installed model.
@@ -260,16 +275,9 @@ impl OllamaProxy {
             || endpoint.path() != "/v1"
             || endpoint.port().is_none()
             || self.endpoint == self.upstream.endpoint
-            || self.runtime.provider != "docker"
-            || self
-                .runtime
-                .engine
-                .contains(['$', '%', '{', '}', '\r', '\n', '\0'])
-            || !self.runtime.engine.starts_with("unix:///")
-            || crate::docker::Engine::validate_endpoint(&self.runtime.engine).is_err()
             || !regex::Regex::new(constraints::IMAGE)
                 .unwrap()
-                .is_match(&self.runtime.image)
+                .is_match(&self.image)
             || !regex::Regex::new("^[a-f0-9]{64}$")
                 .unwrap()
                 .is_match(&self.upstream.model.digest)

@@ -53,11 +53,8 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path) in [
         ("spark/spark-inline.yaml", "/spec/gateway"),
-        ("spark/spark-inline.yaml", "/spec/services/qwen/runtime"),
-        (
-            "managed-ollama.yaml",
-            "/spec/services/ollama-server/runtime",
-        ),
+        ("spark/spark-inline.yaml", "/spec/services/qwen"),
+        ("managed-ollama.yaml", "/spec/services/ollama-server"),
     ] {
         for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
             let mut value = input(file);
@@ -234,7 +231,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "managed-ollama.yaml",
-            "/spec/services/ollama-server/runtime/image",
+            "/spec/services/ollama-server/image",
             json!("ollama/ollama:latest"),
             false,
         ),

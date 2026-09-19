@@ -13,7 +13,7 @@ fn input() -> Value {
     let service = &mut value["spec"]["services"]["qwen"];
     *service = json!({
         "kind":"vllm", "authentication":"bearer",
-        "runtime":{"provider":"docker","engine":"unix:///var/run/docker.sock","image":format!("nc-vllm-amd64@sha256:{}", "0".repeat(64))},
+        "image":format!("nc-vllm-amd64@sha256:{}", "0".repeat(64)),
         "model":{"repository":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4","revision":"0dcd680e5585c791728c83342b311d0a0026dbeb"},
         "hardware":{"architecture":"amd64","minComputeCapability":90,"minGpuMemoryBytes":96000000000_u64,"minDriverMajor":580},
         "container":{"ipc":"host","sharedMemoryGiB":32},

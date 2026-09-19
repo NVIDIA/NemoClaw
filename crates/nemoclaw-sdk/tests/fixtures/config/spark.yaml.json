@@ -1,5 +1,5 @@
 {
-  "digest": "0a7488644a71fe28c756e0fc2cc421f64a6b7f9bc3eec8f67f9302998a54564e",
+  "digest": "976e9a0af457d9d1a51e8083d3d05436f0dfaf090e1e85ec74af4938a6b31f18",
   "document": {
     "apiVersion": "nemoclaw.nvidia.com/v1alpha1",
     "kind": "NemoClawConfig",
@@ -55,6 +55,7 @@
       ],
       "services": {
         "qwen": {
+          "image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "kind": "vllm",
           "memory": {
             "consecutiveSamples": 5,
@@ -126,11 +127,6 @@
               "executable": "/opt/recipe/verify",
               "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             }
-          },
-          "runtime": {
-            "engine": "unix:///var/run/docker.sock",
-            "image": "fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "provider": "docker"
           },
           "serving": {
             "batchTokens": 1024,

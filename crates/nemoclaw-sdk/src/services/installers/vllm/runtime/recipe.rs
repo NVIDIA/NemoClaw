@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::runtime::report;
-use nemoclaw_sdk::{CancellationToken, Error, snapshot};
+use super::report;
+use crate::{CancellationToken, Error, snapshot};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -11,11 +11,11 @@ pub(crate) struct PreparedModel {
     pub environment: std::collections::BTreeMap<String, std::ffi::OsString>,
 }
 pub(crate) async fn prepare(
-    service: &nemoclaw_sdk::services::installers::vllm::Service,
+    service: &crate::services::installers::vllm::Service,
     root: &Path,
     cancel: &CancellationToken,
 ) -> Result<PreparedModel, Error> {
-    use nemoclaw_sdk::services::installers::vllm::recipes::huggingface as hf;
+    use crate::services::installers::vllm::recipes::huggingface as hf;
     if let Some(recipe) = &service.recipe {
         super::inline_recipe::PackagedRecipe(recipe).validate_files()?;
     }
@@ -57,17 +57,17 @@ pub(crate) async fn prepare(
             "running declared recipe preparation and verification",
             0,
         )?;
-        let memory = nemoclaw_sdk::hardware::linux::memory()?;
+        let memory = crate::hardware::linux::memory()?;
         if memory.available
             < (recipe.resources.preparation_memory_gi_b + service.memory.host_reserve_gib as u64)
-                * nemoclaw_sdk::hardware::GIB
+                * crate::hardware::GIB
         {
             return Err(Error::Conflict(
                 "memory headroom changed before recipe preparation",
             ));
         }
         let root = root.join("prepared");
-        let output = nemoclaw_sdk::services::installers::vllm::recipes::preparation::prepare(
+        let output = crate::services::installers::vllm::recipes::preparation::prepare(
             &root,
             &model,
             service,

@@ -68,7 +68,7 @@ Explicit apply rechecks capacity and retained identities before recovery.
 The [watchdog diagnostic correction](https://github.com/NVIDIA/NemoClaw/commit/35199ef56d) shows why the reason for a stop also matters.
 A memory parser incorrectly assumed that Linux `MemAvailable` must exceed `MemFree`.
 That observation failure required a different fix from real memory pressure, but the original diagnostic did not distinguish them.
-The [supervisor](../../crates/nemoclaw-runtime/src/supervisor.rs) now reports pressure, failed observations, closed sample streams, and operator trips separately.
+The [supervisor](../../crates/nemoclaw-sdk/src/services/runtime/supervisor.rs) now reports pressure, failed observations, closed sample streams, and operator trips separately.
 The parser validates free and available memory independently against total memory; refer to the [kernel memory field definitions](https://www.kernel.org/doc/html/v6.5/filesystems/proc.html).
 
 ## Why Fabric Owns the Agent Process

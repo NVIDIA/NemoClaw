@@ -13,7 +13,7 @@ mod inference;
 mod interfaces;
 mod providers;
 pub(crate) mod references;
-pub use crate::services::{ServiceDefinition, ServiceRuntime};
+pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
 pub use interfaces::*;

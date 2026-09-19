@@ -156,18 +156,19 @@ fn runtime_specs() -> Vec<Spec> {
         ),
     ] {
         for independent in [false, true] {
-            let source = if independent {
-                source.replace(
-                    "        engine: unix:///var/run/docker.sock",
-                    "        engine: ssh://worker@inference.example",
-                ).replace(
-                    "      model:\n",
-                    &format!("      placement:\n        networkCidr: 172.30.119.0/24\n      publication:\n        endpoint: http://10.0.0.8:{port}/v1\n        bindAddress: 10.0.0.8\n      model:\n"),
-                )
-            } else {
-                source.to_owned()
-            };
-            let document = Document::parse(source.as_bytes()).unwrap();
+            let mut value: serde_json::Value = serde_saphyr::from_str(source).unwrap();
+            if independent {
+                let service = &mut value["spec"]["services"]["qwen"];
+                service["placement"] = serde_json::json!({
+                    "engine":"ssh://worker@inference.example",
+                    "networkCidr":"172.30.119.0/24"
+                });
+                service["publication"] = serde_json::json!({
+                    "endpoint":format!("http://10.0.0.8:{port}/v1"),
+                    "bindAddress":"10.0.0.8"
+                });
+            }
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
             let generations = [
                 ("managed_gateway".into(), "a".repeat(32)),
                 ("inference_service".into(), "b".repeat(32)),

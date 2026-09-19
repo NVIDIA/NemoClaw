@@ -15,11 +15,9 @@ spec:
       kind: vllm
       hardware:
         profile: dgx-spark
-      runtime:
-        provider: docker
-        engine: ssh://gpu-box
-        image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
+      image: nc-prototype-vllm@sha256:0913eec1d921a129e4c02e64bfe199a5a0e23269ba429c4022809b8d038bb46e
       placement:
+        engine: ssh://gpu-box
         networkCidr: 172.30.119.0/24
       publication:
         endpoint: http://10.0.0.8:18898/v1

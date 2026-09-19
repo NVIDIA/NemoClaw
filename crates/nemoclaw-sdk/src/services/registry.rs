@@ -4,7 +4,7 @@
 //! Dispatch for service definitions and installer-owned resource backends.
 
 use super::{
-    ManagedOllama, OllamaProxy, ServiceRuntime,
+    ManagedOllama, OllamaProxy,
     contract::{InstallPlan, InstallStage, Installer, RemovePlan},
     installers,
 };
@@ -36,7 +36,7 @@ pub(crate) struct ResolvedInference {
 /// One explicitly supported managed container package.
 pub enum ServiceDefinition {
     /// Managed Ollama daemon and selected model.
-    Ollama(ManagedOllama),
+    Ollama(Box<ManagedOllama>),
     /// Managed authentication proxy for an external Ollama daemon and model.
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
@@ -207,23 +207,28 @@ impl ServiceDefinition {
         }
     }
 
-    fn validate_installation(&self, gateway: &Gateway) -> Result<(), ConfigError> {
-        let (placement, engine, package) = match self {
-            Self::Ollama(service) => (
-                service.placement.is_some(),
-                service.runtime.engine.as_str(),
-                "Ollama",
-            ),
-            Self::Vllm(service) => (
-                service.placement.is_some(),
-                service.runtime.engine.as_str(),
-                "vLLM",
-            ),
-            Self::OllamaProxy(_) => return Ok(()),
+    fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
+        let gateway = &document.spec.gateway;
+        let local_docker = gateway.management == "managed"
+            && gateway.engine.starts_with("unix:///")
+            && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
+            && document
+                .spec
+                .sandboxes
+                .iter()
+                .all(|sandbox| sandbox.runtime.provider == "docker");
+        let (placement, package) = match self {
+            Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
+            Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
+            Self::OllamaProxy(_) => {
+                return crate::config::validation::require(
+                    local_docker,
+                    "Ollama proxy requires a managed local Docker gateway",
+                );
+            }
         };
         crate::config::validation::require(
-            (gateway.management == "managed" && !placement && engine == gateway.engine)
-                || placement,
+            placement.is_some() || local_docker,
             if package == "Ollama" {
                 "Ollama requires the managed gateway Docker engine or explicit placement"
             } else {
@@ -234,15 +239,13 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
-        let (engine, placement, publication, port) = match self {
+        let (placement, publication, port) = match self {
             Self::Ollama(service) => (
-                &service.runtime.engine,
                 &service.placement,
                 &service.publication,
                 service.serving.port,
             ),
             Self::Vllm(service) => (
-                &service.runtime.engine,
                 &service.placement,
                 &service.publication,
                 service.serving.port,
@@ -250,7 +253,9 @@ impl ServiceDefinition {
             Self::OllamaProxy(_) => return Ok(None),
         };
         Ok(Some(NetworkAllocation {
-            engine: engine.clone(),
+            engine: placement
+                .as_ref()
+                .map_or(gateway.engine.clone(), |placement| placement.engine.clone()),
             network_cidr: placement
                 .as_ref()
                 .map_or(gateway.network_cidr.as_str(), |placement| {
@@ -263,14 +268,6 @@ impl ServiceDefinition {
             )?,
             port,
         }))
-    }
-
-    pub fn runtime(&self) -> &ServiceRuntime {
-        match self {
-            Self::Ollama(service) => &service.runtime,
-            Self::OllamaProxy(service) => &service.runtime,
-            Self::Vllm(service) => &service.runtime,
-        }
     }
 }
 
@@ -415,19 +412,14 @@ struct NetworkAllocation {
 }
 
 pub(crate) fn defaults(definition: &mut ServiceDefinition) {
-    let runtime = match definition {
+    match definition {
         ServiceDefinition::Ollama(service) => {
             service.defaults();
-            &mut service.runtime
         }
-        ServiceDefinition::OllamaProxy(service) => &mut service.runtime,
+        ServiceDefinition::OllamaProxy(_) => {}
         ServiceDefinition::Vllm(service) => {
             service.defaults();
-            &mut service.runtime
         }
-    };
-    if runtime.provider.is_empty() {
-        runtime.provider = "docker".into();
     }
 }
 
@@ -520,7 +512,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     for (name, definition) in &document.spec.services {
         require(SLUG.is_match(name), "service names must be lowercase slugs")?;
         definition.validate_definition()?;
-        definition.validate_installation(&document.spec.gateway)?;
+        definition.validate_installation(document)?;
     }
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();

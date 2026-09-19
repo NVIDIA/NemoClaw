@@ -271,7 +271,36 @@ mod tests {
 #[tokio::test]
 async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() {
     let directory = tempfile::tempdir().unwrap();
-    let result=tokio::time::timeout(Duration::from_secs(7),run(directory.path(),Path::new("/usr/bin/python3"),&["-c", "import os,time; pid=os.fork(); (os.setsid(),open('escaped.pid','w').write(str(os.getpid())),time.sleep(30)) if pid==0 else None"],&Default::default(),&CancellationToken::new())).await;
+    // The parent must not exit until the child leaves its process group.
+    // Otherwise ordinary group cleanup can win the race and close the pipes.
+    let script = r#"
+import os, time
+ready, notify = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(ready)
+    os.setsid()
+    with open('escaped.pid', 'w') as marker:
+        marker.write(str(os.getpid()))
+    os.write(notify, b'1')
+    os.close(notify)
+    time.sleep(30)
+else:
+    os.close(notify)
+    assert os.read(ready, 1) == b'1'
+    os.close(ready)
+"#;
+    let result = tokio::time::timeout(
+        Duration::from_secs(7),
+        run(
+            directory.path(),
+            Path::new("/usr/bin/python3"),
+            &["-c", script],
+            &Default::default(),
+            &CancellationToken::new(),
+        ),
+    )
+    .await;
     if let Ok(pid) = std::fs::read_to_string(directory.path().join("escaped.pid")) {
         let _ = std::process::Command::new("kill")
             .args(["-KILL", pid.trim()])
@@ -281,7 +310,12 @@ async fn exited_parent_cannot_leave_capture_waiting_for_an_escaped_descendant() 
         result.is_ok(),
         "capture outlived the exited command without a bound"
     );
-    assert!(result.unwrap().is_err());
+    assert!(matches!(
+        result.unwrap(),
+        Err(Error::State(
+            "child exited but its output streams did not close; retain state for reconciliation"
+        ))
+    ));
 }
 
 #[cfg(all(test, unix))]

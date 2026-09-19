@@ -247,3 +247,14 @@ fn lifecycle_workflow_selects_existing_test_targets() {
         }
     }
 }
+
+#[test]
+fn native_validation_runs_on_pull_requests_targeting_v1() {
+    let workflow: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap();
+    assert_eq!(
+        workflow["on"]["pull_request"]["branches"],
+        serde_json::json!(["v1"])
+    );
+    assert!(workflow["on"]["pull_request"].get("paths").is_none());
+}

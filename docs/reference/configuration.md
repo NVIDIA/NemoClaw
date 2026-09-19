@@ -503,7 +503,7 @@ Guide: [Container image downloads](../usage.md#control-container-image-downloads
 Paths:
 
 - `spec.gateway.imagePullPolicy`
-- `spec.services.{key}.runtime.imagePullPolicy`
+- `spec.services.{key}.imagePullPolicy`
 
 Accepted input: string.
 
@@ -1224,12 +1224,13 @@ Managed Ollama daemon and selected model.
 |---|---|---|---|---|
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional IPC and shared-memory settings for the runtime container. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
+| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means Never. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
 | `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
 | `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
-| `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and pinned NemoClaw Ollama runtime image. |
 | `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
 
 ### Alternative 2
@@ -1240,8 +1241,9 @@ Managed authentication proxy for an external Ollama daemon and model.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
+| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
-| `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and immutable NemoClaw proxy image. The external daemon runs on this same Linux host. |
 | `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
 
 ### Alternative 3
@@ -1254,13 +1256,14 @@ Managed vLLM runtime and immutable model snapshot.
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
+| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means Never. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
-| `runtime` | [ServiceRuntime](#serviceruntime) | Yes | — | Docker runner and immutable NemoClaw vLLM runtime image. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
 
 ## ServiceHardware
@@ -1312,6 +1315,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
 | `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication
@@ -1328,23 +1332,6 @@ Paths:
 |---|---|---|---|---|
 | `bindAddress` | string | Yes | — | Private host IPv4 address outside the service Docker subnet. Loopback is rejected. |
 | `endpoint` | string | Yes | — | Private HTTP inference URL reachable by OpenShell. Constraints: pattern `^http://.+:[0-9]+/v1$`. |
-
-## ServiceRuntime
-
-Container runner and immutable image used by a managed service installer.
-
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.services.{key}.runtime`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `engine` | string | Yes | — | Explicit Docker endpoint used to install, observe, and remove the service. Constraints: pattern `^(unix:///\|ssh://)`. |
-| `image` | string | Yes | — | Immutable image reference used by the package installer. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
-| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. The selected installer defines the omitted default. |
-| `provider` | string | Yes | — | Supported container runner. The initial service contract uses Docker. Constraints: `"docker"`. |
 
 ## Serving
 

@@ -61,7 +61,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     else {
         panic!("expected vllm")
     };
-    service.runtime.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
+    service.image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
     let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
     for (kind, expected) in [
         ("nemoclaw_managed_gateway", "Always"),
@@ -93,7 +93,7 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
     else {
         panic!("expected ollama")
     };
-    service.runtime.image_pull_policy = Some(ImagePullPolicy::Never);
+    service.image_pull_policy = Some(ImagePullPolicy::Never);
     let mut after = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
         after["resource"]["nemoclaw_ollama_service"]["ollama-server"]

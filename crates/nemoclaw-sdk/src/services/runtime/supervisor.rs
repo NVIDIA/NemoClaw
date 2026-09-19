@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests;
 
-use nemoclaw_sdk::{
+use crate::{
     CancellationToken, Error,
     hardware::{Capacity, ProtectionPolicy, Watchdog},
 };
@@ -11,17 +11,17 @@ use process_wrap::tokio::ChildWrapper;
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 
-pub(crate) struct Monitors<'a> {
+pub(in crate::services) struct Monitors<'a> {
     pub samples: Receiver<Result<Capacity, Error>>,
     pub ready: Receiver<bool>,
     pub trip: CancellationToken,
     pub report: &'a (dyn Fn(&str, &str, u32) -> Result<(), Error> + Sync),
 }
-pub(crate) struct Policy {
+pub(in crate::services) struct Policy {
     pub startup_timeout: Duration,
     pub protection: ProtectionPolicy,
 }
-pub(crate) async fn supervise(
+pub(in crate::services) async fn supervise(
     policy: Policy,
     child: &mut dyn ChildWrapper,
     mut monitors: Monitors<'_>,
@@ -59,7 +59,7 @@ pub(crate) async fn supervise(
     terminate(child).await;
     result
 }
-pub(crate) async fn terminate(child: &mut dyn ChildWrapper) {
+pub(in crate::services) async fn terminate(child: &mut dyn ChildWrapper) {
     let _ = child.signal(15);
     if tokio::time::timeout(Duration::from_secs(30), child.wait())
         .await

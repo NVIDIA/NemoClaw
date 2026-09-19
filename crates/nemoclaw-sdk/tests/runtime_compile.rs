@@ -76,8 +76,8 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670"});
     value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
-    value["spec"]["services"]["qwen"]["runtime"]["engine"] = json!("ssh://operator@gpu-box");
-    value["spec"]["services"]["qwen"]["placement"] = json!({"networkCidr":"172.30.119.0/24"});
+    value["spec"]["services"]["qwen"]["placement"] =
+        json!({"engine":"ssh://operator@gpu-box","networkCidr":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =
         json!({"endpoint":"http://10.0.0.8:18888/v1","bindAddress":"10.0.0.8"});
     let bytes = serde_json::to_vec(&value).unwrap();

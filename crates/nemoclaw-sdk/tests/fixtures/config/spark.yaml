@@ -15,10 +15,7 @@ spec:
   services:
     qwen:
       kind: vllm
-      runtime:
-        provider: docker
-        engine: unix:///var/run/docker.sock
-        image: fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      image: fixture-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         repository: fixture/model
         revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

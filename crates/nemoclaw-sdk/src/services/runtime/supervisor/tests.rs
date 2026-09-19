@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_sdk::hardware::{GIB, ProtectionPolicy};
+use crate::hardware::{GIB, ProtectionPolicy};
 use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
 fn policy() -> Policy {
     Policy {
