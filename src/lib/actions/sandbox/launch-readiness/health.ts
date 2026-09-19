@@ -16,7 +16,7 @@ import {
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
-import { createCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
   buildSandboxInferenceRouteProbeRequest,
@@ -86,7 +86,7 @@ export type LaunchReadinessBoundCapture = (
 export function createLaunchReadinessInferenceRouteObserver(
   capture: LaunchReadinessBoundCapture,
 ): OpenShellInferenceRouteObserver {
-  return createCliOpenShellInferenceRouteObserver(capture);
+  return createSynchronousCliOpenShellInferenceRouteObserver(capture);
 }
 
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */

@@ -108,6 +108,19 @@ The global `$$nemoclaw doctor` command remains available without a sandbox name.
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### `--force-fresh-install`
+
+On Apple silicon macOS, remove every NemoClaw- and OpenShell-managed sandbox, gateway, credential, configuration file, and recovery record before reinstalling and starting fresh onboarding. This destructive reset keeps downloaded model caches, but the removed state cannot be recovered without an external backup. Unlike `--fresh`, it removes the existing managed installation instead of only requesting fresh onboarding state.
+
+Use the hosted installer so the selected candidate is staged outside the state it removes:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  bash -s -- --force-fresh-install
+```
+
+The equivalent environment variable is `NEMOCLAW_FORCE_FRESH_INSTALL=1`. The installer rejects this option outside Apple silicon macOS and stops without deleting remaining state if the authoritative whole-host uninstall cannot complete.
+
 ### `--local-model-runtime=vllm`
 
 Enable the fixed vLLM local model profile. The flag accepts only `vllm`. It makes the remaining onboarding non-interactive and disables Express profile selection.
@@ -476,7 +489,10 @@ Use the result from `destroy` to choose the next action:
 
 - If OpenShell reports the sandbox present, `destroy` preserves the record and removes no resources. OpenShell exposes no atomic delete-by-identity primitive. Neither NemoClaw nor manual inspection can bind a later mutable-name delete to the durable identity fingerprint. You can inspect the owning gateway for diagnosis, but do not delete the sandbox by mutable name. Live retained-sandbox removal is not supported yet. Use a different explicit sandbox name while this record remains blocked.
 - If OpenShell cannot determine whether the sandbox is present, `destroy` reports unknown presence, removes no resources, and preserves the recovery record. Correct the OpenShell gateway or list failure, then rerun `destroy`.
-- If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint. Provider and Docker cleanup then apply their own immutable identity checks. `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
+- If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint.
+  Before pending identity publication, it can instead select one record with a durable identity fingerprint when the pending reservation belongs to the recorded onboarding session, the saved session recovery evidence matches the record, and the registry has no lifecycle identity evidence.
+  Provider and Docker cleanup then apply their own immutable identity checks.
+  `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox. It can still select one recovery record that matches the immutable registry generation, gateway, and create-attempt evidence. It clears that record only after the owning gateway reports absence and verified residual cleanup succeeds. If the sandbox is present or presence is unknown, preserve the record and do not delete by mutable name. If NemoClaw could not save recovery evidence, preserve the registry entry and terminal output.
@@ -2440,6 +2456,8 @@ $$nemoclaw my-assistant mcp list [--json]
 
 Add an MCP Streamable HTTP server to a sandbox. Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client. Pass repeatable `--deny-tool <name-or-glob>` options to block matching `tools/call` requests at the OpenShell proxy. The generated deny rules match tool names only and do not inspect arguments. Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an exact RFC1918, CGNAT, or IPv6 unique local destination for the current command. The declaration must equal the normalized host from `--url`. For managed MCP, use a DNS hostname for an IPv6 unique local address because NemoClaw has not qualified direct IPv6-literal MCP URLs. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw records the resulting exact trust intent and address pins, so restart, rebuild, and restore do not depend on the ambient environment. NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an OpenShell resolver placeholder for the recorded key into the agent configuration. Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments. Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`. All endpoints must use HTTPS. The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero. Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels. NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources. NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit. OpenShell `0.0.116` evaluates that policy before replacing the attached provider placeholder in the allowed request header. NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`. OpenShell withholds the credential before the binding is active and outside the bound host, port, and path. The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener. After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key. If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request. Neither outcome fails the committed add, and `--no-probe` skips this check. For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
 
+Credential-bound managed definitions may share a normalized endpoint only when they intentionally share one credential binding. NemoClaw rejects the same endpoint with different credential bindings; use a distinct endpoint URL when different credentials are required.
+
 The generated policy is also binary-scoped: the selected agent's adapter binaries are allowed, while an interactive `/usr/bin/curl` request to the same endpoint is denied.
 Use `mcp status <server>` to inspect policy readiness and run the supported bounded in-sandbox reachability check.
 The command verifies credential resolution only when it reports a verified verdict; other probe outcomes are inconclusive.
@@ -2569,7 +2587,11 @@ Remove an MCP server from a sandbox.
 
 NemoClaw first removes the named agent-native entry so the agent can no longer use it, then removes the deterministic policy key and detaches the exact live provider when the policy binding, provider identity, type, and credential key agree. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command reports the retained provider name so an operator can inspect or remove it separately after confirming it is unused.
 
-The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. Legacy Mcporter or `.nemoclaw-mcp.json` entries must be converted with `mcp migrate --apply` before ordinary removal.
+The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. A named legacy Mcporter or `.nemoclaw-mcp.json` entry can be removed directly only when its committed NemoClaw registry row proves ownership. An unproven legacy entry is preserved; use `mcp migrate --apply` when you intend to convert it to native state.
+
+Legacy removal also requires every other committed legacy row to have an observed legacy entry with the same server name.
+If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
+Run `$$nemoclaw my-assistant mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
 
 ```bash
 $$nemoclaw my-assistant mcp remove github [--force]

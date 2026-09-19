@@ -43,7 +43,7 @@ An existing valid provider can remain ready when a host variable is unset becaus
 
 ## Migrate an Existing Registration
 
-Preview legacy Mcporter or Deep Agents projection entries before the first mutation with the cutover release:
+To keep using legacy Mcporter or Deep Agents projection entries, preview their conversion to native configuration:
 
 ```bash
 $$nemoclaw my-sandbox mcp migrate
@@ -198,6 +198,20 @@ unset LOCAL_MCP_TOKEN
 Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
+
+For a legacy registration, removal requires a committed registry row that proves ownership of the named entry.
+Removal also requires every other committed legacy row to have an observed legacy entry with the same server name.
+If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
+Run `$$nemoclaw my-sandbox mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
+When these conditions pass, you do not need to migrate the named entry before removing it.
+NemoClaw verifies that the named legacy entry is absent before retiring its ownership row and cleaning up policy and provider attachments.
+Ownership rows for remaining legacy entries are preserved so you can remove or migrate them later.
+If the registry write fails after the agent entry is removed, rerun the same removal command.
+The retry verifies that the entry is still absent and compares any remaining policy's recorded registration and provider identity with the committed ownership row before retiring that row.
+Provider detachment still requires an exact match with the live provider identity.
+NemoClaw preserves unproven entries and refuses removal when the same server exists in both legacy and native configuration.
+
+Remove the named registration:
 
 ```bash
 $$nemoclaw my-sandbox mcp remove github

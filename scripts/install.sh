@@ -1087,6 +1087,7 @@ usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
@@ -1100,6 +1101,7 @@ usage() {
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
+  printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (Apple silicon macOS only)\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
@@ -1383,6 +1385,85 @@ spin() {
   return $status
 }
 
+FORCE_FRESH_PREPARE_TIMEOUT_SECONDS=900
+FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS=900
+
+installer_command_group_is_alive() {
+  local command_pid="$1"
+  kill -0 -- "-$command_pid" 2>/dev/null || kill -0 "$command_pid" 2>/dev/null
+}
+
+terminate_installer_command_group() {
+  local command_pid="$1" grace_ticks
+  installer_command_group_is_alive "$command_pid" || {
+    wait "$command_pid" 2>/dev/null || true
+    return
+  }
+  kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
+  for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
+    installer_command_group_is_alive "$command_pid" || break
+    sleep 0.1
+  done
+  if installer_command_group_is_alive "$command_pid"; then
+    kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+  fi
+  wait "$command_pid" 2>/dev/null || true
+}
+
+run_bounded_installer_command() (
+  local label="$1" timeout_seconds="$2" log command_pid="" status=0 ticks=0 pending_signal=0
+  shift 2
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || error "Installer command timeout must be a positive integer."
+  log="$(mktemp)"
+  # Invoked indirectly by the signal and exit traps below.
+  # shellcheck disable=SC2329
+  cleanup_bounded_installer_command() {
+    local cleanup_status="$1"
+    trap 'cleanup_status=130' INT
+    trap 'cleanup_status=143' TERM
+    trap - EXIT
+    [[ -z "$command_pid" ]] || terminate_installer_command_group "$command_pid"
+    rm -f "$log"
+    exit "$cleanup_status"
+  }
+  trap 'pending_signal=130' INT
+  trap 'pending_signal=143' TERM
+  trap 'cleanup_bounded_installer_command "$?"' EXIT
+  info "$label"
+  set -m
+  "$@" >"$log" 2>&1 &
+  command_pid=$!
+  set +m
+  trap 'cleanup_bounded_installer_command 130' INT
+  trap 'cleanup_bounded_installer_command 143' TERM
+  ((pending_signal == 0)) || cleanup_bounded_installer_command "$pending_signal"
+  while installer_command_group_is_alive "$command_pid"; do
+    if ((ticks >= timeout_seconds * 10)); then
+      if [[ "${NEMOCLAW_FORCE_FRESH_CLEANUP_ACTIVE:-}" == "1" ]]; then
+        printf '[ERROR] Timed out during %s after %s seconds. Force-fresh cleanup is incomplete; remaining state was preserved for retry and OpenShell package removal did not start.\n' "$label" "$timeout_seconds" >&2
+      else
+        printf '[ERROR] Timed out during %s after %s seconds. Existing state was preserved; force-fresh cleanup did not start. Retry when package installation is healthy.\n' "$label" "$timeout_seconds" >&2
+      fi
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if wait "$command_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  command_pid=""
+  if ((status != 0)); then
+    cat "$log" >&2
+  fi
+  rm -f "$log"
+  trap - EXIT
+  return "$status"
+)
+
 command_exists() { command -v "$1" &>/dev/null; }
 
 # Apply the gateway's Unix-socket constraints before Node or CLI modules are available.
@@ -1400,7 +1481,7 @@ installer_docker_host_has_supported_shape() {
 # Admit a usable socket and the default context before Docker or recovery effects.
 # Persisted JSON inspection can wait only for its missing Node.js prerequisite.
 validate_installer_docker_target_before_host_changes() {
-  local raw="${DOCKER_HOST-}" candidate active_context=""
+  local raw="${DOCKER_HOST-}" candidate active_context="" context_host=""
   installer_docker_host_has_supported_shape \
     || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer."
   candidate="${raw#"${raw%%[![:space:]]*}"}"
@@ -1417,8 +1498,21 @@ validate_installer_docker_target_before_host_changes() {
     fi
     active_context="$(docker_active_context)"
   fi
-  [[ "$active_context" == default ]] \
-    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer."
+  if [[ "$active_context" != default ]]; then
+    context_host="$(docker context inspect "$active_context" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    [[ -n "$context_host" ]] \
+      || error "The Docker context does not select a supported local Unix socket. Select a local Docker or Colima context, then rerun the installer."
+    DOCKER_HOST="$context_host"
+    installer_docker_host_has_supported_shape \
+      || error "The Docker context does not select a supported local Unix socket. Select a local Docker or Colima context, then rerun the installer."
+    export DOCKER_HOST
+    unset DOCKER_CONTEXT
+  elif [[ -n "$candidate" ]]; then
+    unset DOCKER_CONTEXT
+  fi
+  # DOCKER_CONTEXT takes precedence over DOCKER_HOST in Docker clients. Once
+  # admission resolves a local socket, keep that socket authoritative through
+  # host preflight and automatic onboarding.
 }
 
 # Re-read persisted context after Node installation instead of trusting the temporary default.
@@ -1427,7 +1521,6 @@ complete_deferred_installer_docker_context_validation() {
   _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
   unset DOCKER_CONTEXT
   validate_installer_docker_target_before_host_changes
-  export DOCKER_CONTEXT=default
 }
 
 MIN_NODE_VERSION="22.19.0"
@@ -2286,6 +2379,45 @@ NODE
 #                    over their own openshell version)
 # Both modes defer when NEMOCLAW_DEFER_OPENSHELL_INSTALL=1 so the pre-upgrade
 # backup flow can run before any version bump.
+record_managed_user_local_openshell_install() {
+  local user_bin manifest temp_manifest binary binary_path digest
+  local -a sha256_command
+  user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  manifest="${user_bin}/.nemoclaw-openshell-managed-v1"
+  if command_exists sha256sum; then
+    sha256_command=(sha256sum)
+  elif command_exists shasum; then
+    sha256_command=(shasum -a 256)
+  else
+    error "Could not record managed OpenShell ownership because no SHA-256 command is available."
+  fi
+  temp_manifest="$(mktemp "${manifest}.tmp.XXXXXX")" \
+    || error "Could not create the managed OpenShell install manifest."
+  _cleanup_files+=("$temp_manifest")
+  chmod 600 "$temp_manifest" \
+    || error "Could not secure the managed OpenShell install manifest."
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    binary_path="${user_bin}/${binary}"
+    if [[ ! -e "$binary_path" ]]; then
+      case "$binary" in
+        openshell | openshell-gateway)
+          error "The verified standalone OpenShell install did not provide ${binary_path}."
+          ;;
+        *) continue ;;
+      esac
+    fi
+    [[ -f "$binary_path" && ! -L "$binary_path" && -x "$binary_path" ]] \
+      || error "The verified standalone OpenShell install did not provide ${binary_path}."
+    digest="$("${sha256_command[@]}" "$binary_path" | awk '{print $1}')" \
+      || error "Could not hash the installed ${binary} binary."
+    [[ "$digest" =~ ^[a-f0-9]{64}$ ]] \
+      || error "The installed ${binary} binary returned an invalid SHA-256 digest."
+    printf '%s  %s\n' "$digest" "$binary" >>"$temp_manifest"
+  done
+  mv -f -- "$temp_manifest" "$manifest" \
+    || error "Could not publish the managed OpenShell install manifest."
+}
+
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
@@ -2318,7 +2450,14 @@ maybe_install_openshell_during_install() {
   fi
   if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
-    return 1
+    if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
+      && truthy_env "${FORCE_FRESH_INSTALL:-}" \
+      && _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+        spin "Verifying the installed OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+      warn "Homebrew reported an install failure after placing OpenShell; the pinned OpenShell verifier passed, so force-fresh installation will continue."
+    else
+      return 1
+    fi
   fi
   if [[ "$platform" == "Darwin" ]]; then
     observed_install_method="$(observed_macos_openshell_install_method)" || return 1
@@ -2334,6 +2473,7 @@ maybe_install_openshell_during_install() {
       standalone)
         prefer_user_local_openshell verified-install \
           || error "The verified standalone OpenShell installation did not provide trusted executable user-local CLI and gateway binaries. The installer stopped before gateway recovery."
+        record_managed_user_local_openshell_install
         warn "Homebrew is not installed; using the verified standalone OpenShell gateway without reboot persistence."
         ;;
       *)
@@ -2465,6 +2605,11 @@ preflight_nemoclaw_acp_shim() {
   fi
   is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
   is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
+  if truthy_env "${FORCE_FRESH_INSTALL:-}" && [[ "$cli_path" != "$shim_path" ]]; then
+    _NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM=true
+    warn "Leaving unrelated $shim_path unchanged; the force-fresh install will not publish a nemoclaw-acp shim there."
+    return 0
+  fi
   error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
 }
 
@@ -2554,6 +2699,11 @@ ensure_cli_shim() {
   local replace_identity=""
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+
+  if [[ "$cli_bin" == "nemoclaw-acp" ]] \
+    && [[ "${_NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM:-false}" == true ]]; then
+    return 0
+  fi
 
   if [[ -z "$npm_bin" || ! -x "$npm_bin/$cli_bin" ]]; then
     return 1
@@ -3492,6 +3642,213 @@ run_preupgrade_backup() {
   fi
 
   NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
+}
+
+force_fresh_install_has_existing_state() {
+  local container_id container_image container_inventory container_label_inventory container_name
+  local receipt_volume_inventory user_bin volume_name volume_suffix
+  local existing_state=0
+  _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
+  _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
+  user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [[ -e "$(nemoclaw_state_root)" ]] \
+    || [[ -e "${HOME}/.config/nemoclaw" ]] \
+    || [[ -e "${HOME}/.config/openshell" ]] \
+    || [[ -e "${HOME}/.local/state/nemoclaw" ]] \
+    || [[ -e "${user_bin}/nemoclaw" ]] \
+    || [[ -e "${user_bin}/openshell" ]] \
+    || [[ -e "${user_bin}/openshell-gateway" ]] \
+    || [[ -e "${user_bin}/openshell-sandbox" ]] \
+    || [[ -e "${user_bin}/openshell-driver-vm" ]] \
+    || command_exists nemoclaw \
+    || command_exists openshell; then
+    existing_state=1
+  fi
+  if command_exists brew \
+    && brew list --formula nvidia/openshell/openshell >/dev/null 2>&1; then
+    existing_state=1
+  fi
+  if command_exists docker; then
+    docker info >/dev/null 2>&1 || return 2
+    container_label_inventory="$(
+      docker ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1 2>/dev/null
+    )" || return 2
+    _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$(printf '%s\n' "$container_label_inventory" | sed -n '1p')"
+    container_inventory="$(
+      docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}' 2>/dev/null
+    )" || return 2
+    while read -r container_id container_image container_name; do
+      [[ -n "$container_id" ]] || continue
+      case "$container_name" in
+        openshell-* | nemoclaw-*) _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id" ;;
+      esac
+      case "$container_image" in
+        nemoclaw-* | openshell/* | ghcr.io/nvidia/nemoclaw | ghcr.io/nvidia/nemoclaw:* | ghcr.io/nvidia/nemoclaw@* | ghcr.io/nvidia/nemoclaw/* | ghcr.io/nvidia/nemoclaw-*)
+          _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id"
+          ;;
+      esac
+      [[ -z "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]] || break
+    done <<<"$container_inventory"
+    receipt_volume_inventory="$(
+      docker volume ls --format '{{.Name}}' 2>/dev/null
+    )" || return 2
+    while IFS= read -r volume_name; do
+      case "$volume_name" in
+        nemoclaw-managed-startup-receipt-volume-*) ;;
+        *) continue ;;
+      esac
+      volume_suffix="${volume_name#nemoclaw-managed-startup-receipt-volume-}"
+      [[ "${#volume_suffix}" -eq 32 && "$volume_suffix" =~ ^[0-9a-f]+$ ]] || continue
+      _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME="$volume_name"
+      return 3
+    done <<<"$receipt_volume_inventory"
+  fi
+  if ((existing_state == 0)) && [[ -n "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]]; then
+    return 4
+  fi
+  ((existing_state == 0)) || return 0
+  return 1
+}
+
+force_fresh_install_source_root() {
+  local source_root state_root state_parent
+  source_root="$(cd "${NEMOCLAW_SOURCE_ROOT}" && pwd -P)" \
+    || error "Could not resolve the staged source for the force-fresh install."
+  state_root="$(nemoclaw_state_root)" \
+    || error "Could not resolve the NemoClaw state root for the force-fresh install."
+  if [[ -d "$state_root" ]]; then
+    state_root="$(cd "$state_root" && pwd -P)" \
+      || error "Could not resolve the existing NemoClaw state root."
+  else
+    state_parent="$(dirname "$state_root")"
+    state_root="$(cd "$state_parent" && pwd -P)/$(basename "$state_root")" \
+      || error "Could not resolve the NemoClaw state parent directory."
+  fi
+  case "$source_root" in
+    "$state_root" | "$state_root"/*)
+      error "The force-fresh installer must run from the versioned bootstrap checkout outside ${state_root}. Use the public curl installer with --force-fresh-install."
+      ;;
+  esac
+  [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] \
+    || error "The force-fresh installer requires a staged NemoClaw Git checkout."
+  printf '%s' "$source_root"
+}
+
+prepare_force_fresh_uninstaller() {
+  local source_root="$1" prepare_status=0
+  if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+    run_bounded_installer_command "Preparing OpenClaw package for force-fresh cleanup" "$FORCE_FRESH_PREPARE_TIMEOUT_SECONDS" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$source_root" \
+      || warn "Pre-extraction failed — npm install may fail if the OpenClaw tarball is broken"
+  fi
+  run_bounded_installer_command "Preparing the force-fresh uninstaller" "$FORCE_FRESH_PREPARE_TIMEOUT_SECONDS" bash -c \
+    "cd \"$source_root\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check && npm run --if-present build:cli" \
+    || prepare_status=$?
+  if ((prepare_status == 124)); then
+    error "Force-fresh uninstaller preparation timed out before cleanup. Existing state was preserved; rerun when package installation is healthy."
+  elif ((prepare_status != 0)); then
+    error "The staged force-fresh uninstaller could not be prepared. Existing state was preserved; cleanup did not start."
+  fi
+  [[ -s "${source_root}/dist/lib/actions/uninstall/run-plan.js" ]] \
+    || error "The staged force-fresh uninstaller did not build."
+}
+
+run_force_fresh_uninstaller() {
+  local source_root="$1" node_bin preflight_status=0 cleanup_status=0
+  node_bin="$(command -v node 2>/dev/null || true)"
+  [[ -n "$node_bin" && -x "$node_bin" ]] \
+    || error "Node.js is required for the force-fresh uninstaller."
+  run_bounded_installer_command \
+    "Validating force-fresh OpenShell ownership" \
+    "$FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS" \
+    "$node_bin" "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
+    --force-fresh-ownership-preflight \
+    || preflight_status=$?
+  if ((preflight_status == 124)); then
+    error "The staged canonical ownership preflight timed out. No cleanup started; retry when local process execution is healthy."
+  elif ((preflight_status != 0)); then
+    error "Force-fresh cleanup stopped because the staged canonical ownership preflight rejected a user-local OpenShell executable. Reconcile the reported binary, then rerun. No cleanup started."
+  fi
+  NEMOCLAW_FORCE_FRESH_CLEANUP_ACTIVE=1 run_bounded_installer_command \
+    "Running authoritative force-fresh cleanup" \
+    "$FORCE_FRESH_UNINSTALL_TIMEOUT_SECONDS" \
+    env NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 "$node_bin" \
+    "${source_root}/bin/nemoclaw.js" internal uninstall run-plan \
+    --yes --destroy-user-data --force-fresh-reset --all-gateway-ports \
+    || cleanup_status=$?
+  if ((cleanup_status == 124)); then
+    error "Authoritative force-fresh cleanup timed out and is incomplete. Inspect the remaining state, then rerun; OpenShell package removal did not start."
+  elif ((cleanup_status != 0)); then
+    return "$cleanup_status"
+  fi
+}
+
+preflight_macos_openshell_for_force_fresh_install() {
+  local formula="nvidia/openshell/openshell" binary="" binary_path=""
+  local user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}" homebrew_bin=""
+  if command_exists brew \
+    && brew list --formula "$formula" >/dev/null 2>&1; then
+    homebrew_bin="$(brew --prefix 2>/dev/null)/bin" \
+      || error "Homebrew could not report its installation prefix before force-fresh cleanup. No cleanup started."
+    [[ "$homebrew_bin" != "/bin" ]] \
+      || error "Homebrew returned an empty installation prefix before force-fresh cleanup. No cleanup started."
+  fi
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    binary_path="${user_bin}/${binary}"
+    if [[ -e "$binary_path" ]]; then
+      [[ -f "$binary_path" && ! -L "$binary_path" && -x "$binary_path" && -O "$binary_path" ]] \
+        || error "The force-fresh installer found an unsafe OpenShell executable at ${binary_path}. Remove or reconcile it explicitly, then rerun. No cleanup started."
+    fi
+    binary_path="$(command -v "$binary" 2>/dev/null || true)"
+    [[ -z "$binary_path" || "$binary_path" == "${user_bin}/${binary}" ]] && continue
+    [[ -n "$homebrew_bin" && "$binary_path" == "${homebrew_bin}/${binary}" ]] && continue
+    error "The force-fresh installer found an unverified OpenShell executable at ${binary_path}. Remove or reconcile it explicitly, then rerun. No cleanup started."
+  done
+}
+
+remove_macos_openshell_for_force_fresh_install() {
+  local formula="nvidia/openshell/openshell" binary="" openshell_path=""
+  if command_exists brew && brew list --formula "$formula" >/dev/null 2>&1; then
+    brew services stop "$formula" >/dev/null 2>&1 || true
+    brew uninstall --force "$formula" \
+      || error "Homebrew could not remove OpenShell during the force-fresh install. Rerun the same command after Homebrew is healthy."
+  fi
+  hash -r 2>/dev/null || true
+  for binary in openshell openshell-gateway openshell-sandbox openshell-driver-vm; do
+    openshell_path="$(command -v "$binary" 2>/dev/null || true)"
+    [[ -z "$openshell_path" ]] \
+      || error "The force-fresh installer found a remaining OpenShell executable at ${openshell_path}. Remove or reconcile that installation explicitly, then rerun."
+  done
+}
+
+run_force_fresh_install_reset() {
+  local source_root existing_state_status=0
+  warn "Force-fresh install selected. NemoClaw will destroy all NemoClaw/OpenShell sandboxes, gateways, credentials, configuration, and recovery state on this host. Model caches are kept."
+  preflight_macos_openshell_for_force_fresh_install
+  force_fresh_install_has_existing_state || existing_state_status=$?
+  case "$existing_state_status" in
+    0)
+      source_root="$(force_fresh_install_source_root)"
+      prepare_force_fresh_uninstaller "$source_root"
+      run_force_fresh_uninstaller "$source_root" \
+        || error "Force-fresh cleanup stopped because the authoritative whole-host uninstall did not complete. The installer preserved remaining state for a safe retry."
+      ;;
+    1) info "No existing NemoClaw or OpenShell installation was found; continuing with a clean install." ;;
+    2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
+    3) error "Force-fresh cleanup found unverified receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. Docker names and mutable labels are not ownership proof. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
+    4) error "Force-fresh cleanup found unverified Docker container ${_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER}. NemoClaw cannot prove this Docker-only resource belongs to the current installation. Inspect and reconcile it explicitly, then rerun. No cleanup started." ;;
+    *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
+  esac
+  remove_macos_openshell_for_force_fresh_install
+  FRESH=1
+  export NEMOCLAW_FRESH=1
+  export NEMOCLAW_REINSTALL_CLI=1
+  _PREEXISTING_SANDBOX_COUNT=0
+}
+
+validate_force_fresh_install_platform() {
+  truthy_env "${FORCE_FRESH_INSTALL:-}" || return 0
+  [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] \
+    || error "--force-fresh-install currently supports Apple silicon macOS only."
 }
 
 # Return nonzero when OpenShell is absent or its version command fails.
@@ -7063,6 +7420,9 @@ install_nemoclaw_before_onboarding() {
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   prepare_installer_node_runtime
+  if truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    run_force_fresh_install_reset
+  fi
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"
@@ -7071,7 +7431,9 @@ install_nemoclaw_before_onboarding() {
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
   preflight_nemoclaw_acp_shim
-  preinstall_backup_and_retire_legacy_gateway
+  if ! truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    preinstall_backup_and_retire_legacy_gateway
+  fi
   install_nemoclaw
   verify_nemoclaw
   require_reportable_openshell_version
@@ -7097,6 +7459,7 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   DEFER_ONBOARDING=""
   FRESH=""
+  FORCE_FRESH_INSTALL=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
   LOCAL_MODEL_RUNTIME=""
@@ -7116,6 +7479,7 @@ main() {
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --defer-onboarding) DEFER_ONBOARDING=1 ;;
       --fresh) FRESH=1 ;;
+      --force-fresh-install) FORCE_FRESH_INSTALL=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --local-model-runtime=*)
@@ -7160,6 +7524,12 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   DEFER_ONBOARDING="${DEFER_ONBOARDING:-${NEMOCLAW_DEFER_ONBOARDING:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
+  FORCE_FRESH_INSTALL="${FORCE_FRESH_INSTALL:-${NEMOCLAW_FORCE_FRESH_INSTALL:-}}"
+  if truthy_env "${FORCE_FRESH_INSTALL:-}"; then
+    validate_force_fresh_install_platform
+    FRESH=1
+    export FORCE_FRESH_INSTALL NEMOCLAW_FORCE_FRESH_INSTALL=1
+  fi
   if [ -n "${LOCAL_MODEL_RUNTIME:-}" ]; then
     export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
     export NEMOCLAW_LOCAL_MODEL_RUNTIME="$LOCAL_MODEL_RUNTIME"
