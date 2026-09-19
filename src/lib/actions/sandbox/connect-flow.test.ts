@@ -490,7 +490,7 @@ describe("connectSandbox flow", () => {
       expect.any(Object),
     );
     const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Probe complete: OpenClaw gateway is running in 'alpha'.");
+    expect(output).toContain("Probe complete: recovered OpenClaw gateway in 'alpha'.");
     expect(output).toMatch(/Probe timing: .*lifecycleAction=skipped .*result=ready/);
   });
 
@@ -819,8 +819,8 @@ describe("connectSandbox flow", () => {
     const harness = createConnectHarness({
       processCheck: {
         checked: true,
-        wasRunning: false,
-        recovered: true,
+        wasRunning: true,
+        recovered: false,
       },
     });
 
