@@ -585,9 +585,9 @@ describe("created sandbox identity gate", () => {
     input.gpuRoutePlan = "compatibility-only";
     input.initialGpuRoute = "compatibility";
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
-    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async (_identity, beforeEffects) => {
       events.push("verify-created");
-      expect(replacementRuntimeId).toBeNull();
+      await beforeEffects?.();
     });
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) =>
       events.push(`revalidate:${operation}`),

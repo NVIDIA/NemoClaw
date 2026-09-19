@@ -225,7 +225,10 @@ export interface SandboxGpuCreateFlowInput {
    * Verify the exact sandbox created by each attempt before runtime activation,
    * readiness, GPU, service, dashboard, or registry effects continue.
    */
-  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
+  verifyCreatedSandboxBeforeEffects?: (
+    identity: CreatedSandboxIdentity,
+    beforeEffects?: () => void | Promise<void>,
+  ) => void | Promise<void>;
   /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
   /** Persist the commit fence before the exact final handoff starts. */

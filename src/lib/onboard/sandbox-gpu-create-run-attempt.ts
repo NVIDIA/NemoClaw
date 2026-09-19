@@ -228,14 +228,18 @@ async function verifyCreatedSandboxBeforeEffects(
   createAttemptNonce: string | undefined,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
+  beforeEffects?: () => void | Promise<void>,
 ): Promise<void> {
   if (!input.verifyCreatedSandboxBeforeEffects) return;
-  await input.verifyCreatedSandboxBeforeEffects({
-    sandboxId,
-    liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
-    createAttemptNonce,
-    route,
-  });
+  await input.verifyCreatedSandboxBeforeEffects(
+    {
+      sandboxId,
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce,
+      route,
+    },
+    beforeEffects,
+  );
 }
 
 function resolveCreateAttemptNonce(
@@ -677,13 +681,19 @@ export function createSandboxGpuCreateAttemptRunner(
           deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
         if (!runtimeId || !verifyExactRuntime(input.sandboxName, runtimeId, true)) return;
         waitForCreatedSandboxPublication(sandboxId);
-        await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce, route, input);
+        await verifyCreatedSandboxBeforeEffects(
+          sandboxId,
+          createAttemptNonce,
+          route,
+          input,
+          async () => {
+            revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
+            runtimePatch.maybeApplyDuringCreate();
+            await runtimePatch.exitOnPatchError();
+          },
+        );
         createdSandboxVerified = true;
       }
-      if (runtimePatch.replacementRuntimeId?.()) return;
-      revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-      runtimePatch.maybeApplyDuringCreate();
-      await runtimePatch.exitOnPatchError();
     };
     const streamCreate = async () => {
       const createResult = await streamSandboxCreateWithPublicImageCredentialIsolation(

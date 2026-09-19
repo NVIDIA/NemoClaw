@@ -991,7 +991,12 @@ export async function runSandboxCreateWithIdentityVerification<
 >(input: {
   readonly sandboxName: string;
   readonly revalidate: (sandboxIsLive: boolean, operation: string) => void;
-  readonly create: (verifyCreatedSandbox: (created: Created) => Promise<string>) => Promise<Result>;
+  readonly create: (
+    verifyCreatedSandbox: (
+      created: Created,
+      beforeEffects?: () => void | Promise<void>,
+    ) => Promise<string>,
+  ) => Promise<Result>;
   readonly captureCreatedSandboxIdentity: (created: Created) => string;
   readonly captureCreatedSandboxCreateAttemptNonce?: (created: Created) => string | undefined;
   readonly persistCreatedSandboxIdentity: (created: Created, exactIdentity: string) => void;
@@ -1075,7 +1080,10 @@ export async function runSandboxCreateWithIdentityVerification<
       `Sandbox post-create verification or finalization failed; automatic sandbox cleanup was not safe. ${recoveryGuidance}`,
     );
   };
-  const verifyCreatedSandbox = async (created: Created): Promise<string> => {
+  const verifyCreatedSandbox = async (
+    created: Created,
+    beforeEffects?: () => void | Promise<void>,
+  ): Promise<string> => {
     observedCreatedSandbox = created;
     try {
       const capturedCreateAttemptNonce = input.captureCreatedSandboxCreateAttemptNonce?.(created);
@@ -1113,6 +1121,7 @@ export async function runSandboxCreateWithIdentityVerification<
         evidence,
         `continuing onboarding for sandbox '${input.sandboxName}'`,
       );
+      await beforeEffects?.();
       await input.runVerifiedCreateEffects?.(created, capturedIdentity, evidence);
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
@@ -3062,10 +3071,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               restoreBackupPath,
               terminalAgent: agentDefs.isTerminalAgent(agent),
               managedImage: preparedSandboxWorkload.source.kind === "managed-image",
-              verifyCreatedSandboxBeforeEffects: async (identity) => {
+              verifyCreatedSandboxBeforeEffects: async (identity, beforeEffects) => {
                 managedBootstrapCreateFinished = false;
                 managedBootstrapCreateRoute = identity.route;
-                await verifyCreatedSandbox(identity);
+                await verifyCreatedSandbox(identity, beforeEffects);
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
                 revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation),
