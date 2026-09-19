@@ -158,3 +158,6 @@ pub use download::{
     ByteProgress, DownloadPhase, DownloadProgress, with_download_progress,
     with_provider_download_progress,
 };
+
+#[cfg(test)]
+mod docker_compute;

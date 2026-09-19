@@ -114,7 +114,7 @@ impl ProxySpec {
         ]
         .into())
     }
-    fn container(&self) -> Result<ContainerCreateBody, Error> {
+    pub(crate) fn container(&self) -> Result<ContainerCreateBody, Error> {
         let proxy = &self.settings;
         serde_json::from_value(json!({"Image":self.image,"Labels":self.labels()?,"Entrypoint":["python3","/opt/nemoclaw/ollama_proxy.py"],"Cmd":[],
             "Env":[format!("NEMOCLAW_OLLAMA_PROXY={}",serde_json::to_string(proxy).expect("typed proxy"))],
