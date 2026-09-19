@@ -84,3 +84,23 @@ fn removed_ollama_backends_cannot_resolve_saved_resource_rows() {
         );
     }
 }
+
+#[test]
+fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
+    for source in [
+        include_str!("../../../examples/spark/vllm.yaml"),
+        include_str!("../../../examples/managed-ollama-gpu.yaml"),
+    ] {
+        let mut value: serde_json::Value = serde_saphyr::from_str(source).unwrap();
+        let provider = value["spec"]["inferenceProviders"][0]
+            .as_object_mut()
+            .unwrap();
+        provider.remove("serviceRef");
+        provider.insert(
+            "endpoint".into(),
+            serde_json::json!("https://inference.example/v1"),
+        );
+        value["spec"]["sandboxes"][0]["runtime"]["provider"] = serde_json::json!("podman");
+        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    }
+}

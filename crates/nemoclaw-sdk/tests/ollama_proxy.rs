@@ -187,3 +187,40 @@ fn named_proxies_have_distinct_containers_storage_and_credentials() {
         other["resource"]["nemoclaw_provider"]["inference_local"]["credential_source"]
     );
 }
+
+#[test]
+fn proxy_requires_a_managed_docker_gateway_and_uses_its_engine() {
+    let mut value = input();
+    value["spec"]["gateway"]["engine"] = json!("unix:///tmp/proxy-engine.sock");
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let graph = compile(&document, &generations, "test").unwrap();
+    for kind in [
+        "nemoclaw_ollama_proxy",
+        "nemoclaw_ollama_proxy_storage",
+        "nemoclaw_ollama_external_model",
+    ] {
+        assert_eq!(
+            graph["resource"][kind]["ollama-auth"]["engine"],
+            "unix:///tmp/proxy-engine.sock"
+        );
+    }
+    let mut external = value.clone();
+    external["spec"]["gateway"] =
+        json!({"management":"external", "endpoint":"http://127.0.0.1:17671"});
+    assert!(
+        Document::parse(external.to_string().as_bytes())
+            .unwrap_err()
+            .to_string()
+            .contains("managed local Docker gateway")
+    );
+    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    assert!(
+        Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string()
+            .contains("managed local Docker gateway")
+    );
+}

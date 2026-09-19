@@ -207,24 +207,28 @@ impl ServiceDefinition {
         }
     }
 
-    fn validate_installation(&self, gateway: &Gateway) -> Result<(), ConfigError> {
+    fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
+        let gateway = &document.spec.gateway;
+        let local_docker = gateway.management == "managed"
+            && gateway.engine.starts_with("unix:///")
+            && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()
+            && document
+                .spec
+                .sandboxes
+                .iter()
+                .all(|sandbox| sandbox.runtime.provider == "docker");
         let (placement, package) = match self {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
             Self::OllamaProxy(_) => {
                 return crate::config::validation::require(
-                    gateway.management == "managed"
-                        && gateway.engine.starts_with("unix:///")
-                        && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok(),
+                    local_docker,
                     "Ollama proxy requires a managed local Docker gateway",
                 );
             }
         };
         crate::config::validation::require(
-            placement.is_some()
-                || (gateway.management == "managed"
-                    && gateway.engine.starts_with("unix:///")
-                    && crate::docker::Engine::validate_endpoint(&gateway.engine).is_ok()),
+            placement.is_some() || local_docker,
             if package == "Ollama" {
                 "Ollama requires the managed gateway Docker engine or explicit placement"
             } else {
@@ -508,7 +512,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     for (name, definition) in &document.spec.services {
         require(SLUG.is_match(name), "service names must be lowercase slugs")?;
         definition.validate_definition()?;
-        definition.validate_installation(&document.spec.gateway)?;
+        definition.validate_installation(document)?;
     }
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
