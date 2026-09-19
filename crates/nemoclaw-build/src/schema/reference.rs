@@ -337,68 +337,70 @@ fn collect_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn reference_explains_tool_union_fields_and_disclosure_choices() {
-        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
-        let tools = markdown
-            .split("## AgentTools\n")
-            .nth(1)
-            .unwrap()
-            .split("\n## ")
-            .next()
-            .unwrap();
-        assert!(tools.contains("| `allow` |"));
-        assert!(tools.contains("| `disclosure` |"));
-        assert!(markdown.contains("`\"progressive\"` or `\"direct\"`"));
+    use serde_json::json;
+
+    fn schema(properties: Value, definitions: Value) -> Value {
+        json!({"type":"object", "description":"Fixture configuration.",
+            "properties":properties, "$defs":definitions, "x-nemoclaw-parser-checks":[]})
     }
+
     #[test]
-    fn reference_lists_named_enum_choices() {
-        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
-        let api = markdown
-            .split("## InferenceApi\n")
-            .nth(1)
-            .unwrap()
-            .split("\n## ")
-            .next()
-            .unwrap();
-        assert!(api.contains("openai-responses") && api.contains("anthropic-messages"));
-        let policy = markdown
-            .split("## ImagePullPolicy\n")
-            .nth(1)
-            .unwrap()
-            .split("\n## ")
-            .next()
-            .unwrap();
-        assert!(policy.contains("Accepted input: string."));
-        assert!(policy.contains("usage.md#control-container-image-downloads"));
+    fn reference_renders_each_union_field_and_its_choices() {
+        let input = schema(
+            json!({"setting":{"description":"A selection.", "$ref":"#/$defs/Choice"}}),
+            json!({"Choice":{"description":"Choose one form.", "oneOf":[
+                {"type":"object", "description":"Boolean alternative.", "properties":{"enabled":{"type":"boolean", "description":"Enable this option."}}},
+                {"type":"object", "description":"Named alternative.", "properties":{"selection_mode":{"type":"string", "description":"Select a mode.", "enum":["first-choice","second-choice"]}}}
+            ]}}),
+        );
+        let markdown = render_reference(&input).unwrap();
+        for expected in ["enabled", "selection_mode", "first-choice", "second-choice"] {
+            assert!(markdown.contains(expected), "missing {expected}");
+        }
     }
+
     #[test]
-    fn reference_documents_map_values_and_matcher_alternatives() {
-        let markdown = render_reference(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
-        assert!(markdown.contains("network_policies.{key}.endpoints[].rules[].allow"));
-        assert!(markdown.contains("## PolicyValueMatcher"));
-        assert!(!markdown.contains("Constraints:  or ."));
-        assert!(!markdown.contains("any JSON value or any JSON value"));
-        assert!(markdown.contains("| `consecutiveSamples` | integer |"));
-        assert!(markdown.contains("[PolicyAnyMatcher](#policyanymatcher)"));
+    fn reference_follows_named_values_through_arrays_and_maps() {
+        let input = schema(
+            json!({"rules":{"description":"Rules by name.", "type":"array", "items":{"type":"object", "additionalProperties":{"$ref":"#/$defs/Choice"}}}}),
+            json!({"Choice":{"description":"A selectable value.", "type":"string", "enum":["alpha","beta"]}}),
+        );
+        let markdown = render_reference(&input).unwrap();
+        for expected in ["rules[].{key}", "#choice", "alpha", "beta"] {
+            assert!(markdown.contains(expected), "missing {expected}");
+        }
     }
+
     #[test]
-    fn reference_requires_field_descriptions_and_reflects_schema_metadata() {
-        let mut schema = nemoclaw_sdk::config::schema::input_schema();
-        let property = &mut schema["$defs"]["Serving"]["properties"]["port"];
-        property["default"] = serde_json::json!(19001);
-        property["description"] = serde_json::json!("A changed field description.");
-        let markdown = render_reference(&schema).unwrap();
-        assert!(markdown.contains("19001"));
-        assert!(markdown.contains("A changed field description."));
-        schema["$defs"]["Serving"]["properties"]["port"]
+    fn equivalent_alternative_types_do_not_repeat_or_invent_constraints() {
+        assert_eq!(
+            input_type(
+                &json!({"anyOf":[{"type":"string","minLength":1},{"type":"string","pattern":"x"}]})
+            ),
+            "string"
+        );
+        assert!(constraints(&json!({"oneOf":[{"type":"object"},{"type":"array"}]})).is_empty());
+    }
+
+    #[test]
+    fn reference_reflects_field_metadata_and_rejects_missing_descriptions() {
+        let mut input = schema(
+            json!({"amount":{"type":"integer", "description":"Original amount description.", "default":19001}}),
+            json!({}),
+        );
+        let before = render_reference(&input).unwrap();
+        assert!(before.contains("19001"));
+        assert!(before.contains("Original amount description."));
+        input["properties"]["amount"]["default"] = json!(19002);
+        input["properties"]["amount"]["description"] = json!("Updated amount description.");
+        let after = render_reference(&input).unwrap();
+        assert!(after.contains("19002"));
+        assert!(after.contains("Updated amount description."));
+        assert!(!after.contains("Original amount description."));
+        input["properties"]["amount"]
             .as_object_mut()
             .unwrap()
             .remove("description");
-        assert!(
-            render_reference(&schema)
-                .unwrap_err()
-                .contains("Serving.port lacks a public description")
-        );
+        assert!(render_reference(&input).unwrap_err().contains("amount"));
     }
 }
