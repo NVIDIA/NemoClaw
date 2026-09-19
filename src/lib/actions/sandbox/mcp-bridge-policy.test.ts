@@ -226,12 +226,12 @@ describe("generated MCP policy", () => {
     ]);
   });
 
-  it("includes the credential-resolution probe binaries so mcp add does not deny its own CONNECT (#12065)", () => {
-    const probePaths = MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path);
-    expect(probePaths).toEqual(["/usr/bin/curl", "/usr/local/bin/curl"]);
-
-    const render = (adapter: "openclaw-config" | "hermes-config" | "deepagents-config") =>
-      YAML.parse(
+  it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
+    "includes credential-resolution probe binaries for %s so mcp add does not deny its own CONNECT (#12065)",
+    (adapter) => {
+      const probePaths = MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path);
+      expect(probePaths).toEqual(["/usr/bin/curl", "/usr/local/bin/curl"]);
+      const parsed = YAML.parse(
         buildMcpBridgePolicyYaml(
           "github",
           "https://api.githubcopilot.com/mcp/",
@@ -243,13 +243,11 @@ describe("generated MCP policy", () => {
         network_policies: Record<string, { binaries: Array<{ path: string }> }>;
       };
 
-    for (const adapter of ["openclaw-config", "hermes-config", "deepagents-config"] as const) {
-      const binaries = render(adapter).network_policies.mcp_bridge_github.binaries.map(
-        ({ path }) => path,
+      expect(parsed.network_policies.mcp_bridge_github.binaries.map(({ path }) => path)).toEqual(
+        expect.arrayContaining(probePaths),
       );
-      expect(binaries, adapter).toEqual(expect.arrayContaining(probePaths));
-    }
-  });
+    },
+  );
 
   it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
     "renders an authorized private target for %s with a process-local capability",
