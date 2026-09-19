@@ -125,15 +125,13 @@ runs:
         context: .
         file: ${{ inputs.dockerfile }}
         platforms: ${{ inputs.platform }}
-        provenance: false
+        provenance: mode=min
         sbom: false
         tags: nemoclaw-dcode-base-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           org.opencontainers.image.revision=${{ github.sha }}
-        outputs: |
-          type=docker,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.docker.tar
-          type=oci,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
+        outputs: type=oci,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
         cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
 
     - name: Bind Deep Agents Code local candidate to OCI layout
@@ -141,36 +139,215 @@ runs:
       if: ${{ inputs.agent == 'langchain-deepagents-code' }}
       shell: bash
       env:
-        DOCKER_ARCHIVE: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}.docker.tar
-        LOCAL_REFERENCE: nemoclaw-dcode-base-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
+        ARCH: ${{ inputs.arch }}
         OCI_ARCHIVE: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
         OCI_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-oci
+        VALIDATION_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-validation
       run: |
         set -euo pipefail
-        install -d -m 0700 "$OCI_LAYOUT"
-        docker load --input "$DOCKER_ARCHIVE"
+        install -d -m 0700 "$OCI_LAYOUT" "$VALIDATION_LAYOUT"
         tar --extract --file "$OCI_ARCHIVE" --directory "$OCI_LAYOUT"
-        digest="$(
-          jq -er \
-            '.manifests | if length == 1 then .[0].digest else error("expected one platform manifest") end' \
-            "$OCI_LAYOUT/index.json"
+        root_index="$OCI_LAYOUT/index.json"
+        if [ ! -f "$root_index" ] || [ -L "$root_index" ]; then
+          echo "ERROR: Deep Agents Code candidate OCI root index is missing or unsafe." >&2
+          exit 1
+        fi
+        source_descriptor="$(
+          jq -cer '
+            if .schemaVersion == 2
+              and .mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests | type == "array" and length == 1)
+              and .manifests[0].mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests[0].digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.manifests[0].size | type == "number" and . > 0 and floor == .)
+            then .manifests[0]
+            else error("expected one provenance-wrapped source index")
+            end
+          ' "$root_index"
         )"
-        if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-          echo "ERROR: Deep Agents Code candidate OCI layout has an invalid digest." >&2
+        source_digest="$(jq -r '.digest' <<<"$source_descriptor")"
+        source_size="$(jq -r '.size' <<<"$source_descriptor")"
+        source_index="$OCI_LAYOUT/blobs/sha256/${source_digest#sha256:}"
+        if [ ! -f "$source_index" ] || [ -L "$source_index" ]; then
+          echo "ERROR: Deep Agents Code candidate source index is missing or unsafe." >&2
           exit 1
         fi
-        manifest="$OCI_LAYOUT/blobs/sha256/${digest#sha256:}"
-        if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
-          echo "ERROR: Deep Agents Code candidate OCI manifest is missing or unsafe." >&2
+        actual_source_digest="sha256:$(sha256sum "$source_index" | cut -d' ' -f1)"
+        actual_source_size="$(wc -c < "$source_index" | tr -d '[:space:]')"
+        if [ "$actual_source_digest" != "$source_digest" ] || [ "$actual_source_size" != "$source_size" ]; then
+          echo "ERROR: Deep Agents Code candidate source index descriptor does not match its blob." >&2
           exit 1
         fi
-        config_digest="$(jq -er '.config.digest' "$manifest")"
-        local_image_id="$(docker image inspect --format '{{.Id}}' "$LOCAL_REFERENCE")"
-        if [ "$local_image_id" != "$config_digest" ]; then
+        if ! jq -e --arg arch "$ARCH" '
+          (.manifests | map(select(
+            .platform.os == "linux"
+            and .platform.architecture == $arch
+            and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+            and (.digest | test("^sha256:[0-9a-f]{64}$"))
+            and (.size | type == "number" and . > 0 and floor == .)
+          ))) as $workloads
+          | .schemaVersion == 2
+          and .mediaType == "application/vnd.oci.image.index.v1+json"
+          and (.manifests | type == "array" and length == 2)
+          and ($workloads | length) == 1
+          and ([
+            .manifests[]
+            | select(
+                .platform.os == "unknown"
+                and .platform.architecture == "unknown"
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.digest | test("^sha256:[0-9a-f]{64}$"))
+                and (.size | type == "number" and . > 0 and floor == .)
+                and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                and .annotations["vnd.docker.reference.digest"] == $workloads[0].digest
+              )
+          ] | length) == 1
+        ' "$source_index" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate source index is not one workload plus linked provenance." >&2
+          exit 1
+        fi
+        workload_descriptor="$(
+          jq -cer --arg arch "$ARCH" '
+            .manifests[]
+            | select(.platform.os == "linux" and .platform.architecture == $arch)
+          ' "$source_index"
+        )"
+        workload_digest="$(jq -r '.digest' <<<"$workload_descriptor")"
+        workload_size="$(jq -r '.size' <<<"$workload_descriptor")"
+        workload_manifest="$OCI_LAYOUT/blobs/sha256/${workload_digest#sha256:}"
+        if [ ! -f "$workload_manifest" ] || [ -L "$workload_manifest" ]; then
+          echo "ERROR: Deep Agents Code candidate workload manifest is missing or unsafe." >&2
+          exit 1
+        fi
+        actual_workload_digest="sha256:$(sha256sum "$workload_manifest" | cut -d' ' -f1)"
+        actual_workload_size="$(wc -c < "$workload_manifest" | tr -d '[:space:]')"
+        if [ "$actual_workload_digest" != "$workload_digest" ] || [ "$actual_workload_size" != "$workload_size" ]; then
+          echo "ERROR: Deep Agents Code candidate workload descriptor does not match its blob." >&2
+          exit 1
+        fi
+        attestation_descriptor="$(
+          jq -cer '
+            .manifests[]
+            | select(
+                .platform.os == "unknown"
+                and .platform.architecture == "unknown"
+                and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+              )
+          ' "$source_index"
+        )"
+        attestation_digest="$(jq -r '.digest' <<<"$attestation_descriptor")"
+        attestation_size="$(jq -r '.size' <<<"$attestation_descriptor")"
+        attestation_manifest="$OCI_LAYOUT/blobs/sha256/${attestation_digest#sha256:}"
+        if [ ! -f "$attestation_manifest" ] || [ -L "$attestation_manifest" ]; then
+          echo "ERROR: Deep Agents Code candidate provenance manifest is missing or unsafe." >&2
+          exit 1
+        fi
+        actual_attestation_digest="sha256:$(sha256sum "$attestation_manifest" | cut -d' ' -f1)"
+        actual_attestation_size="$(wc -c < "$attestation_manifest" | tr -d '[:space:]')"
+        if [ "$actual_attestation_digest" != "$attestation_digest" ] || \
+          [ "$actual_attestation_size" != "$attestation_size" ]; then
+          echo "ERROR: Deep Agents Code candidate provenance descriptor does not match its blob." >&2
+          exit 1
+        fi
+        if ! jq -e '
+          .schemaVersion == 2
+          and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+          and (.config | type == "object")
+          and (.layers | type == "array" and length > 0)
+        ' "$workload_manifest" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate workload manifest is invalid." >&2
+          exit 1
+        fi
+        install -d -m 0700 "$VALIDATION_LAYOUT/blobs/sha256"
+        printf '{"imageLayoutVersion":"1.0.0"}\n' > "$VALIDATION_LAYOUT/oci-layout"
+        validation_image_name="docker.io/library/nemoclaw-dcode-base-candidate-${ARCH}:latest"
+        validation_descriptor="$(
+          jq -cn \
+            --arg image_name "$validation_image_name" \
+            --argjson workload "$workload_descriptor" '
+              $workload + {
+                annotations: (($workload.annotations // {}) + {
+                  "io.containerd.image.name": $image_name,
+                  "org.opencontainers.image.ref.name": "latest"
+                })
+              }
+            '
+        )"
+        jq -cn --argjson workload "$validation_descriptor" '
+          {
+            schemaVersion: 2,
+            mediaType: "application/vnd.oci.image.index.v1+json",
+            manifests: [$workload]
+          }
+        ' > "$VALIDATION_LAYOUT/index.json"
+        if ! jq -e --argjson workload "$validation_descriptor" '
+          .schemaVersion == 2
+          and .mediaType == "application/vnd.oci.image.index.v1+json"
+          and .manifests == [$workload]
+        ' "$VALIDATION_LAYOUT/index.json" >/dev/null; then
+          echo "ERROR: Deep Agents Code local validation index does not match the workload." >&2
+          exit 1
+        fi
+        cp -Pl -- \
+          "$workload_manifest" \
+          "$VALIDATION_LAYOUT/blobs/sha256/${workload_digest#sha256:}"
+
+        link_runtime_blob() {
+          local descriptor="$1"
+          local digest size blob actual_digest actual_size
+          digest="$(jq -er '
+            if (.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.size | type == "number" and . > 0 and floor == .)
+              and (.mediaType | type == "string" and length > 0)
+            then .digest
+            else error("invalid runtime descriptor")
+            end
+          ' <<<"$descriptor")"
+          size="$(jq -r '.size' <<<"$descriptor")"
+          blob="$OCI_LAYOUT/blobs/sha256/${digest#sha256:}"
+          if [ ! -f "$blob" ] || [ -L "$blob" ]; then
+            echo "ERROR: Deep Agents Code candidate runtime blob is missing or unsafe." >&2
+            exit 1
+          fi
+          actual_digest="sha256:$(sha256sum "$blob" | cut -d' ' -f1)"
+          actual_size="$(wc -c < "$blob" | tr -d '[:space:]')"
+          if [ "$actual_digest" != "$digest" ] || [ "$actual_size" != "$size" ]; then
+            echo "ERROR: Deep Agents Code candidate runtime descriptor does not match its blob." >&2
+            exit 1
+          fi
+          cp -Pl -- \
+            "$blob" \
+            "$VALIDATION_LAYOUT/blobs/sha256/${digest#sha256:}"
+        }
+
+        config_descriptor="$(jq -cer '.config' "$workload_manifest")"
+        config_digest="$(jq -r '.digest' <<<"$config_descriptor")"
+        link_runtime_blob "$config_descriptor"
+        mapfile -t layer_descriptors < <(jq -cer '.layers[]' "$workload_manifest")
+        for layer_descriptor in "${layer_descriptors[@]}"; do
+          link_runtime_blob "$layer_descriptor"
+        done
+        config_blob="$OCI_LAYOUT/blobs/sha256/${config_digest#sha256:}"
+        if ! jq -e --arg arch "$ARCH" \
+          '.os == "linux" and .architecture == $arch' \
+          "$config_blob" >/dev/null; then
+          echo "ERROR: Deep Agents Code candidate config platform does not match the build." >&2
+          exit 1
+        fi
+
+        tar --create --file=- --directory "$VALIDATION_LAYOUT" . | docker load >/dev/null
+        read -r local_image_id local_os local_arch < <(
+          docker image inspect \
+            --format '{{.Id}} {{.Os}} {{.Architecture}}' \
+            "$validation_image_name"
+        )
+        if { [ "$local_image_id" != "$config_digest" ] && \
+          [ "$local_image_id" != "$workload_digest" ]; } || \
+          [ "$local_os" != "linux" ] || [ "$local_arch" != "$ARCH" ]; then
           echo "ERROR: Deep Agents Code Docker candidate does not match its OCI layout." >&2
           exit 1
         fi
-        printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+        printf 'digest=%s\n' "$source_digest" >> "$GITHUB_OUTPUT"
         printf 'reference=%s\n' "$local_image_id" >> "$GITHUB_OUTPUT"
 
     - name: Validate Deep Agents Code base runtime
@@ -211,13 +388,14 @@ runs:
         set -euo pipefail
         metadata="$RUNNER_TEMP/dcode-base-${ARCH}-publication.json"
         docker buildx imagetools create \
-          --prefer-index=false \
           --tag "${IMAGE}@${DIGEST}" \
           --metadata-file "$metadata" \
           "oci-layout://${OCI_LAYOUT}@${DIGEST}"
         published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$metadata")"
-        if [ "$published_digest" != "$DIGEST" ]; then
-          echo "ERROR: published Deep Agents Code digest differs from the validated candidate." >&2
+        published_media_type="$(jq -er '.["containerimage.descriptor"].mediaType' "$metadata")"
+        if [ "$published_digest" != "$DIGEST" ] || \
+          [ "$published_media_type" != "application/vnd.oci.image.index.v1+json" ]; then
+          echo "ERROR: published Deep Agents Code source index differs from the validated candidate." >&2
           exit 1
         fi
         printf 'digest=%s\n' "$DIGEST" >> "$GITHUB_OUTPUT"
