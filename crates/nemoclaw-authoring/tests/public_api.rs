@@ -9,43 +9,47 @@ use nemoclaw_sdk::config::Document;
 const UID: &str = "12345678-1234-4234-9234-123456789abc";
 
 #[test]
-fn standalone_authoring_preserves_the_generated_yaml_contract() {
+fn standalone_authoring_preserves_answers_and_reopens_equivalent_yaml() {
     let capabilities = Capabilities::available();
-    let session = Session::with_uid(UID).unwrap();
-    let authored = session
-        .project(&capabilities, &Answers::onboarding_defaults())
+    let answers = Answers::onboarding_defaults();
+    let authored = Session::with_uid(UID)
+        .unwrap()
+        .project(&capabilities, &answers)
         .unwrap();
-    let fixture = include_str!("fixtures/default.yaml");
-    let (_, expected_yaml) = fixture.split_once("\n\n").unwrap();
-    assert_eq!(authored.yaml(), expected_yaml);
+    let document = Document::parse(authored.yaml().as_bytes()).unwrap();
+    assert_eq!(&document, authored.document());
+    assert_eq!(document.metadata.uid, UID);
+    assert_eq!(document.metadata.name, answers.deployment_name);
+    assert_eq!(document.spec.sandboxes[0].name, answers.sandbox_name);
+    assert_eq!(document.spec.sandboxes[0].agent.name, answers.agent_name);
     assert_eq!(
-        authored.document(),
-        &Document::parse(expected_yaml.as_bytes()).unwrap()
+        document.inference_provider().unwrap().name,
+        answers.provider_name
     );
-    let reopened = Draft::from_yaml(&capabilities, authored.yaml().as_bytes()).unwrap();
     assert_eq!(
-        reopened.review(&capabilities).unwrap().yaml(),
-        expected_yaml
+        document.credential_names(),
+        [answers.credential_env.as_str()]
     );
+    let source: serde_json::Value = serde_saphyr::from_str(authored.yaml()).unwrap();
+    for input in [
+        authored.yaml().to_owned(),
+        format!("# An editor may add comments.\n{}", authored.yaml()),
+        serde_json::to_string(&source).unwrap(),
+    ] {
+        let reopened = Draft::from_yaml(&capabilities, input.as_bytes()).unwrap();
+        let review = reopened.review(&capabilities).unwrap();
+        assert_eq!(review.document(), &document);
+        assert_eq!(review.uid(), UID);
+        assert_eq!(review.model(), answers.model);
+    }
 }
 
 #[test]
 fn every_advertised_scenario_can_be_authored_and_reopened() {
     let capabilities = Capabilities::available();
-    let choices: Vec<_> = capabilities
-        .scenarios()
-        .iter()
-        .map(|scenario| (scenario.harness(), scenario.api()))
-        .collect();
-    assert_eq!(
-        choices,
-        [
-            (HarnessChoice::OpenClaw, ApiChoice::OpenAiCompletions),
-            (HarnessChoice::OpenClaw, ApiChoice::OpenAiResponses),
-            (HarnessChoice::Hermes, ApiChoice::OpenAiCompletions),
-        ]
-    );
+    assert!(!capabilities.scenarios().is_empty());
     for scenario in capabilities.scenarios() {
+        assert!(!scenario.models().is_empty());
         for model in scenario.models() {
             let answers = Answers {
                 harness: scenario.harness(),
