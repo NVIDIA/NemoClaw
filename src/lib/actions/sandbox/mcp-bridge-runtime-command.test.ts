@@ -14,27 +14,28 @@ import {
 
 const SECRET_BODY = "ghp_super-secret-probe-body-1234567890";
 const HTTP_MARKER = "NEMOCLAW_MCP_PROBE_HTTP_CODE=test:";
+const PYTHON3_AVAILABLE =
+  spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0;
 
 const ADAPTERS = [
   {
     adapter: "openclaw-config" as const,
     binaries: ["/usr/local/bin/openclaw", "/usr/local/bin/node", "/usr/bin/node"],
-    kind: "node" as const,
     runtime: "nemoclaw-start node -e",
   },
   {
     adapter: "hermes-config" as const,
     binaries: ["/usr/local/bin/hermes", "/usr/bin/python3*", "/opt/hermes/.venv/bin/python*"],
-    kind: "python" as const,
     runtime: "/opt/hermes/.venv/bin/python -I -c",
   },
   {
     adapter: "deepagents-config" as const,
     binaries: ["/usr/local/bin/dcode", "/opt/venv/bin/python3*"],
-    kind: "python" as const,
     runtime: "/opt/venv/bin/python3 -I -c",
   },
 ] as const;
+
+const PYTHON_ADAPTERS = [ADAPTERS[1], ADAPTERS[2]] as const;
 
 function policyAndProbeContract(spec: (typeof ADAPTERS)[number]): void {
   const request = {
@@ -76,7 +77,26 @@ function policyAndProbeContract(spec: (typeof ADAPTERS)[number]): void {
   expect(launched).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
 }
 
-function runNodeProbeWithLocalServer(authorization: string): ReturnType<typeof spawnSync> {
+function pythonProbeRequest() {
+  return {
+    authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+    httpMarker: HTTP_MARKER,
+    timeoutSeconds: 3,
+    url: "http://127.0.0.1:9/mcp/",
+  };
+}
+
+function expectProbeStatusWithoutBody(result: ReturnType<typeof spawnSync>, status: string): void {
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain(`${HTTP_MARKER}${status}`);
+  expect(`${result.stdout}\n${result.stderr}`).not.toContain(SECRET_BODY);
+}
+
+function runNodeProbeWithLocalServer(
+  authorization: string,
+  status = 200,
+): ReturnType<typeof spawnSync> {
   const probeSource = mcpAdapterHttpProbeSource("openclaw-config", {
     authorization,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
@@ -90,7 +110,7 @@ function runNodeProbeWithLocalServer(authorization: string): ReturnType<typeof s
     "const server = http.createServer((req, res) => {",
     "  req.resume();",
     '  req.on("end", () => {',
-    '    res.writeHead(200, { "content-type": "application/json" });',
+    `    res.writeHead(${String(status)}, { "content-type": "application/json" });`,
     "    res.end(secret);",
     "  });",
     "});",
@@ -103,7 +123,7 @@ function runNodeProbeWithLocalServer(authorization: string): ReturnType<typeof s
   return spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 10_000 });
 }
 
-function runPythonProbeWithLocalServer(source: string): ReturnType<typeof spawnSync> {
+function runPythonProbeWithLocalServer(source: string, status = 200): ReturnType<typeof spawnSync> {
   const script = [
     "from http.server import BaseHTTPRequestHandler, HTTPServer",
     "import threading",
@@ -111,7 +131,7 @@ function runPythonProbeWithLocalServer(source: string): ReturnType<typeof spawnS
     "    def do_POST(self):",
     "        length = int(self.headers.get('Content-Length', '0'))",
     "        self.rfile.read(length)",
-    "        self.send_response(200)",
+    `        self.send_response(${String(status)})`,
     "        self.send_header('Content-Type', 'application/json')",
     "        self.end_headers()",
     `        self.wfile.write(${JSON.stringify(SECRET_BODY)}.encode())`,
@@ -129,34 +149,38 @@ function runPythonProbeWithLocalServer(source: string): ReturnType<typeof spawnS
 describe("MCP adapter HTTP probe client", () => {
   it.each(ADAPTERS)(
     "lets the $adapter runtime succeed while generated policy keeps interactive curl denied (#12065)",
+    policyAndProbeContract,
+  );
+
+  it("emits a Node probe status after headers without buffering the body (#12065)", () => {
+    expectProbeStatusWithoutBody(
+      runNodeProbeWithLocalServer("Bearer openshell:resolve:env:v11_GITHUB_TOKEN"),
+      "200",
+    );
+  });
+
+  it.skipIf(!PYTHON3_AVAILABLE).each(PYTHON_ADAPTERS)(
+    "emits a $adapter Python probe status after headers without buffering the body (#12065)",
     (spec) => {
-      policyAndProbeContract(spec);
-      const request = {
-        authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }),
-        httpMarker: HTTP_MARKER,
-        timeoutSeconds: 3,
-        url: "http://127.0.0.1:9/mcp/",
-      };
-
-      if (spec.kind === "node") {
-        const result = runNodeProbeWithLocalServer(request.authorization);
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain(`${HTTP_MARKER}200`);
-        expect(`${result.stdout}\n${result.stderr}`).not.toContain(SECRET_BODY);
-        return;
-      }
-
-      const result = runPythonProbeWithLocalServer(
-        mcpAdapterHttpProbeSource(spec.adapter, request),
+      expectProbeStatusWithoutBody(
+        runPythonProbeWithLocalServer(
+          mcpAdapterHttpProbeSource(spec.adapter, pythonProbeRequest()),
+        ),
+        "200",
       );
-      if (result.error) {
-        expect(result.error).toMatchObject({ code: "ENOENT" });
-        return;
-      }
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain(`${HTTP_MARKER}200`);
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain(SECRET_BODY);
+    },
+  );
+
+  it.skipIf(!PYTHON3_AVAILABLE)(
+    "emits a Python probe status for HTTP errors without buffering the body (#12065)",
+    () => {
+      expectProbeStatusWithoutBody(
+        runPythonProbeWithLocalServer(
+          mcpAdapterHttpProbeSource("hermes-config", pythonProbeRequest()),
+          401,
+        ),
+        "401",
+      );
     },
   );
 

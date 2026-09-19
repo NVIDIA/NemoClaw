@@ -102,6 +102,9 @@ describe("MCP credential-resolution probe command security", () => {
       expect(command).toContain(runtime);
       expect(command).toContain(client);
       expect(command).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
+      expect(command).not.toContain("arrayBuffer");
+      expect(command).not.toContain("resp.read()");
+      expect(command).not.toContain("err.read()");
       expect(command).not.toContain("head -c");
       expect(command).not.toContain("mktemp");
     },

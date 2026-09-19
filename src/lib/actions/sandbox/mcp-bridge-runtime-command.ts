@@ -58,6 +58,8 @@ export interface McpAdapterHttpProbeRequest {
  * Credential-bound MCP policy therefore allows only the selected adapter
  * runtime. The probe must open the socket from that runtime; a curl child
  * would either be denied or require widening the persistent allowlist.
+ * Emit the status after headers arrive, then cancel or close the body
+ * without reading it.
  */
 export function mcpAdapterHttpProbeSource(
   adapter: AgentMcpAdapter,
@@ -82,9 +84,11 @@ export function mcpAdapterHttpProbeSource(
         "  body,",
         '  redirect: "manual",',
         "  signal: AbortSignal.timeout(timeoutMs),",
-        "}).then((res) => res.arrayBuffer().then(() => {",
+        "}).then((res) => {",
         '  process.stdout.write("\\n" + httpMarker + String(res.status) + "\\n");',
-        "})).then(() => process.exit(0), fail);",
+        "  try { res.body && res.body.cancel(); } catch {}",
+        "  process.exit(0);",
+        "}, fail);",
       ].join("\n");
     case "hermes-config":
     case "deepagents-config":
@@ -102,15 +106,17 @@ export function mcpAdapterHttpProbeSource(
         "req = urllib.request.Request(url, data=body.encode('utf-8'), method='POST', headers={'content-type': 'application/json', 'accept': 'application/json, text/event-stream', 'authorization': authorization})",
         "try:",
         "    with opener.open(req, timeout=timeout) as resp:",
-        "        resp.read()",
         "        sys.stdout.write('\\n%s%s\\n' % (http_marker, resp.status))",
+        "        resp.close()",
         "        raise SystemExit(0)",
         "except urllib.error.HTTPError as err:",
         "    try:",
-        "        err.read()",
-        "    except Exception:",
-        "        pass",
-        "    sys.stdout.write('\\n%s%s\\n' % (http_marker, err.code))",
+        "        sys.stdout.write('\\n%s%s\\n' % (http_marker, err.code))",
+        "    finally:",
+        "        try:",
+        "            err.close()",
+        "        except Exception:",
+        "            pass",
         "    raise SystemExit(0)",
         "except Exception as err:",
         "    reason = getattr(err, 'reason', err)",
