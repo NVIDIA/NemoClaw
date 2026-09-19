@@ -14,6 +14,34 @@ struct Experiment {
     tofu: PathBuf,
 }
 impl Experiment {
+    fn hardware_config(&self, invalid: bool) {
+        use nemoclaw_sdk::{compile, config::Document};
+        let document =
+            Document::parse(include_bytes!("../../../examples/spark/vllm.yaml").as_slice())
+                .unwrap();
+        let generations = [
+            ("managed_gateway".into(), "a".repeat(32)),
+            ("inference_service".into(), "b".repeat(32)),
+        ]
+        .into();
+        let target = compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "inference_service")
+            .unwrap();
+        let mut spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
+        if invalid {
+            let mut service: Value =
+                serde_json::from_str(spec["process"]["configuration"].as_str().unwrap()).unwrap();
+            service["hardware"] = json!({"profile":"h100"});
+            spec["process"]["configuration"] = json!(service.to_string());
+        }
+        fs::write(self.dir.path().join("main.tf.json"), json!({
+            "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
+            "provider":{"nemoclaw":{}},
+            "resource":{"nemoclaw_inference_service":{"gpu":{"spec":spec.to_string().replace("${", "$${").replace("%{", "%%{")}}}
+        }).to_string()).unwrap();
+    }
     fn new() -> Self {
         let tofu = PathBuf::from(
             std::env::var_os("NEMOCLAW_TEST_TOFU")
@@ -78,6 +106,66 @@ impl Experiment {
         self.success(&["plan", "-input=false", "-out=plan"]);
         serde_json::from_slice(&self.success(&["show", "-json", "plan"]).stdout).unwrap()
     }
+}
+
+#[test]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
+fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
+    let e = Experiment::new();
+    e.hardware_config(true);
+    let result = e.run(&["validate", "-json"]);
+    assert!(!result.status.success());
+    let validation: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(
+        validation["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["summary"] == "Invalid resource specification"
+                && d["detail"].as_str().unwrap().contains("architecture")),
+        "{validation}"
+    );
+    e.hardware_config(false);
+    e.success(&["validate"]);
+    for mode in ["old-driver", "capacity-unavailable"] {
+        e.mode(mode);
+        let result = e.run(&["plan", "-input=false"]);
+        assert!(!result.status.success());
+        let diagnostic = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            diagnostic.contains("Resource planning failed"),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains(if mode == "old-driver" {
+                "observed 570"
+            } else {
+                "observation transport failed"
+            }),
+            "{diagnostic}"
+        );
+        assert!(!e.dir.path().join("resource.json").exists());
+    }
+    e.mode("normal");
+    e.success(&["plan", "-input=false", "-out=hardware.plan"]);
+    e.mode("old-driver");
+    let result = e.run(&["apply", "-input=false", "hardware.plan"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("observed 570"));
+    assert!(
+        !e.dir.path().join("resource.json").exists(),
+        "saved plan bypassed current hardware validation"
+    );
+    e.mode("normal");
+    e.success(&["apply", "-auto-approve", "-input=false"]);
+    let prior = e.state();
+    e.mode("old-driver");
+    assert!(!e.run(&["plan", "-input=false"]).status.success());
+    assert_eq!(
+        e.state(),
+        prior,
+        "failed capacity observation changed existing bindings"
+    );
 }
 
 #[test]

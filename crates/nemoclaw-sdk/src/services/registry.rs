@@ -895,6 +895,15 @@ pub struct RegisteredBackend(Box<dyn Backend>);
 
 #[async_trait::async_trait]
 impl Backend for RegisteredBackend {
+    async fn plan(
+        &self,
+        kind: &str,
+        desired: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), crate::Error> {
+        self.0.plan(kind, desired, prior).await
+    }
+
     async fn read(
         &self,
         kind: &str,

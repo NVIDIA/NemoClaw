@@ -24,6 +24,11 @@ pub(crate) async fn check(
         let host = engine.host_observer.observe(engine).await?;
         let info = engine.info().await?;
         let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
+        hardware_capacity::check_memory(
+            &service,
+            &capacity,
+            observed.is_none_or(|runtime| !runtime.running),
+        )?;
         let directory = model_source::directory(&service);
         let cached = if let Some(observed) = observed {
             engine
