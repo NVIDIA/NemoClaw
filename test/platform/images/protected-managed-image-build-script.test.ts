@@ -28,6 +28,7 @@ const DIGEST = "b".repeat(64);
 let testRoot = "";
 let stubBin = "";
 let dockerLog = "";
+let buildxConfigLog = "";
 let dockerBuildCount = "";
 let dockerBuildFailureMode = "";
 let receiptVerifyStatus = "";
@@ -50,6 +51,7 @@ function stubBuildInvocation(): void {
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_DOCKER_LOG"
+printf '%s\n' "\${BUILDX_CONFIG:-}" >>"$NEMOCLAW_TEST_BUILDX_CONFIG_LOG"
 case "$*" in
   "buildx imagetools inspect "*) printf '{}\n' ;;
   "buildx build "*)
@@ -243,7 +245,12 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
-function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
+function runBuild(
+  sourceRoot: string,
+  extraArgs: readonly string[] = [],
+  platform = "linux/amd64",
+  environment: NodeJS.ProcessEnv = {},
+) {
   const output = path.join(testRoot, "contracts.json");
   const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
   const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
@@ -274,6 +281,11 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platfor
       encoding: "utf8",
       env: {
         ...process.env,
+        BUILDX_CONFIG: "",
+        DOCKER_CONFIG: "",
+        GITHUB_ACTIONS: "",
+        HOME: "",
+        NEMOCLAW_TEST_BUILDX_CONFIG_LOG: buildxConfigLog,
         NEMOCLAW_TEST_DOCKER_BUILD_COUNT: dockerBuildCount,
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
@@ -288,6 +300,7 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platfor
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: testRoot,
+        ...environment,
       },
     },
   );
@@ -297,6 +310,7 @@ beforeEach(() => {
   testRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-build-"));
   stubBin = path.join(testRoot, "bin");
   dockerLog = path.join(testRoot, "docker.log");
+  buildxConfigLog = path.join(testRoot, "buildx-config.log");
   dockerBuildCount = path.join(testRoot, "docker-build-count");
   dockerBuildFailureMode = "";
   receiptVerifyStatus = "0";
@@ -353,6 +367,24 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
+  it("retains the setup-buildx builder after isolated Docker authentication", () => {
+    const home = path.join(testRoot, "home");
+    const setupBuildxConfig = path.join(home, ".docker", "buildx");
+    mkdirSync(setupBuildxConfig, { recursive: true });
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, [], "linux/amd64", {
+      DOCKER_CONFIG: path.join(testRoot, "isolated-docker-auth"),
+      GITHUB_ACTIONS: "true",
+      HOME: home,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(new Set(readFileSync(buildxConfigLog, "utf8").trim().split("\n"))).toEqual(
+      new Set([realpathSync(setupBuildxConfig)]),
+    );
+  });
+
   it.each(["linux/amd64", "linux/arm64"])(
     "builds every agent as sandbox by default on %s",
     (platform) => {
