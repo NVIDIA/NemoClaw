@@ -60,7 +60,7 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
             "serving settings are unsupported by the generic vLLM backend",
         ));
     }
-    super::spark::validate_memory(&service.memory)?;
+    super::policy::validate_memory(&service.memory)?;
     if service.recipe.is_some() {
         return Ok(());
     }

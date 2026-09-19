@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 /// Managed vLLM service. Explicit placement and publication must appear together.
 pub struct Service {
-    /// Explicit execution hardware requirements. Required without an inline recipe; excludes recipe.
+    /// Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe.
     #[schemars(extend("x-nemoclaw-required" = "Without recipe"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceHardware")]
@@ -140,7 +140,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires service.hardware and excludes a recipe, gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"

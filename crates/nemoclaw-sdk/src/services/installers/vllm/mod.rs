@@ -10,6 +10,7 @@ pub use config::{
     Memory, Model, Service, ServiceAuthentication, ServicePlacement, ServicePublication, Serving,
 };
 pub use hardware_profile::HardwareProfile;
+pub(crate) use hardware_profile::MemoryArchitecture;
 pub use service_hardware::{DedicatedHardware, ServiceContainer, ServiceHardware, ServiceIpc};
 pub(crate) mod arguments;
 mod artifacts;
@@ -17,9 +18,9 @@ pub use artifacts::RuntimeStatus;
 pub(crate) mod capacity;
 pub mod hardware_capacity;
 mod hardware_policy;
+pub(crate) mod policy;
 pub mod recipes;
 pub(crate) mod schema;
-pub(crate) mod spark;
 pub(crate) mod validation;
 impl Service {
     pub fn gpu_bytes(&self) -> Result<u64, Error> {

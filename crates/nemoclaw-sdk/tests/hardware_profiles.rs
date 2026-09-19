@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     config::{Document, schema::input_schema},
-    hardware::{Capacity, DedicatedGpu, GIB},
+    hardware::{Capacity, GIB, GpuMemory},
     services::{
         ServiceDefinition,
         installers::vllm::hardware_capacity::{check_capacity, serving_memory},
@@ -74,10 +74,10 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
                 available: 400 * GIB,
                 free: 300 * GIB,
                 disk_free: 500 * GIB,
-                gpu_memory: Some(DedicatedGpu {
+                compute_capability: cc,
+                gpu_memory: Some(GpuMemory {
                     total: 80 * GIB,
                     free: 70 * GIB,
-                    compute_capability: cc,
                 }),
                 ..Default::default()
             };
@@ -103,7 +103,7 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
                         }
                         .into()
                     }
-                    "compute" => bad.gpu_memory.as_mut().unwrap().compute_capability = cc - 1,
+                    "compute" => bad.compute_capability = cc - 1,
                     "memory" => bad.gpu_memory = None,
                     "free" => bad.gpu_memory.as_mut().unwrap().free = GIB,
                     "driver" => bad.driver_major = 579,
@@ -190,10 +190,10 @@ fn similar_gpu_names_cannot_satisfy_a_different_profile() {
             total: 128 * GIB,
             available: 100 * GIB,
             disk_free: 500 * GIB,
-            gpu_memory: Some(DedicatedGpu {
+            compute_capability: 120,
+            gpu_memory: Some(GpuMemory {
                 total: 80 * GIB,
                 free: 70 * GIB,
-                compute_capability: 120,
             }),
             ..Default::default()
         };

@@ -18,8 +18,10 @@ The [supervisor extraction](https://github.com/NVIDIA/NemoClaw/commit/4fee9768e2
 The [module separation](https://github.com/NVIDIA/NemoClaw/commit/8d998e02d2) then assigned artifact preparation, hardware rules, and backend behavior to their respective owners.
 An inline recipe supplies model-specific tools; vLLM is the serving backend.
 Direct hardware checks use recipe-declared compatibility or an explicit `spec.services.<name>.hardware` contract for ordinary models.
-The named `dgx-spark` profile retains its GB10 and host-memory requirements.
-Other named profiles validate GPU family and dedicated memory independently of CPU architecture; GPU-only profiles require an explicit host architecture, while Grace system profiles fix ARM64.
+Every named profile validates GPU family and observed compute capability independently of memory accounting.
+The catalog declares unified or dedicated memory: unified profiles budget host RAM with a reserve, while dedicated profiles require GPU total/free counters and check host RAM separately.
+Both collectors preserve unsupported framebuffer counters without guessing a memory architecture; failed queries or incomplete observations stop the operation.
+GPU-only profiles require an explicit host architecture, while system profiles fix ARM64.
 Custom dedicated GPU requirements retain their Linux AMD64 contract.
 Hardware identity does not select device placement or parallelism: current collectors require one GPU and the backend uses tensor parallel size 1.
 All paths retain resident memory protection; see [hardware profiles](../models.md#choose-a-hardware-profile) for configuration and qualification limits.

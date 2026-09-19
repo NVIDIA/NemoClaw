@@ -12,19 +12,21 @@ pub struct Capacity {
     pub architecture: String,
     pub gpu: String,
     pub driver_major: u32,
-    pub gpu_memory: Option<DedicatedGpu>,
+    /// Observed major times ten plus minor, independent of memory architecture.
+    pub compute_capability: u32,
+    /// Framebuffer counters; None means the device reports them as unsupported.
+    pub gpu_memory: Option<GpuMemory>,
     pub total: u64,
     pub available: u64,
     pub free: u64,
     pub disk_free: u64,
     pub foreign_gpu_processes: usize,
 }
-/// Measurements for the single dedicated-memory GPU; bytes are independent of host RAM.
+/// GPU framebuffer memory counters in bytes, independent of compute capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DedicatedGpu {
+pub struct GpuMemory {
     pub total: u64,
     pub free: u64,
-    pub compute_capability: u32,
 }
 pub fn read_memory(reader: impl Read) -> Result<Capacity, Error> {
     let mut text = String::new();

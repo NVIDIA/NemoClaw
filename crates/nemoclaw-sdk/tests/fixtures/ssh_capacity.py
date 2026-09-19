@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
 
-def collect(machine, name):
+def collect(machine, name, capability, memory):
     commands = []
 
     def output(args, **kwargs):
@@ -23,7 +23,8 @@ def collect(machine, name):
         assert args[0] == "nvidia-smi" and args[2] == "--format=csv,noheader,nounits"
         return {
             "--query-gpu=name,driver_version": f"{name}, 610.0\n".encode(),
-            "--query-gpu=memory.total,memory.free,compute_cap": b"81920, 71680, 10.3\n",
+            "--query-gpu=compute_cap": capability.encode(),
+            "--query-gpu=memory.total,memory.free": memory.encode(),
             "--query-compute-apps=pid": b"",
         }[args[1]]
 
@@ -41,9 +42,15 @@ def collect(machine, name):
     return json.loads(captured.getvalue()), commands
 
 
-for machine, name in [("aarch64", "NVIDIA GB10"), ("aarch64", "NVIDIA GB300"), ("aarch64", "NVIDIA H100"), ("x86_64", "NVIDIA H100")]:
-    result, commands = collect(machine, name)
-    dedicated = name != "NVIDIA GB10"
-    assert (result["gpu_memory"] is not None) == dedicated
-    assert any("--query-gpu=memory.total,memory.free,compute_cap" in command for command in commands) == dedicated
+for machine, name, capability, memory in [
+    ("aarch64", "NVIDIA GB10", "12.1\n", "[N/A], [N/A]\n"),
+    ("aarch64", "NVIDIA GB300", "10.3\n", "245760, 204800\n"),
+    ("aarch64", "NVIDIA H100", "9.0\n", "81920, 71680\n"),
+    ("x86_64", "NVIDIA H100", "9.0\n", "81920, 71680\n"),
+]:
+    result, commands = collect(machine, name, capability, memory)
+    assert result["gpu_memory"] == memory
+    assert result["compute_capability"] == capability
+    assert any("--query-gpu=memory.total,memory.free" in command for command in commands)
+    assert any("--query-gpu=compute_cap" in command for command in commands)
     assert result["gpu"].startswith(name)

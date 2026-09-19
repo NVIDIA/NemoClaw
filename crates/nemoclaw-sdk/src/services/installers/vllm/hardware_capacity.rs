@@ -3,7 +3,10 @@
 // Host-reserve policy informed by MiaAI Lab's single-Spark start.sh (AGPL-3.0-or-later).
 // Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
 use crate::hardware::{Capacity, GIB};
-use crate::{Error, services::installers::vllm::Service};
+use crate::{
+    Error,
+    services::installers::vllm::{MemoryArchitecture, Service},
+};
 pub fn check_capacity(
     service: &Service,
     c: &Capacity,
@@ -40,7 +43,7 @@ pub fn check_capacity(
 pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(), Error> {
     service.validate()?;
     check_compatibility(service, c)?;
-    if service.dedicated_hardware().is_some() {
+    if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         let gpu = c
             .gpu_memory
             .as_ref()
@@ -89,7 +92,7 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
 
 /// Total memory used to translate the serving budget into vLLM's utilization setting.
 pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Error> {
-    if service.dedicated_hardware().is_some() {
+    if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         capacity
             .gpu_memory
             .as_ref()
@@ -101,11 +104,18 @@ pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Err
 }
 
 fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
+    if !(10..=999).contains(&c.compute_capability) {
+        return Err(Error::State("GPU compute capability is unobservable"));
+    }
     if let Some(super::ServiceHardware::Profile { profile, .. }) = &service.hardware
-        && !profile.matches_gpu(&c.gpu)
+        && (!profile.matches_gpu(&c.gpu)
+            || c.compute_capability < profile.compute_capability()
+            || c.architecture != service.architecture()?
+            || c.driver_major < 580
+            || c.total < profile.min_host_memory_bytes())
     {
         return Err(Error::Conflict(
-            "execution GPU does not match the declared hardware profile",
+            "execution host does not satisfy the declared hardware profile",
         ));
     }
     if let Some(required) = service.dedicated_hardware() {
@@ -117,7 +127,7 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
             || c.driver_major < required.min_driver_major
             || gpu.total < required.min_gpu_memory_bytes
             || gpu.free > gpu.total
-            || gpu.compute_capability < required.min_compute_capability
+            || c.compute_capability < required.min_compute_capability
         {
             return Err(Error::Conflict(
                 "execution host does not satisfy dedicated GPU requirements",
@@ -136,14 +146,8 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
             ));
         }
         Ok(())
-    } else if matches!(
-        service.hardware,
-        Some(super::ServiceHardware::Profile {
-            profile: super::HardwareProfile::DgxSpark,
-            ..
-        })
-    ) {
-        super::spark::check_compatibility(c)
+    } else if service.hardware.is_some() {
+        Ok(())
     } else {
         Err(crate::config::ConfigError::new(
             "declare exactly one of service.hardware or service.recipe",
@@ -160,12 +164,13 @@ pub fn check_service_budgets(services: &[(&Service, bool)], c: &Capacity) -> Res
     let mut new_budget = 0u64;
     let mut reserve = 0u64;
     let mut startup = 0u64;
-    let dedicated = services
+    let architecture = services
         .first()
-        .is_some_and(|(s, _)| s.dedicated_hardware().is_some());
+        .map(|(s, _)| s.memory_architecture())
+        .transpose()?;
     for &(service, starting) in services {
         check_memory(service, c, starting)?;
-        if service.dedicated_hardware().is_some() != dedicated {
+        if Some(service.memory_architecture()?) != architecture {
             return Err(Error::Conflict(
                 "services sharing an engine must use the same GPU memory contract",
             ));
@@ -196,7 +201,7 @@ pub fn check_service_budgets(services: &[(&Service, bool)], c: &Capacity) -> Res
                 .ok_or(Error::State("combined startup budget overflow"))?;
         }
     }
-    let fits = if dedicated {
+    let fits = if architecture == Some(MemoryArchitecture::Dedicated) {
         c.gpu_memory
             .as_ref()
             .is_some_and(|gpu| total_budget <= gpu.total && new_budget <= gpu.free)
