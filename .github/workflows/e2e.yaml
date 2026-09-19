@@ -4620,6 +4620,17 @@ jobs:
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
 
+      - name: Remove owned Docker Engine 27 receipt daemon
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/checks/docker-engine-27-receipt-transfer-e2e.ts \
+            --cleanup-only \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM"
+
       - name: Validate OpenClaw managed-image security boundary
         shell: bash
         run: >-

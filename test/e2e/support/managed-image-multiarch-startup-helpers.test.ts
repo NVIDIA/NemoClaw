@@ -8,6 +8,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS,
+  DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS,
+  dockerEngine27ReceiptDaemonName,
+  dockerEngine27ReceiptIdentityArguments,
+  finalizeDockerEngine27ReceiptProbe,
+  requireDockerResourceAbsent,
+  validateDockerEngine27SeedIsolation,
+} from "../../../scripts/checks/docker-engine-27-receipt-transfer-e2e.ts";
+import {
   protectedManagedImageDispatchEnvironment,
   readRegularArtifact,
 } from "../live/managed-image-multiarch-startup-helpers.ts";
@@ -38,6 +47,113 @@ afterEach(() => {
 });
 
 describe("protected managed-image startup helpers", () => {
+  it("preserves the probe failure and attempts fixture cleanup after daemon cleanup fails", () => {
+    const cleanupFixture = vi.fn();
+
+    expect(() =>
+      finalizeDockerEngine27ReceiptProbe(
+        new Error("receipt transfer failed"),
+        () => {
+          throw new Error("daemon cleanup failed");
+        },
+        cleanupFixture,
+      ),
+    ).toThrow(/receipt transfer failed.*daemon cleanup failed/u);
+    expect(cleanupFixture).toHaveBeenCalledOnce();
+  });
+
+  it("derives one Docker 27 identity for probe and cleanup on each matrix platform", () => {
+    const amd64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/amd64");
+    const arm64 = dockerEngine27ReceiptDaemonName(123, 4, "linux/arm64");
+    const sharedIdentity = dockerEngine27ReceiptIdentityArguments(123, 4, "linux/amd64");
+    const probeArgs = ["docker-engine-27-receipt-transfer-e2e.ts", ...sharedIdentity];
+    const cleanupArgs = [
+      "docker-engine-27-receipt-transfer-e2e.ts",
+      "--cleanup-only",
+      ...sharedIdentity,
+    ];
+
+    expect(amd64).toBe("nemoclaw-receipt-engine27-123-4-linux-amd64");
+    expect(arm64).toBe("nemoclaw-receipt-engine27-123-4-linux-arm64");
+    expect(amd64).not.toBe(arm64);
+    expect(cleanupArgs.filter((arg) => arg !== "--cleanup-only")).toEqual(probeArgs);
+    expect(sharedIdentity).toEqual([
+      "--run-id",
+      "123",
+      "--run-attempt",
+      "4",
+      "--platform",
+      "linux/amd64",
+    ]);
+  });
+
+  it("bounds the complete Docker 27 probe and external cleanup", () => {
+    expect(30 * 60_000).toBeGreaterThanOrEqual(DOCKER_ENGINE_27_MINIMUM_PROBE_TIMEOUT_MS);
+    expect(90_000).toBeGreaterThanOrEqual(DOCKER_ENGINE_27_MINIMUM_CLEANUP_PROCESS_TIMEOUT_MS);
+  });
+
+  it("requires numeric root and every receipt seed isolation control", () => {
+    const secureSeed = {
+      Config: { User: "0" },
+      HostConfig: {
+        CapDrop: ["ALL"],
+        Mounts: [
+          {
+            Type: "volume",
+            Target: "/run/nemoclaw/managed-startup-receipt-transfer",
+          },
+        ],
+        NetworkMode: "none",
+        Privileged: false,
+        ReadonlyRootfs: true,
+        SecurityOpt: ["no-new-privileges"],
+      },
+    };
+
+    expect(() => validateDockerEngine27SeedIsolation(secureSeed)).not.toThrow();
+    expect(() =>
+      validateDockerEngine27SeedIsolation({ ...secureSeed, Config: { User: "0:0" } }),
+    ).toThrow("receipt seed did not use numeric root");
+    expect(() =>
+      validateDockerEngine27SeedIsolation({
+        ...secureSeed,
+        HostConfig: { ...secureSeed.HostConfig, Privileged: true },
+      }),
+    ).toThrow("receipt seed was privileged");
+    expect(() =>
+      validateDockerEngine27SeedIsolation({
+        ...secureSeed,
+        HostConfig: { ...secureSeed.HostConfig, CapDrop: [] },
+      }),
+    ).toThrow("receipt seed retained capabilities");
+  });
+
+  it("proves cleanup only from Docker's explicit absence response", () => {
+    expect(() =>
+      requireDockerResourceAbsent(
+        { status: 1, stderr: "Error: No such container: receipt-seed", stdout: "" },
+        "receipt seed",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      requireDockerResourceAbsent(
+        {
+          error: new Error("spawnSync docker ETIMEDOUT"),
+          status: null,
+          stderr: "",
+          stdout: "",
+        },
+        "receipt seed",
+      ),
+    ).toThrow("receipt seed absence was not proven");
+    expect(() =>
+      requireDockerResourceAbsent(
+        { status: 1, stderr: "permission denied", stdout: "" },
+        "receipt seed",
+      ),
+    ).toThrow("receipt seed absence was not proven");
+  });
+
   it("parses exact protected dispatch identity", () => {
     expect(protectedManagedImageDispatchEnvironment()).toMatchObject({
       baseSha: sha,
