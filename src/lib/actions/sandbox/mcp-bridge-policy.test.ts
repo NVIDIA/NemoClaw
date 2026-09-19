@@ -13,9 +13,9 @@ import {
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
-  MCP_BRIDGE_PROBE_BINARIES,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
+import { buildCredentialResolutionProbeCommand } from "./mcp-bridge-resolution-probe";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
 
 const entry: McpSourceEntry = {
@@ -222,15 +222,28 @@ describe("generated MCP policy", () => {
       "/usr/local/bin/openclaw",
       "/usr/local/bin/node",
       "/usr/bin/node",
-      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
     ]);
   });
 
-  it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
-    "includes credential-resolution probe binaries for %s so mcp add does not deny its own CONNECT (#12065)",
-    (adapter) => {
-      const probePaths = MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path);
-      expect(probePaths).toEqual(["/usr/bin/curl", "/usr/local/bin/curl"]);
+  it.each([
+    {
+      adapter: "openclaw-config" as const,
+      binaries: ["/usr/local/bin/openclaw", "/usr/local/bin/node", "/usr/bin/node"],
+      runtime: "nemoclaw-start node -e",
+    },
+    {
+      adapter: "hermes-config" as const,
+      binaries: ["/usr/local/bin/hermes", "/usr/bin/python3*", "/opt/hermes/.venv/bin/python*"],
+      runtime: "/opt/hermes/.venv/bin/python -I -c",
+    },
+    {
+      adapter: "deepagents-config" as const,
+      binaries: ["/usr/local/bin/dcode", "/opt/venv/bin/python3*"],
+      runtime: "/opt/venv/bin/python3 -I -c",
+    },
+  ])(
+    "keeps interactive curl off the $adapter credential-bound route and probes through that runtime (#12065)",
+    ({ adapter, binaries, runtime }) => {
       const parsed = YAML.parse(
         buildMcpBridgePolicyYaml(
           "github",
@@ -242,10 +255,25 @@ describe("generated MCP policy", () => {
       ) as {
         network_policies: Record<string, { binaries: Array<{ path: string }> }>;
       };
-
-      expect(parsed.network_policies.mcp_bridge_github.binaries.map(({ path }) => path)).toEqual(
-        expect.arrayContaining(probePaths),
+      const policyBinaries = parsed.network_policies.mcp_bridge_github.binaries.map(
+        ({ path }) => path,
       );
+      const probe =
+        buildCredentialResolutionProbeCommand(
+          {
+            server: "github",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+          },
+          adapter,
+          "v11",
+        )?.command ?? "";
+
+      expect(policyBinaries).toEqual(binaries);
+      expect(policyBinaries).not.toContain("/usr/bin/curl");
+      expect(policyBinaries).not.toContain("/usr/local/bin/curl");
+      expect(probe).toContain(runtime);
+      expect(probe).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
     },
   );
 
@@ -359,19 +387,10 @@ describe("generated MCP policy", () => {
     expect(mcporter.endpoints[0]).not.toHaveProperty("tls");
     expect(
       render("hermes-config").network_policies.mcp_bridge_srv.binaries.map((b) => b.path),
-    ).toEqual([
-      "/usr/local/bin/hermes",
-      "/usr/bin/python3*",
-      "/opt/hermes/.venv/bin/python*",
-      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
-    ]);
+    ).toEqual(["/usr/local/bin/hermes", "/usr/bin/python3*", "/opt/hermes/.venv/bin/python*"]);
     expect(
       render("deepagents-config").network_policies.mcp_bridge_srv.binaries.map((b) => b.path),
-    ).toEqual([
-      "/usr/local/bin/dcode",
-      "/opt/venv/bin/python3*",
-      ...MCP_BRIDGE_PROBE_BINARIES.map(({ path }) => path),
-    ]);
+    ).toEqual(["/usr/local/bin/dcode", "/opt/venv/bin/python3*"]);
   });
 
   it("uses stable collision-resistant provider names with a length guard", () => {
