@@ -107,7 +107,9 @@ The `remote_service` E2E fixture exercises the bundled CLI/provider boundary wit
 Run `cargo test -p nemoclaw-e2e --test remote_service -- --ignored` with `NEMOCLAW_TEST_BUNDLE` set.
 It checks read-only planning, missing/low capacity, failed startup recovery, no-op, export/reapply, failed observation and daemon retargeting without recreation, and retained storage on destroy.
 
+Native CI runs these isolated fixtures on Unix, including managed OpenClaw, Hermes, Pi, and bearer-credential lifecycles.
 Its readiness and artifact manifests are simulated; it does not download or serve a model.
+Plan and apply reject missing or changed model artifacts; export checks configuration without repeating artifact or credential readiness checks.
 
 ## Inference API Fixtures
 

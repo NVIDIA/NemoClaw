@@ -38,18 +38,12 @@ impl Source {
                     && spec.owner == owner
                     && super::installers::vllm::configured_service(spec).is_ok_and(|service| {
                         service.authentication.is_some()
-                            && service.publication.as_ref().map_or_else(
-                                || {
-                                    spec.bridge().is_ok_and(|bridge| {
-                                        endpoint
-                                            == format!(
-                                                "http://{bridge}:{}/v1",
-                                                service.serving.port
-                                            )
-                                    })
-                                },
-                                |publication| publication.endpoint == endpoint,
-                            )
+                            // Runtime configuration omits placement. The process
+                            // binding retains the address actually published by Docker.
+                            && spec.process.as_ref().is_some_and(|process| {
+                                i64::from(process.port) == service.serving.port
+                                    && endpoint == format!("http://{}:{}/v1", process.bind_address, process.port)
+                            })
                     }) => {}
             _ => return Err(ObservationError::BindingMismatch),
         }
@@ -116,6 +110,49 @@ pub(crate) async fn read_key(engine: &Engine, id: &str) -> Result<String, Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_credential_source_uses_the_published_process_endpoint() {
+        let mut document = crate::config::Document::parse(
+            include_bytes!("../../../../examples/spark/remote-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let crate::services::ServiceDefinition::Vllm(service) =
+            document.spec.services.get_mut("qwen").unwrap()
+        else {
+            panic!("vLLM example");
+        };
+        service.authentication =
+            Some(crate::services::installers::vllm::ServiceAuthentication::Bearer);
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let targets = crate::compile::targets(&document, &generations).unwrap();
+        let provider = &targets
+            .iter()
+            .find(|target| target.kind == "provider")
+            .unwrap()
+            .values;
+        let source = &provider["credential_source"];
+        Source::parse(source, &document.metadata.uid, &provider["endpoint"]).unwrap();
+        assert!(Source::parse(source, "foreign", &provider["endpoint"]).is_err());
+        let Source::ManagedService { spec } = serde_json::from_str(source).unwrap() else {
+            panic!("managed credential");
+        };
+        let bridge_endpoint = format!(
+            "http://{}:{}/v1",
+            spec.bridge().unwrap(),
+            spec.process.as_ref().unwrap().port
+        );
+        assert_ne!(bridge_endpoint, provider["endpoint"]);
+        assert!(Source::parse(source, &document.metadata.uid, &bridge_endpoint).is_err());
+    }
+
     #[test]
     fn credential_source_rejects_wrong_owner_endpoint_and_unsupported_image() {
         let fixtures: Vec<serde_json::Value> =
