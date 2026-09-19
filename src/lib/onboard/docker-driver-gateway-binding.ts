@@ -110,6 +110,12 @@ export function writeDockerDriverGatewayBinding(
   }
   fs.renameSync(temporary, filePath);
   fs.chmodSync(filePath, 0o600);
+  const directoryFd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
 }
 
 /** Apply a persisted binding only when the operator did not provide an explicit override. */
