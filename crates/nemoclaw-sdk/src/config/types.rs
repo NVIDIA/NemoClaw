@@ -105,14 +105,6 @@ pub struct TLS {
 /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
 /// Choose a managed local Docker or Podman gateway or connect to an external gateway. Credentials and TLS require HTTPS.
 pub struct Gateway {
-    /// Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "super::ManagedResource")]
-    pub network: Option<super::ManagedResource>,
-    /// Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "super::ManagedResource")]
-    pub storage: Option<super::ManagedResource>,
     #[serde(rename = "management")]
     /// Whether the SDK manages the gateway or connects to an existing one.
     pub management: String,
@@ -156,10 +148,6 @@ pub struct Gateway {
 #[serde(default, deny_unknown_fields)]
 /// Choose an endpoint for external inference or serviceRef for a managed service.
 pub struct InferenceProvider {
-    /// Optional server ownership. Omission means managed with serviceRef and external with endpoint. The OpenShell provider registration remains deployment-owned in either mode.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "super::Management")]
-    pub management: Option<super::Management>,
     #[serde(rename = "name")]
     /// Provider name referenced by model choices.
     pub name: String,

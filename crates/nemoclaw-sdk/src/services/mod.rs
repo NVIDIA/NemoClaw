@@ -12,6 +12,9 @@ pub mod installers;
 mod registry;
 #[cfg(target_os = "linux")]
 mod runtime;
+mod validation;
+pub(crate) use validation::check_resource_hardware;
+pub use validation::validate_resource_spec;
 
 pub(crate) use contract::InstallStage;
 pub use installers::ollama::{

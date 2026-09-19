@@ -77,7 +77,6 @@ async fn external_ollama_proxy_lifecycle_retains_key_and_never_manages_daemon_or
     provider["serviceRef"] = json!("ollama-auth");
     value["spec"]["services"] = json!({"ollama-auth": {
         "kind":"ollamaProxy",
-        "management":"managed",
         "runtime":{"provider":"docker","engine":"unix:///var/run/docker.sock","image":image},
         "endpoint":endpoint,
         "upstream":{"endpoint":upstream,"model":{"name":"qwen3:0.6b","digest":"a".repeat(64)}}

@@ -235,16 +235,20 @@ async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope
 }
 
 async fn lifecycle(input: &str) {
-    lifecycle_with_ownership(input, false).await;
+    lifecycle_with_rejected_annotations(input, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
-async fn optional_management_plan_export_reapply_preserves_resources() {
-    lifecycle_with_ownership(include_str!("../../../examples/explicit-policy.yaml"), true).await;
+async fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
+    lifecycle_with_rejected_annotations(
+        include_str!("../../../examples/explicit-policy.yaml"),
+        true,
+    )
+    .await;
 }
 
-async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
+async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bool) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
@@ -341,31 +345,29 @@ async fn lifecycle_with_ownership(input: &str, declare_ownership: bool) {
         effects,
         document.spec.sandboxes.len() + if has_search { 5 } else { 3 }
     );
-    if declare_ownership {
-        document.inference_provider_mut().unwrap().management =
-            Some(nemoclaw_sdk::config::Management::External);
-        document.spec.sandboxes[0]
-            .network
-            .proxy
-            .as_mut()
-            .unwrap()
-            .management = Some(nemoclaw_sdk::config::ExternalManagement::External);
-        assert!(
-            deployment
-                .plan(&document, &cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
-        assert!(
-            deployment
-                .apply(&document, &cancel)
-                .await
-                .unwrap()
-                .changes
-                .is_empty()
-        );
+    if reject_annotations {
+        let intent_path = directory.path().join("intent.json");
+        let state_path = directory.path().join("terraform.tfstate");
+        let before_intent = fs::read(&intent_path).unwrap();
+        let before_state = fs::read(&state_path).unwrap();
+        let mut invalid = serde_json::to_value(&document).unwrap();
+        invalid["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+        let input = directory.path().join("unsupported.yaml");
+        fs::write(&input, invalid.to_string()).unwrap();
+        let rejected = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        )
+        .args(["apply", "--state-dir"])
+        .arg(directory.path())
+        .arg(input)
+        .output()
+        .unwrap();
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("unknown field"));
+        assert_eq!(fs::read(intent_path).unwrap(), before_intent);
+        assert_eq!(fs::read(state_path).unwrap(), before_state);
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
     }
     let exported = Command::new(

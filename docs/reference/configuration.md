@@ -311,21 +311,6 @@ Paths:
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
-## ExternalManagement
-
-NemoClaw uses this resource without managing its lifecycle or administrative configuration.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.sandboxes[].network.proxy.management`
-- `spec.services.{key}.upstream.model.management`
-
-Accepted input: string.
-
-Constraints: `"external"`.
-
 ## ExternalOllama
 
 External Ollama daemon observed by the managed proxy installer.
@@ -354,7 +339,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `digest` | string | Yes | — | Lowercase 64-character model digest reported by Ollama's /api/tags API. Constraints: pattern `^[a-f0-9]{64}$`. |
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional ownership declaration; omission means external. |
 | `name` | string | Yes | — | Installed Ollama model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
 
 ## File
@@ -392,9 +376,7 @@ Paths:
 | `image` | string | No | — | Managed gateway image pinned by the SDK. Omit or leave empty for an external gateway. Managed only: omitted or empty selects ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation or restart. Omission means IfNotPresent; changing this does not restart a running container. |
 | `management` | string | Yes | — | Whether the SDK manages the gateway or connects to an existing one. Constraints: `"managed"` or `"external"`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway. Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage. |
 | `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
 
 ## HardwareProfile
@@ -581,7 +563,6 @@ Paths:
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
 | `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
-| `management` | [Management](#management) | No | — | Optional server ownership. Omission means managed with serviceRef and external with endpoint. The OpenShell provider registration remains deployment-owned in either mode. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -633,60 +614,6 @@ Brave Search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies a BRAVE_API_KEY placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
-
-## ManagedManagement
-
-NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network.management`
-- `spec.gateway.storage.management`
-- `spec.services.{key}.management`
-- `spec.services.{key}.model.management`
-- `spec.services.{key}.placement.network.management`
-- `spec.services.{key}.storage.management`
-
-Accepted input: string.
-
-Constraints: `"managed"`.
-
-## ManagedResource
-
-Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.gateway.network`
-- `spec.gateway.storage`
-- `spec.services.{key}.placement.network`
-- `spec.services.{key}.storage`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | Yes | — | Managed ownership. Omit the enclosing object to keep the same behavior. |
-
-## Management
-
-Ownership of the inference server, separate from NemoClaw's owned routing registration.
-
-Guide: [Resource ownership](../usage.md#resource-ownership).
-
-Paths:
-
-- `spec.inferenceProviders[].management`
-- `spec.inferences.{key}.routes[].provider.management`
-- `spec.sandboxes[].agent.inference.routes[].provider.management`
-- `spec.sandboxes[].inferenceProviders[].management`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.management`
-
-Accepted input: string.
-
-Constraints: `"managed"` or `"external"`.
 
 ## Manifest
 
@@ -752,7 +679,6 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for downloading and preparing this model installation. Omission means managed. |
 | `repository` | string | Yes | — | Public Hugging Face owner/repository name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
 | `revision` | string | Yes | — | Full lowercase 40-hex commit revision; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
 
@@ -805,7 +731,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `digest` | string | Yes | — | Lowercase SHA-256 of the registry manifest selected for that tag. Constraints: pattern `^[a-f0-9]{64}$`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
 | `name` | string | Yes | — | Public library model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
 
 ## OllamaServing
@@ -1099,7 +1024,7 @@ Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
 ## Proxy
 
-Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.
+Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.
 
 Guide: [Sandbox policy and proxy](../sandbox-network.md).
 
@@ -1110,7 +1035,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
-| `management` | [ExternalManagement](#externalmanagement) | No | — | Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
 ## ReasoningEffort
@@ -1303,13 +1227,11 @@ Managed Ollama daemon and selected model.
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means Never. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration for the Ollama daemon container. Omission means managed. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
 | `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
 | `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
 | `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional model-volume ownership declaration. Omission means managed; the volume survives destroy. |
 
 ### Alternative 2
 
@@ -1322,7 +1244,6 @@ Managed authentication proxy for an external Ollama daemon and model.
 | `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional ownership declaration; omission means managed. |
 | `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
 
 ### Alternative 3
@@ -1338,14 +1259,12 @@ Managed vLLM runtime and immutable model snapshot.
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means Never. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
-| `management` | [ManagedManagement](#managedmanagement) | No | — | Optional managed ownership declaration. Omission means managed. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
-| `storage` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged. |
 
 ## ServiceHardware
 
@@ -1397,7 +1316,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `engine` | string | Yes | — | SSH Docker endpoint used for an explicitly placed service. Constraints: pattern `^ssh://`. |
-| `network` | [ManagedResource](#managedresource) | No | — | Optional ownership declaration for the network configured by networkCIDR. Omission means managed. |
 | `networkCidr` | string | Yes | — | Canonical private IPv4 /24 on the selected Docker engine. Constraints: pattern `/24$`. |
 
 ## ServicePublication

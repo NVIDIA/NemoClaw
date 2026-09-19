@@ -47,6 +47,77 @@ impl ResourceAdapter {
     fn observed_running(&self) -> bool {
         self.definition.observed_running
     }
+    fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
+        if self.definition.fields.contains(&"spec") {
+            match config.get("spec") {
+                Some(Value::Unknown) => {}
+                Some(Value::Value(encoded)) => {
+                    if let Err(error) = nemoclaw_sdk::services::validate_resource_spec(
+                        self.definition.kind,
+                        encoded,
+                    ) {
+                        diags.error(
+                            "Invalid resource specification",
+                            error.to_string(),
+                            AttributePath::new("spec"),
+                        );
+                        return None;
+                    }
+                }
+                _ => {
+                    diags.error_short(
+                        "Resource specification is required",
+                        AttributePath::new("spec"),
+                    );
+                    return None;
+                }
+            }
+        }
+        Some(())
+    }
+
+    async fn check_plan(
+        &self,
+        diags: &mut Diagnostics,
+        proposed: &State,
+        config: &State,
+        prior: Option<&State>,
+    ) -> Option<()> {
+        self.validate_config(diags, config)?;
+        // Unknown inputs may depend on upstream resources. OpenTofu will call
+        // planning again with resolved configuration before applying changes.
+        if self
+            .definition
+            .fields
+            .iter()
+            .any(|field| matches!(config.get(*field), Some(Value::Unknown)))
+        {
+            return Some(());
+        }
+        let result = async {
+            let desired = self.row(proposed, true)?;
+            let prior = prior.map(|state| self.row(state, false)).transpose()?;
+            self.backend
+                .plan(self.definition.kind, &desired, prior.as_ref())
+                .await
+        }
+        .await;
+        match result {
+            Ok(()) => Some(()),
+            Err(error) => {
+                if self.definition.fields.contains(&"spec") {
+                    diags.error(
+                        "Resource planning failed",
+                        error.to_string(),
+                        AttributePath::new("spec"),
+                    );
+                } else {
+                    diags.root_error("Resource planning failed", error.to_string());
+                }
+                None
+            }
+        }
+    }
     fn row(&self, state: &State, creating: bool) -> Result<Row, ObservationError> {
         state
             .iter()
@@ -147,6 +218,10 @@ impl Resource for ResourceAdapter {
     type PrivateState<'a> = ValueEmpty;
     type ProviderMetaState<'a> = ValueEmpty;
 
+    async fn validate<'a>(&self, diags: &mut Diagnostics, config: State) -> Option<()> {
+        self.validate_config(diags, &config)
+    }
+
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let attributes = self
             .definition
@@ -219,9 +294,9 @@ impl Resource for ResourceAdapter {
     }
     async fn plan_create<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         mut proposed: State,
-        _: State,
+        config: State,
         _: ValueEmpty,
     ) -> Option<(State, ValueEmpty)> {
         proposed.insert("id".into(), Value::Unknown);
@@ -232,20 +307,18 @@ impl Resource for ResourceAdapter {
             proposed.insert("running".into(), Value::Unknown);
         }
         for field in &self.definition.fields {
-            if self.optional(field)
-                && matches!(
-                    proposed.get(*field),
-                    Some(Value::Null | Value::Unknown) | None
-                )
-            {
+            // Core may propose unknown for an omitted OptionalComputed value.
+            // Choose its default only when the configuration itself is null.
+            if self.optional(field) && matches!(config.get(*field), Some(Value::Null) | None) {
                 proposed.insert((*field).into(), Value::Value(String::new()));
             }
         }
+        self.check_plan(diags, &proposed, &config, None).await?;
         Some((proposed, Value::Null))
     }
     async fn plan_update<'a>(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
         prior: State,
         mut proposed: State,
         config: State,
@@ -259,6 +332,8 @@ impl Resource for ResourceAdapter {
         {
             proposed.insert("image_pull_policy".into(), Value::Value(String::new()));
         }
+        self.check_plan(diags, &proposed, &config, Some(&prior))
+            .await?;
         let (state, replacements) = plan_update(&self.definition, &prior, proposed);
         Some((
             state,

@@ -52,6 +52,7 @@ fn targets_with_plans(
     service_plans: &crate::services::InstallPlans,
 ) -> Result<Vec<Target>, ConfigError> {
     let workspace = document.workspace();
+    let providers = document.selected_providers()?;
     let mut result = vec![Target {
         kind: "workspace".into(),
         address: "nemoclaw_workspace.deployment".into(),
@@ -65,8 +66,13 @@ fn targets_with_plans(
         ]
         .into(),
     }];
-    for provider in document.selected_inference_providers()? {
-        result.extend(inference_targets(document, provider, generations)?);
+    for provider in &providers {
+        result.extend(inference_targets(
+            document,
+            provider.definition,
+            &provider.key,
+            generations,
+        )?);
     }
     let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
     sandboxes.sort_by_key(|sandbox| &sandbox.name);
@@ -102,11 +108,11 @@ fn targets_with_plans(
             harness.observability.as_ref(),
         )?;
         for provider in document.sandbox_inference_providers(sandbox)? {
-            let connection = document.provider_connection(provider)?;
+            let connection = document.provider_connection(provider.definition)?;
             let profile = crate::openshell::inference_profile(
-                &document.provider_key(provider),
+                &provider.key,
                 &connection.endpoint,
-                &provider.provider,
+                &provider.definition.provider,
                 false,
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;
@@ -183,15 +189,13 @@ fn targets_with_plans(
             }
         }
     }
-    for provider in document.selected_inference_providers()? {
+    for provider in &providers {
         if let Some(source) =
-            crate::services::credential_source_json(document, provider, generations)?
+            crate::services::credential_source_json(document, provider.definition, generations)?
         {
             result
                 .iter_mut()
-                .find(|r| {
-                    r.kind == "provider" && r.values["name"] == document.provider_key(provider)
-                })
+                .find(|r| r.kind == "provider" && r.values["name"] == provider.key)
                 .unwrap()
                 .values
                 .insert("credential_source".into(), source);
@@ -204,13 +208,14 @@ fn targets_with_plans(
 fn inference_targets(
     document: &Document,
     provider: &InferenceProvider,
+    key: &str,
     generations: &Generations,
 ) -> Result<[Target; 2], ConfigError> {
     let connection = document.provider_connection(provider)?;
-    let logical = format!("inference_{}", document.provider_key(provider));
+    let logical = format!("inference_{key}");
     let values: Row = [
         ("workspace".into(), document.workspace()),
-        ("name".into(), document.provider_key(provider)),
+        ("name".into(), key.into()),
         ("owner".into(), document.metadata.uid.clone()),
         (
             "generation".into(),
@@ -236,10 +241,7 @@ fn inference_targets(
     ]
     .into();
     let mut profile = values.clone();
-    profile.insert(
-        "name".into(),
-        format!("nemoclaw-inference-{}", document.provider_key(provider)),
-    );
+    profile.insert("name".into(), format!("nemoclaw-inference-{key}"));
     profile.remove("credential_env");
     profile.insert(
         "authenticated".into(),
@@ -281,6 +283,7 @@ pub(super) fn compile_with_plans(
     service_plans: &crate::services::InstallPlans,
 ) -> Result<Value, ConfigError> {
     let targets = targets_with_plans(document, generations, service_plans)?;
+    let providers = document.selected_providers()?;
     let gateway = &document.spec.gateway;
     let mut provider = json!({"endpoint":gateway.endpoint});
     if let Some(c) = &gateway.credential {
@@ -327,11 +330,10 @@ pub(super) fn compile_with_plans(
         {
             let logical = target.address.split_once('.').unwrap().1;
             let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
-            if let Some(selected) = document
-                .selected_inference_providers()?
-                .into_iter()
-                .find(|provider| document.provider_key(provider) == target.values["name"])
-                && let Some(service) = crate::services::resolve(document, selected)?
+            if let Some(selected) = providers
+                .iter()
+                .find(|provider| provider.key == target.values["name"])
+                && let Some(service) = crate::services::resolve(document, selected.definition)?
             {
                 dependencies.extend(service.resource_dependencies);
             }

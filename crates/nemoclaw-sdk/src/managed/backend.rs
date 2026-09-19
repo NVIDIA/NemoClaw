@@ -122,6 +122,30 @@ fn diagnostic(error: &Error) -> ObservationError {
 }
 #[async_trait::async_trait]
 impl Backend for ManagedBackend {
+    async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
+        if self.process_kind != Some(kind) {
+            return Ok(());
+        }
+        let encoded = desired.get("spec").ok_or(ObservationError::Incomplete)?;
+        crate::services::validate_resource_spec(kind, encoded)?;
+        let want = specification(kind, encoded)?;
+        let old = prior
+            .map(|row| specification(kind, row.get("spec").ok_or(ObservationError::Incomplete)?))
+            .transpose()?
+            .unwrap_or_else(|| want.clone());
+        if old.owner != want.owner
+            || old.generation != want.generation
+            || old.name != want.name
+            || old.engine() != want.engine()
+        {
+            return Err(ObservationError::BindingMismatch.into());
+        }
+        if prior.is_some_and(|row| row.get("id").is_none_or(String::is_empty)) {
+            return Err(ObservationError::Incomplete.into());
+        }
+        crate::services::check_resource_hardware(&self.engine, &want).await
+    }
+
     async fn read(
         &self,
         kind: &str,

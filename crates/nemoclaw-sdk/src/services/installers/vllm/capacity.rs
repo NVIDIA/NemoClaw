@@ -23,6 +23,11 @@ impl Engine {
                 let host = self.host_observer.observe(self).await?;
                 let info = self.info().await?;
                 let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
+                super::hardware_capacity::check_memory(
+                    &service,
+                    &capacity,
+                    observed.is_none_or(|runtime| !runtime.running),
+                )?;
                 let directory = super::recipes::huggingface::directory(&service);
                 let cached = if let Some(observed) = observed {
                     self.read_file(

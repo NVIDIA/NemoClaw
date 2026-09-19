@@ -52,6 +52,18 @@ impl ConfiguredBackend {
 }
 #[async_trait]
 impl Backend for ConfiguredBackend {
+    async fn plan(
+        &self,
+        kind: &str,
+        desired: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), nemoclaw_sdk::Error> {
+        if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, desired)? {
+            backend.plan(kind, desired, prior).await?;
+        }
+        Ok(())
+    }
+
     async fn read(
         &self,
         kind: &str,

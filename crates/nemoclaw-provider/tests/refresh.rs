@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod support;
 use async_trait::async_trait;
 use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row, State};
 use nemoclaw_sdk::ObservationError;
@@ -36,6 +37,37 @@ fn state(row: Row) -> State {
 }
 
 #[tokio::test]
+async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_is_unknown() {
+    let resource = ResourceAdapter::new(
+        Definition::new(
+            "provider",
+            &["name", "endpoint", "credential_env"],
+            &["endpoint", "credential_env"],
+        ),
+        Arc::new(Fixture(Ok(None))),
+    );
+    let config = State::from([
+        ("name".into(), Value::Value("inference".into())),
+        (
+            "endpoint".into(),
+            Value::Value("https://example.test/v1".into()),
+        ),
+        ("credential_env".into(), Value::Null),
+    ]);
+    let mut proposed = config.clone();
+    proposed.insert("credential_env".into(), Value::Unknown);
+    let mut diagnostics = Diagnostics::default();
+    let result = resource
+        .plan_create(&mut diagnostics, proposed, config, Value::Null)
+        .await;
+    assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
+    assert_eq!(
+        result.unwrap().0["credential_env"],
+        Value::Value(String::new())
+    );
+}
+
+#[tokio::test]
 async fn removing_image_pull_policy_restores_the_default_without_replacement() {
     let resource = ResourceAdapter::new(
         Definition::new(
@@ -45,9 +77,10 @@ async fn removing_image_pull_policy_restores_the_default_without_replacement() {
         ),
         Arc::new(Fixture(Ok(None))),
     );
+    let encoded = support::specification().to_string();
     let prior: State = [
         ("id", "physical"),
-        ("spec", "unchanged"),
+        ("spec", encoded.as_str()),
         ("running", "true"),
         ("image_pull_policy", "Always"),
     ]
@@ -175,7 +208,10 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
     );
     let mut diagnostics = Diagnostics::default();
     let configured = State::from([
-        ("spec".into(), Value::Value("pinned-spec".into())),
+        (
+            "spec".into(),
+            Value::Value(support::specification().to_string()),
+        ),
         ("running".into(), Value::Null),
         ("id".into(), Value::Null),
     ]);

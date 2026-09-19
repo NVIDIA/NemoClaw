@@ -6,6 +6,9 @@
 //! Host observations and validated memory protection, independent of a recipe.
 use crate::Error;
 use std::{collections::BTreeMap, io::Read};
+mod diagnostic;
+pub use diagnostic::HardwareDiagnostic;
+pub(crate) use diagnostic::{architecture, at_least};
 pub const GIB: u64 = 1 << 30;
 #[derive(Clone, Debug, Default)]
 pub struct Capacity {

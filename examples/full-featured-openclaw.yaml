@@ -35,27 +35,18 @@ spec:
     engine: unix:///var/run/docker.sock
     image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.121.0/24
-    network:
-      management: managed
-    storage:
-      management: managed
   services:
     nemotron:
       kind: vllm
-      management: managed
       authentication: bearer
       # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
       image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
       placement:
         engine: ssh://gpu-box
         networkCidr: 172.30.119.0/24
-        network:
-          management: managed
       publication:
         endpoint: http://10.0.0.8:18898/v1
         bindAddress: 10.0.0.8
-      storage:
-        management: managed
       hardware:
         architecture: amd64
         minComputeCapability: 90
@@ -65,7 +56,6 @@ spec:
         ipc: host
         sharedMemoryGiB: 32
       model:
-        management: managed
         repository: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
         revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
       serving:
@@ -83,7 +73,6 @@ spec:
         gpuMemoryUtilization: 0.75
   inferenceProviders:
     - name: nemotron
-      management: managed
       provider: openai
       api: openai-completions
       serviceRef: nemotron
@@ -102,7 +91,6 @@ spec:
         provider: docker
       network:
         proxy:
-          management: external
           host: 10.200.0.1
           port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
@@ -157,7 +145,6 @@ spec:
         provider: docker
       network:
         proxy:
-          management: external
           host: 10.200.0.1
           port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.
@@ -213,7 +200,6 @@ spec:
         provider: docker
       network:
         proxy:
-          management: external
           host: 10.200.0.1
           port: 3128
         # Explicit policy replaces the tier preset. Search and tracing add their own reserved rules.

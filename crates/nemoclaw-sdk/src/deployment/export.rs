@@ -108,10 +108,11 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         return Ok(());
     }
     let provider = document
-        .selected_inference_providers()?
+        .selected_providers()?
         .into_iter()
-        .find(|provider| document.provider_key(provider) == expected["name"])
+        .find(|provider| provider.key == expected["name"])
         .ok_or(Error::Conflict("observed provider is not selected"))?;
+    let provider = provider.definition;
     let managed = provider.service_ref.is_some();
     if managed
         && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
@@ -156,7 +157,7 @@ async fn export_sandbox(
             "pi_model_config".into(),
             serde_json::to_string(
                 &document
-                    .agent_inference(&definition.agent)?
+                    .sandbox_inference(definition)?
                     .default_route()?
                     .overrides,
             )

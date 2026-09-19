@@ -11,4 +11,6 @@ mod backend;
 mod gateway_storage;
 mod keys;
 mod mutation;
+#[cfg(all(test, unix))]
+mod planning_tests;
 pub use backend::{GATEWAY_STORAGE_KIND, ManagedBackend, connection_endpoint, runtime_engine};

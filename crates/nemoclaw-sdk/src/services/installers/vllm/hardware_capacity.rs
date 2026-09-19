@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host-reserve policy informed by MiaAI Lab's single-Spark start.sh (AGPL-3.0-or-later).
 // Source revision and attribution: crates/nemoclaw-sdk/NOTICE.md.
-use crate::hardware::{Capacity, GIB};
+use crate::hardware::{Capacity, GIB, at_least};
 use crate::{
     Error,
     services::installers::vllm::{MemoryArchitecture, Service},
@@ -56,35 +56,36 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
             .map_or(service.gpu_bytes()?, |r| {
                 (gpu.total as f64 * r).floor() as u64
             });
-        if budget > gpu.total || (starting && budget > gpu.free) {
-            return Err(Error::Conflict(
-                "insufficient dedicated GPU memory for the declared serving budget",
-            ));
+        at_least("GPU total memory (bytes)", budget, gpu.total)?;
+        if starting {
+            at_least("GPU free memory (bytes)", budget, gpu.free)?;
         }
         let reserve = service.memory.host_reserve_gib as u64 * GIB;
-        if c.total < reserve || (starting && c.available < reserve + 20 * GIB) {
-            return Err(Error::Conflict(
-                "insufficient host memory reserve and startup headroom",
-            ));
+        at_least("host total memory (bytes)", reserve, c.total)?;
+        if starting {
+            at_least(
+                "host available memory (bytes)",
+                reserve + 20 * GIB,
+                c.available,
+            )?;
         }
     } else {
-        if service.gpu_bytes()? + service.memory.host_reserve_gib as u64 * GIB > c.total {
-            return Err(Error::Conflict(
-                "requested GPU budget leaves less than declared host memory reserve",
-            ));
-        }
-        if starting
-            && c.available
-                < service.gpu_bytes()?
+        at_least(
+            "host total memory (bytes)",
+            service.gpu_bytes()? + service.memory.host_reserve_gib as u64 * GIB,
+            c.total,
+        )?;
+        if starting {
+            at_least(
+                "host available memory (bytes)",
+                service.gpu_bytes()?
                     + service
                         .recipe
                         .as_ref()
                         .map_or(20, |r| r.resources.startup_headroom_gi_b)
-                        * GIB
-        {
-            return Err(Error::Conflict(
-                "insufficient startup memory headroom; service was not started",
-            ));
+                        * GIB,
+                c.available,
+            )?;
         }
     }
     Ok(())
@@ -107,33 +108,8 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
     if !(10..=999).contains(&c.compute_capability) {
         return Err(Error::State("GPU compute capability is unobservable"));
     }
-    if let Some(super::ServiceHardware::Profile { profile, .. }) = &service.hardware
-        && (!profile.matches_gpu(&c.gpu)
-            || c.compute_capability < profile.compute_capability()
-            || c.architecture != service.architecture()?
-            || c.driver_major < 580
-            || c.total < profile.min_host_memory_bytes())
-    {
-        return Err(Error::Conflict(
-            "execution host does not satisfy the declared hardware profile",
-        ));
-    }
-    if let Some(required) = service.dedicated_hardware() {
-        let gpu = c
-            .gpu_memory
-            .as_ref()
-            .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-        if c.architecture != required.architecture
-            || c.driver_major < required.min_driver_major
-            || gpu.total < required.min_gpu_memory_bytes
-            || gpu.free > gpu.total
-            || c.compute_capability < required.min_compute_capability
-        {
-            return Err(Error::Conflict(
-                "execution host does not satisfy dedicated GPU requirements",
-            ));
-        }
-        Ok(())
+    if let Some(hardware) = &service.hardware {
+        hardware.check_compatibility(c)
     } else if let Some(recipe) = &service.recipe {
         let required = &recipe.compatibility;
         if c.architecture != required.architecture
@@ -145,8 +121,6 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
                 "execution host does not satisfy recipe compatibility requirements",
             ));
         }
-        Ok(())
-    } else if service.hardware.is_some() {
         Ok(())
     } else {
         Err(crate::config::ConfigError::new(

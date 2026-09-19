@@ -17,7 +17,6 @@ spec:
   services:
     ollama-server:
       kind: ollama
-      management: managed
       hardware: {profile: dgx-spark}
       image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:

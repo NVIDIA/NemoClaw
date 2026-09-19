@@ -424,16 +424,6 @@
       ],
       "type": "object"
     },
-    "ExternalManagement": {
-      "description": "NemoClaw uses this resource without managing its lifecycle or administrative configuration.",
-      "oneOf": [
-        {
-          "const": "external",
-          "description": "The resource is provided by its external owner.",
-          "type": "string"
-        }
-      ]
-    },
     "ExternalOllama": {
       "additionalProperties": false,
       "description": "External Ollama daemon observed by the managed proxy installer.",
@@ -461,10 +451,6 @@
           "description": "Lowercase 64-character model digest reported by Ollama's /api/tags API.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
-        },
-        "management": {
-          "$ref": "#/$defs/ExternalManagement",
-          "description": "Optional ownership declaration; omission means external."
         },
         "name": {
           "description": "Installed Ollama model name including its tag.",
@@ -592,16 +578,6 @@
                 "anyOf": [
                   {
                     "required": [
-                      "network"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "storage"
-                    ]
-                  },
-                  {
-                    "required": [
                       "imagePullPolicy"
                     ]
                   }
@@ -665,18 +641,10 @@
           ],
           "type": "string"
         },
-        "network": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional ownership declaration for the gateway network configured by networkCIDR. Omission means managed for a managed gateway."
-        },
         "networkCIDR": {
           "description": "Canonical private IPv4 /24 for a managed gateway. Omit or leave empty for an external gateway.",
           "type": "string",
           "x-nemoclaw-default-rule": "Managed only: omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
-        },
-        "storage": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional ownership declaration for gateway storage. Omission means managed for a managed gateway; external gateways cannot declare storage."
         },
         "tls": {
           "$ref": "#/$defs/TLS",
@@ -1129,9 +1097,6 @@
         "properties": {
           "endpoint": {
             "pattern": "^https?://"
-          },
-          "management": {
-            "const": "external"
           }
         },
         "required": [
@@ -1156,10 +1121,6 @@
           "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.",
           "type": "string",
           "x-nemoclaw-required": "Without serviceRef"
-        },
-        "management": {
-          "$ref": "#/$defs/Management",
-          "description": "Optional server ownership. Omission means managed with serviceRef and external with endpoint. The OpenShell provider registration remains deployment-owned in either mode."
         },
         "name": {
           "description": "Provider name referenced by model choices.",
@@ -1201,9 +1162,6 @@
         "properties": {
           "endpoint": {
             "const": ""
-          },
-          "management": {
-            "const": "managed"
           },
           "provider": {
             "const": "openai"
@@ -1307,45 +1265,6 @@
             "credential"
           ],
           "type": "object"
-        }
-      ]
-    },
-    "ManagedManagement": {
-      "description": "NemoClaw manages this resource's lifecycle. Storage retention is independent of ownership.",
-      "oneOf": [
-        {
-          "const": "managed",
-          "description": "The deployment creates and observes the resource using its existing lifecycle and retention policy.",
-          "type": "string"
-        }
-      ]
-    },
-    "ManagedResource": {
-      "additionalProperties": false,
-      "description": "Explicit ownership for a dependency whose creation settings remain on its parent. Only managed ownership is implemented.",
-      "properties": {
-        "management": {
-          "$ref": "#/$defs/ManagedManagement",
-          "description": "Managed ownership. Omit the enclosing object to keep the same behavior."
-        }
-      },
-      "required": [
-        "management"
-      ],
-      "type": "object"
-    },
-    "Management": {
-      "description": "Ownership of the inference server, separate from NemoClaw's owned routing registration.",
-      "oneOf": [
-        {
-          "const": "managed",
-          "description": "The deployment manages the declared service.",
-          "type": "string"
-        },
-        {
-          "const": "external",
-          "description": "The deployment uses the endpoint without managing its server.",
-          "type": "string"
         }
       ]
     },
@@ -1549,10 +1468,6 @@
       "additionalProperties": false,
       "description": "Immutable model identity used for snapshot resolution and storage.",
       "properties": {
-        "management": {
-          "$ref": "#/$defs/ManagedManagement",
-          "description": "Optional ownership declaration for downloading and preparing this model installation. Omission means managed."
-        },
         "repository": {
           "description": "Public Hugging Face owner/repository name.",
           "maxLength": 200,
@@ -1730,10 +1645,6 @@
           "description": "Lowercase SHA-256 of the registry manifest selected for that tag.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
-        },
-        "management": {
-          "$ref": "#/$defs/ManagedManagement",
-          "description": "Optional ownership declaration; omission means managed."
         },
         "name": {
           "description": "Public library model name including its tag.",
@@ -2308,7 +2219,7 @@
     },
     "Proxy": {
       "additionalProperties": false,
-      "description": "Agent HTTP proxy, reachable from inside the sandbox. Credentials and URL syntax are excluded.",
+      "description": "Existing agent HTTP proxy, reachable from inside the sandbox. NemoClaw does not manage it. Credentials and URL syntax are excluded.",
       "properties": {
         "host": {
           "description": "Proxy hostname or IPv4 address, without scheme, path, or credentials.",
@@ -2316,10 +2227,6 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9._-]+$",
           "type": "string"
-        },
-        "management": {
-          "$ref": "#/$defs/ExternalManagement",
-          "description": "Optional external ownership declaration. Omission means external; NemoClaw does not create this proxy."
         },
         "port": {
           "description": "Proxy TCP port, from 1 through 65535.",
@@ -2848,10 +2755,6 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
-            "management": {
-              "$ref": "#/$defs/ManagedManagement",
-              "description": "Optional ownership declaration for the Ollama daemon container. Omission means managed."
-            },
             "memory": {
               "$ref": "#/$defs/OllamaMemory",
               "description": "GPU budget and resident memory-protection thresholds."
@@ -2871,10 +2774,6 @@
             "serving": {
               "$ref": "#/$defs/OllamaServing",
               "description": "Ollama serving limits."
-            },
-            "storage": {
-              "$ref": "#/$defs/ManagedResource",
-              "description": "Optional model-volume ownership declaration. Omission means managed; the volume survives destroy."
             }
           },
           "required": [
@@ -2906,10 +2805,6 @@
               "const": "ollamaProxy",
               "description": "Supported installer selected by this service definition.",
               "type": "string"
-            },
-            "management": {
-              "$ref": "#/$defs/ManagedManagement",
-              "description": "Optional ownership declaration; omission means managed."
             },
             "upstream": {
               "$ref": "#/$defs/ExternalOllama",
@@ -3148,10 +3043,6 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
-            "management": {
-              "$ref": "#/$defs/ManagedManagement",
-              "description": "Optional managed ownership declaration. Omission means managed."
-            },
             "memory": {
               "$ref": "#/$defs/Memory",
               "description": "GPU budget and resident watchdog thresholds. Omission selects the SDK defaults."
@@ -3178,10 +3069,6 @@
             "serving": {
               "$ref": "#/$defs/Serving",
               "description": "Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options."
-            },
-            "storage": {
-              "$ref": "#/$defs/ManagedResource",
-              "description": "Optional ownership declaration for model storage. Omission means managed; existing retention behavior is unchanged."
             }
           },
           "required": [
@@ -3315,10 +3202,6 @@
           "description": "SSH Docker endpoint used for an explicitly placed service.",
           "pattern": "^ssh://",
           "type": "string"
-        },
-        "network": {
-          "$ref": "#/$defs/ManagedResource",
-          "description": "Optional ownership declaration for the network configured by networkCIDR. Omission means managed."
         },
         "networkCidr": {
           "description": "Canonical private IPv4 /24 on the selected Docker engine.",
