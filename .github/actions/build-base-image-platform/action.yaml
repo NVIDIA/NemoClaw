@@ -115,8 +115,113 @@ runs:
           printf 'audit_build_args<<EOF\n%s\nEOF\n' "$audit_build_args" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Build Deep Agents Code platform candidate
+      id: dcode-candidate
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platform }}
+        provenance: false
+        sbom: false
+        tags: nemoclaw-dcode-base-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        outputs: |
+          type=docker,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.docker.tar
+          type=oci,dest=${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
+        cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
+
+    - name: Bind Deep Agents Code local candidate to OCI layout
+      id: dcode-candidate-identity
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        DOCKER_ARCHIVE: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}.docker.tar
+        LOCAL_REFERENCE: nemoclaw-dcode-base-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
+        OCI_ARCHIVE: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}.oci.tar
+        OCI_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-oci
+      run: |
+        set -euo pipefail
+        install -d -m 0700 "$OCI_LAYOUT"
+        docker load --input "$DOCKER_ARCHIVE"
+        tar --extract --file "$OCI_ARCHIVE" --directory "$OCI_LAYOUT"
+        digest="$(
+          jq -er \
+            '.manifests | if length == 1 then .[0].digest else error("expected one platform manifest") end' \
+            "$OCI_LAYOUT/index.json"
+        )"
+        if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Deep Agents Code candidate OCI layout has an invalid digest." >&2
+          exit 1
+        fi
+        manifest="$OCI_LAYOUT/blobs/sha256/${digest#sha256:}"
+        if [ ! -f "$manifest" ] || [ -L "$manifest" ]; then
+          echo "ERROR: Deep Agents Code candidate OCI manifest is missing or unsafe." >&2
+          exit 1
+        fi
+        config_digest="$(jq -er '.config.digest' "$manifest")"
+        local_image_id="$(docker image inspect --format '{{.Id}}' "$LOCAL_REFERENCE")"
+        if [ "$local_image_id" != "$config_digest" ]; then
+          echo "ERROR: Deep Agents Code Docker candidate does not match its OCI layout." >&2
+          exit 1
+        fi
+        printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+        printf 'reference=%s\n' "$local_image_id" >> "$GITHUB_OUTPUT"
+
+    - name: Validate Deep Agents Code base runtime
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        REFERENCE: ${{ steps.dcode-candidate-identity.outputs.reference }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$REFERENCE" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Deep Agents Code base image build did not return a valid image ID." >&2
+          exit 1
+        fi
+        docker run --rm --platform "$PLATFORM" \
+          --network none \
+          --cap-drop ALL \
+          --security-opt no-new-privileges \
+          --read-only \
+          --user 999:999 \
+          --entrypoint /bin/sh \
+          "$REFERENCE" -eu -c \
+          'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
+        node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+          --reference "$REFERENCE" \
+          --platform "$PLATFORM"
+
+    - name: Push validated Deep Agents Code platform digest
+      id: dcode-publish
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        DIGEST: ${{ steps.dcode-candidate-identity.outputs.digest }}
+        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+        OCI_LAYOUT: ${{ runner.temp }}/dcode-base-${{ inputs.arch }}-oci
+      run: |
+        set -euo pipefail
+        metadata="$RUNNER_TEMP/dcode-base-${{ inputs.arch }}-publication.json"
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "${IMAGE}@${DIGEST}" \
+          --metadata-file "$metadata" \
+          "oci-layout://${OCI_LAYOUT}@${DIGEST}"
+        published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$metadata")"
+        if [ "$published_digest" != "$DIGEST" ]; then
+          echo "ERROR: published Deep Agents Code digest differs from the validated candidate." >&2
+          exit 1
+        fi
+        printf 'digest=%s\n' "$DIGEST" >> "$GITHUB_OUTPUT"
+
     - name: Build and push platform digest
-      id: build
+      id: registry-build
+      if: ${{ inputs.agent != 'langchain-deepagents-code' }}
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
       with:
         context: .
@@ -136,32 +241,25 @@ runs:
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', inputs.mcporter-audit-raw-report) || '' }}
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', inputs.mcporter-audit-policy-result) || '' }}
 
-    - name: Validate Deep Agents Code base runtime
-      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+    - name: Select platform digest
+      id: build
       shell: bash
       env:
-        DIGEST: ${{ steps.build.outputs.digest }}
-        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
-        PLATFORM: ${{ inputs.platform }}
+        AGENT: ${{ inputs.agent }}
+        DCODE_DIGEST: ${{ steps.dcode-publish.outputs.digest }}
+        REGISTRY_DIGEST: ${{ steps.registry-build.outputs.digest }}
       run: |
         set -euo pipefail
-        if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-          echo "ERROR: Deep Agents Code base image build did not return a valid digest: $DIGEST" >&2
+        if [ "$AGENT" = "langchain-deepagents-code" ]; then
+          digest="$DCODE_DIGEST"
+        else
+          digest="$REGISTRY_DIGEST"
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: platform build did not return a valid digest." >&2
           exit 1
         fi
-        reference="${IMAGE}@${DIGEST}"
-        docker run --rm --platform "$PLATFORM" \
-          --network none \
-          --cap-drop ALL \
-          --security-opt no-new-privileges \
-          --read-only \
-          --user 999:999 \
-          --entrypoint /bin/sh \
-          "$reference" -eu -c \
-          'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
-        node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
-          --reference "$reference" \
-          --platform "$PLATFORM"
+        printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
     - name: Export platform digest
       id: job-output

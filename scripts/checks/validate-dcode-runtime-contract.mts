@@ -6,12 +6,28 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const IMMUTABLE_REFERENCE_PATTERN = /^[^@\s]+@sha256:[0-9a-f]{64}$/u;
+const IMMUTABLE_REFERENCE_PATTERN =
+  /^(?:sha256:[0-9a-f]{64}|[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)+@sha256:[0-9a-f]{64})$/u;
 const PLATFORM_PATTERN = /^linux\/(?:amd64|arm64)$/u;
 const SUCCESS_MARKER = "nemoclaw-dcode-runtime-contract-ok";
 const VALIDATOR_PATH = "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py";
 
 export type DockerRunner = (args: readonly string[]) => string;
+
+function dockerFailureClass(error: unknown): string {
+  if (!error || typeof error !== "object" || !("stderr" in error)) {
+    return "Docker command failed without a runtime diagnostic";
+  }
+  const stderr = (error as { stderr?: unknown }).stderr;
+  const detail =
+    typeof stderr === "string" ? stderr : Buffer.isBuffer(stderr) ? stderr.toString() : "";
+  const missingModule = detail.match(
+    /ModuleNotFoundError:\s+No module named ['"](deepagents_code|deepagents)['"]/u,
+  )?.[1];
+  return missingModule
+    ? `missing required runtime module: ${missingModule}`
+    : "Docker command failed without a recognized runtime diagnostic";
+}
 
 export function dcodeRuntimeValidationArgs(reference: string, platform: string): readonly string[] {
   if (!IMMUTABLE_REFERENCE_PATTERN.test(reference)) {
@@ -54,11 +70,14 @@ export function validateDcodeRuntimeContract(
       timeout: 120_000,
     }),
 ): void {
+  const args = dcodeRuntimeValidationArgs(reference, platform);
   let output: string;
   try {
-    output = runDocker(dcodeRuntimeValidationArgs(reference, platform));
-  } catch {
-    throw new Error("Deep Agents Code runtime contract validation failed");
+    output = runDocker(args);
+  } catch (error) {
+    throw new Error(
+      `Deep Agents Code runtime contract validation failed for reference=${JSON.stringify(reference)} platform=${JSON.stringify(platform)}: ${dockerFailureClass(error)}`,
+    );
   }
   if (output.trim() !== SUCCESS_MARKER) {
     throw new Error("Deep Agents Code runtime contract validation returned invalid evidence");

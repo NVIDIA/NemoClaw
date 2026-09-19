@@ -11,9 +11,12 @@ import YAML from "yaml";
 
 type Step = {
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 };
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -66,7 +69,7 @@ describe("base-image dependency contracts", () => {
     },
   );
 
-  it("validates each Deep Agents Code platform runtime before digest export (#12086)", () => {
+  it("validates each local Deep Agents Code candidate before publication (#12086)", () => {
     const action = YAML.parse(
       fs.readFileSync(
         path.join(repoRoot, ".github", "actions", "build-base-image-platform", "action.yaml"),
@@ -74,95 +77,170 @@ describe("base-image dependency contracts", () => {
       ),
     ) as { runs?: { steps?: Step[] } };
     const steps = action.runs?.steps ?? [];
+    const localBuild =
+      steps.find((candidate) => candidate.name === "Build Deep Agents Code platform candidate") ??
+      (() => {
+        throw new Error("Base-image platform action is missing the local DCode build");
+      })();
+    const identity =
+      steps.find(
+        (candidate) => candidate.name === "Bind Deep Agents Code local candidate to OCI layout",
+      ) ??
+      (() => {
+        throw new Error("Base-image platform action is missing the DCode candidate identity");
+      })();
     const validate =
       steps.find((candidate) => candidate.name === "Validate Deep Agents Code base runtime") ??
       (() => {
         throw new Error("Base-image platform action is missing the runtime validation");
       })();
-    const buildIndex = steps.findIndex(
+    const publish =
+      steps.find(
+        (candidate) => candidate.name === "Push validated Deep Agents Code platform digest",
+      ) ??
+      (() => {
+        throw new Error("Base-image platform action is missing the DCode publication");
+      })();
+    const registryBuild = steps.find(
       (candidate) => candidate.name === "Build and push platform digest",
     );
+    const localBuildIndex = steps.indexOf(localBuild);
+    const identityIndex = steps.indexOf(identity);
     const validateIndex = steps.indexOf(validate);
+    const publishIndex = steps.indexOf(publish);
     const exportIndex = steps.findIndex((candidate) => candidate.name === "Export platform digest");
 
+    expect(localBuild.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
+    expect(localBuild.with).toMatchObject({
+      platforms: "${{ inputs.platform }}",
+      provenance: false,
+      sbom: false,
+    });
+    expect(localBuild.with?.outputs).toContain("type=docker");
+    expect(localBuild.with?.outputs).toContain("type=oci");
+    expect(JSON.stringify(localBuild)).not.toContain("push=true");
+    expect(JSON.stringify(localBuild)).not.toContain("cache-to");
+    expect(identity.run).toContain('if [ "$local_image_id" != "$config_digest" ]');
+    expect(identity.run).toContain("expected one platform manifest");
     expect(validate.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
     expect(validate.env).toEqual({
-      DIGEST: "${{ steps.build.outputs.digest }}",
-      IMAGE: "${{ inputs.registry }}/${{ inputs.image }}",
       PLATFORM: "${{ inputs.platform }}",
+      REFERENCE: "${{ steps.dcode-candidate-identity.outputs.reference }}",
     });
-    expect(validate.run).toContain('reference="${IMAGE}@${DIGEST}"');
     expect(validate.run).toContain("scripts/checks/validate-dcode-runtime-contract.mts");
     expect(validate.run).toContain("test -x /usr/bin/dos2unix");
-    expect([buildIndex < validateIndex, validateIndex < exportIndex]).toEqual([true, true]);
+    expect(publish.run).toContain('"oci-layout://${OCI_LAYOUT}@${DIGEST}"');
+    expect(publish.run).toContain('--tag "${IMAGE}@${DIGEST}"');
+    expect(publish.run).toContain('if [ "$published_digest" != "$DIGEST" ]');
+    expect(registryBuild?.if).toBe("${{ inputs.agent != 'langchain-deepagents-code' }}");
+    expect(
+      JSON.stringify(steps.slice(0, validateIndex)),
+      "DCode validation must precede every registry write",
+    ).not.toMatch(/push=true|cache-to|imagetools create/u);
+    expect([
+      localBuildIndex < identityIndex,
+      identityIndex < validateIndex,
+      validateIndex < publishIndex,
+      publishIndex < exportIndex,
+    ]).toEqual([true, true, true, true]);
   });
 
   it.each([
-    ["a complete runtime", "complete", 0],
-    ["a Docker command failure", "command-failure", 1],
-    ["noisy success evidence", "noisy-success", 1],
-  ])("accepts only %s from the shared runtime validator (#12086)", (_case, outcome, expected) => {
-    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-runtime-"));
-    const dockerPath = path.join(temporaryRoot, "docker");
-    const argumentsPath = path.join(temporaryRoot, "arguments");
-    const validatorPath = path.join(repoRoot, "scripts/checks/validate-dcode-runtime-contract.mts");
-    const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${"a".repeat(64)}`;
-    fs.writeFileSync(
-      dockerPath,
-      `#!/bin/sh
+    ["a complete runtime", "complete", 0, ""],
+    [
+      "a missing deepagents module",
+      "missing-deepagents",
+      1,
+      "missing required runtime module: deepagents",
+    ],
+    [
+      "a missing deepagents_code module",
+      "missing-deepagents-code",
+      1,
+      "missing required runtime module: deepagents_code",
+    ],
+    [
+      "a Docker command failure",
+      "command-failure",
+      1,
+      "Docker command failed without a recognized runtime diagnostic",
+    ],
+    ["noisy success evidence", "noisy-success", 1, "returned invalid evidence"],
+  ])(
+    "accepts only %s from the shared runtime validator (#12086)",
+    (_case, outcome, expected, diagnostic) => {
+      const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-runtime-"));
+      const dockerPath = path.join(temporaryRoot, "docker");
+      const argumentsPath = path.join(temporaryRoot, "arguments");
+      const validatorPath = path.join(
+        repoRoot,
+        "scripts/checks/validate-dcode-runtime-contract.mts",
+      );
+      const reference = `sha256:${"a".repeat(64)}`;
+      fs.writeFileSync(
+        dockerPath,
+        `#!/bin/sh
 printf '%s\\n' "$@" > "$FAKE_DOCKER_ARGUMENTS"
 case "$FAKE_DOCKER_OUTCOME" in
   complete) printf '%s\\n' 'nemoclaw-dcode-runtime-contract-ok' ;;
   noisy-success) printf '%s\\n' 'nemoclaw-dcode-runtime-contract-ok' 'unexpected-output' ;;
-  missing-deepagents) printf '%s\\n' 'ModuleNotFoundError: deepagents' >&2; exit 31 ;;
-  missing-deepagents-code) printf '%s\\n' 'ModuleNotFoundError: deepagents_code' >&2; exit 32 ;;
-  command-failure) exit 33 ;;
+  missing-deepagents) printf '%s\\n' "ModuleNotFoundError: No module named 'deepagents'" >&2; exit 31 ;;
+  missing-deepagents-code) printf '%s\\n' "ModuleNotFoundError: No module named 'deepagents_code'" >&2; exit 32 ;;
+  command-failure) printf '%s\\n' 'Authorization: Bearer should-not-leak' >&2; exit 33 ;;
   *) exit 34 ;;
 esac
 `,
-      { mode: 0o755 },
-    );
-    try {
-      const result = spawnSync(
-        process.execPath,
-        ["--no-warnings", validatorPath, "--reference", reference, "--platform", "linux/amd64"],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            FAKE_DOCKER_ARGUMENTS: argumentsPath,
-            FAKE_DOCKER_OUTCOME: outcome,
-            PATH: `${temporaryRoot}:${process.env.PATH ?? ""}`,
-          },
-        },
+        { mode: 0o755 },
       );
-      expect(result.status === 0 ? 0 : 1, result.stderr).toBe(expected);
-      const args = fs.readFileSync(argumentsPath, "utf8").trim().split("\n");
-      expect(args).toEqual([
-        "run",
-        "--rm",
-        "--platform",
-        "linux/amd64",
-        "--network",
-        "none",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "--read-only",
-        "--user",
-        "999:999",
-        "--entrypoint",
-        "/opt/venv/bin/python3",
-        reference,
-        "-I",
-        "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py",
-      ]);
-      expect(result.stderr).not.toContain("ModuleNotFoundError");
-    } finally {
-      fs.rmSync(temporaryRoot, { force: true, recursive: true });
-    }
-  });
+      try {
+        const result = spawnSync(
+          process.execPath,
+          ["--no-warnings", validatorPath, "--reference", reference, "--platform", "linux/amd64"],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              FAKE_DOCKER_ARGUMENTS: argumentsPath,
+              FAKE_DOCKER_OUTCOME: outcome,
+              PATH: `${temporaryRoot}:${process.env.PATH ?? ""}`,
+            },
+          },
+        );
+        expect(result.status === 0 ? 0 : 1, result.stderr).toBe(expected);
+        const args = fs.readFileSync(argumentsPath, "utf8").trim().split("\n");
+        expect(args).toEqual([
+          "run",
+          "--rm",
+          "--platform",
+          "linux/amd64",
+          "--network",
+          "none",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--read-only",
+          "--user",
+          "999:999",
+          "--entrypoint",
+          "/opt/venv/bin/python3",
+          reference,
+          "-I",
+          "/usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py",
+        ]);
+        expect(result.stderr).not.toContain("ModuleNotFoundError");
+        expect(result.stderr).not.toContain("should-not-leak");
+        expect(result.stderr).toContain(diagnostic);
+        const reportsMissingModule = outcome.startsWith("missing-");
+        expect(result.stderr).toContain(
+          reportsMissingModule ? `reference=${JSON.stringify(reference)}` : "",
+        );
+        expect(result.stderr).toContain(reportsMissingModule ? 'platform="linux/amd64"' : "");
+      } finally {
+        fs.rmSync(temporaryRoot, { force: true, recursive: true });
+      }
+    },
+  );
 
   it.each([
     ["a complete runtime", undefined, "0.7.5", "0.1.55", "0.7.5", 0, ""],
@@ -239,6 +317,7 @@ esac
           "python3",
           [
             "-I",
+            "-S",
             "-c",
             `import runpy, sys
 site_packages, script, *arguments = sys.argv[1:]
