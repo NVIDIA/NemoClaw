@@ -107,7 +107,7 @@ impl Spec {
         {
             self.gateway.validate_managed()?;
         }
-        if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0 | 2) {
+        if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0 | 1 | 2) {
             return Ok(());
         }
         if self.kind != GATEWAY_KIND
