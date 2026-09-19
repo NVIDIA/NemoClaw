@@ -2796,8 +2796,13 @@
               "description": "Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell.",
               "type": "string"
             },
+            "engine": {
+              "description": "Local Docker Unix socket. Omission uses the managed gateway engine.",
+              "pattern": "^unix:///[^?#\\x00]*$",
+              "type": "string"
+            },
             "image": {
-              "description": "Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host.",
+              "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
               "type": "string"
             },

@@ -87,7 +87,7 @@ pub fn targets(
         ("upstream", settings.upstream.clone()),
         ("model", settings.model.clone()),
         ("digest", settings.digest.clone()),
-        ("engine", document.spec.gateway.engine.clone()),
+        ("engine", proxy.engine(document).into()),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v))

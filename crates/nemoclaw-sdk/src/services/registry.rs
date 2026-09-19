@@ -227,10 +227,10 @@ impl ServiceDefinition {
         let (placement, package) = match self {
             Self::Ollama(service) => (service.placement.as_ref(), "Ollama"),
             Self::Vllm(service) => (service.placement.as_ref(), "vLLM"),
-            Self::OllamaProxy(_) => {
+            Self::OllamaProxy(service) => {
                 return crate::config::validation::require(
-                    local_docker,
-                    "Ollama proxy requires a managed local Docker gateway",
+                    local_docker || service.engine.is_some(),
+                    "Ollama proxy requires a managed local Docker gateway or explicit local engine",
                 );
             }
         };

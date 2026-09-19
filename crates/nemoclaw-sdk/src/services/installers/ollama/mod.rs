@@ -242,10 +242,23 @@ impl ManagedOllama {
 }
 
 impl OllamaProxy {
+    pub(crate) fn engine<'a>(&'a self, document: &'a Document) -> &'a str {
+        self.engine
+            .as_deref()
+            .unwrap_or(&document.spec.gateway.engine)
+    }
+
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
         validate_image(&self.image)?;
         crate::config::ImagePullPolicy::validate_service(self.image_pull_policy)?;
+        require(
+            self.engine.as_ref().is_none_or(|engine| {
+                engine.starts_with("unix:///")
+                    && crate::docker::Engine::validate_endpoint(engine).is_ok()
+            }),
+            "proxy engine must be a local Unix socket",
+        )?;
         crate::config::validate_endpoint(&self.endpoint, false)?;
         crate::config::validate_endpoint(&self.upstream.endpoint, false)?;
         let upstream = Url::parse(&self.upstream.endpoint)
@@ -561,7 +574,7 @@ impl OllamaProxy {
         let mut spec = proxy::specification(document, name, self, generations)?;
         spec.image_pull_policy = None;
         Ok(crate::services::authentication::Source::OllamaProxy {
-            engine: document.spec.gateway.engine.clone(),
+            engine: self.engine(document).into(),
             spec: Box::new(spec),
         }
         .json()?)

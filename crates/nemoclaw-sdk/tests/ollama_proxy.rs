@@ -19,6 +19,75 @@ fn input() -> Value {
     }});
     value
 }
+
+#[test]
+fn explicit_proxy_engine_works_with_an_external_gateway() {
+    let mut value = input();
+    value["spec"]["gateway"] =
+        json!({"management":"external", "endpoint":"http://127.0.0.1:17671"});
+    value["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("podman");
+    value["spec"]["services"]["ollama-auth"]["engine"] = json!("unix:///tmp/proxy-engine.sock");
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value)
+    );
+    assert!(document.spec.gateway.engine.is_empty());
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let generations: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let targets = nemoclaw_sdk::compile::targets(&document, &generations).unwrap();
+    let proxy_targets: Vec<_> = targets
+        .iter()
+        .filter(|target| {
+            matches!(
+                target.kind.as_str(),
+                "ollama_proxy" | "ollama_proxy_storage" | "ollama_external_model"
+            )
+        })
+        .collect();
+    assert_eq!(proxy_targets.len(), 3);
+    for target in proxy_targets {
+        assert_eq!(target.values["engine"], "unix:///tmp/proxy-engine.sock");
+    }
+    let graph = compile(&document, &generations, "0.1.0").unwrap();
+    let credential: Value = serde_json::from_str(
+        graph["resource"]["nemoclaw_provider"]["inference_local"]["credential_source"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(credential["engine"], "unix:///tmp/proxy-engine.sock");
+}
+
+#[test]
+fn explicit_proxy_engine_must_be_a_valid_local_socket() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for engine in [
+        "",
+        "ssh://operator@host",
+        "tcp://127.0.0.1:2375",
+        "unix://relative",
+        "unix:///tmp/socket?query",
+        "unix:///tmp/socket#fragment",
+    ] {
+        let mut value = input();
+        value["spec"]["services"]["ollama-auth"]["engine"] = json!(engine);
+        let error = Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("proxy engine must be a local Unix socket"),
+            "{engine}: {error}"
+        );
+        assert!(!validator.is_valid(&value));
+    }
+}
 #[test]
 fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
     let gens: Generations = ["workspace", "provider", "sandbox", "ollama_proxy"]

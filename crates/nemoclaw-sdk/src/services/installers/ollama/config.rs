@@ -207,7 +207,11 @@ impl ManagedOllama {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
 pub struct OllamaProxy {
-    /// Immutable NemoClaw proxy image. The external daemon runs on the managed gateway host.
+    /// Local Docker Unix socket. Omission uses the managed gateway engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String", regex(pattern = r"^unix:///[^?#\x00]*$"))]
+    pub engine: Option<String>,
+    /// Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.
     pub image: String,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
