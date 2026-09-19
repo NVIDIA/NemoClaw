@@ -108,6 +108,19 @@ The global `$$nemoclaw doctor` command remains available without a sandbox name.
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### `--force-fresh-install`
+
+On Apple silicon macOS, remove every NemoClaw- and OpenShell-managed sandbox, gateway, credential, configuration file, and recovery record before reinstalling and starting fresh onboarding. This destructive reset keeps downloaded model caches, but the removed state cannot be recovered without an external backup. Unlike `--fresh`, it removes the existing managed installation instead of only requesting fresh onboarding state.
+
+Use the hosted installer so the selected candidate is staged outside the state it removes:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  bash -s -- --force-fresh-install
+```
+
+The equivalent environment variable is `NEMOCLAW_FORCE_FRESH_INSTALL=1`. The installer rejects this option outside Apple silicon macOS and stops without deleting remaining state if the authoritative whole-host uninstall cannot complete.
+
 ### `--local-model-runtime=vllm`
 
 Enable the fixed vLLM local model profile. The flag accepts only `vllm`. It makes the remaining onboarding non-interactive and disables Express profile selection.
