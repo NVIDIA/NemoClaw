@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
+import { extractShellFunctionFromSource } from "../../support/shell-function-extractor.ts";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
@@ -73,6 +74,60 @@ afterEach(() => {
 });
 
 describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
+  it("restores and verifies the sticky root-owned workspace before privilege drop", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const normalize = extractShellFunctionFromSource(
+      source,
+      "normalize_dcode_workspace_root",
+      "agents/langchain-deepagents-code/start.sh",
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          'chown() { printf "chown:%s\\n" "$*"; }',
+          'chmod() { printf "chmod:%s\\n" "$*"; }',
+          "stat() { printf '%s\\n' root:sandbox:1775; }",
+          normalize,
+          "normalize_dcode_workspace_root",
+        ].join("\n"),
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("chown:root:sandbox /sandbox\nchmod:1775 /sandbox\n");
+  });
+
+  it("fails closed when the workspace-root posture cannot be verified", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const normalize = extractShellFunctionFromSource(
+      source,
+      "normalize_dcode_workspace_root",
+      "agents/langchain-deepagents-code/start.sh",
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          "chown() { :; }",
+          "chmod() { :; }",
+          "stat() { printf '%s\\n' sandbox:sandbox:1775; }",
+          normalize,
+          "normalize_dcode_workspace_root",
+        ].join("\n"),
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Managed DCode workspace-root posture is unsafe");
+  });
+
   it("stays alive as a long-running process when invoked with no command", () => {
     // The terminal-runtime sandbox runs this entrypoint with no args as its
     // sole foreground process. It must NOT exit on its own — a self-exiting

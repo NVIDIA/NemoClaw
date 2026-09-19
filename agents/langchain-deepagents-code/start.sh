@@ -34,8 +34,28 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# Root entrypoints hand off agent work without reading personal shell files.
+normalize_dcode_workspace_root() {
+  local metadata
+  if ! chown root:sandbox /sandbox || ! chmod 1775 /sandbox; then
+    printf '%s\n' '[SECURITY] Could not restore the managed DCode workspace-root posture.' >&2
+    return 1
+  fi
+  metadata="$(stat -c '%U:%G:%a' /sandbox 2>/dev/null)" || {
+    printf '%s\n' '[SECURITY] Could not verify the managed DCode workspace-root posture.' >&2
+    return 1
+  }
+  if [ "$metadata" != root:sandbox:1775 ]; then
+    printf '%s\n' '[SECURITY] Managed DCode workspace-root posture is unsafe.' >&2
+    return 1
+  fi
+}
+
+# OpenShell can materialize its persistent workspace with agent ownership.
+# Restore DCode's image-declared sticky root boundary before privilege drop so
+# the agent can write its home without owning or weakening the workspace root.
+# Root entrypoints then hand off agent work without reading personal shell files.
 if [ "$(id -u)" -eq 0 ]; then
+  normalize_dcode_workspace_root
   exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
     /usr/local/bin/nemoclaw-start "$@"
 fi
