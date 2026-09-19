@@ -100,6 +100,16 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
+    const value = workflow();
+    const cleanup = namedMultiarchStep(value, "Remove owned Docker Engine 27 receipt daemon");
+    cleanup.if = "${{ !cancelled() }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup Docker Engine 27 receipt daemon cleanup must always run",
+    );
+  });
+
   // source-shape-contract: security -- The direct runner imports candidate shared modules and must not use stale build output
   it("builds the candidate shared boundary before direct managed-image contracts", () => {
     const value = workflow();
